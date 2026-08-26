@@ -2774,6 +2774,15 @@ sub _prepare_tool_round {
             $tool_call->{function}->{name} = $alias_info->{tool};
             $tool_name = $alias_info->{tool};
 
+            # Build a list of any extra params the alias wants to inject into
+            # the call. Currently used for 'append_file' -> write_file with
+            # append=1, but designed to be extensible for any future alias
+            # that needs to pre-populate a parameter without forcing the
+            # caller to set it. The injected key is only added when the
+            # caller hasn't already supplied it (preserves caller intent).
+            my @inject_keys = grep { $_ ne 'tool' && $_ ne 'operation' } keys %$alias_info;
+            my @inject_pairs = map { $_ => $alias_info->{$_} } @inject_keys;
+
             my $args_str = $tool_call->{function}->{arguments};
             if ($args_str) {
                 eval {
@@ -2783,10 +2792,26 @@ sub _prepare_tool_round {
                         $tool_call->{function}->{arguments} = encode_json($args);
                         log_debug('WorkflowOrchestrator', "Injected operation='$alias_info->{operation}' into args");
                     }
+                    # Inject any extra alias defaults. Only set keys the caller
+                    # didn't explicitly provide (e.g. caller can override
+                    # append=true with append=false if they really want to).
+                    for my $pair (@inject_pairs) {
+                        my ($k, $v) = @$pair;
+                        unless (exists $args->{$k}) {
+                            $args->{$k} = $v;
+                            $tool_call->{function}->{arguments} = encode_json($args);
+                            log_debug('WorkflowOrchestrator', "Injected $k=$v into args (alias default)");
+                        }
+                    }
                 };
             } else {
-                $tool_call->{function}->{arguments} = encode_json({ operation => $alias_info->{operation} });
-                log_debug('WorkflowOrchestrator', "Created args with operation='$alias_info->{operation}'");
+                my %new_args = (operation => $alias_info->{operation});
+                for my $pair (@inject_pairs) {
+                    my ($k, $v) = @$pair;
+                    $new_args{$k} = $v;
+                }
+                $tool_call->{function}->{arguments} = encode_json(\%new_args);
+                log_debug('WorkflowOrchestrator', "Created args with operation='$alias_info->{operation}'" . (@inject_pairs ? " + extras" : ""));
             }
         }
 

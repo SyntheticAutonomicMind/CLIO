@@ -119,14 +119,22 @@ sub get_tool {
         'list_dir'        => { tool => 'file_operations', operation => 'list_dir' },
         'read_file'       => { tool => 'file_operations', operation => 'read_file' },
         'write_file'      => { tool => 'file_operations', operation => 'write_file' },
-        'create_file'     => { tool => 'file_operations', operation => 'create_file' },
+        # 2026-08-26: create_file is now a silent alias for write_file (which
+        # creates-or-overwrites). The orchestrator injects operation='write_file'
+        # into the call, and the dispatch_table routes the result to the
+        # write_file handler. No special-case needed at alias resolution time.
+        'create_file'     => { tool => 'file_operations', operation => 'write_file' },
         'delete_file'     => { tool => 'file_operations', operation => 'delete_file' },
         'grep_search'     => { tool => 'file_operations', operation => 'grep_search' },
         'semantic_search' => { tool => 'file_operations', operation => 'semantic_search' },
         'file_exists'     => { tool => 'file_operations', operation => 'file_exists' },
         'get_file_info'   => { tool => 'file_operations', operation => 'get_file_info' },
         'rename_file'     => { tool => 'file_operations', operation => 'rename_file' },
-        'append_file'     => { tool => 'file_operations', operation => 'append_file' },
+        # append_file is the legacy append-only operation. It now routes to
+        # write_file with append=1 injected into the args, so the legacy
+        # 'open with >>' behavior is preserved exactly while sharing the
+        # single write_file implementation.
+        'append_file'     => { tool => 'file_operations', operation => 'write_file', append => 1 },
         'replace_string'  => { tool => 'file_operations', operation => 'replace_string' },
         'insert_at_line'  => { tool => 'file_operations', operation => 'insert_at_line' },
         'create_directory'=> { tool => 'file_operations', operation => 'create_directory' },
@@ -218,14 +226,22 @@ sub get_alias_info {
         'list_dir'        => { tool => 'file_operations', operation => 'list_dir' },
         'read_file'       => { tool => 'file_operations', operation => 'read_file' },
         'write_file'      => { tool => 'file_operations', operation => 'write_file' },
-        'create_file'     => { tool => 'file_operations', operation => 'create_file' },
+        # 2026-08-26: create_file is now a silent alias for write_file (which
+        # creates-or-overwrites). The orchestrator injects operation='write_file'
+        # into the call, and the dispatch_table routes the result to the
+        # write_file handler. No special-case needed at alias resolution time.
+        'create_file'     => { tool => 'file_operations', operation => 'write_file' },
         'delete_file'     => { tool => 'file_operations', operation => 'delete_file' },
         'grep_search'     => { tool => 'file_operations', operation => 'grep_search' },
         'semantic_search' => { tool => 'file_operations', operation => 'semantic_search' },
         'file_exists'     => { tool => 'file_operations', operation => 'file_exists' },
         'get_file_info'   => { tool => 'file_operations', operation => 'get_file_info' },
         'rename_file'     => { tool => 'file_operations', operation => 'rename_file' },
-        'append_file'     => { tool => 'file_operations', operation => 'append_file' },
+        # append_file is the legacy append-only operation. It now routes to
+        # write_file with append=1 injected into the args, so the legacy
+        # 'open with >>' behavior is preserved exactly while sharing the
+        # single write_file implementation.
+        'append_file'     => { tool => 'file_operations', operation => 'write_file', append => 1 },
         'replace_string'  => { tool => 'file_operations', operation => 'replace_string' },
         'insert_at_line'  => { tool => 'file_operations', operation => 'insert_at_line' },
         'create_directory'=> { tool => 'file_operations', operation => 'create_directory' },

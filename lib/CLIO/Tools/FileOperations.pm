@@ -20,6 +20,7 @@ use Cwd qw(abs_path getcwd);
 use Encode qw(decode);
 use File::Glob qw(:bsd_glob);
 use CLIO::Core::WorkflowOrchestrator;
+use JSON::PP ();  # For JSON::PP::false default in get_additional_parameters()
 
 =head1 NAME
 
@@ -108,39 +109,37 @@ AUTHORIZATION:
   Check first chunk for complete answer before reading more.
   Parameters: toolCallId (required), offset (optional, default: 0), length (optional, default: dynamic based on model context, max: 32768)
 
-━━━━━━━━━━━━━━━━━━━━━ WRITE (8 operations) ━━━━━━━━━━━━━━━━━━━━━
--  create_file - Create new file with content
-  Parameters: path (required), content (required)
-  
--  write_file - Overwrite existing file
-  Parameters: path (required), content (required)
-  
--  append_file - Append content to file
-  Parameters: path (required), content (required)
-  
+━━━━━━━━━━━━━━━━━━━━━ WRITE (7 operations) ━━━━━━━━━━━━━━━━━━━━━
+-  write_file - Write content to a file. Creates the file if it doesn't exist,
+  overwrites it if it does. Pass append=true to append instead of overwriting.
+  Parameters: path (required), content (required), append (optional, default: false)
+  Replaces the older create_file (refused to overwrite) and append_file.
+  Both still work as silent aliases for backward compatibility.
+
 -  replace_string - Find and replace text in file
   Parameters: path (required), old_string (required), new_string (required)
 
 -  multi_replace_string - Batch replace operations across multiple files
   Parameters: replacements (required, array of {path, old_string, new_string})
   Returns: Summary of all replacements performed
-  
+
 -  insert_at_line - Insert content at specific line number
   Parameters: path (required), line (required), content (required)
-  
+
 -  delete_file - Delete file or directory
   Parameters: path (required), recursive (optional, for directories)
-  
+
 -  rename_file - Rename or move file
   Parameters: old_path (required), new_path (required)
-  
+
 -  create_directory - Create directory (with parents)
   Parameters: path (required)
 
 ALIASES: Each operation above also accepts common natural-language aliases
 (e.g. `list_dir` / `list_directory`, `read` / `read_file`, `delete` /
 `delete_file`, `mv` / `rename_file`, `mkdir` / `create_directory`,
-`bulk_replace` / `multi_replace_string`). The canonical names above are
+`bulk_replace` / `multi_replace_string`, `create` / `create_file`,
+`append` / `append_file`). The canonical names above are
 preferred for clarity; aliases exist so calling code that uses the more
 familiar English form still dispatches correctly.
 },
@@ -169,11 +168,29 @@ familiar English form still dispatches correctly.
     
     # Store session directory for authorization checks
     $self->{session_dir} = $opts{session_dir} || '';
-    
+
     # Initialize PathAuthorizer (lazy load to avoid circular dependencies)
     $self->{path_authorizer} = undef;
-    
+
     return $self;
+}
+
+=head2 get_tool_definition
+
+Return the base schema unchanged. The base class marks only `operation`
+as required, which is correct for FileOperations: not all operations
+need the same fields (e.g. `read_file` needs `path`, `grep_search`
+needs `query` + `directory`, `write_file` needs `path` + `content`).
+
+Per-operation requirements are enforced by individual handlers, which
+use the canonical "Missing required parameter: <name>" error format so
+ToolErrorGuidance categorizes them consistently.
+
+=cut
+
+sub get_tool_definition {
+    my ($self) = @_;
+    return $self->SUPER::get_tool_definition();
 }
 
 =head2 get_additional_parameters
@@ -261,9 +278,15 @@ sub get_additional_parameters {
         
         # Write parameters - DUAL PARAMETER SUPPORT
         %{$self->add_dual_json_parameters('content', {
-            description => '[REQUIRED for create_file, write_file, append_file, insert_at_line] File content to write. (as string - escape JSON quotes if needed)',
+            description => '[REQUIRED for write_file] File content to write (as string - escape JSON quotes if needed).',
             string_format => 'any',
         })},
+
+        append => {
+            type => "boolean",
+            description => "[OPTIONAL for write_file] When true, append content to the file instead of overwriting. Default: false. The file is created if it does not exist (matching Unix '>' vs '>>' semantics: write_file=overwrite, write_file with append=true=append).",
+            default => JSON::PP::false,
+        },
         
         old_string => {
             type => "string",
@@ -323,12 +346,21 @@ sub dispatch_table {
         semantic_search     => 'semantic_search',
         read_tool_result    => 'read_tool_result',
         read_result         => 'read_tool_result',
-        create_file         => 'create_file',
-        create              => 'create_file',
+        create_file         => 'write_file',
+        create              => 'write_file',
+        # 2026-08-26 collapse: create_file and append_file became silent
+        # aliases for write_file (which now creates-or-overwrites, with
+        # append=true for append semantics). The hashref form injects
+        # defaults into $params before dispatch so direct callers
+        # (integration tests, internal code) get the legacy semantics
+        # without having to set append=true themselves. End-to-end LLM
+        # callers go through Registry's alias injection in
+        # WorkflowOrchestrator which sets the same defaults earlier in
+        # the pipeline.
         write_file          => 'write_file',
         write               => 'write_file',
-        append_file         => 'append_file',
-        append              => 'append_file',
+        append_file         => { method => 'write_file', defaults => { append => 1 } },
+        append              => { method => 'write_file', defaults => { append => 1 } },
         replace_string      => 'replace_string',
         replace             => 'replace_string',
         edit                => 'replace_string',
@@ -605,7 +637,7 @@ sub read_file {
     my $end_line = $params->{end_line};
     
     # Validation
-    return $self->error_result("Missing 'path' parameter") unless $path;
+    return $self->error_result("Missing required parameter: path") unless $path;
     
     # Sandbox check
     my $sandbox_check = $self->_check_sandbox($path, $context);
@@ -861,7 +893,7 @@ sub file_exists {
     
     my $path = $self->_clean_path($params->{path});
     
-    return $self->error_result("Missing 'path' parameter") unless $path;
+    return $self->error_result("Missing required parameter: path") unless $path;
     
     # Sandbox check
     my $sandbox_check = $self->_check_sandbox($path, $context);
@@ -888,7 +920,7 @@ sub get_file_info {
     
     my $path = $self->_clean_path($params->{path});
     
-    return $self->error_result("Missing 'path' parameter") unless $path;
+    return $self->error_result("Missing required parameter: path") unless $path;
     
     # Sandbox check
     my $sandbox_check = $self->_check_sandbox($path, $context);
@@ -931,7 +963,7 @@ sub get_errors {
         @paths = ($params->{path});
     }
 
-    return $self->error_result("Missing 'path' or 'paths' parameter") unless @paths;
+    return $self->error_result("Missing required parameter: paths") unless @paths;
 
     my @all_errors;
     my %per_file;
@@ -1032,7 +1064,7 @@ sub file_search {
     my $pattern = $params->{pattern};
     my $directory = $self->_clean_path($params->{directory}) || '.';
     
-    return $self->error_result("Missing 'pattern' parameter") unless $pattern;
+    return $self->error_result("Missing required parameter: pattern") unless $pattern;
     
     my $max_results = $params->{max_results} || 200;  # Limit result count
     
@@ -1191,7 +1223,7 @@ sub grep_search {
     my $max_results = $params->{max_results} || 50;  # Prevent runaway searches
     my $directory = $self->_clean_path($params->{directory}) || $self->_clean_path($params->{path}) || '.';
 
-    return $self->error_result("Missing 'query' parameter") unless defined $query && length($query);
+    return $self->error_result("Missing required parameter: query") unless defined $query && length($query);
 
     # Graceful file-path handling: if the model passed a FILE path as 'directory'
     # or 'path' (a common mistake since 'path' is described as "File or directory
@@ -1406,7 +1438,7 @@ sub semantic_search {
     my $scope = $params->{scope} || '.';
     my $top_k = $params->{max_results} || 20;
     
-    return $self->error_result("Missing 'query' parameter") unless $query;
+    return $self->error_result("Missing required parameter: query") unless $query;
     
     log_debug('FileOp', "Semantic search for: $query (scope: $scope)");
     
@@ -1657,7 +1689,7 @@ sub read_tool_result {
     my $length = $params->{length} // $default_chunk;
     
     # Validation
-    return $self->error_result("Missing 'toolCallId' parameter") unless $toolCallId;
+    return $self->error_result("Missing required parameter: toolCallId") unless $toolCallId;
     
     if ($offset < 0) {
         return $self->error_result("offset must be >= 0");
@@ -1771,23 +1803,24 @@ sub read_tool_result {
 # WRITE OPERATIONS
 #
 
-sub create_file {
+sub write_file {
     my ($self, $params, $context) = @_;
-    
+
     my $path = $self->_clean_path($params->{path});
     my $content = $params->{content};
-    
-    return $self->error_result("Missing 'path' parameter") unless $path;
-    return $self->error_result("Missing 'content' parameter") unless defined $content;
-    
+    my $append = $params->{append} ? 1 : 0;
+
+    return $self->error_result("Missing required parameter: path") unless $path;
+    return $self->error_result("Missing required parameter: content") unless defined $content;
+
     # Sandbox check (before other validation to give clear error)
     my $sandbox_check = $self->_check_sandbox($path, $context);
     return $self->error_result($sandbox_check->{error}) unless $sandbox_check->{allowed};
-    
-    return $self->error_result("File already exists: $path") if -e $path;
-    
-    # Check authorization
-    my $auth_result = $self->_check_write_authorization($path, 'create_file', $context);
+
+    # Authorization key uses 'write_file' regardless of caller alias
+    # (create_file/append_file both route here). Path authorizer sees a
+    # consistent operation name for grant/revoke matching.
+    my $auth_result = $self->_check_write_authorization($path, 'write_file', $context);
     if ($auth_result->{status} eq 'requires_authorization') {
         return $self->error_result(
             "Authorization required: $auth_result->{reason}\n\n" .
@@ -1796,97 +1829,8 @@ sub create_file {
         );
     } elsif ($auth_result->{status} eq 'denied') {
         return $self->error_result("Authorization denied: $auth_result->{reason}");
-   }
-   
-    # Security: scan script content for risky patterns
-    my $scan = $self->_scan_script_content($path, $content, $context);
-    if ($scan) {
-        my $approved = $self->_prompt_script_confirmation($path, $scan, $context);
-        unless ($approved) {
-            log_info('FileOp', "User DENIED script creation: $path");
-            return $self->error_result(
-                "Script creation denied by user.\n\n" .
-                "Security analysis: $scan->{summary}\n" .
-                "The user chose not to allow this file. Try a different approach."
-            );
-        }
-        log_info('FileOp', "User APPROVED script creation: $path");
     }
-    
-    # Multi-agent coordination: Request file lock via broker
-    my ($lock_acquired, $lock_error) = $self->_acquire_file_lock($path, $context);
-    return $self->error_result($lock_error) if $lock_error;
-   
-    log_debug('FileOp', "Creating file: $path (authorized: $auth_result->{reason})");
-    
-    # Vault: record creation for undo support
-    $self->_vault_capture($path, 'create', $context);
-    
-    my $result;
-    eval {
-        # Create parent directories if needed with secure permissions
-        my $dir = dirname($path);
-        unless (-d $dir) {
-            $self->_secure_mkdir($dir, 0700, $context);
-        }
-        
-        # Write file using atomic write pattern (secure_open -> write -> secure_close)
-        my $mode = $self->_get_file_mode($path, $content);
-        my ($fh, $temp_path) = $self->_secure_open($path, $mode, $context);
-        print $fh $content;
-        $self->_secure_close($fh, $temp_path, $path, $context);
-        
-        my $size = -s $path;
-        
-        log_debug('FileOp', "Created file $path ($size bytes)");
-        
-        my $action_desc = "creating $path ($size bytes)";
-        
-        $result = $self->success_result(
-            "File created successfully",
-            action_description => $action_desc,
-            path => $path,
-            size => $size,
-        );
-    };
-    
-    # Release lock if acquired
-    $self->_release_file_lock($path, $context) if $lock_acquired;
-    
-    if ($@) {
-        log_debug('FileOp', "Failed to create file: $@");
-        return $self->error_result("Failed to create file: " . $self->_clean_eval_error($@));
-    }
-    
-    return $result;
-}
 
-sub write_file {
-    my ($self, $params, $context) = @_;
-    
-    my $path = $self->_clean_path($params->{path});
-    my $content = $params->{content};
-    
-    return $self->error_result("Missing 'path' parameter") unless $path;
-    return $self->error_result("Missing 'content' parameter") unless defined $content;
-    
-    # Sandbox check
-    my $sandbox_check = $self->_check_sandbox($path, $context);
-    return $self->error_result($sandbox_check->{error}) unless $sandbox_check->{allowed};
-    
-    return $self->error_result("File not found: $path") unless -f $path;
-    
-    # Check authorization
-    my $auth_result = $self->_check_write_authorization($path, 'write_file', $context);
-    if ($auth_result->{status} eq 'requires_authorization') {
-        return $self->error_result(
-            "Authorization required: $auth_result->{reason}\n\n" .
-            "Use interact tool to request authorization."
-        );
-    } elsif ($auth_result->{status} eq 'denied') {
-        return $self->error_result("Authorization denied: $auth_result->{reason}");
-    }
-   
     # Security: scan script content for risky patterns
     my $scan = $self->_scan_script_content($path, $content, $context);
     if ($scan) {
@@ -1901,131 +1845,80 @@ sub write_file {
         }
         log_info('FileOp', "User APPROVED script write: $path");
     }
-    
+
     # Multi-agent coordination: Request file lock via broker
     my ($lock_acquired, $lock_error) = $self->_acquire_file_lock($path, $context);
     return $self->error_result($lock_error) if $lock_error;
-   
-    log_debug('FileOp', "Writing file: $path (authorized: $auth_result->{reason})");
-    
-    # Vault: capture original content for undo support
-    $self->_vault_capture($path, 'modify', $context);
-    
+
+    # Snapshot the existence state BEFORE the write so we can pick the
+    # right vault mode. 'create' lets undo delete the new file; 'modify'
+    # lets undo restore the original content.
+    my $file_existed = -f $path;
+    my $vault_type = $file_existed ? 'modify' : 'create';
+    $self->_vault_capture($path, $vault_type, $context);
+
+    # Choose verb for log + action_description based on mode
+    my $verb = $append ? 'appending to' : ($file_existed ? 'overwriting' : 'creating');
+
+    log_debug('FileOp', "Write file: $path (mode=$verb, authorized: $auth_result->{reason})");
+
     my $result;
+    my $written_size;
     eval {
-        # Write file using atomic write pattern
-        my $mode = $self->_get_file_mode($path, $content);
-        my ($fh, $temp_path) = $self->_secure_open($path, $mode, $context);
-        print $fh $content;
-        $self->_secure_close($fh, $temp_path, $path, $context);
-        
-        my $size = -s $path;
-        
-        log_debug('FileOp', "Wrote file $path ($size bytes)");
-        
-        my $action_desc = "writing $path ($size bytes)";
-        
+        # Create parent directories if needed with secure permissions.
+        # Only needed when appending to a new file or overwriting nothing -
+        # both code paths can land here, so this is shared.
+        my $dir = dirname($path);
+        unless (-d $dir) {
+            $self->_secure_mkdir($dir, 0700, $context);
+        }
+
+        if ($append) {
+            # Append mode: opens the file directly with >> semantics. If
+            # the file didn't exist before, opens creates it. We use the
+            # same secure-permissions chmod as the original append_file to
+            # avoid leaving existing files with overly permissive modes.
+            chmod(0600, $path) if -f $path;
+
+            open my $fh, '>>:utf8', $path or croak "Cannot append to $path: $!";
+            print $fh $content;
+            close $fh;
+        } else {
+            # Truncate-and-write mode: atomic write via temp + rename. The
+            # temp-file approach guarantees we never leave a half-written
+            # file behind if the rename fails midway.
+            my $mode = $self->_get_file_mode($path, $content);
+            my ($fh, $temp_path) = $self->_secure_open($path, $mode, $context);
+            print $fh $content;
+            $self->_secure_close($fh, $temp_path, $path, $context);
+        }
+
+        $written_size = -s $path;
+
+        log_debug('FileOp', "Wrote file $path ($written_size bytes, mode=$verb)");
+
+        my $action_desc = "$verb $path ($written_size bytes)";
+        my $status_msg = $append
+            ? "Content appended successfully"
+            : ($file_existed ? "File written successfully" : "File created successfully");
+
         $result = $self->success_result(
-            "File written successfully",
+            $status_msg,
             action_description => $action_desc,
             path => $path,
-            size => $size,
+            size => $written_size,
+            mode => $append ? 'append' : ($file_existed ? 'overwrite' : 'create'),
         );
     };
-    
+
     # Release lock if acquired
     $self->_release_file_lock($path, $context) if $lock_acquired;
-    
+
     if ($@) {
         log_debug('FileOp', "Failed to write file: $@");
         return $self->error_result("Failed to write file: " . $self->_clean_eval_error($@));
     }
-    
-    return $result;
-}
 
-sub append_file {
-    my ($self, $params, $context) = @_;
-    
-    my $path = $self->_clean_path($params->{path});
-    my $content = $params->{content};
-    
-    return $self->error_result("Missing 'path' parameter") unless $path;
-    return $self->error_result("Missing 'content' parameter") unless defined $content;
-    
-    # Sandbox check
-    my $sandbox_check = $self->_check_sandbox($path, $context);
-    return $self->error_result($sandbox_check->{error}) unless $sandbox_check->{allowed};
-    
-    return $self->error_result("File not found: $path") unless -f $path;
-    
-    # Check authorization
-    my $auth_result = $self->_check_write_authorization($path, 'append_file', $context);
-    if ($auth_result->{status} eq 'requires_authorization') {
-        return $self->error_result(
-            "Authorization required: $auth_result->{reason}\n\n" .
-            "Use interact tool to request authorization."
-        );
-    } elsif ($auth_result->{status} eq 'denied') {
-        return $self->error_result("Authorization denied: $auth_result->{reason}");
-    }
-   
-    # Security: scan script content for risky patterns
-    my $scan = $self->_scan_script_content($path, $content, $context);
-    if ($scan) {
-        my $approved = $self->_prompt_script_confirmation($path, $scan, $context);
-        unless ($approved) {
-            log_info('FileOp', "User DENIED script append: $path");
-            return $self->error_result(
-                "Script append denied by user.\n\n" .
-                "Security analysis: $scan->{summary}\n" .
-                "The user chose not to allow this content. Try a different approach."
-            );
-        }
-        log_info('FileOp', "User APPROVED script append: $path");
-    }
-    
-    # Multi-agent coordination: Request file lock via broker
-    my ($lock_acquired, $lock_error) = $self->_acquire_file_lock($path, $context);
-    return $self->error_result($lock_error) if $lock_error;
-   
-    log_debug('FileOp', "Appending to file: $path (authorized: $auth_result->{reason})");
-    
-    # Vault: capture original content for undo support
-    $self->_vault_capture($path, 'modify', $context);
-    
-    my $result;
-    eval {
-        # Ensure file has secure permissions before appending
-        # Files created by other tools might have overly permissive modes
-        chmod(0600, $path) if -f $path;
-
-        open my $fh, '>>:utf8', $path or croak "Cannot append to $path: $!";
-        print $fh $content;
-        close $fh;
-        
-        my $size = -s $path;
-        
-        log_debug('FileOp', "Appended to file $path (new size: $size bytes)");
-        
-        my $action_desc = "appending to $path (new size: $size bytes)";
-        
-        $result = $self->success_result(
-            "Content appended successfully",
-            action_description => $action_desc,
-            path => $path,
-            size => $size,
-        );
-    };
-    
-    # Release lock if acquired
-    $self->_release_file_lock($path, $context) if $lock_acquired;
-    
-    if ($@) {
-        log_debug('FileOp', "Failed to append to file: $@");
-        return $self->error_result("Failed to append to file: " . $self->_clean_eval_error($@));
-    }
-    
     return $result;
 }
 
@@ -2036,9 +1929,9 @@ sub replace_string {
     my $old_string = $params->{old_string};
     my $new_string = $params->{new_string};
     
-    return $self->error_result("Missing 'path' parameter") unless $path;
-    return $self->error_result("Missing 'old_string' parameter") unless defined $old_string;
-    return $self->error_result("Missing 'new_string' parameter") unless defined $new_string;
+    return $self->error_result("Missing required parameter: path") unless $path;
+    return $self->error_result("Missing required parameter: old_string") unless defined $old_string;
+    return $self->error_result("Missing required parameter: new_string") unless defined $new_string;
     
     # Sandbox check
     my $sandbox_check = $self->_check_sandbox($path, $context);
@@ -2125,7 +2018,7 @@ sub multi_replace_string {
     
     my $replacements = $params->{replacements};
     
-    return $self->error_result("Missing 'replacements' parameter") unless $replacements;
+    return $self->error_result("Missing required parameter: replacements") unless $replacements;
     return $self->error_result("'replacements' must be an array") unless ref($replacements) eq 'ARRAY';
     return $self->error_result("'replacements' array is empty") unless @$replacements > 0;
     
@@ -2160,7 +2053,7 @@ sub multi_replace_string {
         unless ($path) {
             push @failed, {
                 index => $idx,
-                error => "Missing 'path' in replacement $idx"
+                error => "Missing required parameter: path in replacement $idx"
             };
             next;
         }
@@ -2169,7 +2062,7 @@ sub multi_replace_string {
             push @failed, {
                 index => $idx,
                 path => $path,
-                error => "Missing 'old_string' in replacement $idx"
+                error => "Missing required parameter: old_string in replacement $idx"
             };
             next;
         }
@@ -2178,7 +2071,7 @@ sub multi_replace_string {
             push @failed, {
                 index => $idx,
                 path => $path,
-                error => "Missing 'new_string' in replacement $idx"
+                error => "Missing required parameter: new_string in replacement $idx"
             };
             next;
         }
@@ -2251,9 +2144,9 @@ sub insert_at_line {
     my $line_number = $params->{line} // $params->{line_number};
     my $content = $params->{content};
     
-    return $self->error_result("Missing 'path' parameter") unless $path;
-    return $self->error_result("Missing 'line' parameter") unless defined $line_number;
-    return $self->error_result("Missing 'content' parameter") unless defined $content;
+    return $self->error_result("Missing required parameter: path") unless $path;
+    return $self->error_result("Missing required parameter: line") unless defined $line_number;
+    return $self->error_result("Missing required parameter: content") unless defined $content;
     
     # Sandbox check
     my $sandbox_check = $self->_check_sandbox($path, $context);
@@ -2320,7 +2213,7 @@ sub delete_file {
     my $path = $self->_clean_path($params->{path});
     my $recursive = $params->{recursive} || 0;
     
-    return $self->error_result("Missing 'path' parameter") unless $path;
+    return $self->error_result("Missing required parameter: path") unless $path;
     
     # Sandbox check
     my $sandbox_check = $self->_check_sandbox($path, $context);
@@ -2391,8 +2284,8 @@ sub rename_file {
     my $old_path = $self->_clean_path($params->{old_path});
     my $new_path = $self->_clean_path($params->{new_path});
     
-    return $self->error_result("Missing 'old_path' parameter") unless $old_path;
-    return $self->error_result("Missing 'new_path' parameter") unless $new_path;
+    return $self->error_result("Missing required parameter: old_path") unless $old_path;
+    return $self->error_result("Missing required parameter: new_path") unless $new_path;
     
     # Sandbox check for both paths
     my $sandbox_check = $self->_check_sandbox($old_path, $context);
@@ -2463,7 +2356,7 @@ sub create_directory {
     
     my $path = $self->_clean_path($params->{path});
     
-    return $self->error_result("Missing 'path' parameter") unless $path;
+    return $self->error_result("Missing required parameter: path") unless $path;
     
     # Sandbox check
     my $sandbox_check = $self->_check_sandbox($path, $context);
