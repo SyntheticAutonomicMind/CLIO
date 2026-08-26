@@ -65,6 +65,26 @@ my @cases = (
     [q{File not found: /tmp/foo.txt},            'file_not_found'],
     [q{Permission denied},                       'permission_denied'],
     [q{Cannot find match position for chunk},    'edit_content_mismatch'],
+
+    # Audit-pass additions (2026-08-26 follow-up):
+    [q{Working directory does not exist: /tmp/foo}, 'directory_not_found'],
+    [q{Directory not found: /tmp/foo},              'directory_not_found'],
+    [q{No such file or directory},                  'directory_not_found'],
+    [q{Directory not readable: /tmp/foo},           'directory_not_readable'],
+    [q{Not a Git repository: /tmp/foo},             'not_a_git_repository'],
+    [q{User cancelled collaboration or provided no input}, 'operation_cancelled'],
+    [q{Received stop signal from coordinator},      'operation_cancelled'],
+    [q{Timeout waiting for user response via broker (waited 30s)}, 'user_input_timeout'],
+    [q{Remote execution failed: timed out after 120s}, 'remote_timeout'],
+    [q{Connection refused},                         'network_unreachable'],
+    [q{Network is unreachable},                     'network_unreachable'],
+    [q{Host is unreachable},                        'network_unreachable'],
+    [q{SubAgent system not available},              'system_unavailable'],
+    [q{SkillManager unavailable},                   'system_unavailable'],
+    [q{Invalid regex pattern 'foo'},                'invalid_regex'],
+    [q{Sandbox mode: web operations are disabled},  'sandbox_blocked'],
+    [q{Invalid status 'doing_it'},                  'invalid_value'],
+    [q{Invalid value for host: empty},              'invalid_value'],
 );
 
 for my $case (@cases) {

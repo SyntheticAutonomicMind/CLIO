@@ -145,13 +145,63 @@ sub _categorize_error {
     # Operation-needs-parameter form: "'update' operation requires 'todoUpdates' parameter"
     return 'missing_required' if $error =~ /['"`]?(\w+)['"`]?\s+operation\s+requires\s+['"`]?(\w+)['"`]?\s+parameter/i;
 
+    # Working directory / path-doesn't-exist forms. The agent often tries
+    # to write a file under a directory that doesn't exist yet, or calls
+    # a tool from the wrong cwd. Both surface as "Working directory does
+    # not exist" / "Directory not found" - distinguish from file_not_found
+    # because the agent needs to create the directory, not look harder.
+    return 'directory_not_found' if $error =~ /working directory.*not.*(exist|found)|directory.*not.*found/i;
+    return 'directory_not_found' if $error =~ /no such file or directory/i;
+    return 'directory_not_readable' if $error =~ /directory.*not.*readable/i;
+
     return 'invalid_operation' if $error =~ /unknown operation|unsupported.*operation/i;
     return 'invalid_json' if $error =~ /json|parse error/i;
     return 'missing_ui' if $error =~ /ui.*not available/i;
     return 'invalid_value' if $error =~ /invalid.*value|must be|should be/i;
+    # Invalid regex pattern (grep_search). Agent should fix the pattern, not
+    # retry with the same regex.
+    return 'invalid_regex' if $error =~ /invalid regex|invalid regex pattern/i;
+    # Invalid status value in todoList/todoUpdates. Agent should use one of
+    # the enum values listed in the schema.
+    return 'invalid_value' if $error =~ /invalid status|invalid '?status'?\b/i;
+    # Sandbox mode blocks the operation. Agent should NOT retry - it should
+    # either disable sandbox or pick a different operation.
+    return 'sandbox_blocked' if $error =~ /sandbox mode|sandbox.*disabled|sandbox.*blocked/i;
     return 'insufficient_params' if $error =~ /insufficient|need/i;
     return 'file_not_found' if $error =~ /cannot.*find|not found|no such file/i;
     return 'permission_denied' if $error =~ /permission|denied|access/i;
+
+    # Git-specific forms - "Not a Git repository" is the most common
+    # error agents hit when they try version_control ops on a fresh
+    # clone or a directory that's not a repo. The agent usually recovers
+    # by running `git init` or by running the command from the right cwd.
+    return 'not_a_git_repository' if $error =~ /not a git repository/i;
+
+    # Operation cancelled by the user/coordinator. The agent should not
+    # retry - it should treat this as "user wants to stop" and surface
+    # a final answer rather than continuing the loop.
+    return 'operation_cancelled' if $error =~ /cancelled|stop signal|received stop/i;
+
+    # User input timeout - the user didn't respond within the wait window.
+    # Different from operation_cancelled: the user might still be there,
+    # just slow. The agent can retry with a longer timeout or take an
+    # alternative path that doesn't require user input.
+    return 'user_input_timeout' if $error =~ /timeout.*user|user.*timeout/i;
+
+    # Remote execution timeout. The remote agent or command didn't
+    # finish in time. The agent should retry with a longer timeout
+    # or check the remote agent's logs.
+    return 'remote_timeout' if $error =~ /remote.*timed out|remote.*timeout/i;
+
+    # Network unreachable / host unreachable. The remote SSH target
+    # is offline. The agent should verify host connectivity before
+    # retrying.
+    return 'network_unreachable' if $error =~ /network is unreachable|host is unreachable|no route to host|connection refused|connection timed out/i;
+
+    # External system unavailable (SkillManager, SubAgent system). The
+    # agent should not retry - it needs to take an alternative path.
+    return 'system_unavailable' if $error =~ /unavailable|system not available|not available/i;
+
     return 'generic_error';
 }
 
@@ -312,10 +362,76 @@ sub _get_category_guidance {
             return "WHAT WENT WRONG: The UI is not available (terminal interface not initialized).\n" .
                    "HOW TO FIX: This tool requires an interactive terminal. Check that CLIO is running with terminal UI enabled.";
         },
-        
+
+        directory_not_found => sub {
+            return "WHAT WENT WRONG: The directory you're trying to access doesn't exist.\n" .
+                   "HOW TO FIX: Check that the path is correct. If the parent directory should exist, " .
+                   "verify your current working directory (terminal_operations: exec with 'pwd'). " .
+                   "If you need to CREATE the directory, call file_operations with operation='create_directory' first.";
+        },
+
+        directory_not_readable => sub {
+            return "WHAT WENT WRONG: The directory exists but you don't have read permission.\n" .
+                   "HOW TO FIX: Check file permissions on the directory. The sandbox may be blocking access to this path.";
+        },
+
+        not_a_git_repository => sub {
+            return "WHAT WENT WRONG: The current directory is not a Git repository.\n" .
+                   "HOW TO FIX: Either run 'git init' to initialize a new repo, or change to a directory " .
+                   "that is already a Git repo. Check your current working directory with terminal_operations: exec 'pwd'.";
+        },
+
+        operation_cancelled => sub {
+            return "WHAT WENT WRONG: The operation was cancelled by the user or coordinator.\n" .
+                   "HOW TO FIX: Do NOT retry this operation. Treat this as a stop signal and surface a final answer to the user instead of continuing the loop.";
+        },
+
+        user_input_timeout => sub {
+            return "WHAT WENT WRONG: The user didn't respond within the wait window (default 300s).\n" .
+                   "HOW TO FIX: Either retry with a longer timeout (pass timeout=<seconds>), or take an alternative path that doesn't require user input.\n" .
+                   "If the user explicitly said 'go ahead' before the timeout fired, retry once with a fresh request.";
+        },
+
+        invalid_regex => sub {
+            return "WHAT WENT WRONG: Your grep_search 'is_regex=true' pattern is not a valid Perl regex.\n" .
+                   "HOW TO FIX: Fix the regex syntax. Common issues: unescaped brackets, unmatched parens, unescaped metacharacters like . * + ?.\n" .
+                   "Test the pattern with terminal_operations: exec 'perl -e \"print \\\"ok\\\" if /<pattern>/\"' first if you are unsure.";
+        },
+
+        sandbox_blocked => sub {
+            return "WHAT WENT WRONG: The --sandbox flag is enabled, which blocks this operation.\n" .
+                   "HOW TO FIX: Do NOT retry. Either disable sandbox (run CLIO without --sandbox) or pick a different operation that doesn't require external access.";
+        },
+
+        remote_timeout => sub {
+            return "WHAT WENT WRONG: A remote command or sub-agent didn't finish within the timeout.\n" .
+                   "HOW TO FIX: Retry with a longer timeout, or check the remote agent's logs at /tmp/clio-agent-*.log.";
+        },
+
+        network_unreachable => sub {
+            return "WHAT WENT WRONG: The remote host is unreachable (network down, host offline, or SSH service not running).\n" .
+                   "HOW TO FIX: Verify the host is online (e.g. ping) and that SSH is running. Then retry. Do not retry indefinitely.";
+        },
+
+        system_unavailable => sub {
+            return "WHAT WENT WRONG: A required subsystem is not available (SkillManager, SubAgent system, etc.).\n" .
+                   "HOW TO FIX: Do NOT retry. Take an alternative path that does not depend on this subsystem, " .
+                   "or surface the limitation to the user.";
+        },
+
         invalid_value => sub {
-            return "WHAT WENT WRONG: One of your parameter values is invalid (wrong type, wrong range, etc.).\n" .
-                   "HOW TO FIX: Check the schema below to see what values are allowed for each parameter.";
+            # Extract the parameter name when the error message names one
+            # ("Invalid value for 'foo'"). The schema's enum/type for that
+            # param is the most actionable hint we can give.
+            my $param_name;
+            if ($error =~ /invalid.*?(?:value.*?for\s+['"`]?(\w+)['"`]?|['"`]?(\w+)['"`]?\s+is\s+invalid)/i) {
+                $param_name = $1 || $2;
+            }
+            my $hint = $param_name
+                ? "\n\nThe invalid parameter appears to be '$param_name'. Check the schema's 'type' and 'enum' for that field below."
+                : "";
+            return "WHAT WENT WRONG: One of your parameter values is invalid (wrong type, wrong range, or not in the allowed enum).\n" .
+                   "HOW TO FIX: Check the schema below to see what values are allowed for each parameter." . $hint;
         },
         
         insufficient_params => sub {
