@@ -1061,50 +1061,54 @@ git add -A && git commit -m "type(scope): description"
 
 ## Prompt Pipeline Protocol
 
-Every API request CLIO sends follows a fixed seven-slot layout. The goal is LCP (Longest Common Prefix) cache stability across turns — keep the cached prefix as long as possible so providers like llama.cpp, Anthropic, and OpenAI can reuse KV cache instead of reprocessing the full prompt.
+Every API request CLIO sends follows a fixed message layout. The goal is LCP (Longest Common Prefix) cache stability across turns — keep the cached prefix as long as possible so providers like llama.cpp, Anthropic, and OpenAI can reuse KV cache instead of reprocessing the full prompt.
 
-**The seven slots, in order:**
+**The message sections, in order:**
 
 ```
 [0] system_prompt      Static (built once per session; includes tools schema)
-[1] summary            CSSS slot; regenerates within size budget
-[2] context_files      User-added files (stable until /context add|remove)
-[3] dialog             user / assistant alternating (chronological)
-[4] tool_results       Deinterleaved to END; oldest first
-[5] user_context       Dynamic (date/time, working dir, LTM, session goals)
-[6] user_input         Current turn's raw user input (no prefix)
+[1] context_files      User-added files (stable until /context add|remove)
+[2] dialog             user / assistant alternating, tool_results interleaved
+[3] summary            CSSS slot; regenerates within size budget, at END
+[4] user_context       Dynamic (date/time, working dir, LTM, session goals)
+[5] user_input         Current turn's raw user input (no prefix)
 ```
 
 **Key invariants:**
 
-- Sections [0..2] are the **stable anchor** — only invalidate when tools change, summary regenerates, or context files change.
-- Section [5] is the **dynamic anchor** — changes every minute (date/time cache). When it changes, only [5] onwards is reprocessed. The dialog and tool_results at [3..4] stay cached.
-- Section [6] is always fresh.
+- Sections [0..1] are the **stable anchor** — only invalidate when tools change or context files are added/removed.
+- Section [3] is the **CSSS slot** — regenerates at a constant token count across trims, placed at the END so the LCP prefix extends through all dialog before breaking.
+- Section [4] is the **dynamic anchor** — changes every minute (date/time cache). When it changes, only [4] onwards is reprocessed. The dialog and tool_results at [2] stay cached.
+- Section [5] is always fresh.
 
 **Why this layout works for LCP:**
 
-The most common invalidation events are: user sends new turn (user_input changes), date ticks over (user_context changes), and dialog grows (tool execution adds results). The layout positions all three events at the END of the prompt, so the LCP breaks as late as possible. When only the date ticks, [0..4] stay cached — that's ~99% of the prompt unchanged.
+The most common invalidation events are: user sends new turn (user_input changes), date ticks over (user_context changes), and dialog grows (tool execution adds results). The layout positions all three events toward the END of the prompt, so the LCP breaks as late as possible. When only the date ticks, [0..3] stay cached — that's ~99% of the prompt unchanged.
 
-**System messages are NOT merged.** `ConversationManager::enforce_message_alternation` excludes `role=system` from its merge rule. Each section [0], [1], [2], [5] is its own message. Merging them would couple cache lifetimes: any section's regeneration would invalidate the whole merged system prompt. Providers that need concatenation (Anthropic) do so at the wire-format layer.
+**System messages are NOT merged.** `ConversationManager::enforce_message_alternation` excludes `role=system` from its merge rule. Each section [0], [1], [4] is its own message. Merging them would couple cache lifetimes: any section's regeneration would invalidate the whole merged system prompt. Providers that need concatenation (Anthropic) do so at the wire-format layer.
 
-**Resume fast path preserves LCP.** `Session::State::last_api_payload` captures the conversation state at end of turn. On resume, `_try_resume_from_payload` returns the snapshot verbatim with fresh [5] and [6] appended. The snapshot must equal what `load_conversation_history` would return from session history — otherwise the fast path and rebuild path diverge and the LCP breaks.
+**Resume fast path preserves LCP.** `Session::State::last_api_payload` captures the conversation state at end of turn (after tool execution and final assistant response). On resume, `_try_resume_from_payload` returns the snapshot verbatim with fresh [4] and [5] appended. The snapshot must equal what `load_conversation_history` would return from session history — otherwise the fast path and rebuild path diverge and the LCP breaks.
 
-**Snapshot timing matters.** `_capture_api_payload` runs at end of turn (success path + iteration-limit exit), not before tool execution. Capturing before tool execution produces a stale pre-tool snapshot that diverges from session history — the bug CachyLLama reported on 2026-08-18.
+**Snapshot timing matters.** `_capture_api_payload` runs at end of turn (success path + iteration-limit exit), not before tool execution. Capturing before tool execution produces a stale pre-tool snapshot that diverges from session history — the bug CachyLLama reported on 2026-08-18. The snapshot includes only minimal normalization: strip ephemeral continuation nudges (not persisted to session history) and strip orphan tool_calls (defense-in-depth for stale snapshots). No reinterleave or user_context stripping is applied — the snapshot is a faithful copy of what the model saw.
+
+**Unit-based trim (no deinterleave).** Both `trim_conversation_for_api` (pre-flight) and `MessageValidator::validate_and_truncate` (proactive/reactive) use unit-based trimming: each message unit (assistant + tool_calls + tool_results grouped together) is kept or dropped as a whole. This preserves the natural interleaved ordering of tool_calls with their tool_results, so no `reinterleave_tool_results` step is needed. The LCP cache stays stable because byte positions only change when messages are actually dropped, not when they are reordered.
+
+**Trim thresholds agree.** Both trim paths use the same drift-aware threshold from `_compute_drift_aware_threshold`: `int(ctx * 0.90 / max(1.0, drift_ratio))`. `trim_conversation_for_api` accepts an optional `trim_threshold` parameter; the caller (`WorkflowOrchestrator._build_turn_context`) passes the same drift-aware value. This prevents double-trims: pre-flight and proactive trims agree on the same limit, so the proactive trim is a no-op when the pre-flight already handled it.
 
 **Trim policy:**
 
-- [0], [1], [5], [6] — NEVER trimmed (anchors + active request)
-- [2] — trimmed with dialog budget walk
-- [3] — primary trim target (oldest dialog dropped first)
-- [4] — secondary trim target (oldest tool_results dropped first)
-
-The deinterleaved layout puts tool_results at the END specifically so they get dropped before dialog when budget is tight. Tool results are the most expendable — the agent can re-call the tool.
+- [0] — NEVER trimmed (system anchor)
+- [1] — NEVER trimmed (context_files, stable until /context change)
+- [2] — primary trim target (oldest dialog+tool pairs dropped first)
+- [3] — never trimmed (CSSS slot, locked to MIN/MAX_CSSS_SLOT_TOKENS)
+- [4] — replaced in-place on every resume (dynamic, not trimmed)
+- [5] — fresh each turn (not trimmed)
 
 **Provider adaptations:**
 
-- **Anthropic**: concatenates all `role=system` messages into one `system` field with `cache_control: {type: 'ephemeral'}`. Per-section cache control is a future enhancement.
+- **Anthropic**: concatenates all `role=system` messages into one `system` field with `cache_control: {type: 'ephemeral'}` on the system_prompt.
 - **OpenAI**: sends system messages as separate items. Supports per-message `cache_control`.
-- **llama.cpp**: sets `prompt_stable_prefix_tokens` = sum of [0..2] tokens so the slot match covers the stable anchor.
+- **llama.cpp**: sets `prompt_stable_prefix_tokens` = sum of leading system message tokens (system_prompt + context_files), excluding user_context. The CSSS summary at END is outside the stable prefix, so CSSS regeneration only invalidates the summary tokens, not the stable prefix.
 
 Full spec: [`docs/SPECS/PROMPT_PIPELINE.md`](docs/SPECS/PROMPT_PIPELINE.md).
 
@@ -1112,11 +1116,12 @@ Full spec: [`docs/SPECS/PROMPT_PIPELINE.md`](docs/SPECS/PROMPT_PIPELINE.md).
 
 - `tests/unit/test_cache_stable_layout.pl` — trim produces the cache-stable message ordering
 - `tests/unit/test_cache_stable_summary.pl` — CSSS slot lock behavior
-- `tests/unit/test_session_cached_payload.pl` — snapshot roundtrip + strip-and-replace on resume + per-section signatures
-- `tests/unit/test_conversation_manager_multimodal.pl` — system messages stay separate (no merge)
+- `tests/unit/test_session_cached_payload.pl` — snapshot roundtrip + in-place user_context replacement + per-section signatures
+- `tests/unit/test_trim_threshold_consistency.pl` — pre-flight and proactive trims agree on threshold
+- `tests/unit/test_drift_ratio_tools.pl` — drift ratio includes tool definition tokens
 - `tests/unit/test_conversation_manager.pl` — context_files injected as role=system
-- `tests/unit/test_provider_cache_control.pl` — `supports_cache_control` propagation + marker placement on last leading system message
-- `tests/integration/test_session_resume_cached_payload.pl` — end-to-end resume flow
+- `tests/unit/test_provider_cache_control.pl` — `supports_cache_control` propagation + marker placement
+- `tests/integration/test_trim_loss_photonterm_scenario.pl` — end-to-end trim-loss recovery
 
 Any change to message ordering, role assignment, trim policy, snapshot
 signatures, or provider cache adaptations must update these tests.

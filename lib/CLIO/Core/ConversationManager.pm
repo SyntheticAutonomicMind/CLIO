@@ -315,10 +315,11 @@ sub load_conversation_history {
 Trim conversation history to fit within model's token limits.
 
 Strategy:
-1. Always preserve first user message (original task context)
-2. Keep recent messages for continuity
-3. Fill remaining budget with high-importance older messages
+1. Preserve leading system messages (context_files, user_context)
+2. Preserve existing thread_summary at its original position
+3. Keep recent messages (tail-preserving walk) until budget exhausted
 4. Preserve tool_call/tool_result pairs together (never split them)
+5. Attach preserved summaries at the END for LCP cache stability
 
 Arguments:
 - $history: Arrayref of message objects
@@ -326,6 +327,7 @@ Arguments:
 - %opts: Options hash
   - model_context_window => int (default: 128000)
   - max_response_tokens => int (default: 16000)
+  - trim_threshold => int (optional, drift-aware threshold from proactive trim)
   - debug => 0|1
 
 Returns:
@@ -378,9 +380,30 @@ sub trim_conversation_for_api {
 
     my @messages = @$history;
 
-    # Calculate target based on available space (90% of remaining budget
-    # after system prompt reserve - gives 10% headroom for next burst).
-    my $target_tokens = int(($safe_threshold - $system_tokens) * 0.9);
+    # Calculate target based on available space. When a caller-provided
+    # trim_threshold is available (e.g. from the drift-aware threshold in
+    # WorkflowOrchestrator._compute_drift_aware_threshold), use it as the
+    # effective limit so the pre-flight trim and the proactive trim in
+    # process_input agree. Previously this function used its own 90% of
+    # (prompt_budget - system_tokens) threshold, which was ~20K higher
+    # than the drift-aware proactive threshold — the proactive trim would
+    # fire immediately after the pre-flight trim, causing a second
+    # deinterleave/reinterleave cycle and an unnecessary LCP cache break.
+    #
+    # When trim_threshold is provided, it represents the TOTAL budget for
+    # all messages (including system prompt). The history-only target is
+    # trim_threshold - system_tokens. When not provided, fall back to
+    # the original 90% of (prompt_budget - system_tokens).
+    my $target_tokens;
+    my $trim_threshold = $opts{trim_threshold};
+    if (defined $trim_threshold && $trim_threshold > 0) {
+        $target_tokens = int($trim_threshold - $system_tokens);
+        log_debug('ConversationManager',
+            "Pre-flight trim using drift-aware threshold: $trim_threshold total, " .
+            "$target_tokens for history (system: $system_tokens)");
+    } else {
+        $target_tokens = int(($safe_threshold - $system_tokens) * 0.9);
+    }
 
     if ($target_tokens < 5000) {
         $target_tokens = 5000;
@@ -434,15 +457,13 @@ sub trim_conversation_for_api {
     # The proactive trim in MessageValidator handles sophisticated compression
     # with thread_summary generation. This is a simple budget-based tail keep.
     #
-    # IMPORTANT: Preserve tool_call/tool_result pairs together - never split them.
-    #
-    # Cache stability: deinterleave so tool_results go to the END of the prompt.
-    # The dialog (user/assistant) stays at the front so the LCP cache match
-    # extends through sys + summary + dialog across trims. Tool_results are
-    # the most expendable (the agent can re-call the tool) so they're dropped
-    # first when budget is exceeded.
-    my @dialog = ();
-    my @deferred_tool_results = ();
+    # IMPORTANT: Preserve tool_call/tool_result pairs together. Each message
+    # is kept or dropped as a whole — tool_calls and their tool_results are
+    # never separated. This maintains the natural interleaved ordering so
+    # no reinterleave step is needed later, keeping the LCP cache prefix
+    # stable across trims (the byte positions only change when messages
+    # are actually dropped, not reordered).
+    my @kept = ();
 
     for my $i (reverse 0 .. $#messages) {
         my $msg = $messages[$i];
@@ -452,79 +473,31 @@ sub trim_conversation_for_api {
             next;
         }
 
-        # Deinterleave: classify as dialog or tool_result.
-        if (($msg->{role} // '') eq 'tool' || $msg->{tool_call_id}) {
-            # Defer tool_results - added in second pass with newest-first priority
-            unshift @deferred_tool_results, $msg;
+        # Keep message if budget allows. Stop the walk when budget is
+        # exhausted: we don't want to add small old messages after a
+        # large recent message broke the budget. Older messages are
+        # less valuable than newer ones.
+        if ($kept_tokens + $msg_tokens <= $target_tokens) {
+            unshift @kept, $msg;
+            $kept_tokens += $msg_tokens;
         } else {
-            # Keep dialog if budget allows. Stop the walk when budget is
-            # exhausted: we don't want to add small old messages after a
-            # large recent message broke the budget. Older dialog is
-            # less valuable than newer dialog for LCP cache stability.
-            if ($kept_tokens + $msg_tokens <= $target_tokens) {
-                unshift @dialog, $msg;
-                $kept_tokens += $msg_tokens;
-            } else {
-                # Budget exhausted - stop walking through older messages
-                last;
-            }
+            # Budget exhausted - stop walking through older messages
+            last;
         }
     }
-
-    # Second pass: add tool_results from NEWEST to OLDEST until budget is reached.
-    # Oldest tool_results are dropped first - they're the most expendable.
-    # CRITICAL: drop tool_results whose tool_call was dropped by the first-pass
-    # budget walk. The dialog walk uses `last` when budget exhausts, so older
-    # dialog (including assistant-with-tool_calls) is dropped. Without this
-    # guard, those tool_calls would be missing while their tool_results
-    # survived - orphan tool_results for the next call, which Anthropic
-    # rejects ("tool_use block must have a corresponding tool_result in
-    # the next message" requires the tool_use block to be in an earlier
-    # assistant message, not vice versa). Same fix as MessageValidator.pm.
-    my %kept_tool_call_ids;
-    for my $msg (@dialog) {
-        next unless ($msg->{role} // '') eq 'assistant';
-        next unless $msg->{tool_calls} && ref($msg->{tool_calls}) eq 'ARRAY';
-        for my $tc (@{$msg->{tool_calls}}) {
-            $kept_tool_call_ids{$tc->{id}} = 1 if $tc->{id};
-        }
-    }
-    my @kept_tool_results;
-    for my $i (reverse 0 .. $#deferred_tool_results) {
-        my $tr = $deferred_tool_results[$i];
-        next unless $tr->{tool_call_id} && $kept_tool_call_ids{$tr->{tool_call_id}};
-        my $tr_tokens = CLIO::Memory::TokenEstimator::estimate_tokens($tr->{content} // '');
-        if ($kept_tokens + $tr_tokens <= $target_tokens) {
-            unshift @kept_tool_results, $tr;
-            $kept_tokens += $tr_tokens;
-        }
-    }
-
-    my @result = (@preserved_system_msgs, @dialog, @kept_tool_results);
-    my @kept = @result;
+    # Assemble result: leading system messages + tail-kept conversation +
+    # preserved summaries at the END for LCP cache stability.
+    my @result = (@preserved_system_msgs, @kept);
 
     if ($debug) {
         log_debug('ConversationManager', "Trimmed: " . scalar(@messages) . " -> " . scalar(@kept) . " messages");
         log_debug('ConversationManager', "Token reduction: $history_tokens -> $kept_tokens tokens");
         log_debug('ConversationManager', "Final total with system: " . ($system_tokens + $kept_tokens) . " of $safe_threshold prompt budget");
-        log_debug('ConversationManager', sprintf(
-            "Deinterleave: %d dialog + %d tool_results kept, %d tool_results dropped",
-            scalar(@dialog), scalar(@kept_tool_results),
-            scalar(@deferred_tool_results) - scalar(@kept_tool_results)));
     }
 
-    # Cache-stable ordering: summary at position 1 (right after the system
-    # prompt) so the LCP match extends through sys + summary on every turn.
-    # Order: [system][dialog][tool_results][summary]
-    #
-    # In the normal flow, load_conversation_history excludes the system
-    # prompt, so @result starts with dialog and the summary goes at
-    # the END after dialog + tool_results. This keeps the LCP match alive
-    # through the stable prefix before breaking at the summary content.
-    # If the history carries a leading non-summary system message (the
-    # resume path or tests), the summary still goes at the END so the
-    # LCP can extend through every preserved system section before
-    # breaking at the summary boundary.
+    # Cache-stable ordering: summary at the END (after dialog) so the LCP
+    # match extends through the stable prefix (system + context_files +
+    # dialog) before breaking at the summary boundary.
     #
     # Bug history: placing the summary at position 1 forced llama.cpp's
     # prompt_stable_prefix_tokens gate to include summary tokens that
@@ -539,12 +512,10 @@ sub trim_conversation_for_api {
     }
 
     # Strip orphan tool_calls (tool_calls whose tool_results were dropped
-    # by the budget walk above). The trim's second-pass guard only ensures
-    # kept tool_results have matching tool_calls; it does NOT strip the
-    # reverse (tool_calls whose results were dropped). Without this, the
-    # assistant messages with tool_calls but no matching tool_results would
-    # be sent to the API, and Anthropic rejects:
-    #   "tool_use ids were found without tool_result blocks immediately after"
+    # by the budget walk above). With unit-based trim (no deinterleave),
+    # tool_calls and their results stay in the same message unit, so
+    # this is primarily defense-in-depth for edge cases where orphans
+    # were introduced upstream (stale snapshots, partial units).
     return validate_tool_message_pairs(\@result) if @result;
 
     return validate_tool_message_pairs($history);
@@ -655,8 +626,9 @@ Enforce strict user/assistant alternation.
 
 Some providers require alternating roles.
 This function:
-1. Merges consecutive same-role messages into one
-2. Preserves tool messages with their tool_call_ids
+1. Merges consecutive same-role messages into one (except tool and system)
+2. Strips orphan tool_calls (defense-in-depth before the API call)
+3. Preserves tool messages with their tool_call_ids
 
 Arguments:
 - $messages: Arrayref of messages
@@ -677,7 +649,7 @@ sub enforce_message_alternation {
 
     log_debug('ConversationManager', "Enforcing message alternation");
 
-    # Strip orphan tool_calls before re-interleaving. An orphan tool_call is
+    # Strip orphan tool_calls before the API call. An orphan tool_call is
     # an assistant message with tool_calls whose matching tool_result was
     # dropped (e.g. by a prior trim, context truncation, or a stale session
     # snapshot). validate_and_truncate in the proactive trim path already
@@ -690,16 +662,14 @@ sub enforce_message_alternation {
     # Calling validate_tool_message_pairs here catches orphans from ANY
     # source (trim_conversation_for_api, load_conversation_history edge cases,
     # stale snapshots, etc.) before they reach the provider.
+    #
+    # No reinterleave needed in the normal flow: unit-based trim (no
+    # deinterleave) keeps tool_calls and their results in their natural
+    # interleaved order. As defense-in-depth for old/stale snapshots that
+    # may have been deinterleaved by the prior implementation, restore
+    # adjacency before the API call. This is a structural no-op on
+    # already-interleaved input.
     $messages = validate_tool_message_pairs($messages);
-
-    # Re-interleave tool_results back adjacent to their tool_calls BEFORE the
-    # merge pass.  The cache-stable internal layout deinterleaves tool_results
-    # to the end of the array; no provider accepts that on the wire (Anthropic
-    # requires tool_result blocks in the user message immediately following the
-    # assistant's tool_use block; OpenAI-compatible APIs require the same
-    # adjacency).  This no-ops on already-interleaved input and restores
-    # correct ordering on deinterleaved input from a prior trim or a cached
-    # resume snapshot.
     $messages = reinterleave_tool_results($messages);
 
     my @alternating = ();

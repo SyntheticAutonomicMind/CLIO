@@ -14,43 +14,53 @@ reprocessing the full prompt every turn.
 
 ## Canonical Layout
 
-Every API request is an ordered array of seven distinct **sections**.
+Every API request is an ordered array of six distinct **sections**.
 Position is significant. Sections at the same position use the same
 cache lifetime; sections at different positions have independent cache
 lifetimes.
 
 ```
 [0] system_prompt      Static (built once per session; includes tools schema)
-[1] summary            CSSS slot; regenerates within size budget
-[2] context_files      User-added files (stable until /context add|remove)
-[3] dialog             user / assistant alternating (chronological)
-[4] tool_results       Deinterleaved to END; oldest first
-[5] user_context       Dynamic (date/time, working dir, LTM, session goals)
-[6] user_input         Current turn's raw user input (no prefix)
+[1] context_files      User-added files (stable until /context add|remove)
+[2] dialog             user / assistant alternating, tool_results interleaved
+[3] summary            CSSS slot; regenerates within size budget, at END
+[4] user_context       Dynamic (date/time, working dir, LTM, session goals)
+[5] user_input         Current turn's raw user input (no prefix)
 ```
 
-Sections [0] through [2] are the **stable anchor** — changes here
-invalidate everything from that section onwards. Section [5] is the
-**dynamic anchor** — changes here invalidate [5] onwards but [0..4]
-stay cached. Section [6] is always fresh and invalidates only itself.
+Sections [0] through [1] are the **stable anchor** — changes here
+invalidate everything from that section onwards. Section [4] is the
+**dynamic anchor** — changes here invalidate [4] onwards but [0..3]
+stay cached. Section [5] is always fresh and invalidates only itself.
 
-The positions are not literal message-array indices — the dialog at [3]
+The positions are not literal message-array indices — the dialog at [2]
 can be empty (turn 1, no history), or many messages. What matters is
 **section ordering** and **relative position of dynamic content**.
+
+Key design decision: with unit-based trim (no deinterleave),
+tool_calls and their tool_results stay together in their natural
+interleaved order throughout the pipeline. This means:
+- No deinterleave/reinterleave cycle on trim (the old pipeline protocol
+  tried separating tool_results to the END and reinterleaving them back,
+  which caused structural reordering that broke LCP cache stability).
+- The LCP prefix extends through sys + context_files + dialog + tools
+  because byte positions only change when units are actually dropped,
+  not when they are shuffled.
+- The summary at END (position [3]) means the LCP break is at a
+  well-defined boundary — after all live context, before the static
+  summary. CSSS locks the summary to a constant token count, so the
+  only invalidated tokens are the summary slot itself.
 
 ---------------------------------------------------
 
 ## Section Lifecycle
 
-| Section | Built when | Recomputed when | Cache lifetime |
-|---------|-----------|-----------------|---------------|
 | [0] system_prompt | Session start | Tools change | Session |
-| [1] summary | After trim | Drop oldest, CSSS lock | CSSS slot size |
-| [2] context_files | After user /context | User adds/removes file | Until change |
-| [3] dialog | After history load | Trim drops oldest | Newest-only |
-| [4] tool_results | After tool execution | Tool re-runs | Per tool call |
-| [5] user_context | Every turn | Date ticks, LTM changes | ~1 minute |
-| [6] user_input | Every turn | Always | One turn |
+| [1] context_files | After user /context | User adds/removes file | Until change |
+| [2] dialog | After history load | Trim drops oldest | Newest-only |
+| [3] summary | After trim | Drop oldest, CSSS lock | CSSS slot size |
+| [4] user_context | Every turn | Date ticks, LTM changes | ~1 minute |
+| [5] user_input | Every turn | Always | One turn |
 
 `built when` and `recomputed when` describe when the orchestrator
 generates or regenerates the section's content. `Cache lifetime`
@@ -70,12 +80,11 @@ All sections are encoded as messages in the OpenAI Chat Completions
 | Section | Role |
 |---------|------|
 | [0] system_prompt | `system` |
-| [1] summary | `system` (wraps `<thread_summary>...</thread_summary>`) |
-| [2] context_files | `system` (wraps `[CONTEXT FILES]...`) |
-| [3] dialog | alternating `user` / `assistant` |
-| [4] tool_results | `tool` (with `tool_call_id`) |
-| [5] user_context | `system` (wraps `<userContext>` / `<dynamicContext>` / `<sessionGoals>`) |
-| [6] user_input | `user` |
+| [1] context_files | `system` (wraps `[CONTEXT FILES]...`) |
+| [2] dialog | alternating `user` / `assistant`, plus `tool` for results |
+| [3] summary | `system` (wraps `<thread_summary>...</thread_summary>`) |
+| [4] user_context | `system` (wraps `<userContext>` / `<dynamicContext>` / `<sessionGoals>`) |
+| [5] user_input | `user` |
 
 All four `system` sections ([0], [1], [2], [5]) must remain **separate
 messages** — not merged into one. `enforce_message_alternation`
@@ -95,16 +104,14 @@ Trim policy walks the message array and drops content to fit the
 context budget. Each section has a fixed trim priority:
 
 - **[0] system_prompt** — NEVER trimmed. The LCP anchor.
-- **[1] summary** — NEVER trimmed. CSSS slot.
-- **[2] context_files** — Trimmed with dialog budget walk. Oldest
-  dialog dropped first to make room.
-- **[3] dialog** — Primary trim target. Walk from newest, drop
-  oldest when budget exceeded. Tool call/result pairs preserved
-  together (never split).
-- **[4] tool_results** — Secondary trim target. Walk from newest,
-  drop oldest when budget exceeded. Most expendable — the agent
-  can re-call the tool if needed.
-- **[5] user_context** — NEVER trimmed. It's small and dynamic; not
+- **[1] context_files** — NEVER trimmed. Stable until /context change.
+- **[2] dialog** — Primary trim target. Walk from newest, drop
+  oldest units when budget exceeded. Tool call/result pairs are always
+  kept together (never split) — each assistant+tool_call_result unit is
+  either fully retained or fully dropped. This preserves the natural
+  interleaved ordering so the LCP cache stays stable.
+- **[3] summary** — NEVER trimmed. CSSS slot, locked to MIN/MAX bounds.
+- **[4] user_context** — NEVER trimmed. It's small and dynamic; not
   a budget concern. The validator preserves user_context system messages
   at any position (msg[1], msg[N-2], etc.) so the chat template's
   `<system>...</system>` block stays in the prefix region across trims.
@@ -112,7 +119,7 @@ context budget. Each section has a fixed trim priority:
   break llama.cpp's LCP cache (the CachyLLama full re-prompt bug observed
   2026-08-18, where a 5-minute per-task reprocess loop was traced back
   to the validator silently dropping user_context at msg[1]).
-- **[6] user_input** — NEVER trimmed. Active request.
+- **[5] user_input** — NEVER trimmed. Active request.
 
 `trim_conversation_for_api` (ConversationManager.pm) and
 `validate_and_truncate` (API/MessageValidator.pm) implement this
@@ -162,19 +169,23 @@ before the error, not the partial state after).
 ### What Goes In The Snapshot
 
 The snapshot includes all messages that were in `@messages` at end of
-turn. For a turn that ran tools and produced a final assistant
-response, that means the snapshot includes:
+turn (after stripping ephemeral continuation nudges and orphan tool_calls
+in `_capture_api_payload`). For a turn that ran tools and produced a
+final assistant response, that means the snapshot includes:
 
 - [0] system_prompt
-- [1] summary (if any)
-- [2] context_files (if any)
-- [3] dialog (with the final assistant_with_tool_calls appended)
-- [4] tool_results
-- [5] user_context (the dynamic block that was current for this turn)
-- [6] user_input (the current turn's raw input)
+- [1] context_files (if any)
+- [2] dialog (with tool_results naturally interleaved, final assistant
+  response appended)
+- [3] summary (if any, placed at END by the trim)
+- [4] user_context
+- [5] user_input
 
-The dynamic [5] and [6] are stale on resume — the resume path strips
-them and appends fresh values.
+The snapshot is a faithful copy — with unit-based trim (no deinterleave),
+there is no structural reordering to undo. Continuation nudges are
+stripped (not persisted to session history), and orphan tool_calls are
+stripped (API safety), but tool_calls/results that are properly paired
+stay in their natural interleaved order.
 
 ### Resume Fast Path
 
@@ -182,27 +193,31 @@ them and appends fresh values.
 
 1. Provider matches current provider
 2. Tools signature matches current tools
-3. Context window matches (or larger than) the saved context window
+3. Context window is large enough (or trims if smaller)
 
 If the snapshot is valid, the fast path:
 
-1. Pops trailing `user_input` (role=user)
-2. Pops trailing `user_context` (role=system with `<userContext>` /
-   `<dynamicContext>` / `<sessionGoals>` tag)
-3. Appends fresh `user_context` (regenerated for current turn)
-4. Appends fresh `user_input` (current turn's raw input)
-6. Returns the resulting message array
+1. Replaces stale `user_context` in-place (the snapshot always has
+   exactly one user_context at the [-2] position, which is replaced
+   with fresh content)
+2. Appends fresh `user_input` (current turn's raw input)
+3. Returns the resulting message array
 
-This keeps [0..4] (the stable anchor) byte-identical across resume
-turns — the LCP match survives the resume.
+This keeps [0..3] (the stable anchor + dialog) byte-identical across
+resume turns — the LCP match survives the resume. The only change is
+the user_context content at [-2] (dynamic, expected to change every
+minute) and the new user_input at [-1] (fresh).
 
-If the snapshot is invalid (drift detected), the orchestrator falls
-back to the rebuild path. Rebuild:
+If the snapshot exceeds the current model's budget, `validate_and_truncate`
+runs with the same drift-aware threshold as the proactive trim, so the
+fast path and rebuild path produce identical output when the snapshot is
+valid and the session history hasn't drifted.
 
 1. Loads session history via `load_conversation_history`
-2. Pre-flight trims via `trim_conversation_for_api`
-3. Pushes section [5] (fresh user_context)
-4. Pushes section [6] (current user_input)
+2. Pre-flight trims via `trim_conversation_for_api` (using same drift-aware
+   threshold as the proactive trim)
+3. Pushes section [4] (fresh user_context)
+4. Pushes section [5] (current user_input)
 
 The two paths converge to the same prompt when the snapshot is valid
 and the session history hasn't drifted.
@@ -212,8 +227,8 @@ and the session history hasn't drifted.
 ## Provider Wire Formats
 
 Different providers handle the message array differently. The pipeline
-protocol preserves the seven sections in the internal representation;
-each provider adapts to its wire format at the boundary. Cache-specific
+protocol preserves the sections in the internal representation; each
+provider adapts to its wire format at the boundary. Cache-specific
 adaptations (cache_control markers, prompt_stable_prefix_tokens) are
 documented in [Provider Cache Adaptations](#provider-cache-adaptations)
 below.
@@ -294,9 +309,11 @@ read a file (tool call) and explain what it contains:
 ```
 TURN 1 N (just before user message N arrives)
 [0] system_prompt          (token positions 0..8000)
-[3] dialog (old turns)     (positions 8000..50000)
-[5] user_context_N         (positions 50000..50100)  <- dynamic
-[6] user_input_N           (positions 50100..50200)  <- fresh
+[1] context_files          (positions 8000..12000)
+[2] dialog (old turns)     (positions 12000..50000)
+[3] summary                (positions 50000..54000)  <- CSSS slot (stable)
+[4] user_context_N         (positions 50000..50100)  <- dynamic
+[5] user_input_N           (positions 50100..50200)  <- fresh
 ```
 LCP match from TURN N-1: [0..50100] all identical. Cache hit through
 `50100`. Tokens 50100+ reprocessed (the user_input).
@@ -304,13 +321,15 @@ LCP match from TURN N-1: [0..50100] all identical. Cache hit through
 ```
 TURN N+1 (1 minute later — date/time changed)
 [0] system_prompt          (positions 0..8000)
-[3] dialog (one more turn) (positions 8000..50500)  <- grew
-[5] user_context_N+1       (positions 50500..50600)  <- changed
-[6] user_input_N+1         (positions 50600..50700)  <- fresh
+[1] context_files          (positions 8000..12000)
+[2] dialog (one more turn) (positions 12000..50500)  <- grew
+[3] summary                (positions 50500..54500)  <- CSSS (stable)
+[4] user_context_N+1       (positions 50500..50600)  <- changed
+[5] user_input_N+1         (positions 50600..50700)  <- fresh
 ```
-LCP match from TURN N: [0..50500] identical (system, summary, dialog
-up to before user_context). Cache hit through `50500`. Tokens
-50500+ reprocessed (user_context changed, plus new user_input).
+LCP match from TURN N: [0..50500] identical (system, context_files,
+dialog up to before summary, summary). Cache hit through `50500`.
+Tokens 50500+ reprocessed (user_context changed, plus new user_input).
 
 That's 50500 / 50700 = 99.6% cache hit. Only 200 tokens (user_context
 + user_input) are reprocessed. llama.cpp at ~400 tok/s spends 0.5
@@ -406,18 +425,21 @@ are defensive metadata for selective rebuild (a future optimization).
 ## Provider Cache Adaptations
 
 Different providers support different prompt caching mechanisms. The
-pipeline protocol's stable anchor [0..2] is the natural cache region
-across all of them.
+pipeline protocol's stable anchor [0..1] (system_prompt + context_files)
+is the natural cache region across all of them. The CSSS summary at
+position [3] (END of dialog) is outside the leading stable prefix, so
+CSSS regeneration only invalidates the summary slot tokens — not the
+stable anchor.
 
 ### OpenAI Chat Completions (`cache_control` marker)
 
 Providers that support OpenAI prompt caching receive a `cache_control`
 marker on the FIRST leading system message (the system prompt itself).
 This anchors the cache to [0] so the system prompt stays cached across
-turns even when summary/context_files/user_context are regenerated.
+turns even when context_files or user_context are regenerated.
 Anchoring on the LAST system message would invalidate the cache on
-every CSSS regeneration or context_files change, since those are
-volatile sections in the pipeline layout.
+every context_files or user_context change, since those are volatile
+sections in the pipeline layout.
 
 Providers marked `supports_cache_control => 1` in `lib/CLIO/Providers.pm`:
 
@@ -443,8 +465,9 @@ enhancement.
 For local inference servers (llama.cpp, LM Studio, SAM), the cache
 matching is done server-side via `prompt_stable_prefix_tokens`.
 `APIManager::_build_payload` computes this as the sum of leading
-system message tokens and includes it in the payload. The server uses
-this to reject any slot whose stored prompt doesn't share the leading
+system message tokens (system_prompt + context_files, excluding
+user_context) and includes it in the payload. The server uses this
+to reject any slot whose stored prompt doesn't share the leading
 prefix — a match check that survives trimming.
 
 Providers marked `llama_user_id_supported => 1` in `lib/CLIO/Providers.pm`:
@@ -461,14 +484,14 @@ section structure maps cleanly to this when implemented.
 
 | Provider | Cache region | Mechanism |
 |----------|--------------|-----------|
-| OpenAI Chat Completions | [0..N] system messages | `cache_control` marker on last leading system |
+| OpenAI Chat Completions | [0..N] system messages | `cache_control` marker on first leading system |
 | Anthropic | Whole `system[]` block | `cache_control: ephemeral` on the block entry |
 | llama.cpp | [0..M] tokens (M = leading system tokens) | `prompt_stable_prefix_tokens` field |
 | Google Gemini | (future) per-section `cachedContent` | TBD |
 
 The pipeline protocol's stable anchor layout means all four cache
-strategies anchor to the same byte region: [0..2] in pipeline order,
-which is the system_prompt + summary + context_files messages.
+strategies anchor to the same byte region: [0..1] in pipeline order,
+which is the system_prompt + context_files messages.
 
 ---------------------------------------------------
 

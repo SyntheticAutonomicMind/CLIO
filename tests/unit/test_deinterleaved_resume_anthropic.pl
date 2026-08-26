@@ -432,25 +432,26 @@ subtest '_try_resume_from_payload: already-interleaved snapshot stays correct' =
     is(scalar(@errors), 0, 'zero Anthropic adjacency errors');
 };
 
-subtest '_try_resume_from_payload: snapshot captured AFTER fix is interleaved' => sub {
-    # Verify _capture_api_payload stores an interleaved snapshot even
-    # when the input @messages was deinterleaved (from a prior trim).
-    my $state = CLIO::Session::State->new(session_id => 'capture-reinterleave', debug => 0);
+subtest '_try_resume_from_payload: snapshot stored as-is (interleaved input stays interleaved)' => sub {
+    # With unit-based trim (no deinterleave), @messages is always in natural
+    # interleaved order. _capture_api_payload stores it as-is (no reinterleave
+    # needed since no deinterleave was applied).
+    my $state = CLIO::Session::State->new(session_id => 'capture-no-deinterleave', debug => 0);
     my $sess = StubSession4->new(state => $state);
 
-    # Simulate @messages as they would look AFTER a proactive trim deinterleave:
-    # tool_results at the END, separated from their tool_calls.
+    # @messages in natural interleaved order (as produced by the main loop
+    # with unit-based trim — tool_results adjacent to their tool_calls)
     my $messages = [
         { role => 'system', content => 'sys' },
         { role => 'user',   content => 'q1' },
         { role => 'assistant', content => 'a1', tool_calls => [
             { id => 'call_1', type => 'function', function => { name => 'x', arguments => '{}' } },
         ] },
+        { role => 'tool', content => 'r1', tool_call_id => 'call_1' },
         { role => 'user',   content => 'q2' },
         { role => 'assistant', content => 'a2', tool_calls => [
             { id => 'call_2', type => 'function', function => { name => 'x', arguments => '{}' } },
         ] },
-        { role => 'tool', content => 'r1', tool_call_id => 'call_1' },
         { role => 'tool', content => 'r2', tool_call_id => 'call_2' },
     ];
 
@@ -459,7 +460,7 @@ subtest '_try_resume_from_payload: snapshot captured AFTER fix is interleaved' =
     my $stored = $state->last_api_payload;
     ok($stored && @$stored, 'snapshot stored');
     is(count_misplaced_tool_results($stored), 0,
-        'stored snapshot has all tool_results adjacent (captured interleaved)');
+        'stored snapshot preserves interleaved order (no reinterleave needed)');
 };
 
 done_testing();

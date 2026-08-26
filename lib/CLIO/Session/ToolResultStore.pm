@@ -95,40 +95,45 @@ Returns: Either the original content (if small) or a marker with preview (if lar
 
 sub processToolResult {
     my ($self, $toolCallId, $content, $session_id) = @_;
-    
+
     # Handle undefined content gracefully
     $content //= '';
-    
+
     my $content_size = length($content);
-    
+
     if ($content_size <= $MAX_INLINE_SIZE) {
-        # Small enough to send inline
+        # Small enough to send inline. Return a hashref with persisted=0
+        # so callers can uniformly inspect the return shape. The content
+        # is returned verbatim. Returning a hashref (vs. raw string) is a
+        # deliberate API break — see ToolExecutor._execute_tool for the
+        # backward-compatible consumer that handles both shapes.
         log_debug('ToolResultStore', "Inline: toolCallId=$toolCallId, size=$content_size bytes");
-        return $content;
+        return { content => $content, persisted => 0 };
     }
-    
+
     # Analyze content for potential issues BEFORE persisting
     my $warnings = _analyze_content_issues($content);
-    
+
     # Persist the full content to disk
     my $marker;
+    my $persist_meta;
     eval {
         my $metadata = $self->persistResult($toolCallId, $content, $session_id);
-        
+
         # Use actual stored length (may differ from input due to line wrapping)
         my $stored_length = $metadata->{totalLength};
-        
+
         # Generate preview chunk
         my $preview = substr($content, 0, $PREVIEW_SIZE);
-        
+
         my $remaining = $stored_length - $PREVIEW_SIZE;
-        
+
         # Build marker with optional warnings
         my $warning_text = '';
         if (@$warnings) {
             $warning_text = "\n[CONTENT WARNINGS]\n" . join("\n", map { "- $_" } @$warnings) . "\n";
         }
-        
+
         $marker = <<END_MARKER;
 [TOOL_RESULT_PREVIEW: First $PREVIEW_SIZE bytes shown]$warning_text
 
@@ -139,15 +144,28 @@ $preview
 To read the full result, use:
 file_operations(operation: "read_tool_result", toolCallId: "$toolCallId", offset: 0, length: 8192)
 END_MARKER
-        
+
         log_info('ToolResultStore', "Persisted: toolCallId=$toolCallId, totalSize=$stored_length bytes, preview=$PREVIEW_SIZE bytes, path=$metadata->{filePath}");
+
+        # Capture the persisted metadata so the caller (ToolExecutor) can
+        # attach it to the tool result message. The summary pipeline
+        # (YaRN.compress_messages) reads _metadata.persisted_chunks to
+        # render chunk pointers in the thread_summary, which lets the
+        # model re-read large files after trim cycles drop the original
+        # tool result content.
+        $persist_meta = {
+            tool_call_id => $toolCallId,
+            file_path    => $metadata->{filePath},
+            total_length => $stored_length,
+            remaining    => $stored_length - $PREVIEW_SIZE,
+        };
     };
-    
+
     if ($@) {
         # Fallback: If persistence fails, truncate and log warning
         my $error = $@;
         log_error('ToolResultStore', "Failed to persist result: $error");
-        
+
         my $truncated = substr($content, 0, $MAX_INLINE_SIZE);
         $marker = <<END_FALLBACK;
 [WARNING: Tool result too large ($content_size bytes) and persistence failed]
@@ -156,9 +174,12 @@ $truncated
 
 [TRUNCATED: Remaining @{[$content_size - $MAX_INLINE_SIZE]} bytes not shown]
 END_FALLBACK
+        # Mark as failed so the orchestrator doesn't emit a chunk
+        # pointer for a file that doesn't exist on disk.
+        $persist_meta = { tool_call_id => $toolCallId, persist_failed => 1 };
     }
-    
-    return $marker;
+
+    return { content => $marker, persisted => 1, meta => $persist_meta };
 }
 
 =head2 _analyze_content_issues (private)

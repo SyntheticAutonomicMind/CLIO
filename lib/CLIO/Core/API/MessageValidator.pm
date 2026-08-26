@@ -186,11 +186,13 @@ sub validate_and_truncate {
         $preserved_general_system) =
         _extract_preserved_units(\@units);
     
-    # Build conversation from newest to oldest
-    # Deinterleave collections: dialog at the front (LCP-critical), tool_results
-    # at the END (defer until budget is allocated).
-    my @dialog = ();
-    my @deferred_tool_results = ();
+    # Build conversation from newest to oldest. Unit-based walk: each unit
+    # (assistant+tool_calls+tool_results grouped together) is kept or dropped
+    # as a whole. This preserves the natural interleaved ordering of
+    # tool_calls with their tool_results, so no reinterleave step is needed
+    # later — the LCP cache stays stable because byte positions only change
+    # when messages are actually dropped, not when they're reordered.
+    my @conversation;
     # Don't pre-allocate token budget for last_user_unit - it will be included
     # naturally by the budget walk below (it's a recent message). Only reserve
     # space for the always-present system prompt and any existing summary.
@@ -204,133 +206,47 @@ sub validate_and_truncate {
     my @dropped_units;
     
     my @remaining = @units[$start_unit .. $#units];
-    
-    # Post-trim target: keep context at the prompt budget computed
-    # from model capabilities. The estimation buffer in
-    # compute_prompt_budget already covers next-burst headroom; no
-    # additional percentage-based haircut is needed.
-    #
-    # Ring-buffer / sliding window approach: target stays at effective_limit,
-    # NOT prompt_budget. The effective_limit already subtracts tool definition
-    # tokens (they're sent in the tools[] array, not in messages) so the walk
-    # budget matches what actually goes into the prompt. When a caller
-    # provides trim_threshold (e.g. drift-aware threshold), effective_limit
-    # is replaced by it, so post_trim_keep_limit inherits the correction.
-    # CSSS (Cache-Stable Summary Slot) handles cache stability for the summary.
-    # DEFAULT_POST_TRIM_FLOOR acts as absolute safety floor.
+
+    # Post-trim target: keep context at the caller's trim_threshold (which
+    # defaults to the drift-aware threshold from the proactive trim in
+    # WorkflowOrchestrator.process_input) or, if not provided, the
+    # effective_limit (= prompt_budget - tool_tokens). Ring-buffer /
+    # sliding window: keep newest messages, drop oldest non-critical.
+    # CSSS handles summary cache stability; DEFAULT_POST_TRIM_FLOOR
+    # acts as absolute safety floor.
     my $post_trim_keep_limit = $effective_limit;
     $post_trim_keep_limit = CLIO::Core::Defaults::DEFAULT_POST_TRIM_FLOOR() if $post_trim_keep_limit < CLIO::Core::Defaults::DEFAULT_POST_TRIM_FLOOR();
     log_debug('MessageValidator', "Post-trim keep target: $post_trim_keep_limit tokens (prompt budget for $model)");
-
-    # DIAGNOSTIC: Append post_trim_keep_limit to the validator diagnostic (CLIO_TRIM_DIAG=1 to enable)
-    if ($ENV{CLIO_TRIM_DIAG}) {
-    eval {
-        my $ts = POSIX::strftime('%Y%m%d_%H%M%S', localtime);
-        # Append to the most recent validator log
-        my @logs = glob("/tmp/clio_trim_validator_*_$$.log");
-        if (@logs) {
-            my $latest = $logs[-1];
-            if (open my $dfh, '>>:encoding(UTF-8)', $latest) {
-                print $dfh "post_trim_keep_limit: $post_trim_keep_limit\n";
-                print $dfh "system_tokens: $system_tokens\n";
-                print $dfh "last_user_tokens: $last_user_tokens\n";
-                print $dfh "summary_tokens: $summary_tokens\n";
-                print $dfh "units_count: " . scalar(@units) . "\n";
-                print $dfh "remaining_units: " . scalar(@remaining) . "\n";
-                close $dfh;
-            }
-        }
-    };
-    }
 
     for my $unit (reverse @remaining) {
         if ($unit->{is_orphan_tool_result}) {
             log_debug('MessageValidator', "Skipping orphan tool_result unit (tool_id: $unit->{orphan_tool_id})");
             next;
         }
-        
-        # Deinterleave: classify each message in the unit as dialog or tool_result.
-        # We trim tool_results FIRST (oldest first) before dropping dialog, so the
-        # dialog stays at the front of the prompt. This keeps the LCP cache
-        # match alive through sys + summary + dialog across trims.
-        my $unit_dialog_tokens = 0;
-        my @unit_dialog;
-        my @unit_tool_results;
-        for my $msg (@{$unit->{messages}}) {
-            if (($msg->{role} // '') eq 'tool' || $msg->{tool_call_id}) {
-                push @unit_tool_results, $msg;
-            } else {
-                push @unit_dialog, $msg;
-                $unit_dialog_tokens += estimate_tokens($msg->{content} // '') + 4;
-                $unit_dialog_tokens += 8 if ($msg->{role} // '') eq 'tool';
-                # Include tool_call JSON tokens (assistant's tool_calls travel
-                # with the dialog, not with the tool_results).
-                if ($msg->{tool_calls} && ref($msg->{tool_calls}) eq 'ARRAY') {
-                    for my $tc (@{$msg->{tool_calls}}) {
-                        my $json = safe_encode_json($tc, '');
-                        $unit_dialog_tokens += estimate_tokens($json);
-                    }
-                }
-            }
+        # Skip the trailing thread_summary unit — it's extracted by the
+        # second pass in _extract_preserved_units and placed at the END
+        # of the output separately (CSSS). Including it in the budget
+        # walk would either double-count it or drop it, losing the CSSS
+        # slot lock that keeps sim_best stable across trims.
+        if ($unit->{is_trailing_summary}) {
+            log_debug('MessageValidator', "Skipping trailing thread_summary in budget walk (CSSS slot preserved)");
+            next;
         }
-
-        # Always keep dialog if budget allows. Tool_results are deferred and
-        # added in the second pass with newest-first priority.
-        if (@unit_dialog && $current_tokens + $unit_dialog_tokens <= $post_trim_keep_limit) {
-            unshift @dialog, @unit_dialog;
-            $current_tokens += $unit_dialog_tokens;
+        
+        # Unit-based trim: keep or drop the ENTIRE unit (including any
+        # tool_calls and tool_results it contains). This preserves the
+        # natural interleaved ordering — no deinterleave/reinterleave
+        # cycle, so the LCP cache prefix doesn't shift on trims that
+        # only drop complete units.
+        if ($current_tokens + $unit->{tokens} <= $post_trim_keep_limit) {
+            unshift @conversation, @{$unit->{messages}};
+            $current_tokens += $unit->{tokens};
             for my $id (keys %{$unit->{tool_call_ids} || {}}) {
                 $included_tool_ids{$id} = 1;
             }
-        } elsif (@unit_dialog) {
-            # Dialog alone exceeds budget - drop entire unit (rare, only
-            # when the conversation itself is larger than the budget).
+        } else {
             push @dropped_units, $unit;
         }
-
-        # Defer tool_results without consuming budget. They'll be added in the
-        # second pass in chronological order (already collected in reverse walk).
-        unshift @deferred_tool_results, @unit_tool_results;
-    }
-
-    # Second pass: add deferred tool_results from NEWEST to OLDEST until the
-    # budget is reached. This drops the oldest tool_results first (they're
-    # the most expendable - the agent can re-call the tool if needed).
-    #
-    # CRITICAL: a tool_result must only be kept if its tool_call is in the
-    # kept dialog. The deinterleaved trim can produce orphaned tool_calls
-    # when the first-pass dialog walk keeps an older assistant-with-tool_calls
-    # but the second pass drops its older tool_result due to budget. Without
-    # this guard, Anthropic sees an assistant with tool_use blocks but no
-    # matching tool_result in the next message and rejects with:
-    #   "Each tool_use block must have a corresponding tool_result block
-    #    in the next message."
-    # This is the regression introduced by the deinterleaved trim layout
-    # (commit d4247744). The post-truncation validation below also strips
-    # orphan tool_calls from any assistant that slipped through, but skipping
-    # them here is the first line of defense - it keeps the prompt_stable
-    # prefix cleaner (no wasted tokens on results with no context).
-    my @kept_tool_results;
-    for my $i (reverse 0 .. $#deferred_tool_results) {
-        my $tr = $deferred_tool_results[$i];
-        next unless $tr->{tool_call_id} && $included_tool_ids{$tr->{tool_call_id}};
-        my $tr_tokens = estimate_tokens($tr->{content} // '') + 8;
-        if ($current_tokens + $tr_tokens <= $post_trim_keep_limit) {
-            unshift @kept_tool_results, $tr;
-            $current_tokens += $tr_tokens;
-        }
-    }
-
-    # Combine: dialog first (in chronological order), then tool_results at the END.
-    # The deinterleaved layout keeps the conversation dialog stable at the front
-    # of the prompt so llama.cpp's LCP cache match extends through sys + summary
-    # + matching dialog instead of collapsing at the first dropped tool message.
-    my @conversation = (@dialog, @kept_tool_results);
-    if (@deferred_tool_results) {
-        log_debug('MessageValidator', sprintf(
-            "Deinterleave: %d dialog + %d tool_results kept, %d deferred dropped",
-            scalar(@dialog), scalar(@kept_tool_results),
-            scalar(@deferred_tool_results) - scalar(@kept_tool_results)));
     }
     
     # Calculate total tokens in dropped units for proactive CSSS slot growth
@@ -394,76 +310,27 @@ sub validate_and_truncate {
         log_debug('MessageValidator', "No dropped messages - preserving existing thread_summary");
     }
     
-    # Post-truncation validation: enforce tool_call/tool_result pairing.
-    # Two checks run here:
-    #   1. Drop orphaned tool_results whose tool_call was dropped (the
-    #      original check; protects against partial-unit truncation).
-    #   2. STRIP orphaned tool_calls from assistant messages whose
-    #      tool_result was dropped. Without this, Anthropic rejects the
-    #      request with: "Each tool_use block must have a corresponding
-    #      tool_result block in the next message." The deinterleaved trim
-    #      can produce this state if the second-pass tool_result drop
-    #      didn't see the corresponding tool_call (defense in depth - the
-    #      second pass also skips orphan tool_results, but this catches
-    #      any case that slipped through).
-    #
-    # Build the set of tool_call_ids that have results in the final
-    # conversation. tool_results live in @kept_tool_results (positions
-    # >= scalar(@dialog) in @conversation).
-    my %kept_tool_result_ids;
-    for my $msg (@kept_tool_results) {
-        if ($msg->{tool_call_id}) {
-             $kept_tool_result_ids{$msg->{tool_call_id}} = 1;
-        }
-    }
+    # Post-truncation validation: drop orphaned tool_results whose tool_call
+    # was in a dropped unit. With unit-based trim (no deinterleave), each
+    # unit keeps tool_calls and their tool_results together — so this should
+    # rarely fire. But it's defense-in-depth for units that straddle the
+    # budget boundary (e.g. a large assistant+tool pair where the budget
+    # walk kept the assistant but the tool_result's unit was built separately
+    # by _group_into_units).
     my @validated;
-    my $stripped_orphans = 0;
     for my $msg (@conversation) {
         my $is_tool_result = $msg->{tool_call_id} || ($msg->{role} && $msg->{role} eq 'tool');
         if ($is_tool_result && $msg->{tool_call_id} && !$included_tool_ids{$msg->{tool_call_id}}) {
-            log_debug('MessageValidator', "Dropping orphaned tool_result after truncation");
+            log_debug('MessageValidator', "Dropping orphaned tool_result after truncation (tool_call in dropped unit)");
             next;
         }
-
-        # Strip orphan tool_calls from assistant messages. If ALL tool_calls
-        # in an assistant message are orphan, keep the message as plain
-        # text (the model may have spoken before/after the tool call).
-        if (($msg->{role} // '') eq 'assistant'
-            && $msg->{tool_calls}
-            && ref($msg->{tool_calls}) eq 'ARRAY'
-            && @{$msg->{tool_calls}}) {
-            my @matched;
-            my @orphan;
-            for my $tc (@{$msg->{tool_calls}}) {
-                if ($tc->{id} && $kept_tool_result_ids{$tc->{id}}) {
-                    push @matched, $tc;
-                } else {
-                    push @orphan, $tc;
-                }
-            }
-            if (@orphan) {
-                $stripped_orphans += scalar(@orphan);
-                if (@matched) {
-                    push @validated, {
-                        %$msg,
-                        tool_calls => \@matched,
-                    };
-                } else {
-                    # All tool_calls were orphan - keep the text content
-                    push @validated, {
-                        role => 'assistant',
-                        content => $msg->{content} // '',
-                    };
-                }
-                next;
-            }
-        }
-
         push @validated, $msg;
     }
-    if ($stripped_orphans > 0) {
-        log_info('MessageValidator', "Stripped $stripped_orphans orphaned tool_calls (tool_results dropped by trim)");
-    }
+    
+    # Final cleanup: strip any pre-existing orphans (from stale snapshots,
+    # etc.) so the wire payload always has matching tool_call/tool_result
+    # pairs. This is a no-op on clean input.
+    @validated = @{ validate_tool_message_pairs(\@validated) };
     
     # Combine: system + compressed summary + validated conversation
     # Ensure at least one user message exists in the conversation.
@@ -530,9 +397,10 @@ sub validate_and_truncate {
     # sim_best from ~0.99 to ~0.58 forever (the bug observed 2026-08-19,
     # cache hit ratio collapse on first trim of a long-running session).
     #
-    # Combined with the deinterleaved tool_results layout below, the LCP
-    # match survives a context trim instead of collapsing at the first
-    # dropped position. Order: [system][dialog][tool_results][summary]
+    # With unit-based trim (no deinterleave), the dialog + tool_results
+    # stay in their natural interleaved order from newest to oldest,
+    # so the LCP prefix extends through the entire conversation before
+    # breaking at the summary boundary. Order: [system][dialog+tools][summary]
     push @truncated, @validated;
     push @truncated, $summary_to_use if $summary_to_use;
 
@@ -911,8 +779,38 @@ sub _extract_preserved_units {
                 log_debug('MessageValidator', "Preserving general system message at unit $i (content starts with: " . substr($content, 0, 30) . ")");
             }
         } elsif ($first_msg->{role} && $first_msg->{role} ne 'system') {
-            # Hit a non-system, non-summary message - start of conversation
+            # Hit a non-system message - start of conversation
             $start_unit = $i;
+            last;
+        }
+    }
+
+    # SECOND PASS: scan remaining units for trailing thread_summary.
+    # The CSSS summary is placed at the END of the message array by the
+    # proactive trim ([sys][dialog...][summary]), but the walk above only
+    # finds summaries at LEADING positions (before the dialog). Without
+    # this second pass, the CSSS slot is never locked — every trim
+    # regenerates the summary with different content/size, changing the
+    # LCP prefix boundary and causing sim_best to stay collapsed at ~0.2
+    # (observed in the PhotonTERM session logs, 2026-08-26: every trim
+    # logged "CSSS: first trim slot target 8000" even at iteration 27+).
+    #
+    # Find the LAST thread_summary unit. If found, set $summary_unit/
+    # $summary_tokens (for CSSS slot locking) and mark the unit with
+    # is_trailing_summary so the budget walk skips it — otherwise it's
+    # double-counted (kept in conversation AND compressed into new summary).
+    for my $i (reverse ($start_unit .. $#$units)) {
+        my $unit = $units->[$i];
+        next unless $unit && $unit->{messages} && @{$unit->{messages}};
+        my $first_msg = $unit->{messages}[0];
+        my $content = $first_msg->{content} || '';
+        if ($content =~ /<thread_summary>/) {
+            $summary_unit = $unit;
+            $summary_tokens = $unit->{tokens};
+            $unit->{is_trailing_summary} = 1;
+            log_debug('MessageValidator',
+                "Found trailing thread_summary at unit $i ($summary_tokens tokens) " .
+                "- CSSS slot will lock across trims");
             last;
         }
     }
@@ -920,9 +818,26 @@ sub _extract_preserved_units {
     # Find the MOST RECENT user unit for task context preservation.
     # The most recent user message represents the current work; the
     # original task is captured in the thread_summary.
+    #
+    # Layer 3 of trim-loss fix: we walk newest-to-oldest to find the
+    # most recent user-role message and preserve that unit at full
+    # content. This handles the case where a long autonomous tool loop
+    # (50+ iterations) drops the original user prompt along with the
+    # oldest dialog — the budget walk goes newest-to-oldest and the
+    # original user message is at the bottom. Without this guard, the
+    # model sees only assistant+tool pairs after trim and may hallucinate
+    # that there's no active task.
+    #
+    # We preserve the unit (full content) not just the message text so
+    # any tool_calls paired with the user message (rare but possible
+    # when the user message is delivered via a tool) survive too.
+    # One message, position-stable — does not affect LCP cache hit
+    # because the stable prefix (sys + summary + dialog at front) is
+    # unchanged regardless of how many user messages are dropped.
     my $last_user_unit;
     my $last_user_tokens = 0;
     my $last_user_idx = -1;
+    my $last_user_content = '';
     for my $i ($start_unit .. $#$units) {
         my $unit = $units->[$i];
         next unless $unit && $unit->{messages} && @{$unit->{messages}};
@@ -931,13 +846,17 @@ sub _extract_preserved_units {
             $last_user_unit = $unit;
             $last_user_tokens = $unit->{tokens};
             $last_user_idx = $i;
+            $last_user_content = $first_msg->{content} // '';
         }
     }
-    
+
     if ($last_user_unit) {
         log_debug('MessageValidator', "Found most recent user message at unit $last_user_idx (tokens=$last_user_tokens)");
     }
 
+    # Return both the unit (for the existing preserved-user-message
+    # injection path) and the content (for any future path that wants
+    # the bare text without the unit structure).
     return ($system_msg, $last_user_unit, $start_unit, $system_tokens, $last_user_tokens,
             $summary_unit, $summary_tokens, \@preserved_user_contexts, \@preserved_general_system);
 }

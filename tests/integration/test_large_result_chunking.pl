@@ -43,9 +43,14 @@ my $store = CLIO::Session::ToolResultStore->new(
         $small_content,
         'test_session_1'
     );
-    
-    is($result, $small_content, 'Small result returned inline (no storage)');
-    like($result, qr/^x+$/, 'Content intact');
+
+    # New return shape: hashref with content/persisted keys. Inline
+    # results are persisted=0 with content == original. Tests unwrap
+    # the hashref to keep assertions stable across the API break.
+    my $unwrapped = ref($result) eq 'HASH' ? $result->{content} : $result;
+
+    is($unwrapped, $small_content, 'Small result returned inline (no storage)');
+    like($unwrapped, qr/^x+$/, 'Content intact');
 }
 
 # Test 2: Large result (> 8KB) - should be stored with marker
@@ -56,12 +61,14 @@ my $store = CLIO::Session::ToolResultStore->new(
         $large_content,
         'test_session_2'
     );
-    
-    like($result, qr/\[TOOL_RESULT_PREVIEW:/, 'Large result shows preview marker');
-    like($result, qr/\[TOOL_RESULT_STORED:/, 'Large result shows storage marker');
-    like($result, qr/toolCallId=test_large_456/, 'toolCallId included in marker');
-    like($result, qr/totalLength=\d+/, 'Total length included in marker');
-    like($result, qr/read_tool_result/, 'Instructions to use read_tool_result');
+
+    my $unwrapped = ref($result) eq 'HASH' ? $result->{content} : $result;
+
+    like($unwrapped, qr/\[TOOL_RESULT_PREVIEW:/, 'Large result shows preview marker');
+    like($unwrapped, qr/\[TOOL_RESULT_STORED:/, 'Large result shows storage marker');
+    like($unwrapped, qr/toolCallId=test_large_456/, 'toolCallId included in marker');
+    like($unwrapped, qr/totalLength=\d+/, 'Total length included in marker');
+    like($unwrapped, qr/read_tool_result/, 'Instructions to use read_tool_result');
 }
 
 # Test 3: Chunk retrieval - sequential reading within 32KB limit

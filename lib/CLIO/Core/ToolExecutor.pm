@@ -425,14 +425,33 @@ sub execute_tool {
         # reads at offset=0, producing another >8KB result, ad infinitum.
         my $operation = $arguments->{operation} || '';
         my $skip_persist = ($operation eq 'read_tool_result');
-        
+
+        # Track if this tool's result was persisted to a chunked file on
+        # disk. WorkflowOrchestrator attaches this to the tool result
+        # message's _metadata so YaRN's compress_messages can include the
+        # chunk pointer in the summary. Without this, large file reads
+        # are black-holed after trim: the model sees the preview but
+        # can't reconstruct which persisted file to re-read.
+        my $persisted_chunk;
+
         my $session_id = $self->{session}->{session_id};
         if ($session_id && $tool_call_id && !$skip_persist) {
-            $output = $self->{storage}->processToolResult(
+            my $processed = $self->{storage}->processToolResult(
                 $tool_call_id,
                 $output,
                 $session_id
             );
+            if (ref($processed) eq 'HASH' && $processed->{persisted}) {
+                # ToolResultStore now returns a hashref so we can attach
+                # the persisted metadata. The content string remains
+                # $processed->{content} (the marker-wrapped preview).
+                $output = $processed->{content};
+                $persisted_chunk = $processed->{meta};
+            } else {
+                # Backward-compatible path for any code that returns a
+                # raw string. Strip the hashref form if present.
+                $output = ref($processed) eq 'HASH' ? $processed->{content} : $processed;
+            }
         }
         
         # Log successful execution
@@ -455,7 +474,18 @@ sub execute_tool {
             success => 1,  # Include success flag for test verification
             output => $output,
         };
-        
+
+        # Attach persisted-chunk metadata so WorkflowOrchestrator can put
+        # it on the tool result message. YaRN reads _metadata.persisted_chunks
+        # from the tool result message and renders the pointers in the
+        # summary, so the model can re-read large chunks after trim.
+        if ($persisted_chunk && $persisted_chunk->{tool_call_id}) {
+            # read_tool_result reads should NOT add their own chunk pointer;
+            # they reference the original chunk's toolCallId. The orchestrator
+            # suppresses this by reading the tool's args.
+            $response->{_persisted_chunk} = $persisted_chunk;
+        }
+
         # Add action_description if present (for UI feedback)
         if ($result->{action_description}) {
             $response->{action_description} = $result->{action_description};

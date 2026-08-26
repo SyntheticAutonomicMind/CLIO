@@ -3,14 +3,14 @@
 #
 # Verifies that the proactive trim produces a layout that maximizes the
 # LCP (Longest Common Prefix) cache hit rate on llama.cpp:
-#   1. Summary at position 1 (right after system prompt) so the LCP
-#      match extends through sys + summary on every turn.
-#   2. Tool results deinterleaved to the END of the prompt so the LCP
-#      match extends through sys + summary + dialog across trims.
-#   3. Tool results dropped FIRST when budget is exceeded (most
-#      expendable - the agent can re-call the tool).
+#   1. Summary at the END so the LCP match extends through all dialog.
+#   2. Tool results stay interleaved with their tool_calls (unit-based
+#      trim — no deinterleave/reinterleave cycle that would shift byte
+#      positions between turns).
+#   3. Oldest complete units (assistant + tool_calls + tool_results)
+#      dropped first when budget is exceeded.
 #
-# These all combine to make prompt_stable_prefix_tokens (sys + summary)
+# These combine to make prompt_stable_prefix_tokens (sys + context_files)
 # a stable cache key, with the dialog layer beneath it staying
 # stable across trims as long as the conversation grows.
 
@@ -133,8 +133,8 @@ subtest 'Summary at END preserves LCP through stable prefix (sys + dialog + tool
         "Stable prefix (sys + summary) is substantial enough to anchor LCP: $stable_prefix tokens");
 };
 
-# ===== Test 2: Tool results deinterleaved to the END =====
-subtest 'Tool results deinterleaved to the END of prompt' => sub {
+# ===== Test 2: Tool results stay interleaved with tool_calls (unit-based trim) =====
+subtest 'Tool results stay interleaved (no deinterleave needed)' => sub {
     my @msgs = build_mixed_conversation();
     my $caps = {
         max_context_window_tokens => 131072,
@@ -159,25 +159,12 @@ subtest 'Tool results deinterleaved to the END of prompt' => sub {
     ok($last_dialog_idx >= 0, "Some dialog exists in trimmed output");
 
     if ($first_tr_idx >= 0 && $last_dialog_idx >= 0) {
-        ok($first_tr_idx > $last_dialog_idx,
-            "First tool result ($first_tr_idx) is AFTER last dialog ($last_dialog_idx) - deinterleaved");
-    }
-
-    # Verify summary is BEFORE dialog
-    my ($summary_idx, $summary) = find_summary($trimmed);
-    if ($summary_idx >= 0 && $last_dialog_idx >= 0) {
-        ok($summary_idx < $last_dialog_idx,
-            "Summary ($summary_idx) is BEFORE dialog ($last_dialog_idx)");
-    }
-
-    # Verify the final order is: [sys, summary, dialog, tool_results]
-    is($trimmed->[0]{role}, 'system', "Position 0 is system prompt");
-    if ($summary_idx >= 0) {
-        is($summary_idx, 1, "Position 1 is summary");
-    }
-    if ($first_tr_idx >= 0 && $last_dialog_idx >= 0) {
-        ok($last_dialog_idx < $first_tr_idx,
-            "Dialog ends ($last_dialog_idx) before tool_results start ($first_tr_idx)");
+        # With unit-based trim (no deinterleave), tool results stay in their
+        # natural interleaved position — each tool_result follows its tool_call.
+        # The LCP cache stays stable because byte positions only change when
+        # complete units are actually dropped, not when messages are reordered.
+        ok($first_tr_idx <= $last_dialog_idx,
+            "Tool results are interleaved with dialog (no deinterleave reordering)");
     }
 };
 
@@ -324,8 +311,8 @@ subtest 'Pre-flight trim produces cache-stable layout' => sub {
             "Pre-flight trim: summary is NOT at position 1 (would break LCP gate)");
     }
     if ($first_tr_idx >= 0 && $last_dialog_idx >= 0) {
-        ok($last_dialog_idx < $first_tr_idx,
-            "Pre-flight trim: dialog ends ($last_dialog_idx) before tool_results ($first_tr_idx)");
+        ok($first_tr_idx <= $last_dialog_idx,
+            "Pre-flight trim: tool results interleaved with dialog (no deinterleave)");
     }
 };
 

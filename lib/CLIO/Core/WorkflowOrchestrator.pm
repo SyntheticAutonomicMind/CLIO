@@ -1227,11 +1227,25 @@ sub _build_turn_context {
     my $history = load_conversation_history($session, debug => $self->{debug});
 
     if ($history && @$history) {
+        # Pass the same drift-aware threshold that the proactive trim in
+        # process_input uses. Without this, trim_conversation_for_api uses
+        # its own 90% of (prompt_budget - system_tokens) threshold, which
+        # disagrees with the proactive trim's int(ctx * 0.90 / drift),
+        # causing a double-trim: pre-flight trims to ~85K, then proactive
+        # trim trims again to ~77K, deinterleaving tool_results twice
+        # and permanently breaking LCP cache stability. Both trims must
+        # agree on the same threshold so the proactive trim is a no-op
+        # when the pre-flight already handled it.
+        my $pre_trim_threshold = $self->_compute_drift_aware_threshold(
+            $model_caps->{max_context_window_tokens} // CLIO::Core::Defaults::DEFAULT_CONTEXT_WINDOW,
+            $session,
+        );
         $history = trim_conversation_for_api(
             $history,
             $system_prompt,
             model_context_window => $model_caps->{max_context_window_tokens} // CLIO::Core::Defaults::DEFAULT_CONTEXT_WINDOW,
             max_response_tokens  => $model_caps->{max_output_tokens} // CLIO::Core::Defaults::DEFAULT_MAX_RESPONSE_TOKENS,
+            trim_threshold       => $pre_trim_threshold,
             debug => $self->{debug},
         );
     }
@@ -1573,53 +1587,24 @@ sub _capture_api_payload {
     # bare 'ref' truthiness check is the portable test.
     return unless ref($state);
 
-    # Normalize the snapshot to the canonical pipeline layout before storing.
-    # Two normalizations are applied:
+    # Minimal snapshot normalization. With unit-based trim (no deinterleave),
+    # the @messages array is always in natural interleaved order, so no
+    # reinterleave is needed. We still strip two categories of ephemeral
+    # content that are NOT persisted to session history and would cause
+    # the snapshot to diverge from the rebuild path:
     #
-    # 1. Strip non-trailing user_context system messages (<userContext>,
-    #    <dynamicContext>, <sessionGoals>). Prevents stale snapshots from
-    #    carrying a non-standard layout forward across turns, which would
-    #    cause the resume fast path to produce a prompt that diverges from
-    #    the rebuild path and breaks LCP cache stability (the bug observed
-    #    2026-08-18: snapshot captured <dynamicContext> at [1] instead of
-    #    [-2], fast path carried it forward, next turn's rebuild produced
-    #    the correct layout at [-2], LCP match failed with sim_best=0).
+    # 1. Continuation nudges: "[SYSTEM: Your previous response ended..."
+    #    user messages injected when the model stops prematurely. These are
+    #    not saved to session history, so load_conversation_history would
+    #    never produce them. Leaving them in the snapshot causes the
+    #    resume fast path to diverge from the rebuild path.
     #
-    # 2. Strip continuation nudges - ephemeral "[SYSTEM: Your previous
-    #    response ended without completing your work...]" user messages
-    #    pushed when the model gets stuck mid-workflow. These are NOT
-    #    persisted to session history, so the rebuild path never sees
-    #    them. Leaving them in the snapshot causes the fast path to
-    #    accumulate one nudge per stuck cycle, diverging from the rebuild
-    #    path after each cycle.
-    my @normalized = $self->_strip_non_trailing_user_context(@$messages_ref);
-    @normalized   = $self->_strip_continuation_nudges(@normalized);
-    # Strip orphan tool_calls from the snapshot. If a tool_call was
-    # emitted by the assistant but its tool_result was dropped by a prior
-    # trim, the snapshot contains a tool_use block that would be sent
-    # without its matching tool_result block on the next resume. Anthropic
-    # rejects this with:
-    #   "tool_use ids were found without tool_result blocks immediately after"
-    # The proactive trim in process_input already calls validate_and_truncate
-    # which strips orphans, but the snapshot is captured AFTER that trim so
-    # it should be clean. This is belt-and-suspenders for any code path
-    # that builds @messages with tool_calls but skips the trim (e.g. the
-    # iteration-limit exit path captures whatever @messages currently has).
-    # Stored snapshots stay clean across resume cycles - any orphan that
-    # sneaks in once is sanitized at capture time, not on every resume.
+    # 2. Orphan tool_calls: assistant tool_use blocks whose matching
+    #    tool_result was dropped by a prior trim. With unit-based trim this
+    #    should not happen, but defend against edge cases (iteration-limit
+    #    exit path, stale in-memory state) so snapshots stay clean.
+    my @normalized = $self->_strip_continuation_nudges(@$messages_ref);
     @normalized   = $self->_strip_orphan_tool_calls(@normalized);
-
-    # Re-interleave tool_results back adjacent to their tool_calls.  The
-    # cache-stable internal layout (and the proactive trim inside
-    # validate_and_truncate) parks tool_results at the END of the array
-    # for LCP cache stability.  That layout is invalid on the wire — every
-    # provider (Anthropic, OpenAI, Google, llama.cpp, etc.) requires a
-    # tool_result to be the message immediately following its tool_call.
-    # Stripping orphans above removed unmatched pairs; this restores the
-    # correct in-order adjacency so the stored snapshot is always
-    # provider-safe and the resume fast path never sends a deinterleaved
-    # payload.  Already-interleaved input is a structural no-op.
-    @normalized = @{ reinterleave_tool_results(\@normalized) };
 
     my $model    = $self->{api_manager} ? $self->{api_manager}->get_current_model()    : undef;
     my $provider = $self->{api_manager} ? $self->{api_manager}->get_current_provider() : undef;
@@ -1635,10 +1620,28 @@ sub _capture_api_payload {
     # When _learn_from_api_response gets real usage.prompt_tokens from a
     # successful response, we compute estimated / actual ratio and store
     # it in state. The next resume applies that ratio to the threshold.
+    # Include tool_call JSON and tool definition tokens in the estimate.
+    # The API's usage.prompt_tokens counts the entire prompt: message
+    # content + tool_call JSON + tool definition schemas. Omitting any
+    # component produces an undercount that inflates the resume fast path's
+    # drift check, causing unnecessary fallbacks to the rebuild path.
+    # This mirrors the computation now in APIManager._learn_from_api_response
+    # so the snapshot's estimated_tokens is consistent with the drift ratio.
     my $estimated_tokens = 0;
     for my $msg (@normalized) {
-        my $content = $msg->{content} // '';
-        $estimated_tokens += estimate_tokens($content);
+        $estimated_tokens += estimate_tokens($msg->{content} // '');
+        if ($msg->{tool_calls} && ref($msg->{tool_calls}) eq 'ARRAY') {
+            for my $tc (@{$msg->{tool_calls}}) {
+                my $tc_json = CLIO::Util::JSON::safe_encode_json($tc, '');
+                $estimated_tokens += estimate_tokens($tc_json) if defined $tc_json && length($tc_json);
+            }
+        }
+    }
+    if ($tools_ref && ref($tools_ref) eq 'ARRAY' && @$tools_ref) {
+        for my $tool (@$tools_ref) {
+            my $tool_json = CLIO::Util::JSON::safe_encode_json($tool, '');
+            $estimated_tokens += estimate_tokens($tool_json) if defined $tool_json && length($tool_json);
+        }
     }
 
     $state->set_last_api_payload(
@@ -2073,14 +2076,12 @@ sub _try_resume_from_payload {
     my $current_ctx    = $model_caps->{max_context_window_tokens}
                           // CLIO::Core::Defaults::DEFAULT_CONTEXT_WINDOW();
 
-    # Normalize the cached payload to the canonical pipeline layout.
-    # Removes non-trailing user_context system messages that would cause
-    # the prompt to diverge from the rebuild path and break LCP cache
-    # stability (the bug observed 2026-08-18). Also strips continuation
-    # nudges that are not persisted to session history (the rebuild path
-    # never sees them, so the fast path must not carry them forward).
-    my $messages = [ $self->_strip_non_trailing_user_context(@$payload) ];
-    $messages    = [ $self->_strip_continuation_nudges(@$messages) ];
+    # Snapshot was normalized at capture time (continuation nudges and
+    # orphan tool_calls stripped in _capture_api_payload). With unit-based
+    # trim (no deinterleave), the snapshot is always in natural interleaved
+    # order, so no further normalization is needed here. The restore path
+    # is: use the snapshot verbatim if it fits, else trim once.
+    my $messages = [ @$payload ];
 
     my $pre_count = scalar(@$messages);
 
@@ -2112,49 +2113,22 @@ sub _try_resume_from_payload {
             . " messages (fits current budget: ctx=$current_ctx, threshold=$trim_threshold)");
     }
 
-    # Strip orphan tool_calls from the resumed payload. The trim path
-    # inside validate_and_truncate already runs validate_tool_message_pairs
-    # (which strips orphans), but only when trim actually fired. If the
-    # payload fits the budget the trim block above is skipped entirely
-    # and we return the cached snapshot verbatim - any orphan tool_calls
-    # in the snapshot would land on the wire and Anthropic rejects with:
-    #   "tool_use ids were found without tool_result blocks immediately after"
-    # This is the regression observed on resume (2026-08-24): snapshots
-    # captured between turns where a prior trim had dropped the tool_result
-    # but kept the assistant-with-tool_calls. The snapshot now sanitizes
-    # itself at capture time (see _capture_api_payload), but old sessions
-    # saved before that fix still have orphan tool_calls. This call
-    # protects every resume against both old and new snapshots.
+    # Strip orphan tool_calls from the resumed payload. ... protects every
+    # resume against both old and new snapshots.
+    #
+    # Restore tool_result adjacency for old/stale snapshots: with unit-based
+    # trim (no deinterleave), new snapshots are always interleaved, but legacy
+    # snapshots from the prior deinterleave implementation may have
+    # tool_results parked at the END. reinterleave_tool_results is a
+    # structural no-op on already-interleaved input.
     my $pre_orphan_strip_count = scalar(@$messages);
     my $stripped = validate_tool_message_pairs($messages);
     $messages = $stripped;
+    $messages = reinterleave_tool_results($messages);
     if (scalar(@$messages) != $pre_orphan_strip_count) {
         log_info('WorkflowOrchestrator',
             "Resume fast path: stripped orphan tool_calls from payload "
             . "($pre_orphan_strip_count -> " . scalar(@$messages) . " messages)");
-    }
-
-    # Re-interleave tool_results back adjacent to their tool_calls.
-    # Old snapshots (saved before _capture_api_payload re-interleaves
-    # at capture time) and any snapshot that was deinterleaved by a prior
-    # trim will have tool_results parked at the END of the array.  No
-    # provider accepts that on the wire — Anthropic rejects with
-    #   "tool_use ids were found without tool_result blocks immediately after"
-    # and OpenAI-compatible APIs have the same adjacency requirement.
-    # This no-ops on already-interleaved payloads and restores correct
-    # ordering on deinterleaved ones, so the resume fast path always
-    # returns provider-safe message ordering regardless of how the
-    # snapshot was stored.  Called here as belt-and-suspenders: the
-    # real guarantee is enforce_message_alternation (which also
-    # re-interleaves before every API call), but this keeps the snapshot
-    # shape correct for any caller that inspects it without running
-    # alternation first.
-    my $pre_reinterleave_count = scalar(@$messages);
-    $messages = reinterleave_tool_results($messages);
-    if (scalar(@$messages) != $pre_reinterleave_count) {
-        log_info('WorkflowOrchestrator',
-            "Resume fast path: re-interleaved tool_results to match tool_calls "
-            . "($pre_reinterleave_count -> " . scalar(@$messages) . " messages reordered)");
     }
 
     return ($messages, $tools);
@@ -2488,13 +2462,53 @@ sub _execute_tool_round {
         my $sanitized_content = sanitize_text($ai_content);
         $sanitized_content = "$sanitized_content" if defined $sanitized_content;
 
+        # Build tool result message. If ToolExecutor attached a
+        # _persisted_chunk, propagate it as _metadata.persisted_chunks so
+        # YaRN's compress_messages can render chunk pointers in the
+        # thread_summary after a trim cycle drops this tool result.
+        #
+        # For read_tool_result calls specifically, suppress the
+        # _persisted_chunk metadata: read_tool_result reads from an
+        # already-persisted chunk and emitting its own pointer would
+        # duplicate the original chunk in the summary. The original
+        # chunk's pointer is captured at the originating tool call
+        # (e.g. the file_operations read_file that triggered the
+        # persistence). We detect read_tool_result by checking the
+        # tool name.
+        my $persisted_chunks;
+        if ($result_data && ref($result_data) eq 'HASH' && $result_data->{_persisted_chunk}) {
+            if ($tool_name eq 'file_operations') {
+                my $chunk = $result_data->{_persisted_chunk};
+                # Extract the source path from the tool call args so the
+                # summary can render "<file>: <path>" alongside the chunk
+                # pointer.
+                my $source_path = '';
+                if (ref($tool_args) eq 'HASH' && $tool_args->{path}) {
+                    $source_path = $tool_args->{path};
+                }
+                $chunk->{source_path} = $source_path if $source_path;
+                $chunk->{source_tool} = $tool_name;
+                $persisted_chunks = [$chunk];
+            }
+            # file_operations is the only tool that triggers persistence;
+            # all other tools that call processToolResult end up here but
+            # never produce _persisted_chunk in practice (read_tool_result
+            # is suppressed at the ToolExecutor level). Belt-and-suspenders:
+            # if some future tool ever does produce one, suppress it if
+            # it's a read_tool_result follow-on read.
+        }
+
         # Add tool result to conversation
-        push @$messages, {
+        my $tool_result_msg = {
             role => 'tool',
             tool_call_id => $tool_call->{id},
             name => $tool_name,
             content => $sanitized_content
         };
+        if ($persisted_chunks && @$persisted_chunks) {
+            $tool_result_msg->{_metadata} = { persisted_chunks => $persisted_chunks };
+        }
+        push @$messages, $tool_result_msg;
 
         # Save tool result to session (atomic with assistant message on first result)
         if ($session && $session->can('add_message')) {

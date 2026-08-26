@@ -2108,13 +2108,11 @@ sub validate_and_truncate_messages {
     # well-calibrated models (Qwen3.6, Llama-3, etc.). The resulting
     # fallback to effective_limit = prompt_budget - tool_tokens (~96K)
     # was ~21K LOWER than the proactive threshold (117964), causing a
-    # double-trim:
-    #   1. Proactive trim at 117K: deinterleaves tool_results to end (if over)
-    #   2. enforce_message_alternation: reinterleaves back to interleaved order
-    #   3. Reactive trim at 96K: deinterleaves AGAIN (lower threshold, drops more)
-    # The double-deinterleave restructured the prompt layout on every turn
-    # after the first trim, permanently breaking the LCP between the slot's
-    # cached prompt and the new task (f_keep collapsed to ~0.32).
+    # double-trim: proactive trim at 117K dropped units, then reactive trim
+    # at 96K dropped more — structurally changing the prompt on every turn
+    # after the first trim. With unit-based trim (no deinterleave), the
+    # only layout change is dropped units, not reordering, but the double-
+    # trim still wastes computation and reduces context.
     # Fix: always pass the same drift-aware threshold so both trims agree.
     my $ctx_window = $caps->{max_context_window_tokens} // DEFAULT_CONTEXT_WINDOW;
     my $trim_threshold = $self->_compute_drift_aware_threshold($ctx_window, $self->{session});
@@ -2300,14 +2298,35 @@ sub _learn_from_api_response {
     if ($self->{session} && $self->{session}->can('state')) {
         my $state = $self->{session}->state();
         if (ref($state)) {
-            require CLIO::Memory::TokenEstimator;
-            my $estimated_tokens = 0;
-            for my $msg (@$messages) {
-                $estimated_tokens += CLIO::Memory::TokenEstimator::estimate_tokens($msg->{content} || '');
-                if ($msg->{tool_calls} && ref($msg->{tool_calls}) eq 'ARRAY') {
-                    for my $tc (@{$msg->{tool_calls}}) {
-                        my $json = encode_json($tc);
-                        $estimated_tokens += CLIO::Memory::TokenEstimator::estimate_tokens($json);
+           require CLIO::Memory::TokenEstimator;
+           my $estimated_tokens = 0;
+           for my $msg (@$messages) {
+               $estimated_tokens += CLIO::Memory::TokenEstimator::estimate_tokens($msg->{content} || '');
+               if ($msg->{tool_calls} && ref($msg->{tool_calls}) eq 'ARRAY') {
+                   for my $tc (@{$msg->{tool_calls}}) {
+                       my $json = encode_json($tc);
+                       $estimated_tokens += CLIO::Memory::TokenEstimator::estimate_tokens($json);
+                   }
+               }
+           }
+
+            # Include tool DEFINITION tokens in the estimate.
+            # The API's usage.prompt_tokens counts the entire prompt, including
+            # the tools[] array (schema descriptions, parameter definitions).
+            # The message-content estimate above only covers message content +
+            # tool_call JSON. Without tool definitions, the drift ratio is
+            # inflated by their size — CLIO has 16+ tools with detailed
+            # schemas totaling ~20-40K tokens. A 130K-token prompt with 30K of
+            # tool defs produces drift = 160K / 130K = 1.23, which tightens the
+            # trim threshold from ~115K to ~93K, triggering unnecessary trims
+            # that break LCP cache stability. Including tool def tokens gives
+            # a drift ratio that reflects pure tokenizer drift (the actual
+            # goal), not the tool definition overhead.
+            if ($tools && ref($tools) eq 'ARRAY' && @$tools) {
+                for my $tool (@$tools) {
+                    my $tool_json = CLIO::Util::JSON::safe_encode_json($tool);
+                    if (defined $tool_json && length($tool_json) > 0) {
+                        $estimated_tokens += CLIO::Memory::TokenEstimator::estimate_tokens($tool_json);
                     }
                 }
             }

@@ -34,13 +34,14 @@ $tests_total++;
 say "Test 1: Small result returns inline";
 my $small_content = "This is a small result\n" x 100;  # ~2.5KB
 my $result = $store->processToolResult($toolCallId . '_small', $small_content, $session_id);
-if ($result eq $small_content) {
+my $result_unwrapped = ref($result) eq "HASH" ? $result->{content} : $result;
+    if ($result_unwrapped eq $small_content) {
     say "✅ PASS: Small result returned inline";
     $tests_passed++;
 } else {
     say "❌ FAIL: Small result was modified";
     say "   Expected: $small_content";
-    say "   Got: $result";
+    say "   Got: $result_unwrapped";
 }
 say "";
 
@@ -49,12 +50,13 @@ $tests_total++;
 say "Test 2: Large result persists with marker";
 my $large_content = "This is a large result that exceeds 8KB\n" x 500;  # ~20KB
 $result = $store->processToolResult($toolCallId . '_large', $large_content, $session_id);
-if ($result =~ /\[TOOL_RESULT_STORED/ && $result =~ /toolCallId=$toolCallId\_large/) {
+my $marker_unwrapped = ref($result) eq 'HASH' ? $result->{content} : $result;
+if ($marker_unwrapped =~ /\[TOOL_RESULT_STORED/ && $marker_unwrapped =~ /toolCallId=$toolCallId\_large/) {
     say "✅ PASS: Large result persisted with marker";
     $tests_passed++;
 } else {
     say "❌ FAIL: Large result marker not found";
-    say "   Got: " . substr($result, 0, 200) . "...";
+    say "   Got: " . substr($marker_unwrapped, 0, 200) . "...";
 }
 say "";
 

@@ -258,7 +258,19 @@ sub compress_messages {
         if ($previous_summary =~ /<task\b/i) {
             _parse_previous_task_summary($previous_summary, \%task_buckets);
         } else {
-            my %flat = ();
+            # Pre-initialize buckets so _parse_previous_summary mutates the
+            # passed-in hash instead of writing to local-only arrays.
+            # Without this, $flat ends up empty after a previous_summary that
+            # doesn't match any section regex (or matches only some) and
+            # the dedup loop at line ~415 crashes on undef keys.
+            my %flat;
+            $flat{user_requests}           = [];
+            $flat{commits}                 = [];
+            $flat{files_touched}           = [];
+            $flat{decisions}               = [];
+            $flat{tool_counts}             = {};
+            $flat{collaboration_exchanges} = [];
+            $flat{persisted_chunks}        = [];
             _parse_previous_summary($previous_summary, \%flat);
             $task_buckets{_flat} = \%flat;
         }
@@ -270,9 +282,17 @@ sub compress_messages {
         }
         if ($previous_summary =~ /Current task:\s*(.{1,500})/s) {
             my $prev_task = $1;
+            # Current task line in the persisted-chunks format is
+            # "<toolCallId> (<source_tool>: <source_path>) (<bytes>, <remaining>)"
+            # which is gibberish as a task name. Skip the carry if the
+            # captured "task" looks like a chunk pointer rather than a
+            # human-readable task description.
             $prev_task =~ s/\s+$//;
             $prev_task =~ s/[\r\n].*//s;
-            if (!$original_task || length($original_task) < 50) {
+            if ($prev_task =~ /^\s*\w[\w\-_.]+\s+\([^)]+:\s*[^)]+\)\s*\(\d+\s*bytes/) {
+                # Looks like a leaked chunk pointer — drop the carry so
+                # the substantive_task fallback can find the real task.
+            } elsif (!$original_task || length($original_task) < 50) {
                 $opts{_carried_task} = $prev_task;
             }
         }
@@ -303,6 +323,7 @@ sub compress_messages {
                 decisions               => [],
                 collaboration_exchanges => [],
                 tool_counts             => {},
+                persisted_chunks        => [],
                 name                    => '',
                 todo_id                 => undef,
                 status                  => 'unknown',
@@ -323,6 +344,7 @@ sub compress_messages {
             decisions               => [],
             collaboration_exchanges => [],
             tool_counts             => {},
+            persisted_chunks        => [],
             name                    => '',
             todo_id                 => undef,
             status                  => 'unknown',
@@ -336,18 +358,50 @@ sub compress_messages {
             push @{$bucket->{user_requests}}, $summary;
         }
         elsif ($role eq 'assistant') {
-            # Collaboration/decision messages (identified by metadata or legacy text prefix)
+            # Collaboration/decision messages (identified by metadata,
+            # explicit [COLLABORATION] tag, or progress-marker regex).
+            #
+            # Three capture paths:
+            #   1. metadata.collaboration set (programmatic, future)
+            #   2. [COLLABORATION] text prefix (model-emitted tag)
+            #   3. Progress-marker regex (catches what the model forgot
+            #      to tag): "Done with X", "Moving to Y",
+            #      "Item N complete", "I found that...", etc.
+            #
+            # The regex fallback exists because we don't want to force
+            # the model to remember a tag. If it says something that
+            # clearly looks like progress, we capture it. False positives
+            # pollute the Decisions bucket, so the whitelist is tight.
+            my $captured_decision;
             my $collab_type = $msg->{metadata} && $msg->{metadata}{collaboration};
             if ($collab_type) {
-                # Modern: collaboration metadata on message
-                my $dec = substr($content, 0, 300);
+                $captured_decision = $content;
+            } elsif ($content =~ /\[COLLABORATION\](.{1,500})/s) {
+                $captured_decision = $1;
+            } else {
+                # Progress-marker heuristic. The pattern must:
+                #   - start at a sentence boundary (^|\.\s+|then\s+|\n\s*)
+                #   - contain a known progress phrase
+                #   - have non-trivial content after the phrase
+                # Without ^/boundary anchoring we'd capture mid-sentence
+                # continuations that happen to contain the word
+                # "complete" or "found".
+                if ($content =~ /(?:^|[.;]\s+|\n)\s*(?:(?:I\s+have|I've|I|We\s+have|We've|We)\s+(?:completed?|finished|done|found|identified|discovered|located)\s+|Found\s+|Done\s+with\s+|Finished\s+|Moving\s+to\s+|Now\s+(?:proceeding|starting|implementing|working)\s+|The\s+(?:fix|root\s+cause|bug|problem|solution|approach|plan)\s+(?:is|was)\s+|Next\s+(?:step|phase|item)\s+(?:is|will\s+be)\s+|Item\s+\d+\s+(?:complete|done)\s*[:.]?\s*|Proceeding\s+with\s+|The\s+plan\s+is\s+(?:to\s+)?)(.{15,500})/i) {
+                    $captured_decision = $1;
+                }
+            }
+
+            if (defined $captured_decision) {
+                my $dec = $captured_decision;
                 $dec =~ s/\s+/ /g;
-                push @{$bucket->{decisions}}, substr($dec, 0, 250);
-            } elsif ($content =~ /\[COLLABORATION\](.{1,300})/s) {
-                # Legacy: [COLLABORATION] text prefix (backward compat)
-                my $dec = $1;
-                $dec =~ s/\s+/ /g;
-                push @{$bucket->{decisions}}, substr($dec, 0, 250);
+                $dec =~ s/^\s+|\s+$//g;
+                # Cap at 250 chars to keep the Decisions section compact.
+                # Same limit as the existing [COLLABORATION] capture path.
+                $dec = substr($dec, 0, 250);
+                # Dedup by exact string match so repeated "Moving to X"
+                # markers don't bloat the bucket across trim cycles.
+                my $dup = grep { $_ eq $dec } @{$bucket->{decisions}};
+                push @{$bucket->{decisions}}, $dec unless $dup;
             }
 
             # Tool calls - extract meaningful path/operation details
@@ -391,6 +445,50 @@ sub compress_messages {
                     response => $response,
                 };
                 delete $collab_tool_calls{$msg->{tool_call_id}};
+            }
+
+            # Persisted chunk tracking: if this tool result carries
+            # _metadata.persisted_chunks, the original content was
+            # persisted to disk because it exceeded the inline limit.
+            # Capture the chunk reference so the summary can tell the
+            # model how to re-read the full content via read_tool_result
+            # after this tool result gets dropped by a trim cycle.
+            #
+            # Authoritative source: structured _metadata.persisted_chunks
+            # attached by WorkflowOrchestrator. Falls back to regex over
+            # content for messages persisted before that plumbing existed
+            # (legacy sessions).
+            if (ref($msg->{_metadata}) eq 'HASH' && ref($msg->{_metadata}{persisted_chunks}) eq 'ARRAY') {
+                for my $chunk (@{$msg->{_metadata}{persisted_chunks}}) {
+                    next unless ref($chunk) eq 'HASH' && $chunk->{tool_call_id};
+                    # Skip persist-failed chunks; no file on disk to read.
+                    next if $chunk->{persist_failed};
+                    push @{$bucket->{persisted_chunks}}, {
+                        tool_call_id => $chunk->{tool_call_id},
+                        source_path  => $chunk->{source_path}  || '',
+                        source_tool  => $chunk->{source_tool}  || '',
+                        total_length => $chunk->{total_length} || 0,
+                        remaining    => $chunk->{remaining}    || 0,
+                    };
+                }
+            }
+            # Legacy fallback: regex over content for [TOOL_RESULT_STORED: ...]
+            # markers. Used when sessions persisted before this code path
+            # are loaded and re-trimmed.
+            elsif ($content =~ /\[TOOL_RESULT_STORED:\s*toolCallId=([^\s,]+)/g) {
+                my $legacy_tcid = $1;
+                # Dedupe: if structured metadata already named this chunk
+                # in the same summary, skip.
+                my $already = grep { $_->{tool_call_id} eq $legacy_tcid } @{$bucket->{persisted_chunks} || []};
+                next if $already;
+                push @{$bucket->{persisted_chunks}}, {
+                    tool_call_id => $legacy_tcid,
+                    source_path  => '',
+                    source_tool  => '',
+                    total_length => 0,
+                    remaining    => 0,
+                    legacy       => 1,
+                };
             }
 
             # Git commit results: [abc1234] Commit subject line
@@ -587,6 +685,25 @@ sub _render_flat_summary {
         push @parts, "";
     }
 
+    # Persisted chunks: tool results that exceeded the inline limit and
+    # were persisted to disk. Render the toolCallId + source path so the
+    # model can re-read the full content via read_tool_result after this
+    # summary regenerates. Without this section, large file reads are
+    # black-holed by trim — the preview survives but the model has no
+    # way to know which persisted file to fetch.
+    my @persisted_chunks = @{$bucket->{persisted_chunks} || []};
+    if (@persisted_chunks) {
+        push @parts, "Persisted chunks (re-read with file_operations read_tool_result, toolCallId=<id>, offset=<bytes>):";
+        for my $chunk (@persisted_chunks) {
+            my $line = "- $chunk->{tool_call_id}";
+            $line .= " ($chunk->{source_tool}: $chunk->{source_path})" if $chunk->{source_path};
+            $line .= " ($chunk->{total_length} bytes, $chunk->{remaining} remaining)" if $chunk->{total_length};
+            $line .= " [legacy: detected from content marker]" if $chunk->{legacy};
+            push @parts, $line;
+        }
+        push @parts, "";
+    }
+
     push @parts, "</thread_summary>";
 
     return join("\n", @parts);
@@ -715,6 +832,20 @@ sub _render_single_task_block {
         push @lines, "Tools: " . join(", ", @tool_lines);
     }
 
+    # Persisted chunks: same as flat renderer — emit toolCallId + source
+    # so the model can re-read large files after trim drops the original
+    # tool result content.
+    if (@{$b->{persisted_chunks} || []}) {
+        push @lines, "Persisted chunks:";
+        for my $chunk (@{$b->{persisted_chunks}}) {
+            my $line = "- $chunk->{tool_call_id}";
+            $line .= " ($chunk->{source_tool}: $chunk->{source_path})" if $chunk->{source_path};
+            $line .= " ($chunk->{total_length} bytes, $chunk->{remaining} remaining)" if $chunk->{total_length};
+            $line .= " [legacy: detected from content marker]" if $chunk->{legacy};
+            push @lines, $line;
+        }
+    }
+
     push @lines, "</task>";
     return join("\n", @lines);
 }
@@ -745,6 +876,7 @@ sub _parse_previous_task_summary {
             decisions               => [],
             collaboration_exchanges => [],
             tool_counts             => {},
+            persisted_chunks        => [],
             name                    => '',
             todo_id                 => undef,
             status                  => $tstatus,
@@ -773,16 +905,18 @@ sub _parse_previous_task_summary {
 
         # Extract sections: lines after the label up to the next label or end.
         my %section_re = (
-            Decisions => qr/^Decisions:\s*$/,
-            Files     => qr/^Files:\s*$/,
-            Commits   => qr/^Commits:\s*$/,
-            Tools     => qr/^Tools:\s*$/,
+            Decisions        => qr/^Decisions:\s*$/,
+            Files            => qr/^Files:\s*$/,
+            Commits          => qr/^Commits:\s*$/,
+            Tools            => qr/^Tools:\s*$/,
+            'Persisted chunks' => qr/^Persisted chunks:\s*$/,
         );
         my %sections = (
-            Decisions => [],
-            Files     => [],
-            Commits   => [],
-            Tools     => [],
+            Decisions          => [],
+            Files              => [],
+            Commits            => [],
+            Tools              => [],
+            'Persisted chunks' => [],
         );
         my $current_label;
         for my $line (split /\n/, $body) {
@@ -809,9 +943,36 @@ sub _parse_previous_task_summary {
                 $current_label = undef;
             }
         }
-        push @{$bucket->{decisions}},     @{$sections{Decisions}};
-        push @{$bucket->{files_touched}}, @{$sections{Files}};
-        push @{$bucket->{commits}},       @{$sections{Commits}};
+        push @{$bucket->{decisions}},          @{$sections{Decisions}};
+        push @{$bucket->{files_touched}},      @{$sections{Files}};
+        push @{$bucket->{commits}},            @{$sections{Commits}};
+
+        # Persisted chunks are stored differently from other sections:
+        # each line is "<toolCallId> (<source_tool>: <source_path>) (<bytes>, <remaining>)".
+        # Re-parse into the bucket's persisted_chunks list.
+        for my $line (@{$sections{'Persisted chunks'}}) {
+            # Extract toolCallId (first whitespace-delimited token).
+            my ($tcid, $rest) = split /\s+/, $line, 2;
+            next unless $tcid && $tcid =~ /^[\w\-_.]+$/;
+            my $chunk = {
+                tool_call_id => $tcid,
+                source_path  => '',
+                source_tool  => '',
+                total_length => 0,
+                remaining    => 0,
+                legacy       => 0,
+            };
+            if ($rest =~ /\(([^:]+):\s*([^)]+)\)/) {
+                $chunk->{source_tool} = $1;
+                $chunk->{source_path} = $2;
+            }
+            if ($rest =~ /\((\d+)\s*bytes,\s*(\d+)\s*remaining\)/) {
+                $chunk->{total_length} = $1;
+                $chunk->{remaining}    = $2;
+            }
+            $chunk->{legacy} = 1 if $rest =~ /\[legacy:/;
+            push @{$bucket->{persisted_chunks}}, $chunk;
+        }
     }
 }
 
@@ -833,7 +994,14 @@ sub find_substantive_task {
     my ($candidate, $messages) = @_;
     my $min_len = 50;
 
-    return $candidate if $candidate && length($candidate) >= $min_len;
+    # A carried-task that looks like a leaked persisted-chunk pointer
+    # (<toolCallId> (<source_tool>: <path>) (<bytes>, <remaining>)) is
+    # gibberish as a task description. Treat it as missing so we fall
+    # through to the messages scan.
+    my $looks_like_chunk_pointer = $candidate
+        && $candidate =~ /^\s*\w[\w\-_.]+\s+\([^)]+:\s*[^)]+\)\s*\(\d+\s*bytes/;
+
+    return $candidate if $candidate && !$looks_like_chunk_pointer && length($candidate) >= $min_len;
 
     # Scan messages newest-first for a substantive user message
     if ($messages && ref($messages) eq 'ARRAY') {
@@ -841,9 +1009,11 @@ sub find_substantive_task {
             if (ref($item) eq 'HASH') {
                 next unless ($item->{role} || '') eq 'user';
                 my $content = $item->{content} || '';
+                next if $content =~ /^\s*\w[\w\-_.]+\s+\([^)]+:\s*[^)]+\)\s*\(\d+\s*bytes/;
                 return $content if length($content) >= $min_len;
             } else {
                 # Plain string (e.g. from @user_requests)
+                next if defined $item && $item =~ /^\s*\w[\w\-_.]+\s+\([^)]+:\s*[^)]+\)\s*\(\d+\s*bytes/;
                 return $item if defined $item && length($item) >= $min_len;
             }
         }
@@ -869,7 +1039,39 @@ sub _parse_previous_summary {
     my $tool_counts             = $buckets->{tool_counts}             || {};
     my $user_requests           = $buckets->{user_requests}           || [];
     my $collaboration_exchanges = $buckets->{collaboration_exchanges} || [];
-    
+    my $persisted_chunks        = $buckets->{persisted_chunks}        || [];
+
+    # Parse persisted chunks: lines under "Persisted chunks:" section.
+    # Each line is "- <toolCallId> (<source_tool>: <source_path>) (<bytes>, <remaining>)"
+    # or "- <toolCallId> [legacy: detected from content marker]".
+    if ($summary_text =~ /Persisted chunks \(re-read with [^)]+\):\n((?:- [^\n]+\n)+)/s) {
+        my $block = $1;
+        while ($block =~ /^- ([^\n]+)$/mg) {
+            my $line = $1;
+            my ($tcid, $rest) = split /\s+/, $line, 2;
+            next unless $tcid && $tcid =~ /^[\w\-_.]+$/;
+            my $chunk = {
+                tool_call_id => $tcid,
+                source_path  => '',
+                source_tool  => '',
+                total_length => 0,
+                remaining    => 0,
+                legacy       => 0,
+            };
+            $rest //= '';
+            if ($rest =~ /\(([^:]+):\s*([^)]+)\)/) {
+                $chunk->{source_tool} = $1;
+                $chunk->{source_path} = $2;
+            }
+            if ($rest =~ /\((\d+)\s*bytes,\s*(\d+)\s*remaining\)/) {
+                $chunk->{total_length} = $1;
+                $chunk->{remaining}    = $2;
+            }
+            $chunk->{legacy} = 1 if $rest =~ /\[legacy:/;
+            push @$persisted_chunks, $chunk;
+        }
+    }
+
     # Parse git commits: lines starting with "- " under "Git commits" section
     if ($summary_text =~ /Git commits.*?:\n((?:- .+\n)+)/s) {
         my $block = $1;

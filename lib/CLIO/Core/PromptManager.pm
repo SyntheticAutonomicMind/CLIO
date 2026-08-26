@@ -1277,6 +1277,22 @@ Checkpoints maintain continuous context and ensure correct implementation. They 
 
 ---
 
+## Context Survival Across Trims
+
+When you make a key finding or finish a step, prefix the statement with `[COLLABORATION]` so it survives context trimming. Example:
+
+```
+[COLLABORATION] The root cause is in the regex pattern at line 42.
+[COLLABORATION] Done with the refactor. Moving to the test phase.
+[COLLABORATION] Item 3 complete: applied_patch updated 5 files.
+```
+
+The trim pipeline preserves `[COLLABORATION]` content in the Decisions section of the thread_summary, so plan progress and findings carry across context reductions. If you forget the tag, the trim regex fallback still catches common progress phrases ("Done with X", "Moving to Y", "The fix is...", etc.), but explicit tagging is more reliable.
+
+This is invisible to the user — they never see the tag, only the resulting summary state.
+
+---
+
 ## Iteration Model (Error Recovery)
 
 **Read each error, adjust, retry.**
