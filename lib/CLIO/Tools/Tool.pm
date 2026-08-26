@@ -85,14 +85,17 @@ sub execute {
     
     log_debug("Tool:$self->{name}", "Execute called");
     
-    # Extract operation parameter
+    # Extract operation parameter. Use the canonical phrasing so
+    # ToolErrorGuidance categorizes this as 'missing_operation' and emits
+    # the targeted "you forgot the operation field" guidance instead of
+    # falling through to the generic "missing required parameter" branch.
     my $operation = $params->{operation};
     unless ($operation) {
         my $available = join(', ', @{$self->{supported_operations}});
         log_debug("Tool:$self->{name}", "Missing 'operation' parameter. Available: $available");
         return $self->operation_error("Missing 'operation' parameter");
     }
-    
+
     # Validate operation
     unless ($self->validate_operation($operation)) {
         my $available = join(', ', @{$self->{supported_operations}});
@@ -101,6 +104,18 @@ sub execute {
         log_debug("Tool:$self->{name}", "Unknown operation: '$operation'. Available: $available");
         return $self->operation_error("Unknown operation: $operation.$hint Valid operations: $available");
     }
+
+    # Pre-validate required parameters BEFORE dispatching. Uses the
+    # get_tool_definition() schema's `required` array (when defined) to
+    # emit a canonical "Missing required parameter: <name>" error for any
+    # required field that wasn't supplied. Without this hook, the
+    # missing-required regex in ToolErrorGuidance can miss some forms
+    # (e.g. when the tool's handler does its own ad-hoc check and the
+    # error string has an unusual shape). The categorizer now matches
+    # those forms, but pre-validating here means we get a consistent
+    # error shape regardless of which handler short-circuits.
+    my $guard = $self->_pre_validate_required_params($params);
+    return $guard if $guard;
     
     # Route to operation handler
     log_debug("Tool:$self->{name}", "Routing to operation: $operation");
@@ -282,11 +297,21 @@ Returns: Hashref with success=0, error message, and available operations
 
 sub operation_error {
     my ($self, $message) = @_;
-    
+
     my $operations = join("\n  - ", @{$self->{supported_operations}});
-    
+
+    # Use the canonical "Missing required parameter: <name>" form whenever
+    # the message looks like a parameter-missing case. This guarantees
+    # ToolErrorGuidance categorizes it correctly regardless of which
+    # tool emitted it. For unknown-operation errors we keep the bare
+    # text so the categorizer's invalid_operation branch fires.
+    my $normalized = $message;
+    if ($message =~ /missing\s+['"`]?(\w+)['"`]?\s+parameter/i && $message !~ /operation/) {
+        $normalized = "Missing required parameter: $1";
+    }
+
     my $error_text = <<EOF;
-ERROR: $message
+ERROR: $normalized
 
 Available operations for '$self->{name}':
   - $operations
@@ -300,12 +325,61 @@ Example usage:
 
 Tip: Each operation may have different required parameters.
 EOF
-    
-    return {
-        success => 0,
-        error => $error_text,
-        tool_name => $self->{name},
-    };
+
+    return $self->error_result($error_text);
+}
+
+=head2 _pre_validate_required_params
+
+Validate that all parameters listed in the tool's JSON schema as `required`
+are present before dispatching to the handler. Returns an error_result() with
+a canonical "Missing required parameter: <name>" message for the first missing
+field, or undef if validation passes.
+
+Why this exists:
+- Tools that pre-validate in their handlers produce a mix of error
+  message shapes (some say "Missing 'X' parameter", some say
+  "'op' operation requires 'X' parameter", some say "Missing required
+  parameter: X"). ToolErrorGuidance's categorizer now matches all of
+  these, but pre-validating here gives every tool the SAME error shape
+  for missing fields, which is easier to test and reason about.
+- If a tool forgets to validate a required field in its handler, this
+  safety net catches it before the handler runs, instead of letting
+  the handler crash on undef.
+
+Arguments:
+- $params: Hashref of parameters supplied by the LLM
+
+Returns:
+- undef when all required parameters are present (or when no schema
+  is available - tools without get_additional_parameters() are skipped)
+- error_result() hashref when a required parameter is missing
+
+=cut
+
+sub _pre_validate_required_params {
+    my ($self, $params) = @_;
+
+    # Only run if the subclass provides a get_tool_definition() with a
+    # `required` array. The base class's get_tool_definition() only marks
+    # `operation` as required, so this catches the universal rule but
+    # does not duplicate per-tool required fields (those are validated
+    # in the handler or via get_additional_parameters() per-tool rules).
+    my $def = eval { $self->get_tool_definition(); };
+    return undef unless $def && ref($def) eq 'HASH';
+
+    my $required = $def->{parameters}{required} || [];
+    return undef unless @$required;
+
+    $params ||= {};
+    for my $field (@$required) {
+        my $val = $params->{$field};
+        next if defined $val && (!ref($val) || ref($val) eq 'ARRAY' || ref($val) eq 'HASH');
+        next if ref($val) eq 'ARRAY' && @$val;  # non-empty arrayref
+        # Missing or empty - return canonical error.
+        return $self->error_result("Missing required parameter: $field");
+    }
+    return undef;
 }
 
 =head2 get_tool_definition

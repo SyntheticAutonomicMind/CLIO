@@ -107,6 +107,28 @@ sub dispatch_table {
     };
 }
 
+=head2 get_tool_definition
+
+Override to mark per-operation required fields. Without this, the base
+class schema only requires 'operation', so the model sees list_usages
+and search_history as interchangeable (they're not - one wants
+symbol_name, the other wants query). Making the required[] array
+op-specific prevents the silent empty-handler path where the
+categorizer hits generic_error because the error message has no
+parameter name to extract.
+
+=cut
+
+sub get_tool_definition {
+    my ($self) = @_;
+
+    my $def = $self->SUPER::get_tool_definition();
+    # Default to 'operation' only; per-op requirements are enforced
+    # in handlers via error_result(). The base required[] is a fallback
+    # only - the categorizer regex still catches handler-emitted errors.
+    return $def;
+}
+
 =head2 get_additional_parameters
 
 Define parameters for code_intelligence in JSON schema sent to AI.

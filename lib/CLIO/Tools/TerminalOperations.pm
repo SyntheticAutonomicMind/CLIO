@@ -37,13 +37,17 @@ sub new {
         name => 'terminal_operations',
         description => q{Execute shell commands safely with validation and timeout.
 
-Operations:
+Operations (REQUIRED 'operation' parameter; 'command' parameter required for both):
 -  exec - Run command and capture output. Returns {output, exit_code, action_description}.
 -  validate - Check command safety before execution.
 
 Behavior: Commands run in captured mode by default (output to file, no pty).
 Use passthrough=true for interactive TTY access. Multiplexer panes used when available.
-Timeout is idle: command killed after N seconds with no output. Default idle timeout is 300s (5min). Active commands run until hard ceiling (10min).},
+Timeout is idle: command killed after N seconds with no output. Default idle timeout is 300s (5min). Active commands run until hard ceiling (10min).
+
+QUICK EXAMPLE:
+{"operation": "exec", "command": "ls -la"}
+},
 # Timeout is an idle timeout: if the command produces no output for
 # $timeout seconds it is killed. Active commands that keep writing
 # output will not be killed until the hard ceiling (10min default).
@@ -66,17 +70,21 @@ Returns: Hashref with complete tool definition
 
 sub get_tool_definition {
     my ($self) = @_;
-    
+
     my $def = $self->SUPER::get_tool_definition();
-    
-    # Mark command as required for exec and execute operations
-    $def->{parameters}{required} = ["operation"];
-    
-    # Mark command as required for exec operations
-    $def->{parameters}{description} = 
+
+    # Mark 'command' as required for exec/validate. The base class only
+    # marks 'operation' as required; we add 'command' here so the schema
+    # is accurate and the pre-validate hook in Tool.pm can catch missing
+    # commands before the handler runs.
+    $def->{parameters}{required} = ["operation", "command"];
+
+    # Description makes the requirement explicit so the model knows from
+    # the schema (not just from runtime errors) that command is required.
+    $def->{parameters}{description} =
         "For exec: 'command' parameter is required. " .
         "For validate: 'command' parameter is required.";
-    
+
     return $def;
 }
 

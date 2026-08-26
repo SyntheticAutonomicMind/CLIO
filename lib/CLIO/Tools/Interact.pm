@@ -60,13 +60,19 @@ sub new {
 
 THIS IS A JSON TOOL CALL, NOT TEXT. Always call via JSON function call, never as plain text.
 
+REQUIRES the 'operation' parameter (always 'request_input') AND the 'message' parameter.
+
 - FREE (does not consume API requests) and BLOCKING (pauses until user responds)
 - Use for: checkpoints, approvals, progress updates, questions, reporting blockers
 - Do NOT use for: questions answerable with tools, info already in conversation
 
 Parameters:
 - message (required): Your question/update for the user
-- context (optional): Additional context to help user understand},
+- context (optional): Additional context to help user understand
+
+QUICK EXAMPLE:
+{"operation": "request_input", "message": "Which approach should I use?"}
+},
         supported_operations => [qw(request_input)],
         
         # Execution control - MUST block and be interactive
@@ -97,6 +103,25 @@ sub dispatch_table {
 Define parameters for interact in JSON schema sent to AI.
 
 =cut
+
+=head2 get_tool_definition
+
+Override to mark message as required for interact. Without this the
+schema says only 'operation' is required and the model can call
+request_input without a message - which then hits the error path
+inside the handler. Marking it here means Tool.pm's pre-validate
+catches it BEFORE the handler runs, producing a consistent
+"Missing required parameter: message" error every time.
+
+=cut
+
+sub get_tool_definition {
+    my ($self) = @_;
+
+    my $def = $self->SUPER::get_tool_definition();
+    $def->{parameters}{required} = ["operation", "message"];
+    return $def;
+}
 
 sub get_additional_parameters {
     my ($self) = @_;

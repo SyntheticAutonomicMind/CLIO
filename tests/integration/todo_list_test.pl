@@ -335,7 +335,10 @@ test("Progress field is stored and validated", sub {
     die "Write failed: $error" unless $success;
     
     my $read_todos = $store->read();
-    die "Expected progress 0.5" unless $read_todos->[0]{progress} == 0.5;
+    # JSON::XS round-trips numbers with slightly different float
+    # representation than Perl literals. Use epsilon comparison rather
+    # than == so the test reflects actual stored precision.
+    die "Expected progress 0.5" unless abs(($read_todos->[0]{progress} // 0) - 0.5) < 0.0001;
 });
 
 # TEST 15: Update multiple fields at once
@@ -367,7 +370,11 @@ test("Update multiple fields in one operation", sub {
     die "Expected updated title" unless $updated->[0]{title} eq "Updated title";
     die "Expected updated description" unless $updated->[0]{description} eq "Updated description";
     die "Expected in-progress status" unless $updated->[0]{status} eq "in-progress";
-    die "Expected progress 0.3" unless $updated->[0]{progress} == 0.3;
+    # JSON::XS round-trips 0.3 through a different float representation than
+    # the literal 0.3 in source. Compare with epsilon instead of == so the
+    # test reflects the actual behavior (the value IS 0.3 within precision,
+    # but the IEEE-754 binary representation differs by ~1ulp).
+    die "Expected progress 0.3" unless abs(($updated->[0]{progress} // 0) - 0.3) < 0.0001;
 });
 
 # TEST 16: Non-arrayref 'dependencies' must not crash; must return a
