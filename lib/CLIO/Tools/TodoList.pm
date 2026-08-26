@@ -65,11 +65,17 @@ Manage a structured todo list to track progress and plan tasks.
 
 **MANDATORY** for multi-step tasks. Skip only for single trivial tasks or conversational questions.
 
-OPERATIONS:
--  read: Get current todo list
--  write: Create/replace entire list (requires todoList array, IDs auto-assigned if omitted)
--  update: Change status of existing todos (requires todoUpdates array)
--  add: Append new todos to existing list (requires newTodos array, IDs auto-assigned)
+REQUIRES the 'operation' parameter on every call. The 'description' field is REQUIRED on every todo item.
+
+OPERATIONS (which parameter each operation needs):
+-  read:    no params beyond operation
+-  write:   REQUIRES 'todoList' (full array, replaces existing list)
+-  update:  REQUIRES 'todoUpdates' (NOT todoList - array of {id, ...changes})
+-  add:     REQUIRES 'newTodos' (NOT todoList - array of new todos to append)
+
+COMMON MISTAKE: Sending todo content in the wrong field. The 'update' operation needs
+'todoUpdates' (array of {id, status, ...}). The 'write' operation needs 'todoList'
+(array of full todos). They are NOT interchangeable.
 
 STATUS VALUES: not-started, pending (alias for not-started), in-progress (MAX 1 at a time), completed, blocked
 
@@ -80,6 +86,10 @@ RULES:
 - Mark each complete IMMEDIATELY after finishing (don't batch)
 - Max 1 todo in-progress at a time
 - Call update to change status (system cannot infer from text)
+
+QUICK EXAMPLE:
+{"operation": "write", "todoList": [{"title": "Fix bug", "description": "...", "status": "not-started"}]}
+{"operation": "update", "todoUpdates": [{"id": 1, "status": "in-progress"}]}
 EOF
         supported_operations => [qw(read write update add)],
         debug => $opts{debug} || 0,
@@ -407,7 +417,7 @@ sub handle_write {
     my ($self, $params, $session_id) = @_;
     
     unless ($params->{todoList}) {
-        return $self->error_result("'write' operation requires 'todoList' parameter");
+        return $self->error_result("Missing required parameter: todoList (for the write operation, an array of todos to create)");
     }
     
     my $todo_list = $params->{todoList};
@@ -497,7 +507,7 @@ sub handle_update {
     my ($self, $params, $session_id) = @_;
     
     unless ($params->{todoUpdates}) {
-        return $self->error_result("'update' operation requires 'todoUpdates' parameter");
+        return $self->error_result("Missing required parameter: todoUpdates (for the update operation, an array of {id, ...fields} objects to change - NOT todoList)");
     }
     
     my $updates = $params->{todoUpdates};
@@ -777,7 +787,7 @@ sub handle_add {
     my ($self, $params, $session_id) = @_;
     
     unless ($params->{newTodos}) {
-        return $self->error_result("'add' operation requires 'newTodos' parameter");
+        return $self->error_result("Missing required parameter: newTodos (for the add operation, an array of todos to append - NOT todoList)");
     }
     
     my $new_todos = $params->{newTodos};

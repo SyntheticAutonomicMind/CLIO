@@ -118,8 +118,33 @@ sub _categorize_error {
     return 'edit_content_mismatch' if $error =~ /string not found in file|old_?string not found/i;
     return 'edit_content_mismatch' if $error =~ /cannot find match position for chunk/i;
     return 'edit_ambiguous_match' if $error =~ /old_?string found multiple times|multiple matches/i;
-    
-    return 'missing_required' if $error =~ /missing required (?:parameter|field)/i;
+
+    # Validation-failed forms. These are emitted by TodoStore::validate() and
+    # carry actionable detail ("Multiple todos marked as in-progress...") but
+    # the previous "validation failed" message gave the agent no schema to
+    # follow. Surface them under their own category with a targeted fix.
+    return 'todo_validation_failed' if $error =~ /^update validation failed/i;
+    return 'todo_validation_failed' if $error =~ /multiple todos marked as in-progress/i;
+
+    # Missing the operation parameter entirely (must come BEFORE missing_required
+    # since some messages mention 'parameter' too, but we want operation-specific
+    # guidance here).
+    return 'missing_operation' if $error =~ /missing\s+['"`]?operation['"`]?\s+parameter/i;
+
+    # Generic missing-required-parameter patterns. Catches the common forms:
+    #   - "Missing required parameter: foo"
+    #   - "Missing required parameters: foo, bar"
+    #   - "Missing 'foo' parameter"
+    #   - "Missing 'foo' or 'bar' parameter"
+    #   - "Missing or empty 'foo' parameter"
+    return 'missing_required' if $error =~ /missing\s+required\s+(?:parameter|field|param|argument)s?(?:\(s\))?\s*[:\-]\s*([a-zA-Z0-9_, ]+?)(?:\s*\(|\s*\.\s|$)/i;
+    return 'missing_required' if $error =~ /missing\s+(?:or\s+empty\s+)?['"`]?(\w+)['"`]?\s+parameter/i;
+    # "Missing 'foo' or 'bar' parameter" - alternation form.
+    return 'missing_required' if $error =~ /missing\s+(?:or\s+empty\s+)?['"`]?(\w+)['"`]?\s+or\s+['"`]?(\w+)['"`]?\s+parameter/i;
+
+    # Operation-needs-parameter form: "'update' operation requires 'todoUpdates' parameter"
+    return 'missing_required' if $error =~ /['"`]?(\w+)['"`]?\s+operation\s+requires\s+['"`]?(\w+)['"`]?\s+parameter/i;
+
     return 'invalid_operation' if $error =~ /unknown operation|unsupported.*operation/i;
     return 'invalid_json' if $error =~ /json|parse error/i;
     return 'missing_ui' if $error =~ /ui.*not available/i;
@@ -159,43 +184,121 @@ sub _get_category_guidance {
                    "3. RETRY with a longer, unique old_string that matches exactly ONE location\n\n" .
                    "TIP: Include 2-3 surrounding lines in old_string to make the match unique.";
         },
-        
+
+        missing_operation => sub {
+            # The agent called the tool without an 'operation' field. This is the
+            # single most common first-attempt error in CLIO - the agent includes
+            # everything EXCEPT the operation. We need to surface a clear "add the
+            # operation field" message with the valid options listed.
+            my $ops = '';
+            if ($tool_def && $tool_def->{parameters} &&
+                $tool_def->{parameters}->{properties} &&
+                $tool_def->{parameters}->{properties}->{operation} &&
+                $tool_def->{parameters}->{properties}->{operation}->{enum}) {
+                my @op_list = @{$tool_def->{parameters}->{properties}->{operation}->{enum}};
+                $ops = join(', ', @op_list);
+            }
+            my $ops_text = $ops
+                ? "\n\nVALID operations for '$tool_name': $ops"
+                : "\n\nRead the tool's description above to see the list of valid operations.";
+            return "WHAT WENT WRONG: You called '$tool_name' WITHOUT specifying which operation to perform.\n" .
+                   "The 'operation' parameter is REQUIRED on every call to a CLIO tool.\n" .
+                   "HOW TO FIX: Add an 'operation' field to your tool call with one of the values listed below." .
+                   $ops_text . "\n\n" .
+                   "QUICK EXAMPLE (use the operation that matches what you want to do):\n" .
+                   "  {\"operation\": \"<one-of-the-above>\", ...other params...}";
+        },
+
         missing_required => sub {
             # Try to extract the missing fields from the error message
             # Pattern 1: "missing required field(s): description, title"
             # Pattern 2: "missing required parameter: message"
             # Pattern 3: "missing required parameters: foo, bar"
             my @missing;
-            if ($error =~ /missing required (?:parameter|field)\(s\):\s*([a-z_, ]+?)(?:\.\s|$)/i) {
+            # Canonical "Missing required parameter(s): foo, bar"
+            # Trailing context: ( begins a parenthetical, . followed by space
+            # begins a sentence, $ end-of-string.
+            if ($error =~ /missing\s+required\s+(?:parameter|field|param|argument)s?(?:\(s\))?\s*[:\-]\s*([a-zA-Z0-9_, ]+?)(?:\s*\(|\s*\.\s|$)/i) {
                 @missing = split(/\s*,\s*/, $1);
             }
-            elsif ($error =~ /missing required (?:parameter|field)s?:\s*([a-z_, ]+?)(?:\.\s|$)/i) {
-                @missing = split(/\s*,\s*/, $1);
+            # Bare "Missing 'foo' parameter" - extract the named parameter(s).
+            # IMPORTANT: try the alternation form ("Missing 'foo' or 'bar' parameter")
+            # FIRST. The simple form's \w+ is greedy and would otherwise match only
+            # "foo" or only "bar" but not both from "foo' or 'bar'". The two-word
+            # form must come first.
+            elsif ($error =~ /missing\s+(?:or\s+empty\s+)?['"`]?(\w+)['"`]?\s+or\s+['"`]?(\w+)['"`]?\s+parameter/i) {
+                @missing = ($1, $2);
             }
+            elsif ($error =~ /missing\s+(?:or\s+empty\s+)?['"`]?(\w+)['"`]?\s+parameter/i) {
+                push @missing, $1;
+            }
+            # "'update' operation requires 'todoUpdates' parameter" - extract BOTH
+            # the operation name AND the missing param, so we can show the agent
+            # exactly which slot to use.
+            elsif ($error =~ /['"`]?(\w+)['"`]?\s+operation\s+requires\s+['"`]?(\w+)['"`]?\s+parameter/i) {
+                @missing = ($2);
+            }
+
             my $params_str = @missing ? join(', ', @missing) : 'see schema below';
-            
+
             return "WHAT WENT WRONG: You didn't include the required field(s): $params_str\n" .
                    "HOW TO FIX: Include ALL required fields in your tool call.\n" .
                    "REQUIRED: Every field marked 'required' in the schema MUST be included, including fields inside array items (like todoList items, newTodos items, etc.).\n" .
-                   "COMMON MISTAKE: Omitting 'description' in todo items - it is REQUIRED, not optional.";
+                   "COMMON MISTAKES:\n" .
+                   "  - Omitting 'description' in todo items - it is REQUIRED, not optional\n" .
+                   "  - Sending todo update content in the 'todoList' field - the 'update' operation needs 'todoUpdates' (NOT 'todoList')\n" .
+                   "  - Sending new todo content in 'newTodos' for a 'write' - the 'write' operation needs 'todoList'\n" .
+                   "  - Forgetting to specify an 'operation' at all (the most common mistake)";
         },
         
         invalid_operation => sub {
             my $ops_str = '';
-            if ($tool_def && $tool_def->{parameters} && 
-                $tool_def->{parameters}->{properties} && 
+            if ($tool_def && $tool_def->{parameters} &&
+                $tool_def->{parameters}->{properties} &&
                 $tool_def->{parameters}->{properties}->{operation} &&
                 $tool_def->{parameters}->{properties}->{operation}->{enum}) {
                 my @ops = @{$tool_def->{parameters}->{properties}->{operation}->{enum}};
                 $ops_str = join(', ', @ops);
             }
-            
+
             my $valid = $ops_str ? "\nVALID operations: $ops_str" : '';
-            
+
             return "WHAT WENT WRONG: You used an invalid 'operation' value.\n" .
                    "HOW TO FIX: Set 'operation' to one of the valid values.$valid";
         },
-        
+
+        todo_validation_failed => sub {
+            # TodoStore::validate() returned one or more errors. Surface them
+            # with the rule that triggered them so the agent can fix the
+            # call without re-reading the schema.
+            my $hint = '';
+            if ($error =~ /multiple todos marked as in-progress/i) {
+                $hint = "Only ONE todo may have status='in-progress' at a time. " .
+                        "Mark the previous one 'completed' (or 'not-started') " .
+                        "BEFORE marking the next one 'in-progress'.";
+            } elsif ($error =~ /todo missing 'id' field/i) {
+                $hint = "Every todo in todoUpdates needs an 'id' field. Use the 'read' " .
+                        "operation first to see existing IDs.";
+            } elsif ($error =~ /missing 'title' field|missing 'description' field|missing 'status' field/i) {
+                $hint = "Every todo needs 'title', 'description', and 'status' fields. " .
+                        "title and description are short strings; status must be one of " .
+                        "not-started, pending, in-progress, completed, blocked.";
+            } elsif ($error =~ /invalid status/i) {
+                $hint = "Status must be one of: not-started, pending, in-progress, completed, blocked.";
+            } elsif ($error =~ /depends on non-existent todo/i) {
+                $hint = "A 'dependencies' entry references an ID that doesn't exist. " .
+                        "Use the 'read' operation to confirm IDs before referencing them.";
+            } elsif ($error =~ /circular dependency/i) {
+                $hint = "Todos form a dependency cycle (A depends on B which depends on A). " .
+                        "Break the cycle by removing one of the dependencies.";
+            } elsif ($error =~ /no blockedReason|has no blockedReason/i) {
+                $hint = "A todo with status='blocked' MUST have a 'blockedReason' field " .
+                        "explaining what it's blocked on.";
+            }
+            return "WHAT WENT WRONG: The todo list update was rejected by validation.\n" .
+                   "Original errors:\n$error\n\n" .
+                   ($hint ? "HOW TO FIX: $hint\n" : "HOW TO FIX: Read each error line above; each one names a specific todo and the rule it violated.\n");
+        },
         invalid_json => sub {
             return "WHAT WENT WRONG: The arguments JSON you provided is malformed.\n" .
                    "HOW TO FIX: Check your JSON syntax - all string values must be quoted, all braces/brackets must match.\n" .
@@ -383,7 +486,10 @@ sub _get_examples_for_error {
                    "Write a todo list (EVERY item needs title, description, AND status):\n" .
                    '  {"operation": "write", "todoList": [{"title": "Fix bug", "description": "Fix the null pointer in module X", "status": "not-started"}]}' . "\n" .
                    "\n" .
-                   "Add new todos (EVERY item needs title AND description):\n" .
+                   "Update todo status (uses todoUpdates, NOT todoList):\n" .
+                   '  {"operation": "update", "todoUpdates": [{"id": 1, "status": "in-progress"}]}' . "\n" .
+                   "\n" .
+                   "Add new todos (uses newTodos, NOT todoList):\n" .
                    '  {"operation": "add", "newTodos": [{"title": "Write tests", "description": "Unit tests for module Y"}]}' . "\n" .
                    "\n" .
                    "CRITICAL: The 'description' field is REQUIRED for every todo item. Never omit it.";
