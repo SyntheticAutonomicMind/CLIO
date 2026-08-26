@@ -147,7 +147,9 @@ sub dump_diagnostic {
         if ($caps) {
             for my $key (sort keys %$caps) {
                 my $val = $caps->{$key};
-                if (ref($val) eq 'ARRAY') {
+                if (!defined $val) {
+                    $val = '(undef)';
+                } elsif (ref($val) eq 'ARRAY') {
                     $val = '[' . join(', ', @$val) . ']';
                 } elsif (ref($val)) {
                     $val = safe_encode_json($val, ref($val));

@@ -2975,14 +2975,14 @@ sub _build_payload {
                 }
                 if ($self->{_stable_prefix_cache}
                     && $self->{_stable_prefix_cache}{hash} eq $content_hash) {
-                    $payload->{prompt_stable_prefix_tokens} = $self->{_stable_prefix_cache}{tokens};
+                    $payload->{prompt_stable_prefix_tokens} = 0 + $self->{_stable_prefix_cache}{tokens};
                     log_debug('APIManager', "Including prompt_stable_prefix_tokens: $self->{_stable_prefix_cache}{tokens} (cached, leading system messages unchanged, "
                         . scalar(@leading_system) . " msg(s) covered)");
                 } else {
                     require CLIO::Memory::TokenEstimator;
                     my $stable_tokens = CLIO::Memory::TokenEstimator::estimate_tokens($combined_text);
                     if ($stable_tokens > 0) {
-                        $payload->{prompt_stable_prefix_tokens} = $stable_tokens;
+                        $payload->{prompt_stable_prefix_tokens} = 0 + $stable_tokens;
                         # Cache miss diagnostic: log when the stable prefix changes
                         # between turns. This is the CLIO-side signal that corresponds
                         # to the server-side LCP collapse observed in server.log:
@@ -3004,7 +3004,7 @@ sub _build_payload {
                             . scalar(@leading_system) . " msg(s) covered)");
                         $self->{_stable_prefix_cache} = {
                             hash   => $content_hash,
-                            tokens => $stable_tokens,
+                            tokens => 0 + $stable_tokens,
                         };
                     }
                 }

@@ -145,10 +145,14 @@ sub estimate_tokens {
     }
     
     return 0 unless length($text) > 0;
-    
-    my $ratio = get_effective_ratio();
-    my $char_count = length($text);
-    return int(ceil($char_count / $ratio));
+   
+   my $ratio = get_effective_ratio();
+   my $char_count = length($text);
+   # Force numeric context with 0+ so JSON::XS encodes as integer (not string).
+   # ceil() returns a float; int() on a float can leave Perl's string flag set,
+   # causing JSON::XS to serialize the value as "8" instead of 8. This breaks
+   # strict JSON parsers like llama.cpp's nlohmann/json (type_error.302).
+   return 0 + int(ceil($char_count / $ratio));
 }
 
 =head2 exceeds_limit
