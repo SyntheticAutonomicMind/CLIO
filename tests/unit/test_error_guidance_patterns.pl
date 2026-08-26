@@ -21,6 +21,21 @@ my @categorization_cases = (
     [q{Missing required parameter: message},     'missing_required',  'message'],
     [q{Missing required parameters: targets, task_description}, 'missing_required', 'targets, task_description'],
 
+    # Canonical form for FileOperations fields (now used by handlers after
+    # the validator rework - minimal schema + handler-enforced per-op reqs)
+    [q{Missing required parameter: path},        'missing_required',  'path'],
+    [q{Missing required parameter: content},     'missing_required',  'content'],
+    [q{Missing required parameter: old_string},  'missing_required',  'old_string'],
+    [q{Missing required parameter: new_string},  'missing_required',  'new_string'],
+    [q{Missing required parameter: line},        'missing_required',  'line'],
+    [q{Missing required parameter: old_path},    'missing_required',  'old_path'],
+    [q{Missing required parameter: new_path},    'missing_required',  'new_path'],
+    [q{Missing required parameter: query},       'missing_required',  'query'],
+    [q{Missing required parameter: pattern},     'missing_required',  'pattern'],
+    [q{Missing required parameter: toolCallId},  'missing_required',  'toolCallId'],
+    [q{Missing required parameter: replacements}, 'missing_required', 'replacements'],
+    [q{Missing required parameter: paths},       'missing_required',  'paths'],
+
     # Bare "Missing 'X' parameter" form (was generic_error)
     [q{Missing 'path' parameter},                'missing_required',  'path'],
     [q{Missing 'content' parameter},             'missing_required',  'content'],

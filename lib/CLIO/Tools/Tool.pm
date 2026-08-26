@@ -326,27 +326,45 @@ Returns: Hashref with success, output/error, metadata
 
 sub route_operation {
     my ($self, $operation, $params, $context) = @_;
-    
+
     # Pre-dispatch hook
     my $guard = $self->before_route($operation, $params, $context);
     return $guard if $guard;
-    
-    # Look up in dispatch table
+
+    # Look up in dispatch table. Each entry maps operation name (as the
+    # LLM would supply it) to a method name. Some entries also carry a
+    # hashref with default parameters to inject; the schema is
+    # 'operation_alias_name' => 'method_name' OR 'operation_alias_name'
+    # => { method => 'method_name', defaults => { key => value, ... } }.
+    # The defaults form lets legacy aliases (append_file, create_file)
+    # route to the merged write_file handler with the right flags pre-set.
     my $table = $self->dispatch_table();
     my $handler = $table->{$operation};
-    
+
     if ($handler) {
-        if (ref($handler) eq 'CODE') {
-            return $handler->($self, $params, $context);
+        my $method_name;
+        my $defaults = {};
+        if (ref($handler) eq 'HASH') {
+            # New-style: { method => '...', defaults => {...} }
+            $method_name = $handler->{method};
+            $defaults = $handler->{defaults} || {};
+        } else {
+            # Legacy: bare method-name string
+            $method_name = $handler;
         }
-        # String method name
-        my $method = $self->can($handler);
+
+        # Inject defaults into params without clobbering caller-supplied values
+        for my $k (keys %$defaults) {
+            $params->{$k} = $defaults->{$k} unless exists $params->{$k};
+        }
+
+        my $method = $self->can($method_name);
         if ($method) {
             return $method->($self, $params, $context);
         }
-        croak "Dispatch table maps '$operation' to '$handler' but method does not exist";
+        croak "Dispatch table maps '$operation' to '$method_name' but method does not exist";
     }
-    
+
     return $self->error_result("Operation not implemented: $operation");
 }
 
@@ -402,23 +420,25 @@ are present before dispatching to the handler. Returns an error_result() with
 a canonical "Missing required parameter: <name>" message for the first missing
 field, or undef if validation passes.
 
-Why this exists:
-- Tools that pre-validate in their handlers produce a mix of error
-  message shapes (some say "Missing 'X' parameter", some say
-  "'op' operation requires 'X' parameter", some say "Missing required
-  parameter: X"). ToolErrorGuidance's categorizer now matches all of
-  these, but pre-validating here gives every tool the SAME error shape
-  for missing fields, which is easier to test and reason about.
-- If a tool forgets to validate a required field in its handler, this
-  safety net catches it before the handler runs, instead of letting
-  the handler crash on undef.
+Design:
+- The base class only marks `operation` as required. Each tool that needs
+  additional universally-required fields (e.g. TerminalOperations needs
+  `command`, Interact needs `message`) sets them in its own
+  get_tool_definition() override. The pre-validator trusts the schema's
+  `required` array as the source of truth.
+- Tools with per-operation requirements (e.g. FileOperations where
+  `read_file` needs `path` but `grep_search` does not) set `required`
+  to just `operation` in their schema, and enforce operation-specific
+  fields in the handler. Handlers use the same "Missing required
+  parameter: <name>" format so ToolErrorGuidance categorizes them
+  consistently.
 
 Arguments:
 - $params: Hashref of parameters supplied by the LLM
 
 Returns:
 - undef when all required parameters are present (or when no schema
-  is available - tools without get_additional_parameters() are skipped)
+  is available)
 - error_result() hashref when a required parameter is missing
 
 =cut
@@ -426,11 +446,6 @@ Returns:
 sub _pre_validate_required_params {
     my ($self, $params) = @_;
 
-    # Only run if the subclass provides a get_tool_definition() with a
-    # `required` array. The base class's get_tool_definition() only marks
-    # `operation` as required, so this catches the universal rule but
-    # does not duplicate per-tool required fields (those are validated
-    # in the handler or via get_additional_parameters() per-tool rules).
     my $def = eval { $self->get_tool_definition(); };
     return undef unless $def && ref($def) eq 'HASH';
 
@@ -438,6 +453,7 @@ sub _pre_validate_required_params {
     return undef unless @$required;
 
     $params ||= {};
+
     for my $field (@$required) {
         my $val = $params->{$field};
         next if defined $val && (!ref($val) || ref($val) eq 'ARRAY' || ref($val) eq 'HASH');

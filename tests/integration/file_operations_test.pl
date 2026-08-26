@@ -266,7 +266,7 @@ run_test(
     'read_file',
     { operation => 'read_file' },  # Missing 'path'
     0,  # Should fail
-    sub { $_[0]->{error} =~ /Missing 'path'/ }
+    sub { $_[0]->{error} =~ /Missing required parameter: path/ }
 );
 
 # Test 19: Error handling - Invalid operation
