@@ -106,8 +106,7 @@
         "disabled_type": "disabled",
         "max_tokens_rename": "max_completion_tokens",
         "reasoning_split": true,
-        "message_transform": "minimax",
-        "send_budget_tokens": 1
+        "message_transform": "minimax"
       }
     },
     "minimax_token": {
@@ -132,8 +131,7 @@
         "disabled_type": "disabled",
         "max_tokens_rename": "max_completion_tokens",
         "reasoning_split": true,
-        "message_transform": "minimax",
-        "send_budget_tokens": 1
+        "message_transform": "minimax"
       }
     },
     "nvidia": {
