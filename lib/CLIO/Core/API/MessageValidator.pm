@@ -6,6 +6,8 @@ package CLIO::Core::API::MessageValidator;
 use strict;
 use warnings;
 use utf8;
+use CLIO::Core::Defaults qw(DEFAULT_POST_TRIM_FLOOR MIN_CSSS_SLOT_TOKENS
+    MAX_CSSS_SLOT_TOKENS MAX_PRESERVED_HIGH_VALUE ACK_THRESHOLD_CHARS);
 use CLIO::Core::Logger qw(should_log log_debug log_info log_warning);
 use CLIO::Memory::TokenEstimator qw(estimate_tokens compute_prompt_budget);
 use CLIO::Util::JSON qw(encode_json decode_json safe_encode_json);
@@ -205,8 +207,19 @@ sub validate_and_truncate {
     }
     my @dropped_units;
     my @error_units;  # BUG C: error units deferred to second pass
-    
+
     my @remaining = @units[$start_unit .. $#units];
+
+    # Trim priority classification (see docs/SPECS/TRIM_PRIORITY.md).
+    # Each unit is classified into a tier so the budget walk knows the
+    # drop order. Tier 4 (errors + acks + empty) is dropped FIRST, then
+    # Tier 3 (regular dialog), with the most recent N Tier 2 (high-value)
+    # units preserved regardless of budget pressure.
+    #
+    # The reverse-walk below only emits Tier 3 (regular dialog) and routes
+    # Tier 4 (errors) into @error_units for the second-pass walk. The
+    # existing error-handling is preserved (drop ordering, summary capture).
+    my $max_high_value = CLIO::Core::Defaults::MAX_PRESERVED_HIGH_VALUE();
 
     # Post-trim target: keep context at the caller's trim_threshold (which
     # defaults to the drift-aware threshold from the proactive trim in
@@ -216,14 +229,94 @@ sub validate_and_truncate {
     # CSSS handles summary cache stability; DEFAULT_POST_TRIM_FLOOR
     # acts as absolute safety floor.
     my $post_trim_keep_limit = $effective_limit;
-    $post_trim_keep_limit = CLIO::Core::Defaults::DEFAULT_POST_TRIM_FLOOR() if $post_trim_keep_limit < CLIO::Core::Defaults::DEFAULT_POST_TRIM_FLOOR();
     # BUG C: Allow callers to disable the post-trim floor when they want
     # to force aggressive trim for testing or tight-budget scenarios.
     if ($args{disable_post_trim_floor}) {
-        $post_trim_keep_limit = $effective_limit;
+        # Caller overrides DEFAULT_post_TRIM_FLOOR. Use the raw threshold.
+    } else {
+        $post_trim_keep_limit = CLIO::Core::Defaults::DEFAULT_POST_TRIM_FLOOR()
+            if $post_trim_keep_limit < CLIO::Core::Defaults::DEFAULT_POST_TRIM_FLOOR();
     }
     log_debug('MessageValidator', "Post-trim keep target: $post_trim_keep_limit tokens (prompt budget for $model)");
 
+    # Trim priority multi-pass walk (see docs/SPECS/TRIM_PRIORITY.md).
+    # Tier 4 (errors, empty assistant, acks) is dropped FIRST, before any
+    # Tier 3 unit, when the budget is tight. The existing reverse-walk
+    # already routes errors via @error_units. Here we extend the same
+    # drop-first pattern to ack/empty units, walking them OLDEST-FIRST
+    # within the tier so the newest noise is most likely to survive.
+    #
+    # Approach: rebuild the conversation walking ONLY Tier 4 units first,
+    # then re-add the surviving Tier 3+ units. This guarantees Tier 4
+    # is dropped before Tier 3 even when budget is loose enough that
+    # Pass 1 (existing reverse-walk) would otherwise include Tier 4.
+    my @ack_empty_units;
+    for my $u (@remaining) {
+        next unless $u;
+        next if $u->{is_trailing_summary} || $u->{is_orphan_tool_result};
+        next if $u->{has_tool_error};
+        if ($u->{has_empty_assistant} || $u->{is_acknowledgement}) {
+            push @ack_empty_units, $u;
+        }
+    }
+    if (@ack_empty_units) {
+        my $kept = 0;
+        my $dropped = 0;
+        # Walk oldest-first within Tier 4 so the newest noise is most
+        # likely to survive. Collect which units to remove from
+        # @conversation (they were included by the reverse-walk but
+        # should be dropped).
+        my @to_remove;
+        for my $unit (@ack_empty_units) {
+            if ($current_tokens + $unit->{tokens} <= $post_trim_keep_limit) {
+                # Check if the unit is already in @conversation.
+                # The earlier reverse-walk may have included it.
+                my $already_included = grep { $_ == $unit } @conversation;
+                if (!$already_included) {
+                    unshift @conversation, @{$unit->{messages}};
+                    $current_tokens += $unit->{tokens};
+                    for my $id (keys %{$unit->{tool_call_ids} || {}}) {
+                        $included_tool_ids{$id} = 1;
+                    }
+                    $kept++;
+                }
+            } else {
+                push @to_remove, $unit;
+                push @dropped_units, $unit;
+                $dropped++;
+            }
+        }
+        # Remove any ack/empty units from @conversation that the budget
+        # no longer allows. This is the key Tier 4 enforcement step.
+        if (@to_remove) {
+            my %to_remove_set = map { $_ => 1 } @to_remove;
+            my @filtered;
+            for my $msg (@conversation) {
+                # Check if this message belongs to a unit to remove.
+                my $belongs_to_removed = 0;
+                for my $u (@to_remove) {
+                    if (grep { $_ == $msg } @{$u->{messages}}) {
+                        $belongs_to_removed = 1;
+                        last;
+                    }
+                }
+                if (!$belongs_to_removed) {
+                    push @filtered, $msg;
+                } else {
+                    $current_tokens -= CLIO::Memory::TokenEstimator::estimate_tokens($msg->{content} || '') + 4;
+                }
+            }
+            @conversation = @filtered;
+        }
+        log_debug('MessageValidator', sprintf(
+            "Tier 4 ack/empty pass: kept %d, dropped %d",
+            $kept, $dropped)) if @ack_empty_units;
+    }
+
+    # Walk the conversation, building the in-budget list NEWEST-FIRST
+    # (reverse chronological order), then reverse at the end. This is
+    # the original behavior. The Tier 4 ack/empty removal pass happens
+    # AFTER this walk to drop any noise that survived Pass 1.
     for my $unit (reverse @remaining) {
         if ($unit->{is_orphan_tool_result}) {
             log_debug('MessageValidator', "Skipping orphan tool_result unit (tool_id: $unit->{orphan_tool_id})");
@@ -252,6 +345,13 @@ sub validate_and_truncate {
             next;
         }
 
+        # Skip Tier 4 (ack/empty) units here - already handled by the
+        # dedicated Tier 4 pass above.
+        if ($unit->{has_empty_assistant} || $unit->{is_acknowledgement}) {
+            push @dropped_units, $unit;
+            next;
+        }
+
         # Unit-based trim: keep or drop the ENTIRE unit (including any
         # tool_calls and tool_results it contains). This preserves the
         # natural interleaved ordering — no deinterleave/reinterleave
@@ -266,6 +366,43 @@ sub validate_and_truncate {
         } else {
             push @dropped_units, $unit;
         }
+    }
+
+    # Tier 4 (ack/empty) removal pass - drop any ack/empty units that
+    # are in @conversation because they fit within the budget. These
+    # units are pure noise (empty/whitespace assistant turns, "OK",
+    # "Got it", etc.) and should be dropped FIRST, even when budget is
+    # loose enough to keep them. This guarantees Tier 4 priority is
+    # enforced regardless of budget tightness.
+    my @conv_to_remove;
+    for my $u (@units) {
+        next unless $u;
+        next if $u->{is_trailing_summary} || $u->{is_orphan_tool_result};
+        next if $u->{has_tool_error};
+        if ($u->{has_empty_assistant} || $u->{is_acknowledgement}) {
+            push @conv_to_remove, $u;
+        }
+    }
+    if (@conv_to_remove) {
+        my @filtered;
+        my $removed = 0;
+        for my $msg (@conversation) {
+            my $belongs = 0;
+            for my $u (@conv_to_remove) {
+                if (grep { $_ == $msg } @{$u->{messages}}) {
+                    $belongs = 1;
+                    last;
+                }
+            }
+            if (!$belongs) {
+                push @filtered, $msg;
+            } else {
+                $current_tokens -= estimate_tokens($msg->{content} || '') + 4;
+                $removed++;
+            }
+        }
+        @conversation = @filtered;
+        log_debug('MessageValidator', "Tier 4 cleanup: removed $removed ack/empty messages from kept conversation");
     }
 
     # Second pass (BUG C): walk error units in reverse (newest first) and
@@ -293,12 +430,10 @@ sub validate_and_truncate {
             }
         }
     }
-    
+
     # Calculate total tokens in dropped units for proactive CSSS slot growth
     my $dropped_tokens = 0;
     $dropped_tokens += $_->{tokens} for @dropped_units;
-    
-    # Compress dropped units
     # Create merged summary only if there are dropped messages to compress.
     # If nothing was dropped, preserve the existing summary as-is.
     my $summary_to_use;
@@ -705,7 +840,7 @@ sub _group_into_units {
         
         if ($has_tool_calls) {
             push @units, $current_unit if $current_unit;
-            
+
             # Include tool_call JSON tokens in the unit's token count
             my $tc_tokens = 0;
             for my $tc (@{$msg->{tool_calls}}) {
@@ -714,7 +849,7 @@ sub _group_into_units {
             }
             $current_unit = { messages => [$msg], tokens => $msg_tokens + $tc_tokens, tool_call_ids => {} };
             %pending_tool_ids = ();
-            
+
             for my $tc (@{$msg->{tool_calls}}) {
                 if ($tc->{id}) {
                     $pending_tool_ids{$tc->{id}} = 1;
@@ -725,7 +860,7 @@ sub _group_into_units {
         }
         elsif ($is_tool_result) {
             my $tool_id = $msg->{tool_call_id};
-            
+
             if ($current_unit) {
                 # Track error tool_results separately so the budget walk can
                 # prefer to drop them. We attach the marker to the unit so
@@ -734,7 +869,7 @@ sub _group_into_units {
                 push @{$current_unit->{messages}}, $msg;
                 $current_unit->{tokens} += $msg_tokens;
                 delete $pending_tool_ids{$tool_id} if $tool_id;
-                
+
                 if (!keys %pending_tool_ids) {
                     push @units, $current_unit;
                     $current_unit = undef;
@@ -765,12 +900,35 @@ sub _group_into_units {
                 $current_unit = undef;
                 %pending_tool_ids = ();
             }
-            push @units, { messages => [$msg], tokens => $msg_tokens, tool_call_ids => {} };
+            my $new_unit = { messages => [$msg], tokens => $msg_tokens, tool_call_ids => {} };
+            # Trim priority Tier 4 detection: flag non-tool messages that
+            # contribute nothing to the dialog. These are the FIRST units
+            # dropped when the budget is tight, ahead of any Tier 3 unit.
+            # See docs/SPECS/TRIM_PRIORITY.md for tier definitions.
+            if ($msg->{role} && $msg->{role} eq 'assistant') {
+                my $content = $msg->{content} // '';
+                my $has_reasoning = defined $msg->{reasoning_content}
+                    && length($msg->{reasoning_content} // '');
+                # Match whitespace-only content (single-line or multi-line) as empty
+                # assistant, and short single-line content (< ACK_THRESHOLD)
+                # as acknowledgement. The newline check is conservative -
+                # true acks rarely span multiple lines.
+                if (!$has_tool_calls && !$has_reasoning
+                    && $content !~ /[^\s]/) {
+                    # All whitespace (including multi-line) counts as empty.
+                    $new_unit->{has_empty_assistant} = 1;
+                } elsif (!$has_tool_calls && !$has_reasoning
+                    && length($content) < CLIO::Core::Defaults::ACK_THRESHOLD_CHARS()
+                    && $content !~ /\n/) {
+                    $new_unit->{is_acknowledgement} = 1;
+                }
+            }
+            push @units, $new_unit;
         }
     }
-    
+
     push @units, $current_unit if $current_unit;
-    
+
     return (\@units, \%tool_call_id_to_unit_idx);
 }
 

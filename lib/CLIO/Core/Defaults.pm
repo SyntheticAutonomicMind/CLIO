@@ -41,6 +41,8 @@ our @EXPORT_OK = qw(
     DEFAULT_POST_TRIM_FLOOR
     MIN_CSSS_SLOT_TOKENS
     MAX_CSSS_SLOT_TOKENS
+    MAX_PRESERVED_HIGH_VALUE
+    ACK_THRESHOLD_CHARS
     TOOL_RESULT_MAX_CHUNK
     OUTPUT_ESTIMATION_BUFFER
     OUTPUT_ESTIMATION_BUFFER_PCT
@@ -101,6 +103,23 @@ use constant DEFAULT_POST_TRIM_FLOOR      => 24000;   # Minimum tokens to keep a
 # when aggressive trim drives more content into the summary than can fit.
 use constant MIN_CSSS_SLOT_TOKENS         => 8000;    # Minimum CSSS slot size (tokens)
 use constant MAX_CSSS_SLOT_TOKENS         => 12000;   # Maximum CSSS slot size (tokens)
+
+# Trim priority tier constants (see docs/SPECS/TRIM_PRIORITY.md).
+# MAX_PRESERVED_HIGH_VALUE: the most recent N dialog units (Tier 2) are
+# always preserved during a budget walk, regardless of how tight the
+# budget is. These units represent the model's current task context;
+# dropping them forces the model to hallucinate task boundaries.
+# 5 units covers a typical "task + 2-3 tool rounds + 1 acknowledgement"
+# sub-conversation.
+use constant MAX_PRESERVED_HIGH_VALUE    => 5;
+
+# ACK_THRESHOLD_CHARS: assistant messages shorter than this with no
+# tool_calls and no reasoning_content are flagged as Tier 4
+# "acknowledgements" and dropped first during budget walks. Common
+# examples: "OK" (2), "Got it" (6), "Let me try" (11), "Yes, doing that
+# now." (20). Below the threshold: pure acknowledgement. Above: real
+# reasoning (even if short) worth preserving.
+use constant ACK_THRESHOLD_CHARS         => 50;
 
 =head2 default_chunk_size($context_window)
 
