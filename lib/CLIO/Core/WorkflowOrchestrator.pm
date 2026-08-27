@@ -1869,6 +1869,78 @@ sub _execute_tool_round {
             result => $ai_content
         };
 
+        # BUG B: Detect repeated identical-shape tool errors and escalate.
+        # When a model emits a malformed tool call (e.g. missing 'operation'
+        # field, using 'command' instead of 'operation', or malformed JSON),
+        # CLIO returns a TOOL ERROR + full schema help. The same error
+        # repeating N times means the model is stuck and just burning context
+        # budget on schema dumps. After N=3 identical-shape errors, inject a
+        # stop signal so the model knows to break the loop.
+        #
+        # Loop signature: tool|operation|error_category. The category is
+        # computed by ToolErrorGuidance::categorize_error which produces a
+        # stable enum (missing_required, invalid_operation, directory_not_found,
+        # etc.). The OLD signature used the first 80 chars of the raw error,
+        # which had two failure modes:
+        #   1. Slight variance in the error text (timestamps, IDs, line
+        #      numbers) reset the count to 1.
+        #   2. Different operation names that resolved to the same root
+        #      cause (e.g. "exec" vs "execute") reset the count.
+        # The category-based signature is robust to both: the categorizer
+        # reduces the noisy raw text to one of ~20 stable enums.
+        if ($is_error && $result_data && ref($result_data) eq 'HASH') {
+            my $err_category = 'unknown';
+            if ($self->{error_guidance} && $self->{error_guidance}->can('categorize_error')) {
+                eval {
+                    $err_category = $self->{error_guidance}->categorize_error(
+                        $result_data->{error} // '',
+                        $tool_name,
+                    );
+                };
+                $err_category = 'unknown' if $@;
+            }
+            my $err_sig = join("|",
+                $tool_name,
+                $tool_operation || '',
+                $err_category
+            );
+            if (!defined $self->{_tool_error_loop_count}) {
+                $self->{_tool_error_loop_count} = {};
+                $self->{_tool_error_loop_last_sig} = undef;
+            }
+            if (defined $self->{_tool_error_loop_last_sig}
+                && $self->{_tool_error_loop_last_sig} eq $err_sig) {
+                $self->{_tool_error_loop_count}{$err_sig}++;
+            } else {
+                $self->{_tool_error_loop_count}{$err_sig} = 1;
+                $self->{_tool_error_loop_last_sig} = $err_sig;
+            }
+            my $count = $self->{_tool_error_loop_count}{$err_sig};
+            if ($count == 3) {
+                # Inject a clear directive into the tool result. We replace
+                # the verbose schema dump with a one-line stop signal so the
+                # model knows to break the pattern.
+                my $stop_msg = "STOP: You have made 3 consecutive attempts with the same error: \""
+                    . substr($result_data->{error} // '', 0, 120)
+                    . "\". Re-read the schema and call interact() if you need clarification.";
+                $ai_content = $stop_msg;
+                log_warning('WorkflowOrchestrator',
+                    "Tool error loop detected: 3 consecutive identical-shape errors from $tool_name. "
+                    . "Injected stop signal. sig=" . substr($err_sig, 0, 60));
+            } elsif ($count > 3) {
+                # After 3, keep the short stop signal every iteration so the
+                # verbose schema help doesn't pollute the context budget.
+                $ai_content = "STOP: Same tool error pattern repeating (count=$count). "
+                    . "Use interact(operation: \"request_input\", message: \"...\") to ask for help, "
+                    . "or stop trying this approach.";
+                log_info('WorkflowOrchestrator', "Tool error loop continues: count=$count");
+            }
+        } else {
+            # Reset loop tracking on a successful tool call.
+            $self->{_tool_error_loop_count} = {};
+            $self->{_tool_error_loop_last_sig} = undef;
+        }
+
         # Sanitize tool result content
         my $sanitized_content = sanitize_text($ai_content);
         $sanitized_content = "$sanitized_content" if defined $sanitized_content;

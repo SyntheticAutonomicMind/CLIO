@@ -44,12 +44,36 @@ This prevents agents from abandoning tools after repeated failures.
 =cut
 
 sub new {
-    my ($class) = @_;
-    
-    my $self = {};
+    my ($class, %args) = @_;
+
+    my $self = {
+        debug => $args{debug} // 0,
+    };
     bless $self, $class;
-    
+
     return $self;
+}
+
+=head2 categorize_error
+
+Public wrapper around _categorize_error so callers (e.g. the
+tool-error-loop detector in WorkflowOrchestrator) can get a stable
+category string without depending on the leading underscore convention.
+
+Arguments:
+    $error     - The error message text
+    $tool_name - The tool that produced the error
+
+Returns:
+    Category string (e.g. 'missing_required', 'invalid_operation',
+    'directory_not_found', 'generic_error'). See _categorize_error
+    for the full taxonomy.
+
+=cut
+
+sub categorize_error {
+    my ($self, $error, $tool_name) = @_;
+    return $self->_categorize_error($error // '', $tool_name // '');
 }
 
 =head2 enhance_tool_error
