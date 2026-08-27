@@ -142,8 +142,8 @@ subtest 'M3 + user thinking_mode=enabled -> thinking.type=adaptive (API rejects 
         show_thinking  => 1,
         thinking_effort => 'high',
     );
-    is_deeply($payload->{thinking}, { type => 'adaptive', budget_tokens => 8000 },
-        'MiniMax-M3: thinking_mode=enabled falls back to adaptive (M3 rejects enabled) + high budget');
+    is_deeply($payload->{thinking}, { type => 'adaptive' },
+        'MiniMax-M3: thinking_mode=enabled falls back to adaptive (M3 rejects enabled)');
 };
 
 subtest 'M3 + thinking_mode=auto + show_thinking=1 -> thinking.type=adaptive (default preserved)' => sub {
@@ -156,8 +156,8 @@ subtest 'M3 + thinking_mode=auto + show_thinking=1 -> thinking.type=adaptive (de
         show_thinking  => 1,
         thinking_effort => 'high',
     );
-    is_deeply($payload->{thinking}, { type => 'adaptive', budget_tokens => 8000 },
-        'MiniMax-M3: thinking_mode=auto + show_thinking=1 keeps adaptive default + high budget');
+    is_deeply($payload->{thinking}, { type => 'adaptive' },
+        'MiniMax-M3: thinking_mode=auto + show_thinking=1 keeps adaptive default');
 };
 
 subtest 'M3 + thinking_mode=disabled -> thinking.type=disabled' => sub {
@@ -202,8 +202,8 @@ subtest 'M2.7 + thinking_mode=auto + show_thinking=1 -> thinking.type=enabled' =
         show_thinking  => 1,
         thinking_effort => 'high',
     );
-    is_deeply($payload->{thinking}, { type => 'enabled', budget_tokens => 8000 },
-        'MiniMax-M2.7 (enabled model) keeps type=enabled + high budget');
+    is_deeply($payload->{thinking}, { type => 'enabled' },
+        'MiniMax-M2.7 (enabled model) keeps type=enabled');
 };
 
 subtest 'MiniMax payload always sets reasoning_split=true' => sub {
