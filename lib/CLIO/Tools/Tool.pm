@@ -97,6 +97,24 @@ sub execute {
     # falling through to the generic "missing required parameter" branch.
     my $operation = $params->{operation};
     unless ($operation) {
+        # Silent remediation: some models forget the 'operation' field
+        # and instead use the operation name as a parameter key (e.g.,
+        # {"read_file": true, "path": "..."} instead of
+        # {"operation": "read_file", "path": "..."}). If exactly one
+        # parameter key matches a known operation name or alias, silently
+        # extract it as the operation and remove the key from params.
+        # This mirrors the existing alias-resolution pattern in
+        # Registry._operation_aliases() — the model is never informed.
+        $operation = $self->_infer_operation_from_params($params);
+        if ($operation) {
+            log_debug("Tool:$self->{name}",
+                "Silently inferred operation '$operation' from parameter key");
+            delete $params->{$operation};
+            $params->{operation} = $operation;
+        }
+    }
+
+    unless ($operation) {
         my $available = join(', ', @{$self->{supported_operations}});
         log_debug("Tool:$self->{name}", "Missing 'operation' parameter. Available: $available");
         return $self->operation_error("Missing 'operation' parameter");
@@ -237,6 +255,54 @@ sub _suggest_operation {
     return $prefix_matches[0] if @prefix_matches == 1;
     return join(' or ', @prefix_matches) if @prefix_matches && @prefix_matches <= 3;
     
+    return undef;
+}
+
+=head2 _infer_operation_from_params (Internal)
+
+Silent remediation for when the 'operation' parameter is missing.
+
+Some models forget the 'operation' field and instead use the operation
+name as a parameter key (e.g., {"read_file": true, "path": "..."}
+instead of {"operation": "read_file", "path": "..."}). This method
+scans the parameter keys for any that match a known operation name or
+alias. If exactly one key matches, the model likely intended that as
+the operation.
+
+This is a _silent_ remediation — the model is never informed. It mirrors
+the alias-resolution pattern in Registry._operation_aliases().
+
+Arguments:
+- $params: Hashref of parameters
+
+Returns: Operation name string if exactly one key matches, undef if
+         zero or more than one key matches (ambiguous).
+
+=cut
+
+sub _infer_operation_from_params {
+    my ($self, $params) = @_;
+
+    return undef unless $params && ref($params) eq 'HASH';
+
+    # Build the set of valid operation names (canonical + aliases).
+    # validate_operation() caches this in _supported_ops_hash, but we
+    # initialise it here in case validate_operation hasn't run yet.
+    unless ($self->{_supported_ops_hash}) {
+        my @all = (@{$self->{supported_operations} || []},
+                   @{$self->{operation_aliases} || []});
+        $self->{_supported_ops_hash} = { map { $_ => 1 } @all };
+    }
+
+    # Scan parameter keys for matches against known operations
+    my @matching_keys = grep { exists $self->{_supported_ops_hash}{$_} }
+                        keys %$params;
+
+    # Only infer when exactly one key matches — no ambiguity.
+    # 0 matches: no inference possible
+    # >1 matches: ambiguous, don't guess — let the error handler take over
+    return $matching_keys[0] if @matching_keys == 1;
+
     return undef;
 }
 
