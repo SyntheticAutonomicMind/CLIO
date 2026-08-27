@@ -134,30 +134,30 @@ subtest 'M3 + user thinking_mode=enabled -> thinking.type=adaptive (API rejects 
     # therefore falls back to type=adaptive - the only M3 value that
     # enables thinking. The model decides depth on its own.
     my $payload = _build(
-        provider      => 'minimax',
-        model         => 'minimax/MiniMax-M3',
-        api_base      => 'https://api.minimax.io/v1',
+        provider       => 'minimax',
+        model          => 'minimax/MiniMax-M3',
+        api_base       => 'https://api.minimax.io/v1',
         minimax_marker => ['minimax'],
-        thinking_mode => 'enabled',
-        show_thinking => 1,
+        thinking_mode  => 'enabled',
+        show_thinking  => 1,
+        thinking_effort => 'high',
     );
-    is_deeply($payload->{thinking}, { type => 'adaptive' },
-        'MiniMax-M3: thinking_mode=enabled falls back to adaptive (M3 rejects enabled)');
-    ok(!exists $payload->{thinking}{budget_tokens},
-        'MiniMax-M3: adaptive mode does not include budget_tokens (only enabled mode does)');
+    is_deeply($payload->{thinking}, { type => 'adaptive', budget_tokens => 8000 },
+        'MiniMax-M3: thinking_mode=enabled falls back to adaptive (M3 rejects enabled) + high budget');
 };
 
 subtest 'M3 + thinking_mode=auto + show_thinking=1 -> thinking.type=adaptive (default preserved)' => sub {
     my $payload = _build(
-        provider      => 'minimax',
-        model         => 'minimax/MiniMax-M3',
-        api_base      => 'https://api.minimax.io/v1',
+        provider       => 'minimax',
+        model          => 'minimax/MiniMax-M3',
+        api_base       => 'https://api.minimax.io/v1',
         minimax_marker => ['minimax'],
-        thinking_mode => 'auto',
-        show_thinking => 1,
+        thinking_mode  => 'auto',
+        show_thinking  => 1,
+        thinking_effort => 'high',
     );
-    is_deeply($payload->{thinking}, { type => 'adaptive' },
-        'MiniMax-M3: thinking_mode=auto + show_thinking=1 keeps adaptive default');
+    is_deeply($payload->{thinking}, { type => 'adaptive', budget_tokens => 8000 },
+        'MiniMax-M3: thinking_mode=auto + show_thinking=1 keeps adaptive default + high budget');
 };
 
 subtest 'M3 + thinking_mode=disabled -> thinking.type=disabled' => sub {
@@ -194,15 +194,16 @@ subtest 'M2.7 + thinking_mode=auto + show_thinking=1 -> thinking.type=enabled' =
     # M2.x has reasoning_mode=enabled (not adaptive), so behavior is
     # unaffected by the user-override branch.
     my $payload = _build(
-        provider      => 'minimax',
-        model         => 'minimax/MiniMax-M2.7',
-        api_base      => 'https://api.minimax.io/v1',
+        provider       => 'minimax',
+        model          => 'minimax/MiniMax-M2.7',
+        api_base       => 'https://api.minimax.io/v1',
         minimax_marker => ['minimax'],
-        thinking_mode => 'auto',
-        show_thinking => 1,
+        thinking_mode  => 'auto',
+        show_thinking  => 1,
+        thinking_effort => 'high',
     );
-    is_deeply($payload->{thinking}, { type => 'enabled' },
-        'MiniMax-M2.7 (enabled model) keeps type=enabled');
+    is_deeply($payload->{thinking}, { type => 'enabled', budget_tokens => 8000 },
+        'MiniMax-M2.7 (enabled model) keeps type=enabled + high budget');
 };
 
 subtest 'MiniMax payload always sets reasoning_split=true' => sub {
