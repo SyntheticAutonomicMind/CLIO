@@ -7,7 +7,7 @@ use strict;
 use warnings;
 use utf8;
 use Carp qw(croak);
-use CLIO::Core::Logger qw(log_error log_warning log_debug);
+use CLIO::Core::Logger qw(log_error log_warning log_debug log_info);
 use File::Spec;
 use Cwd qw(getcwd);
 
@@ -81,25 +81,33 @@ Returns:
 =cut
 
 sub read_instructions {
-    my ($self, $workspace_path) = @_;
-    
+    my ($self, $workspace_path, %opts) = @_;
+
+    # Context-window-class aware AGENTS.md loading: XS-class models
+    # (<=32K context) skip AGENTS.md entirely because it's the largest
+    # optional content (10K-15K tokens) and would blow the prompt budget.
+    # Callers pass model_class via opts to control this. Default: include
+    # AGENTS.md (existing behavior preserved).
+    my $model_class = $opts{model_class};
+    my $skip_agents_md = $model_class && $model_class eq 'XS';
+
     # Check for environment variable override (used by sub-agents)
     my $custom_path = $ENV{CLIO_CUSTOM_INSTRUCTIONS};
     if ($custom_path) {
         log_debug('InstructionsReader', "Found CLIO_CUSTOM_INSTRUCTIONS env var: $custom_path");
-        
+
         if (-f $custom_path) {
             log_debug('InstructionsReader', "Loading custom instructions from: $custom_path");
-            
+
             open(my $fh, '<:encoding(UTF-8)', $custom_path) or do {
                 log_warning('InstructionsReader', "Cannot read custom instructions file: $!");
                 # Fall through to normal loading
                 goto NORMAL_LOADING;
             };
-            
+
             my $content = do { local $/; <$fh> };
             close($fh);
-            
+
             if ($content) {
                 log_debug('InstructionsReader', "Loaded " . length($content) . " bytes from custom instructions");
                 return $content;
@@ -108,13 +116,13 @@ sub read_instructions {
             log_warning('InstructionsReader', "CLIO_CUSTOM_INSTRUCTIONS file does not exist: $custom_path");
         }
     }
-    
+
     NORMAL_LOADING:
     # Default to current working directory if not provided
     $workspace_path ||= getcwd();
-    
+
     my @parts;
-    
+
     # 1. Load CLIO-specific instructions first (.clio/instructions.md)
     # This defines CLIO's operational identity and behavior
     my $clio_instructions = $self->_read_clio_instructions($workspace_path);
@@ -122,24 +130,32 @@ sub read_instructions {
         push @parts, $clio_instructions;
         log_debug('InstructionsReader', "Loaded .clio/instructions.md (" . length($clio_instructions) . " bytes)");
     }
-    
-    # 2. Load AGENTS.md (project-level context)
-    # This provides domain knowledge and project-specific guidance
-    my $agents_md = $self->_find_and_read_agents_md($workspace_path);
-    if ($agents_md) {
-        push @parts, $agents_md;
-        log_debug('InstructionsReader', "Loaded AGENTS.md (" . length($agents_md) . " bytes)");
+
+    # 2. Load AGENTS.md (project-level context) - SKIP for XS-class models.
+    # AGENTS.md is the largest optional content in the prompt (10K-15K tokens
+    # for a typical project). On 32K or smaller context models, including it
+    # leaves no room for the dialog. Replace with a one-line pointer so the
+    # model knows the file exists but we don't pay the token cost.
+    if ($skip_agents_md) {
+        log_info('InstructionsReader', "Skipping AGENTS.md (model_class=$model_class, XS budget)");
+        push @parts, '<agentsMdPointer>AGENTS.md exists; see /repo/AGENTS.md for full reference.</agentsMdPointer>';
+    } else {
+        my $agents_md = $self->_find_and_read_agents_md($workspace_path);
+        if ($agents_md) {
+            push @parts, $agents_md;
+            log_debug('InstructionsReader', "Loaded AGENTS.md (" . length($agents_md) . " bytes)");
+        }
     }
-    
+
     # Combine both sources (if any)
     if (@parts) {
         my $combined = join("\n\n---\n\n", @parts);
         log_debug('InstructionsReader', "Combined instructions: " . length($combined) . " bytes total");
         return $combined;
     }
-    
+
     log_debug('InstructionsReader', "No custom instructions found");
-    
+
     return undef;
 }
 

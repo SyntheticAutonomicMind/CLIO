@@ -57,6 +57,7 @@ sub new {
         show_thinking   => $opts{show_thinking} // 0,  # Surface thinking stream and append steering paragraph
         needs_thinking_steering => $opts{needs_thinking_steering} // 0,  # Inject "Reasoning Visibility" paragraph
         # (Anthropic adaptive summarizer only - see generate_thinking_steering_section)
+        model_class     => $opts{model_class},  # Context-window-class for budget scaling (XS/S/M/L/XL)
         _tools_section_cache => undef,
         _skills_section_cache => undef,
         _user_context_cache => undef,
@@ -91,6 +92,8 @@ sub build_system_prompt {
         skip_custom => $self->{skip_custom},
         enable_subagents => $self->{enable_subagents},
     );
+    # Propagate model_class so XS-class loads skip AGENTS.md.
+    $pm->set_model_class($self->{model_class}) if defined $self->{model_class};
 
     if ($self->{skip_custom}) {
         log_debug('PromptBuilder', "Skipping custom instructions (--no-custom-instructions or --incognito)");

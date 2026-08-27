@@ -76,6 +76,7 @@ sub new {
         metadata_file => File::Spec->catfile($prompts_dir, 'metadata.json'),
         metadata => {},
         custom_instructions_cache => undef,
+        model_class => undef,
     };
     
     bless $self, $class;
@@ -660,20 +661,47 @@ Returns: Custom instructions text or undef
 
 sub _load_custom_instructions {
     my ($self) = @_;
-    
+
     # Return cached value if available
-    return $self->{custom_instructions_cache} 
+    return $self->{custom_instructions_cache}
         if defined $self->{custom_instructions_cache};
-    
+
     # Try to load from .clio/instructions.md
     require CLIO::Core::InstructionsReader;
     my $reader = CLIO::Core::InstructionsReader->new(debug => $self->{debug});
-    my $custom = $reader->read_instructions();
-    
+    # Pass model_class so XS-class models skip AGENTS.md. This is the
+    # context-window-class aware budget for the custom instructions
+    # section. See lib/CLIO/Core/ModelBudget.pm and
+    # docs/SPECS/MODEL_BUDGETS.md for the full budget table.
+    my $custom = $reader->read_instructions(undef,
+        model_class => $self->{model_class});
+
     # Cache result (even if undef)
     $self->{custom_instructions_cache} = $custom;
-    
+
     return $custom;
+}
+
+=head2 set_model_class
+
+Set the model class for budget allocation. XS-class models will skip
+AGENTS.md via _load_custom_instructions. Callers should pass the
+class from CLIO::Core::ModelBudget::model_class().
+
+Arguments:
+    $class - 'XS', 'S', 'M', 'L', 'XL', or undef to clear
+
+=cut
+
+sub set_model_class {
+    my ($self, $class) = @_;
+    $self->{model_class} = $class;
+    # Invalidate the cached instructions so the next load reflects the
+    # new class. This is critical: if the class changes mid-session
+    # (e.g. user switches from cloud to local), we must re-read with
+    # the new skip_agents_md setting.
+    undef $self->{custom_instructions_cache};
+    return 1;
 }
 
 =head2 _read_prompt_file

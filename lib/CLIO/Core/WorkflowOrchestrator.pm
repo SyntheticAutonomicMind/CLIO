@@ -224,6 +224,26 @@ sub new {
     }
     log_debug('WorkflowOrchestrator', "needs_thinking_steering=" . ($needs_thinking_steering ? '1' : '0')
         . " (show_thinking=" . ($show_thinking ? '1' : '0') . ")");
+    # Context-window-class for budget scaling (XS-class skips AGENTS.md).
+    # XS-class models (<=32K) need aggressive prompt scaling because the
+    # full CLIO system + AGENTS.md + LTM + tools schema exceeds their
+    # context window. We classify the model on-demand from MCM and pass
+    # the result to PromptBuilder, which propagates it to PromptManager.
+    my $model_class;
+    eval {
+        require CLIO::Core::ModelCapabilitiesManager;
+        require CLIO::Core::ModelBudget;
+        my $mcm = CLIO::Core::ModelCapabilitiesManager->new(debug => 0);
+        my $caps = $args{api_manager} ? $args{api_manager}->get_model_capabilities($args{api_manager}->get_current_model()) : undef;
+        if ($caps && $caps->{context_window}) {
+            $model_class = CLIO::Core::ModelBudget::model_class($caps->{context_window});
+        }
+    };
+    if ($@) {
+        log_debug('WorkflowOrchestrator', "Failed to compute model_class: $@");
+    }
+    log_debug('WorkflowOrchestrator', "model_class=" . ($model_class // 'undef')
+        . " (used for context-window-class aware budget scaling)");
     $self->{prompt_builder} = CLIO::Core::PromptBuilder->new(
         debug           => $args{debug},
         skip_custom     => $self->{skip_custom},
@@ -237,6 +257,7 @@ sub new {
         auto_discover_skills => $auto_discover_skills,
         show_thinking   => $show_thinking,
         needs_thinking_steering => $needs_thinking_steering,
+        model_class     => $model_class,
     );
 
     if ($auto_discover_skills) {
