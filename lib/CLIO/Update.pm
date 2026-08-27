@@ -247,8 +247,11 @@ sub switch_to_version {
         return { success => 0, error => "Invalid version format: $version" };
     }
 
-    # Download the version
-    my $source_dir = $self->download_version($version);
+    # Download the version. Use list context to also get the cleanup dir -
+    # this avoids the previous dirname($source_dir) approach which rmtree'd
+    # the entire parent directory (e.g. /tmp when source_dir sat at
+    # /tmp/foo), walking thousands of unrelated files on shared systems.
+    my ($source_dir, $cleanup_dir) = $self->download_version($version);
     unless ($source_dir) {
         return { success => 0, error => "Failed to download version $version" };
     }
@@ -256,9 +259,11 @@ sub switch_to_version {
     # Install from directory
     my $ok = $self->install_from_directory($source_dir);
 
-    # Clean up download directory regardless of outcome
-    my $download_dir = dirname($source_dir);
-    rmtree($download_dir) if -d $download_dir;
+    # Clean up download directory regardless of outcome. The cleanup dir
+    # comes from download_version() - never recompute via dirname().
+    if ($cleanup_dir && -d $cleanup_dir) {
+        rmtree($cleanup_dir);
+    }
 
     if ($ok) {
         # Clear update cache so future status checks reflect the new version
@@ -703,16 +708,18 @@ Returns:
 
 sub install_latest {
     my ($self) = @_;
-    
-    # Download latest
-    my $source_dir = $self->download_latest();
+
+    # Download latest. Use list context to also get the cleanup dir -
+    # avoids the dirname() fragility where rmtree walked the entire parent
+    # directory on shared systems.
+    my ($source_dir, $cleanup_dir) = $self->download_latest();
     unless ($source_dir) {
         return {
             success => 0,
             message => "Failed to download latest version",
         };
     }
-    
+
     # Get version from downloaded source (best effort - falls back to 'unknown')
     my $new_version = 'unknown';
     if (-f "$source_dir/VERSION") {
@@ -731,8 +738,9 @@ sub install_latest {
     # Install
     my $install_success = $self->install_from_directory($source_dir);
 
-    # Cleanup download directory
-    rmtree(dirname($source_dir));
+    # Cleanup download directory - use the explicit cleanup dir returned by
+    # download_latest() rather than dirname() of the extracted path.
+    rmtree($cleanup_dir) if $cleanup_dir && -d $cleanup_dir;
 
     if ($install_success) {
         # Clear update cache so future status checks reflect the new version
