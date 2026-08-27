@@ -2486,11 +2486,33 @@ sub _execute_tool_round {
         # repeating N times means the model is stuck and just burning context
         # budget on schema dumps. After N=3 identical-shape errors, inject a
         # stop signal so the model knows to break the loop.
+        #
+        # Loop signature: tool|operation|error_category. The category is
+        # computed by ToolErrorGuidance::categorize_error which produces a
+        # stable enum (missing_required, invalid_operation, directory_not_found,
+        # etc.). The OLD signature used the first 80 chars of the raw error,
+        # which had two failure modes:
+        #   1. Slight variance in the error text (timestamps, IDs, line
+        #      numbers) reset the count to 1.
+        #   2. Different operation names that resolved to the same root
+        #      cause (e.g. "exec" vs "execute") reset the count.
+        # The category-based signature is robust to both: the categorizer
+        # reduces the noisy raw text to one of ~20 stable enums.
         if ($is_error && $result_data && ref($result_data) eq 'HASH') {
+            my $err_category = 'unknown';
+            if ($self->{error_guidance} && $self->{error_guidance}->can('categorize_error')) {
+                eval {
+                    $err_category = $self->{error_guidance}->categorize_error(
+                        $result_data->{error} // '',
+                        $tool_name,
+                    );
+                };
+                $err_category = 'unknown' if $@;
+            }
             my $err_sig = join("|",
                 $tool_name,
                 $tool_operation || '',
-                substr($result_data->{error} // '', 0, 80)
+                $err_category
             );
             if (!defined $self->{_tool_error_loop_count}) {
                 $self->{_tool_error_loop_count} = {};
