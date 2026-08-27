@@ -537,11 +537,13 @@ sub compress_messages {
         );
     }
 
-    # Cache-Stable Summary Slot (CSSS): if caller requested a target token size,
-    # fit the summary to that size. Truncate oldest items first if too big,
-    # pad with neutral filler if too small. This keeps the summary at a constant
-    # byte length across trim cycles, so llama.cpp's prompt cache can reuse
-    # everything before and after the summary slot.
+    # Cache-Stable Summary Slot (CSSS): if caller requested a target token
+    # size, treat it as a CEILING. _fit_summary_to_target truncates if the
+    # summary exceeds the ceiling (dropping oldest task blocks / sections,
+    # then hard-truncating as a last resort). If the summary is below the
+    # ceiling it is left at its natural size - NO padding. This ensures
+    # llama.cpp's prompt cache only invalidates at the summary position
+    # on growth events, not on every turn via padding.
     if ($target_tokens && $target_tokens > 0) {
         $summary_content = _fit_summary_to_target($summary_content, $target_tokens);
     }
@@ -1133,18 +1135,21 @@ sub _parse_previous_summary {
 
 =head2 _fit_summary_to_target
 
-Adjust a thread_summary string to fit a target token budget.
+Adjust a thread_summary string to fit within a target token budget.
 
 Strategy:
 - If too big: drop sections in least-critical-first order (tool_counts,
   decisions, files, commits, collaboration, user_requests). Within a section,
   truncate oldest items. Always preserve the Current task line.
-- If too small: pad with a single HTML comment line of neutral filler that
-  # is byte-stable across calls (so it caches the same way each time).
+- If too small: leave as-is (NO padding). Earlier versions padded
+  undersized summaries with an HTML comment of x's to lock the byte
+  size for cache stability; this was removed in 2026-08-27 because the
+  padding was visible to the model as a massive artifact inside
+  <thread_summary>.
 
 Arguments:
   $summary_content - Already-rendered thread_summary string
-  $target_tokens   - Desired token count (approximate; tolerance ~10%)
+  $target_tokens   - Maximum token budget (ceiling, not exact target)
 
 Returns: Adjusted summary string.
 
@@ -1156,10 +1161,25 @@ sub _fit_summary_to_target {
     require CLIO::Memory::TokenEstimator;
     my $current = CLIO::Memory::TokenEstimator::estimate_tokens($summary_content);
 
-    # Within 10% of target - leave as is. Estimation accuracy is ~5-10% so
-    # chasing exact equality causes thrashing without benefit.
+    # No target set: pass through unchanged. The summary grows
+    # organically with dropped content. Caller is responsible for
+    # bounding against the ceiling if a maximum is desired.
+    return $summary_content unless $target_tokens && $target_tokens > 0;
+
+    # Within ceiling: leave the natural summary size alone. Padding
+    # to lock the byte size for cache stability was tried but the
+    # padding blocks of x's were visible to the model as a massive
+    # artifact inside <thread_summary>. Summaries now grow organically
+    # and only invalidate the cache on the summary position itself,
+    # which is a one-time cost per growth event instead of a constant
+    # ~32K-48K char tax on every trim.
+    #
+    # We still enforce a ceiling: if the summary grew beyond the
+    # caller's target, drop oldest task blocks / sections / hard-
+    # truncate as before. The target is now a ceiling, not a target.
+    return $summary_content if $current <= $target_tokens;
+
     my $tolerance = int($target_tokens * 0.10);
-    return $summary_content if abs($current - $target_tokens) <= $tolerance;
 
     if ($current > $target_tokens) {
         log_debug('YaRN', "CSSS: summary $current tokens > target $target_tokens, trimming");
@@ -1264,19 +1284,6 @@ sub _fit_summary_to_target {
                 log_warning('YaRN', "CSSS: hard-truncated summary to $current tokens (target: $target_tokens, preserved Current task)");
             }
         }
-    }
-    elsif ($current < $target_tokens) {
-        # Too small - pad with cache-stable filler. The filler must be
-        # byte-deterministic so subsequent regenerations produce identical
-        # bytes (cache hit on the filler portion too).
-        my $shortfall = $target_tokens - $current;
-        my $ratio = CLIO::Memory::TokenEstimator::get_effective_ratio();
-        my $BUCKET = 64;
-        my $filler_chars = int(($shortfall * $ratio + $BUCKET - 1) / $BUCKET) * $BUCKET;
-        $filler_chars = $BUCKET if $filler_chars < $BUCKET;
-        $summary_content .= "\n<!-- csss:padding:" . ('x' x $filler_chars) . " -->\n";
-        $current = CLIO::Memory::TokenEstimator::estimate_tokens($summary_content);
-        log_debug('YaRN', "CSSS: padded summary to $current tokens (target: $target_tokens, filler=$filler_chars)");
     }
 
     return $summary_content;

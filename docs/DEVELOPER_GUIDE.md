@@ -707,7 +707,7 @@ Every API request CLIO sends follows a fixed seven-slot layout for LCP (Longest 
 
 ```
 [0] system_prompt      Static (built once per session; includes tools schema)
-[1] summary            CSSS slot; regenerates within size budget
+[1] summary            CSSS slot; grows organically up to MAX_CSSR_SLOT_TOKENS
 [2] context_files      User-added files (stable until /context add|remove)
 [3] dialog             user / assistant alternating (chronological)
 [4] tool_results       Deinterleaved to END; oldest first

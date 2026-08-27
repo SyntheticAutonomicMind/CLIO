@@ -6,7 +6,7 @@ package CLIO::Core::API::MessageValidator;
 use strict;
 use warnings;
 use utf8;
-use CLIO::Core::Defaults qw(DEFAULT_POST_TRIM_FLOOR MIN_CSSS_SLOT_TOKENS
+use CLIO::Core::Defaults qw(DEFAULT_POST_TRIM_FLOOR
     MAX_CSSS_SLOT_TOKENS MAX_PRESERVED_HIGH_VALUE ACK_THRESHOLD_CHARS);
 use CLIO::Core::Logger qw(should_log log_debug log_info log_warning);
 use CLIO::Memory::TokenEstimator qw(estimate_tokens compute_prompt_budget);
@@ -437,27 +437,38 @@ sub validate_and_truncate {
     # Create merged summary only if there are dropped messages to compress.
     # If nothing was dropped, preserve the existing summary as-is.
     my $summary_to_use;
-    # Cache-Stable Summary Slot (CSSS): when an existing thread_summary exists,
-    # use its current token count as the target slot size. Subsequent trims
-    # regenerate the summary to fit this same slot, so llama.cpp's prefix
-    # cache stays valid for everything before and after the summary slot.
+    # CSSS (Cache-Stable Summary Slot): bounding summary size.
     #
-    # CRITICAL: The first trim has NO previous summary, so it creates a
-    # naturally small summary. If we lock CSSS to that small size, all
-    # subsequent trims are starved. Use MIN_CSSS_SLOT_TOKENS as a floor.
-    # Also allow proactive growth when dropped content significantly exceeds
-    # the current slot (1.5x), rather than waiting for hard truncation.
+    # Earlier versions tried to lock the summary at a constant byte size
+    # for cache stability, padding undersized summaries with thousands
+    # of x's to fill the slot. The padding was visible to the model as
+    # a massive artifact inside <thread_summary> and burned context
+    # budget. See git history of YaRN.pm:_fit_summary_to_target.
+    #
+    # Current policy: target_tokens is a CEILING, not an exact target.
+    # The summary grows organically with dropped content. We only
+    # enforce a maximum (MAX_CSSS_SLOT_TOKENS) to prevent unbounded
+    # growth when aggressive trims drive large amounts of content into
+    # the summary. The summary slot itself can be smaller than MAX
+    # when there's less dropped content - this is the desired behavior.
+    #
+    # Cache impact: when the summary grows, the cache invalidates on
+    # the summary position itself. That's a one-time cost per growth
+    # event (much cheaper than paying thousands of padding tokens on
+    # every turn).
     my $summary_slot_target = 0;
     if ($summary_unit && $summary_unit->{tokens}) {
         my $current_slot = $summary_unit->{tokens};
-        my $min_slot = CLIO::Core::Defaults::MIN_CSSS_SLOT_TOKENS();
-        # Use the larger of current slot or minimum floor
-        $summary_slot_target = $current_slot < $min_slot ? $min_slot : $current_slot;
-        log_debug('MessageValidator', "CSSS: base slot target $summary_slot_target (current: $current_slot, min: $min_slot)");
+        # Lock the slot to the EXISTING summary size - no floor. The
+        # summary slot grows with content but never shrinks (we
+        # don't try to compact it back down).
+        $summary_slot_target = $current_slot;
+        log_debug('MessageValidator', "CSSS: slot target $summary_slot_target (current summary size)");
 
-        # Proactive growth: if dropped content is > 1.5x slot, grow the slot
-        # before compression. This prevents the summary from being hard-truncated
-        # and silently dropping the "Current task" or other critical context.
+        # Proactive growth: if dropped content is > 1.5x slot, grow the
+        # slot ceiling before compression. This prevents the summary
+        # from being hard-truncated and silently dropping the "Current
+        # task" or other critical context.
         if ($dropped_tokens > $summary_slot_target * 1.5) {
             my $max_slot = CLIO::Core::Defaults::MAX_CSSS_SLOT_TOKENS();
             my $new_slot = int($summary_slot_target * 1.5);
@@ -468,13 +479,13 @@ sub validate_and_truncate {
             }
         }
     } elsif (@dropped_units) {
-        # First trim: no existing summary to lock to. Use MIN_CSSS_SLOT_TOKENS
-        # as the initial slot size so subsequent trims have a stable target to
-        # lock against. Without this, the first summary is naturally tiny
-        # (a few tokens for "Current task" + whatever drops compress to) and
-        # locks CSSS to that small size forever.
-        $summary_slot_target = CLIO::Core::Defaults::MIN_CSSS_SLOT_TOKENS();
-        log_debug('MessageValidator', "CSSS: first trim slot target $summary_slot_target (MIN_CSSS_SLOT_TOKENS floor)");
+        # First trim: no existing summary. Just let the summary grow
+        # organically with dropped content. _fit_summary_to_target
+        # only enforces the ceiling, not a floor. This means small
+        # sessions get tiny summaries (good) and big sessions get
+        # summaries up to MAX_CSSS_SLOT_TOKENS.
+        $summary_slot_target = CLIO::Core::Defaults::MAX_CSSS_SLOT_TOKENS();
+        log_debug('MessageValidator', "CSSS: first trim, target = MAX ceiling $summary_slot_target (organic growth)");
     }
 
     if (@dropped_units) {

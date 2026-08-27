@@ -13,8 +13,7 @@ use CLIO::Memory::TokenEstimator qw(estimate_tokens compute_prompt_budget get_ef
 use CLIO::Util::JSON qw(safe_encode_json);
 use CLIO::Util::RateLimit qw(get_rate_limit_type_name);
 use CLIO::Core::Diagnostics qw(dump_diagnostic display_rate_limit_info get_tool_specific_guidance);
-use CLIO::Core::Defaults qw(DEFAULT_CONTEXT_WINDOW MIN_CSSS_SLOT_TOKENS);
-use Time::HiRes qw(sleep);
+use CLIO::Core::Defaults qw(DEFAULT_CONTEXT_WINDOW DEFAULT_POST_TRIM_FLOOR);
 
 =head1 NAME
 
@@ -877,7 +876,7 @@ sub trim_for_token_limit {
         }
 
         require CLIO::Core::Defaults;
-        my $floor = CLIO::Core::Defaults::MIN_CSSS_SLOT_TOKENS();
+        my $floor = CLIO::Core::Defaults::DEFAULT_POST_TRIM_FLOOR();
         $keep_budget = $floor if $keep_budget < $floor;
 
         log_info('ErrorHandler', sprintf(

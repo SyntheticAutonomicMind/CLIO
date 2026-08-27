@@ -232,7 +232,13 @@ subtest 'YaRN _fit_summary_to_target truncates when summary too big' => sub {
 };
 
 # ===== Test 6: YaRN _fit_summary_to_target pads undersized summary =====
-subtest 'YaRN _fit_summary_to_target pads when summary too small' => sub {
+# Earlier versions of CLIO padded undersized summaries with thousands of
+# 'x' characters to lock the byte size for cache stability. The padding
+# was visible to the model as a massive artifact inside <thread_summary>
+# and burned context budget on every trim. See YaRN.pm:_fit_summary_to_target.
+# The fix removes padding entirely: summaries grow organically and only
+# the ceiling is enforced.
+subtest 'YaRN _fit_summary_to_target leaves undersized summary at natural size (no padding)' => sub {
     my $yarn = CLIO::Memory::YaRN->new();
 
     my @dropped = (
@@ -249,8 +255,14 @@ subtest 'YaRN _fit_summary_to_target pads when summary too small' => sub {
     my $final_tokens = estimate_tokens($result->{content});
     diag("Tiny summary with target=5000: actual=$final_tokens tokens");
 
-    ok($final_tokens >= 4000,
-        "Summary padded toward target (actual=$final_tokens >= 4000)");
+    ok($final_tokens < 1000,
+        "Tiny summary stays at natural size (actual=$final_tokens < 1000 tokens), no padding inflation");
+
+    unlike($result->{content}, qr/csss:padding/,
+        "No csss:padding marker in summary (padding was the bug)");
+
+    unlike($result->{content}, qr/x{100,}/,
+        "No long x-runs in summary (padding used literal x characters)");
 
     # Padded content should be cache-stable (same bytes each call)
     my $result2 = $yarn->compress_messages(\@dropped,
@@ -258,7 +270,7 @@ subtest 'YaRN _fit_summary_to_target pads when summary too small' => sub {
         target_tokens => 5000,
     );
     is($result->{content}, $result2->{content},
-        "Padded summary produces identical bytes across calls (cache-stable)");
+        "Summary produces identical bytes across calls (deterministic, even without padding)");
 };
 
 # ===== Test 7: Recent messages stay at constant positions across trims =====

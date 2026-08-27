@@ -195,6 +195,24 @@ my $overall_ratio = $total_processed > 0
     ? sprintf("%.1f%%", 100 * $total_cached / $total_processed)
     : '0%';
 
+# CSSS padding audit: scan for the '<!-- csss:padding:' marker in any
+# thread_summary. This marker was emitted by older CLIO versions that
+# padded the summary slot with literal x's. The fix (2026-08-27) removed
+# padding entirely. If found in a session, the session was created by
+# an old CLIO version, OR a regression landed.
+my $csss_padding_found = 0;
+my $csss_padding_msgs = 0;
+my $max_padding_chars = 0;
+for my $m (@hist) {
+    next unless ($m->{role} // '') eq 'system';
+    my $content = $m->{content} // '';
+    next unless $content =~ /csss:padding:([x]+)/;
+    $csss_padding_found = 1;
+    $csss_padding_msgs++;
+    my $len = length($1);
+    $max_padding_chars = $len if $len > $max_padding_chars;
+}
+
 if ($json_output) {
     require JSON;
     my %out = (
@@ -205,6 +223,11 @@ if ($json_output) {
         overall_cache_hit_ratio => $overall_ratio,
         total_trim_events => $total_trims,
         total_csss_rotations => $total_csss,
+        csss_padding => {
+            detected => $csss_padding_found ? 1 : 0,
+            messages => $csss_padding_msgs,
+            max_padding_chars => $max_padding_chars,
+        },
         per_turn => [],
     );
     for my $t (@turns) {
@@ -231,6 +254,11 @@ print "Turns: " . scalar(@turns) . "\n";
 print "Total processed: $total_processed tokens\n";
 print "Total cached: $total_cached tokens\n";
 print "Overall hit ratio: $overall_ratio\n";
+if ($csss_padding_found) {
+    print "CSSS padding: $csss_padding_msgs message(s), $max_padding_chars chars of filler\n";
+} else {
+    print "CSSS padding: none (healthy)\n";
+}
 print "Trim events: $total_trims\n";
 print "CSSS rotations: $total_csss\n";
 print "\n";
@@ -256,6 +284,9 @@ if ($total_trims > scalar(@turns)) {
 }
 if ($total_csss > scalar(@turns) / 2) {
     push @warnings, "CSSS rotating on more than half of turns ($total_csss rotations) - summary not stable";
+}
+if ($csss_padding_found) {
+    push @warnings, "CRITICAL: csss:padding marker found in $csss_padding_msgs messages ($max_padding_chars chars of filler) - CSSS padding bug present";
 }
 for my $t (@turns) {
     my $ratio = $t->{bytes_processed} > 0

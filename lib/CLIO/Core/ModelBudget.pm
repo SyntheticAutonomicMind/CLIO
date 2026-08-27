@@ -64,6 +64,11 @@ our %EXPORT_TAGS = (all => \@EXPORT_OK);
 # AGENTS.md and tools schema sections use byte counts because they are
 # file-based rather than tokenized at load time.
 
+# csss_slot is a CEILING on the summary size, not a target. Earlier
+# versions used it as a hard lock with padding to enforce byte-level
+# stability for llama.cpp cache; that approach was abandoned because
+# the padding was visible to the model as a massive artifact inside
+# <thread_summary>. See YaRN.pm:_fit_summary_to_target.
 my %DEFAULT_BUDGETS = (
     'XS' => {
         # <= 32K context. Aggressive scaling: drop everything that's not
@@ -75,7 +80,7 @@ my %DEFAULT_BUDGETS = (
         ltm                   => 0,     # SKIP entirely
         session_goals         => 200,   # truncated to 200 tokens
         tools_schema          => 6000,  # tools filtered to essentials
-        csss_slot         => 2000,  # smaller CSSS
+        csss_slot             => 2000,  # summary ceiling (XS scale)
         dialog                => 8000,  # hard cap on dialog
         description           => 'XS (<=32K): aggressive scaling, drop AGENTS.md and LTM',
     },
@@ -88,7 +93,7 @@ my %DEFAULT_BUDGETS = (
         ltm                   => 2000,  # top 3 most-recent entries
         session_goals         => -1,    # full
         tools_schema          => 12000, # filter to essentials
-        csss_slot         => 4000,
+        csss_slot             => 4000,  # summary ceiling (S scale)
         dialog                => 16000, # hard cap
         description           => 'S (32K-64K): moderate scaling',
     },
@@ -101,7 +106,7 @@ my %DEFAULT_BUDGETS = (
         ltm                   => 6000,  # top 6-8 most-recent
         session_goals         => -1,
         tools_schema          => -1,    # all tools
-        csss_slot         => 8000,  # CSSS default
+        csss_slot             => 8000,  # summary ceiling (M default)
         dialog                => -1,    # no hard cap
         description           => 'M (64K-128K): full, comfortable',
     },
@@ -114,7 +119,7 @@ my %DEFAULT_BUDGETS = (
         ltm                   => 10000,
         session_goals         => -1,
         tools_schema          => -1,
-        csss_slot         => 8000,
+        csss_slot             => 8000,  # summary ceiling (L)
         dialog                => -1,
         description           => 'L (128K-256K): full everything, comfortable',
     },
@@ -127,7 +132,7 @@ my %DEFAULT_BUDGETS = (
         ltm                   => -1,    # full LTM
         session_goals         => -1,
         tools_schema          => -1,
-        csss_slot         => 8000,
+        csss_slot             => 8000,  # summary ceiling (XL)
         dialog                => -1,
         description           => 'XL (>256K): full everything, plenty of headroom',
     },

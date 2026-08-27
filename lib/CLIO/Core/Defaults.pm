@@ -94,15 +94,20 @@ use constant DEFAULT_POST_TRIM_FLOOR      => 24000;   # Minimum tokens to keep a
                                                     # trim at 24K leaves ~84K headroom per cycle.
 
 # Cache-Stable Summary Slot (CSSS) bounds.
-# MIN_CSSS_SLOT_TOKENS: Minimum slot size to ensure "Current task" + essential
-# context fits even after aggressive trim. The first trim creates a naturally
-# small summary (no CSSS constraint); without a floor, CSSS locks to that small
-# size and starves subsequent summaries. 8K preserves ~2K for Current task +
-# ~6K for recent decisions/files/commits.
-# MAX_CSSS_SLOT_TOKENS: Hard ceiling on slot growth. Prevents unbounded growth
-# when aggressive trim drives more content into the summary than can fit.
-use constant MIN_CSSS_SLOT_TOKENS         => 8000;    # Minimum CSSS slot size (tokens)
-use constant MAX_CSSS_SLOT_TOKENS         => 12000;   # Maximum CSSS slot size (tokens)
+# MIN_CSSS_SLOT_TOKENS: Retained as a SAFETY NET for code paths that
+# gate on minimum payload size (e.g. resume fast path's
+# `payload_tokens < MIN_CSSS_SLOT_TOKENS` fallback to full rebuild).
+# No longer drives padding - the summary grows organically and the
+# model is never exposed to fill bytes. See YaRN.pm:_fit_summary_to_target.
+# 8192 covers the minimum reasonable summary (Current task + key
+# decisions + recent files). Anything smaller likely means the session
+# is in trouble and we should rebuild from history.
+# MAX_CSSS_SLOT_TOKENS: Hard ceiling on slot growth. Prevents unbounded
+# growth when aggressive trim drives more content into the summary
+# than can fit. Also serves as the initial ceiling on the first trim
+# (no previous summary to lock to).
+use constant MIN_CSSS_SLOT_TOKENS         => 8192;    # Resume fallback gate (no longer padding floor)
+use constant MAX_CSSS_SLOT_TOKENS         => 12000;   # Summary ceiling - hard cap
 
 # Trim priority tier constants (see docs/SPECS/TRIM_PRIORITY.md).
 # MAX_PRESERVED_HIGH_VALUE: the most recent N dialog units (Tier 2) are

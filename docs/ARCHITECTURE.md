@@ -118,7 +118,7 @@ Every API request follows the **seven-slot layout** defined in
 
 ```
 [0] system_prompt      Static (built once per session)
-[1] summary            CSSS slot, regenerates within size budget
+[1] summary            CSSS slot, grows organically up to MAX ceiling
 [2] context_files      User-added files (stable until /context change)
 [3] dialog             user / assistant alternating (chronological)
 [4] tool_results       Deinterleaved to END; oldest first
@@ -134,7 +134,7 @@ dialog and tool_results cached. Section [6] is always fresh.
 The pipeline is implemented across:
 
 - `ConversationManager.pm` — `load_conversation_history`, `trim_conversation_for_api`, `enforce_message_alternation` (system messages are NOT merged), `inject_context_files`
-- `API/MessageValidator.pm` — `validate_and_truncate` (CSSS slot lock, proactive + reactive trim)
+- `API/MessageValidator.pm` — `validate_and_truncate` (proactive + reactive trim, CSSS slot ceiling)
 - `WorkflowOrchestrator.pm` — `_build_turn_context` (assembles all sections), `_capture_api_payload` (snapshot at end of turn), `_try_resume_from_payload` (resume fast path)
 - `PromptBuilder.pm` — `build_system_prompt` (section [0]), `get_user_context` (section [5])
 - `Providers/*.pm` — per-provider adaptation (Anthropic, OpenAI, llama.cpp)

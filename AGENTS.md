@@ -169,28 +169,28 @@ CLIO supports multimodal image upload and display:
 
 ## Cache-Stable Summary Slot (CSSS)
 
-The proactive trim in `MessageValidator` regenerates a `thread_summary` whenever it drops messages. Without CSSS, every trim changes the summary text - which invalidates llama.cpp's prompt cache for everything after the summary position in the prompt. This causes the agent to reprocess the full conversation on every trim cycle (huge CPU cost for local inference at ~400 tok/s).
+The proactive trim in `MessageValidator` regenerates a `thread_summary` whenever it drops messages. The `thread_summary` is placed at the **end** of the conversation (after all dialog + tool_results) so that on the next turn, the LCP prefix extends through all the preserved dialog before the summary position. Cache invalidation from summary changes only hits the summary tokens themselves.
 
-**How CSSS works:**
+**How CSSS works (current: organic growth, no padding):**
 
-1. After the first trim, the summary's current token count becomes the **locked slot size**.
-2. The slot is bounded by `MIN_CSSS_SLOT_TOKENS` (8K) and `MAX_CSSS_SLOT_TOKENS` (12K) to prevent starvation (slot too small to hold captured state) and unbounded growth.
-3. The slot can grow proactively: if the amount of content dropped in a trim exceeds 1.5x the current slot size, the slot is grown to absorb more tokens. This prevents aggressive trims from forcing the summary into hard-truncation and silently dropping captured state.
+1. After the first trim creates a summary, the summary's current token count becomes the **slot size** - the target the next trim aims to stay within.
+2. The slot is bounded above by `MAX_CSSS_SLOT_TOKENS` (12K). When dropped content exceeds 1.5x the current slot, the slot grows proactively (1.5x bump, capped at MAX) to avoid hard-truncating captured state.
+3. `MIN_CSSS_SLOT_TOKENS` is **no longer a padding floor** - it is retained only as a resume fast-path gate (see below).
 4. On every subsequent trim, `YaRN::compress_messages` is called with `target_tokens => $slot_size`.
-5. `_fit_summary_to_target` (in `YaRN.pm`) adjusts the summary to fit:
-   - Too big: drops sections in least-critical-first order (tool_counts, decisions, files, commits, collab, user_requests), then hard-truncates as a last resort. The `Current task` line is always preserved (extracted before truncation and prepended after).
-   - Too small: pads with a deterministic HTML comment (`<!-- csss:padding:xxxxx -->`) so byte-identical padding regenerates across calls.
-6. The summary is placed at the **end** of the conversation (after recent messages), so even summary content changes only invalidate the summary tokens themselves.
+5. `_fit_summary_to_target` (in `YaRN.pm`) now treats `target_tokens` as a **ceiling**, not an exact target. If the summary exceeds it, the oldest task blocks / sections are dropped and the summary may be hard-truncated (preserving `Current task`). If the summary is below the ceiling, it is left alone - **no padding**. Earlier versions padded undersized summaries with a `<!-- csss:padding:xxxxx -->` block of literal `x` characters, but the padding was visible to the model as a massive artifact inside `<thread_summary>` (reported as "CSS padding noise is massive and distracting"). The fix (2026-08-27) removed padding entirely - summaries now grow organically.
+
+**Cache impact of organic growth (vs. the old padding approach):**
+When the summary grows from 500 to 800 tokens, the LCP cache invalidation hits only the summary position onward - the system prompt + preserved dialog stays cached. That's a one-time cost per growth event (much cheaper than paying ~32K-48K chars of padding tokens on every trim).
 
 **Slot bounds:**
 
-- `MIN_CSSS_SLOT_TOKENS` (8192) in `lib/CLIO/Core/Defaults.pm` - prevents the first-trim slot from being too small to hold captured state
-- `MAX_CSSS_SLOT_TOKENS` (12000) in `lib/CLIO/Core/Defaults.pm` - hard ceiling on slot growth; one 25% step at a time
+- `MAX_CSSS_SLOT_TOKENS` (12000) in `lib/CLIO/Core/Defaults.pm` - hard ceiling on summary size; the slot grows by 1.5x steps up to this cap
+- `MIN_CSSS_SLOT_TOKENS` (8192) in `lib/CLIO/Core/Defaults.pm` - resume fast-path gate only: a payload smaller than this that contains a `thread_summary` falls back to a full history rebuild rather than reuse (so we never resume with a near-empty context)
 - `DEFAULT_POST_TRIM_FLOOR` (24000) in `lib/CLIO/Core/Defaults.pm` - minimum tokens kept verbatim after trimming (compromise between 32K conservative and 12K aggressive)
 
 **Combined with summary-at-end ordering:**
 - Recent messages stay at constant positions across trims
-- Cache hit on system prompt + recent messages; only the small summary slot is reprocessed
+- Cache hit on system prompt + recent messages; only the summary position is at risk from growth
 
 **Tool-output reserve optimization:**
 
@@ -204,16 +204,17 @@ The proactive trim in `MessageValidator` regenerates a `thread_summary` whenever
 **Diagnostics:**
 
 ```
-[DEBUG][MessageValidator] CSSS: locking summary slot to 3500 tokens (existing summary)
-[DEBUG][YaRN] CSSS: padded summary to 3506 tokens (target: 3500)
+[DEBUG][MessageValidator] CSSS: slot target 3500 tokens (existing summary)
+[DEBUG][MessageValidator] CSSS: first trim, target = MAX ceiling 12000 (organic growth)
+[DEBUG][MessageValidator] CSSS: proactive growth 3500 -> 5250 (dropped: 6000 tokens, 1.5x threshold)
 [DEBUG][MessageValidator] CSSS: cache impact ~50/83000 tokens invalidated (summary slot)
 ```
 
-**Tests:** `tests/unit/test_cache_stable_summary.pl` covers CSSS lock behavior, summary-at-end ordering, tool-reserve capping, and YaRN fit behavior. `tests/unit/test_user_context_anchor.pl` covers the user_context-at-any-position preservation that prevents the trim from silently dropping the chat template's `<system>` block (the CachyLLama full re-prompt bug observed 2026-08-18, where the validator dropped `dynamicContext` at msg[1] and the next request's chat template prefix diverged).
+**Tests:** `tests/unit/test_cache_stable_summary.pl` covers CSSS slot behavior, summary-at-end ordering, tool-reserve capping, and YaRN fit behavior. `tests/unit/test_csss_slot_lock_stability.pl` verifies the summary stays bounded by MAX across trim cycles. `tests/unit/test_no_csss_padding.pl` is a regression guard that scans all trim code paths for the `<!-- csss:padding -->` marker and asserts it is never emitted. `tests/unit/test_user_context_anchor.pl` covers the user_context-at-any-position preservation that prevents the trim from silently dropping the chat template's `<system>` block (the CachyLLama full re-prompt bug observed 2026-08-18, where the validator dropped `dynamicContext` at msg[1] and the next request's chat template prefix diverged).
 
 **Session resume and trim recovery:**
 
-When resuming a session, the orchestrator reuses the last API payload from `state->{last_api_payload}` (the exact `@messages` array last sent to the provider). If the saved payload is smaller than `MIN_CSSS_SLOT_TOKENS` and contains a `thread_summary` (indicating it was trimmed), the orchestrator falls back to a full history rebuild instead of reusing the truncated payload. This prevents the agent from resuming with an empty or near-empty context after aggressive trim.
+When resuming a session, the orchestrator reuses the last API payload from `state->{last_api_payload}` (the exact `@messages` array last sent to the provider). If the saved payload is smaller than `MIN_CSSS_SLOT_TOKENS` and contains a `thread_summary` (indicating it was aggressively trimmed to the point of near-emptiness), the orchestrator falls back to a full history rebuild instead of reusing the truncated payload. This prevents resuming with a degenerate context where the summary is the dominant (and stale) content.
 
 ---
 
@@ -1069,7 +1070,7 @@ Every API request CLIO sends follows a fixed message layout. The goal is LCP (Lo
 [0] system_prompt      Static (built once per session; includes tools schema)
 [1] context_files      User-added files (stable until /context add|remove)
 [2] dialog             user / assistant alternating, tool_results interleaved
-[3] summary            CSSS slot; regenerates within size budget, at END
+[3] summary            CSSS slot; grows organically up to MAX_CSSR_SLOT_TOKENS, at END
 [4] user_context       Dynamic (date/time, working dir, LTM, session goals)
 [5] user_input         Current turn's raw user input (no prefix)
 ```
@@ -1077,7 +1078,7 @@ Every API request CLIO sends follows a fixed message layout. The goal is LCP (Lo
 **Key invariants:**
 
 - Sections [0..1] are the **stable anchor** — only invalidate when tools change or context files are added/removed.
-- Section [3] is the **CSSS slot** — regenerates at a constant token count across trims, placed at the END so the LCP prefix extends through all dialog before breaking.
+- Section [3] is the **CSSS slot** — grows organically with dropped content up to `MAX_CSSR_SLOT_TOKENS`, placed at the END so the LCP prefix extends through all dialog before breaking. Cache invalidation from a size change only hits the summary position onward.
 - Section [4] is the **dynamic anchor** — changes every minute (date/time cache). When it changes, only [4] onwards is reprocessed. The dialog and tool_results at [2] stay cached.
 - Section [5] is always fresh.
 
@@ -1100,7 +1101,7 @@ The most common invalidation events are: user sends new turn (user_input changes
 - [0] — NEVER trimmed (system anchor)
 - [1] — NEVER trimmed (context_files, stable until /context change)
 - [2] — primary trim target (oldest dialog+tool pairs dropped first)
-- [3] — never trimmed (CSSS slot, locked to MIN/MAX_CSSS_SLOT_TOKENS)
+- [3] — never trimmed (CSSS slot, bounded by `MAX_CSSR_SLOT_TOKENS` ceiling)
 - [4] — replaced in-place on every resume (dynamic, not trimmed)
 - [5] — fresh each turn (not trimmed)
 
@@ -1108,14 +1109,15 @@ The most common invalidation events are: user sends new turn (user_input changes
 
 - **Anthropic**: concatenates all `role=system` messages into one `system` field with `cache_control: {type: 'ephemeral'}` on the system_prompt.
 - **OpenAI**: sends system messages as separate items. Supports per-message `cache_control`.
-- **llama.cpp**: sets `prompt_stable_prefix_tokens` = sum of leading system message tokens (system_prompt + context_files), excluding user_context. The CSSS summary at END is outside the stable prefix, so CSSS regeneration only invalidates the summary tokens, not the stable prefix.
+- **llama.cpp**: sets `prompt_stable_prefix_tokens` = sum of leading system message tokens (system_prompt + context_files), excluding user_context. The CSSS summary at END is outside the stable prefix, so CSSS regeneration only invalidates the summary tokens, not the stable prefix. Since summaries grow organically (not padded), the stable prefix boundary is stable as long as the summary does not exceed its prior position - a one-time cost per growth event.
 
 Full spec: [`docs/SPECS/PROMPT_PIPELINE.md`](docs/SPECS/PROMPT_PIPELINE.md).
 
 **Tests covering the protocol:**
 
 - `tests/unit/test_cache_stable_layout.pl` — trim produces the cache-stable message ordering
-- `tests/unit/test_cache_stable_summary.pl` — CSSS slot lock behavior
+- `tests/unit/test_cache_stable_summary.pl` — CSSS slot behavior + no-padding assertion
+- `tests/unit/test_csss_slot_lock_stability.pl` — summary bounded by MAX across trim cycles + no padding
 - `tests/unit/test_session_cached_payload.pl` — snapshot roundtrip + in-place user_context replacement + per-section signatures
 - `tests/unit/test_trim_threshold_consistency.pl` — pre-flight and proactive trims agree on threshold
 - `tests/unit/test_drift_ratio_tools.pl` — drift ratio includes tool definition tokens

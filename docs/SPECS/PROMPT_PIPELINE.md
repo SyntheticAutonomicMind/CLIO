@@ -23,7 +23,7 @@ lifetimes.
 [0] system_prompt      Static (built once per session; includes tools schema)
 [1] context_files      User-added files (stable until /context add|remove)
 [2] dialog             user / assistant alternating, tool_results interleaved
-[3] summary            CSSS slot; regenerates within size budget, at END
+[3] summary            CSSS slot; grows organically up to MAX_CSSR_SLOT_TOKENS, at END
 [4] user_context       Dynamic (date/time, working dir, LTM, session goals)
 [5] user_input         Current turn's raw user input (no prefix)
 ```
@@ -48,8 +48,9 @@ interleaved order throughout the pipeline. This means:
   not when they are shuffled.
 - The summary at END (position [3]) means the LCP break is at a
   well-defined boundary — after all live context, before the static
-  summary. CSSS locks the summary to a constant token count, so the
-  only invalidated tokens are the summary slot itself.
+  summary. The summary grows organically up to a MAX_CSSR_SLOT_TOKENS
+  ceiling; when it grows, only the summary position onward is
+  invalidated.
 
 ---------------------------------------------------
 
@@ -58,7 +59,7 @@ interleaved order throughout the pipeline. This means:
 | [0] system_prompt | Session start | Tools change | Session |
 | [1] context_files | After user /context | User adds/removes file | Until change |
 | [2] dialog | After history load | Trim drops oldest | Newest-only |
-| [3] summary | After trim | Drop oldest, CSSS lock | CSSS slot size |
+| [3] summary | After trim | Drop oldest, grow up to ceiling | CSSS ceiling (MAX)
 | [4] user_context | Every turn | Date ticks, LTM changes | ~1 minute |
 | [5] user_input | Every turn | Always | One turn |
 
@@ -110,7 +111,7 @@ context budget. Each section has a fixed trim priority:
   kept together (never split) — each assistant+tool_call_result unit is
   either fully retained or fully dropped. This preserves the natural
   interleaved ordering so the LCP cache stays stable.
-- **[3] summary** — NEVER trimmed. CSSS slot, locked to MIN/MAX bounds.
+- **[3] summary** — NEVER trimmed. CSSS slot, bounded by MAX_CSSR_SLOT_TOKENS ceiling (grows organically, no padding).
 - **[4] user_context** — NEVER trimmed. It's small and dynamic; not
   a budget concern. The validator preserves user_context system messages
   at any position (msg[1], msg[N-2], etc.) so the chat template's
@@ -127,14 +128,25 @@ policy. The proactive trim in MessageValidator also generates a new
 `<thread_summary>` message when content is dropped — that becomes the
 new section [1].
 
-CSSS (Cache-Stable Summary Slot) locks the summary's token budget
-across trims. When the summary regenerates within the same size slot,
-the LCP match for everything before and after the summary stays
-alive. Slot bounds:
+CSSS (Cache-Stable Summary Slot) bounds the summary token budget
+across trims. The summary is placed at the END of the conversation so
+that LCP cache invalidation from a size change only hits the summary
+position onward - the preserved dialog prefix stays cached.
 
-- `MIN_CSSS_SLOT_TOKENS` (8192) — prevents first-trim starvation
-- `MAX_CSSS_SLOT_TOKENS` (12000) — hard ceiling on slot growth
-- `DEFAULT_POST_TRIM_FLOOR` (24000) — minimum tokens kept verbatim
+The summary grows organically with dropped content up to
+`MAX_CSSR_SLOT_TOKENS` (12000). When dropped content exceeds 1.5x
+the current slot, the slot grows before compression to absorb the
+dropped tokens without hard-truncating captured state. Earlier
+versions padded undersized summaries with an
+`<!-- csss:padding:xxxxx -->` block of x's to lock the byte size;
+this was removed (2026-08-27) because the padding was visible to the
+model as a massive artifact.
+
+Slot bounds:
+
+- `MAX_CSSR_SLOT_TOKENS` (12000) - hard ceiling on summary size
+- `MIN_CSSR_SLOT_TOKENS` (8192) - resume fast-path gate
+- `DEFAULT_POST_TRIM_FLOOR` (24000) - minimum tokens kept verbatim
 
 Proactive growth: if a single trim drops more than 1.5x the current
 slot, the slot grows before compression to absorb the dropped tokens
@@ -348,7 +360,7 @@ The pipeline protocol is covered by:
 
 - `tests/unit/test_cache_stable_layout.pl` — validates that trim
   produces the cache-stable message ordering.
-- `tests/unit/test_cache_stable_summary.pl` — CSSS slot lock behavior.
+- `tests/unit/test_cache_stable_summary.pl` — CSSS slot behavior + no-padding assertion.
 - `tests/unit/test_session_cached_payload.pl` — snapshot roundtrip
   and the resume fast path's strip-and-replace logic.
 - `tests/unit/test_conversation_manager_multimodal.pl` — system
@@ -518,7 +530,7 @@ The pipeline protocol is implemented across:
 | File | Role |
 |------|------|
 | `lib/CLIO/Core/ConversationManager.pm` | `load_conversation_history`, `trim_conversation_for_api`, `enforce_message_alternation`, `inject_context_files` |
-| `lib/CLIO/Core/API/MessageValidator.pm` | `validate_and_truncate` (proactive + reactive trim, CSSS slot lock) |
+| `lib/CLIO/Core/API/MessageValidator.pm` | `validate_and_truncate` (proactive + reactive trim, CSSS slot ceiling) |
 | `lib/CLIO/Core/WorkflowOrchestrator.pm` | `_build_turn_context` (assembles all sections), `_capture_api_payload` (snapshot), `_try_resume_from_payload` (resume fast path) |
 | `lib/CLIO/Core/PromptBuilder.pm` | `build_system_prompt` (section [0]), `get_user_context` (section [5]) |
 | `lib/CLIO/Session/State.pm` | `set_last_api_payload` / `last_api_payload` / `last_api_metadata` (snapshot storage) |

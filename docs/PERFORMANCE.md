@@ -83,15 +83,7 @@ Key parameters:
 
 ### CSSS (Cache-Stable Summary Slot)
 
-The CSSS locks the summary's token budget across trim cycles to maximize LCP (Longest Common Prefix) cache hits with local inference providers (llama.cpp).
-
-How it works:
-1. **First trim:** Summary token count becomes the locked slot size (bounded 8K-12K)
-2. **Subsequent trims:** `YaRN::compress_messages` targets the locked slot size
-3. **Proactive growth:** If a single trim drops >1.5x the current slot, the slot grows to absorb more tokens
-4. **Padding:** If summary is smaller than slot, deterministic HTML comment padding fills the gap
-
-This keeps the summary at a stable position in the prompt, so even when it regenerates, only the summary tokens themselves are reprocessed.
+The CSSS bounds the summary size across trim cycles to minimize LCP (Longest Common Prefix) cache invalidation with local inference providers (llama.cpp). Summaries grow organically up to `MAX_CSSR_SLOT_TOKENS` (12K) and are placed at the end of the prompt so only the summary position onward risks cache invalidation on growth.
 
 ### Prompt Budget Calculation
 

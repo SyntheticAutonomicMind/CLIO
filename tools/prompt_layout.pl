@@ -111,6 +111,25 @@ for my $m (@source) {
 my $total = 0;
 $total += $buckets{$_}{tokens} for keys %buckets;
 
+# CSSS padding audit: scan thread_summary messages for the csss:padding
+# marker (the bug that was fixed in 2026-08-27). This should never
+# appear in current CLIO - summaries grow organically. Detecting it in
+# a session file means the session was created by an old CLIO version.
+my $csss_padding_found = 0;
+my $max_padding_chars = 0;
+my $csss_padding_total_msgs = 0;
+for my $m (@source) {
+    next unless ($m->{role} // '') eq 'system';
+    my $content = $m->{content} // '';
+    next unless $content =~ /<thread_summary>/;
+    if ($content =~ /csss:padding:([x]+)/) {
+        $csss_padding_found = 1;
+        $csss_padding_total_msgs++;
+        my $len = length($1);
+        $max_padding_chars = $len if $len > $max_padding_chars;
+    }
+}
+
 if ($json_output) {
     require CLIO::Core::ModelBudget;
     my $ctx = $j->{max_tokens} || 0;
@@ -120,6 +139,11 @@ if ($json_output) {
         session => $session_file,
         total_tokens => $total,
         sections => {},
+        csss => {
+            padding_detected => $csss_padding_found,
+            padding_messages => $csss_padding_total_msgs,
+            max_padding_chars => $max_padding_chars,
+        },
         detected_model_class => $detected_class,
     );
     for my $b (keys %buckets) {
@@ -187,6 +211,12 @@ push @warnings, "context_files bucket has 0 entries (no /context added or all dr
     if $buckets{context_files}{count} == 0;
 push @warnings, "Dialog section is empty (no user/assistant/tool messages)"
     if $buckets{dialog}{count} == 0;
+
+# CSSS padding audit: $csss_padding_found and $max_padding_chars are
+# computed above (before the JSON/text output branches share them).
+if ($csss_padding_found) {
+    push @warnings, "CRITICAL: csss:padding marker found in $csss_padding_total_msgs thread_summary message(s) ($max_padding_chars chars of filler) - CSSS padding bug present";
+}
 
 if (@warnings) {
     print "Warnings:\n";

@@ -87,7 +87,7 @@ subtest 'never loosens below raw 90% (drift < 1.0 has no effect)' => sub {
 
 subtest 'tiny model: 4096 ctx with drift keeps floor' => sub {
     my ($raw, $adj) = compute_threshold(ctx => 4096, drift => 1.5);
-    # 4096 * 0.90 / 1.5 = 2457 (below MIN_CSSS_SLOT_TOKENS=8000 — caller should clamp)
+    # 4096 * 0.90 / 1.5 = 2457 (below MAX_CSSR_SLOT_TOKENS=12000 — caller clamps to ceiling)
     is($adj, 2457, 'tiny ctx yields small threshold (caller clamps)');
 };
 

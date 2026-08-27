@@ -2,20 +2,30 @@
 # SPDX-License-Identifier: GPL-3.0-only
 # SPDX-FileCopyrightText: Copyright (c) 2026 Andrew Wyatt (Fewtarius)
 
-# Regression test for CSSS slot lock stability across multiple trim
-# cycles. The slot target should be constant ±10% across 5+ trims on
-# the same session. If it drifts significantly, the LCP cache prefix
-# boundary moves on every trim and the cache hit collapses.
+# Regression test for CSSS (Cache-Stable Summary Slot) behavior across
+# multiple trim cycles.
 #
-# The CSSS slot is locked by MessageValidator when an existing
-# thread_summary exists. The lock target is the smaller of:
-#   - The current summary's token count
-#   - MAX_CSSS_SLOT_TOKENS
-# And the larger of:
-#   - The current summary's token count
-#   - MIN_CSSS_SLOT_TOKENS
+# Earlier versions locked the slot size to MIN_CSSS_SLOT_TOKENS via
+# padding. The padding was thousands of x characters inside the
+# <thread_summary> block and was visible to the model as a massive
+# artifact (the user-reported bug).
 #
-# Plus proactive growth when dropped content exceeds 1.5x the slot.
+# Current behavior (2026-08-27 fix):
+#   - Summary grows organically with dropped content (no padding).
+#   - Summary is bounded above by MAX_CSSS_SLOT_TOKENS via proactive
+#     growth (slot expands by 1.5x when dropped content exceeds 1.5x
+#     current slot, capped at MAX).
+#   - MIN_CSSS_SLOT_TOKENS is no longer a padding floor; it remains
+#     only as a resume fast-path gate (see WorkflowOrchestrator).
+#   - YaRN.pm:_fit_summary_to_target is a CEILING, not a target.
+#
+# These tests verify:
+#   - First-trim summary size is bounded by MAX (was: >= MIN).
+#   - Across 5 trims, summary size stays under MAX (organic growth,
+#     never padded to fill).
+#   - When dropped content vastly exceeds slot, summary grows up to
+#     but does not exceed MAX.
+#   - No 'csss:padding' marker ever appears in summaries.
 
 use strict;
 use warnings;
@@ -25,7 +35,18 @@ use lib "$RealBin/../../lib";
 
 use Test::More;
 use CLIO::Core::API::MessageValidator qw(validate_and_truncate);
-use CLIO::Core::Defaults qw(MIN_CSSS_SLOT_TOKENS MAX_CSSS_SLOT_TOKENS);
+use CLIO::Core::Defaults qw(MAX_CSSS_SLOT_TOKENS);
+
+# Check that no summary message contains the csss:padding marker.
+sub no_padding_in_result {
+    my ($result) = @_;
+    for my $m (@$result) {
+        if (($m->{role} // '') eq 'system' && ($m->{content} // '') =~ /<thread_summary>/) {
+            return 0 if $m->{content} =~ /csss:padding/;
+        }
+    }
+    return 1;
+}
 
 # Build a synthetic session with mixed substantive + Tier 4 content.
 # The session is large enough that 5 successive trims each drop
@@ -75,7 +96,8 @@ sub summary_tokens {
     return 0;
 }
 
-subtest 'CSSS slot locks to MIN on first trim' => sub {
+# First-trim summary is bounded above by MAX (no padding floor).
+subtest 'first trim produces summary <= MAX ceiling (no padding inflation)' => sub {
     my @msgs = build_session(0);
     my $result = validate_and_truncate(
         messages => \@msgs,
@@ -86,11 +108,14 @@ subtest 'CSSS slot locks to MIN on first trim' => sub {
         disable_post_trim_floor => 1,
     );
     my $tokens = summary_tokens($result);
-    ok($tokens >= MIN_CSSS_SLOT_TOKENS,
-        "first trim produces summary >= MIN_CSSS_SLOT_TOKENS (got $tokens)");
+    ok($tokens <= MAX_CSSS_SLOT_TOKENS + 1000,
+        "first trim produces summary <= MAX ceiling (got $tokens, max=${\ MAX_CSSS_SLOT_TOKENS })");
+    ok(no_padding_in_result($result),
+        "no csss:padding marker in first-trim summary (the bug)");
 };
 
-subtest 'CSSS slot stays within MIN..MAX across 5 trims' => sub {
+# Across 5 trims, summary grows organically and stays bounded by MAX.
+subtest 'summary stays within 0..MAX across 5 trims (organic growth, no padding)' => sub {
     my @slack;
     for my $iter (1..5) {
         my @msgs = build_session($iter);
@@ -104,13 +129,14 @@ subtest 'CSSS slot stays within MIN..MAX across 5 trims' => sub {
         );
         my $tokens = summary_tokens($result);
         push @slack, $tokens;
-        ok($tokens >= MIN_CSSS_SLOT_TOKENS,
-            "iter $iter: summary tokens >= MIN (got $tokens)");
         ok($tokens <= MAX_CSSS_SLOT_TOKENS + 1000,
             "iter $iter: summary tokens <= MAX+buffer (got $tokens)");
+        ok(no_padding_in_result($result),
+            "iter $iter: no csss:padding in summary");
     }
 
-    # Slot target should be relatively stable across iterations.
+    # Summaries grow with dropped content, so they don't have to be
+    # constant across iterations. What matters is the ceiling is honored.
     my $min = (sort { $a <=> $b } @slack)[0];
     my $max = (sort { $b <=> $a } @slack)[0];
     my $drift = $max > 0 ? sprintf("%.1f", 100 * ($max - $min) / $max) : 0;
@@ -118,25 +144,32 @@ subtest 'CSSS slot stays within MIN..MAX across 5 trims' => sub {
         "CSSS slot drift across 5 trims <= 50% (got $drift%, range $min..$max)");
 };
 
-subtest 'CSSS slot grows when dropped content exceeds 1.5x current slot' => sub {
+# When dropped content vastly exceeds current slot, proactive growth
+# pushes the ceiling toward MAX. The summary should grow but stay
+# under MAX (no padding inflation past the ceiling).
+subtest 'summary grows toward MAX ceiling when dropped content exceeds 1.5x slot, no padding' => sub {
     # Build a HUGE session that forces massive drops. The summary
     # should grow toward MAX_CSSS_SLOT_TOKENS.
     my @msgs = (
         { role => 'system', content => 'CLIO System Prompt ' . ('S' x 6000) },
-        { role => 'user', content => 'initial task' },
+        { role => 'user', content => 'initial task: study the codebase' },
     );
     for my $i (1..30) {
         my $tc = "tc_huge_$i";
         push @msgs, {
+            role => 'user',
+            content => "Subtask $i: refactor the optimizer " . ('detailed instructions for the refactor ' x 50),
+        };
+        push @msgs, {
             role => 'assistant',
-            content => "Reasoning $i " . ("x" x 5000),
+            content => "Reasoning $i " . ('reasoning about the optimization strategy ' x 50),
             tool_calls => [{ id => $tc, type => 'function',
                             function => { name => 'foo', arguments => '{}' } }],
         };
         push @msgs, {
             role => 'tool',
             tool_call_id => $tc,
-            content => "Result $i " . ("y" x 5000),
+            content => "Result $i " . ('lines of code that were modified ' x 100),
         };
     }
     push @msgs, { role => 'user', content => 'final task' };
@@ -150,15 +183,15 @@ subtest 'CSSS slot grows when dropped content exceeds 1.5x current slot' => sub 
         disable_post_trim_floor => 1,
     );
     my $tokens = summary_tokens($result);
-    # With 30 dropped units of ~5K each, dropped content vastly exceeds
-    # the slot. The slot should grow toward MAX.
-    ok($tokens >= MIN_CSSS_SLOT_TOKENS,
-        "summary tokens >= MIN (got $tokens)");
-    # Even with growth, the slot is capped at MAX. The actual summary
-    # may exceed MAX briefly while YaRN pads, so we accept any value
-    # above MIN as "grew".
-    ok($tokens > MIN_CSSS_SLOT_TOKENS,
-        "summary grew past MIN (got $tokens)");
+    # With 30 dropped units of substantive content each, the summary
+    # should grow toward MAX. The ceiling is enforced via proactive
+    # growth (1.5x slot bumps), capped at MAX_CSSS_SLOT_TOKENS.
+    ok($tokens <= MAX_CSSS_SLOT_TOKENS + 1000,
+        "summary tokens <= MAX ceiling (got $tokens)");
+    ok($tokens > 100,
+        "summary has substantive content (got $tokens tokens, was likely trimmed)");
+    ok(no_padding_in_result($result),
+        "no csss:padding marker in summary even with massive drop (the bug)");
 };
 
 done_testing();
