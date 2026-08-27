@@ -232,6 +232,59 @@ Tool call frequency:
 
 ---
 
+## tools/cache_health.pl
+
+Per-turn LCP cache hit ratio estimator. Models the 6-section prompt
+layout with rough cache lifetimes per section:
+
+```
+[0] system_prompt      NEVER invalidated after session start
+[1] context_files      Invalidated only on /context add|remove
+[2] dialog+tools        Invalidated when units dropped from front
+[3] summary            Invalidated ONLY when CSSS slot rotates
+[4] user_context       Invalidated every minute (date ticks)
+[5] user_input         Always fresh (per turn)
+```
+
+```bash
+# Default: per-turn + overall cache hit ratios
+perl -I./lib tools/cache_health.pl <session.json>
+
+# JSON output
+perl -I./lib tools/cache_health.pl <session.json> --json
+```
+
+Sample output:
+
+```
+==============================================================================
+CACHE HEALTH - session.json
+==============================================================================
+Turns: 2
+Total processed: 45679 tokens
+Total cached: 34222 tokens
+Overall hit ratio: 74.9%
+Trim events: 0
+CSSS rotations: 0
+
+Turn       Processed      Cached     Hit %   Trims    CSSS
+------------------------------------------------------------------------------
+0               9640           0      0.0%       0       0
+7              36039       34222     95.0%       0       0
+```
+
+Heuristic warnings flag:
+
+- More trim events than turns (sessions thrashing).
+- CSSS rotating on >50% of turns (summary not stable).
+- Any turn with <50% hit ratio (structural change detected).
+
+The estimator is rough but accurate enough to detect the regression
+pattern "every turn invalidates the cache" without simulating actual
+provider behavior.
+
+---
+
 ## Test Coverage
 
 Each tool is verified by running it against:
