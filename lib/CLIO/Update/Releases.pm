@@ -258,7 +258,12 @@ Arguments:
 - version: Version to download (e.g., "20260125.8")
 
 Returns:
-- Path to downloaded and extracted directory, or undef on failure
+- In list context: ($extracted_dir, $cleanup_dir). $cleanup_dir is the
+  top-level download directory that should be removed once install
+  completes. Pass it to L<Cleanup|/remove_cleanup_dir> rather than
+  computing it via dirname() on $extracted_dir.
+- In scalar context: path to downloaded and extracted directory, or undef
+  on failure. Callers that need the cleanup dir should use list context.
 
 =cut
 
@@ -372,7 +377,13 @@ sub _download_and_extract {
     }
 
     log_debug('Update', "Successfully downloaded to: $extracted_dir");
-    return $extracted_dir;
+    # Return both the extracted path and the cleanup scope. Callers that
+    # only need the extracted path can still call us in scalar context;
+    # callers that need to clean up should use list context to avoid the
+    # fragile dirname($source_dir) approach (which previously caused
+    # switch_to_version to rmtree('/tmp') when source_dir sat at /tmp/foo
+    # and walked the entire real /tmp tree).
+    return wantarray ? ($extracted_dir, $download_dir) : $extracted_dir;
 }
 
 1;

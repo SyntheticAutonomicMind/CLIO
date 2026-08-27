@@ -103,7 +103,10 @@ subtest 'enforce_message_alternation tool messages not merged' => sub {
     # Tool messages should NOT be merged (each has unique tool_call_id)
     my $messages = [
         make_msg('user', 'Run a command'),
-        make_msg('assistant', 'Running...', tool_calls => [{ id => 'call_1', function => { name => 'run' } }]),
+        make_msg('assistant', 'Running...', tool_calls => [
+            { id => 'call_1', function => { name => 'run' } },
+            { id => 'call_2', function => { name => 'run' } },
+        ]),
         make_msg('tool', 'result 1', tool_call_id => 'call_1'),
         make_msg('tool', 'result 2', tool_call_id => 'call_2'),
     ];

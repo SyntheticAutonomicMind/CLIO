@@ -106,7 +106,8 @@
         "disabled_type": "disabled",
         "max_tokens_rename": "max_completion_tokens",
         "reasoning_split": true,
-        "message_transform": "minimax"
+        "message_transform": "minimax",
+        "send_budget_tokens": 1
       }
     },
     "minimax_token": {
@@ -131,7 +132,8 @@
         "disabled_type": "disabled",
         "max_tokens_rename": "max_completion_tokens",
         "reasoning_split": true,
-        "message_transform": "minimax"
+        "message_transform": "minimax",
+        "send_budget_tokens": 1
       }
     },
     "nvidia": {
@@ -199,30 +201,6 @@
         ],
         "default_effort": "medium",
         "invalid_effort_default": "high"
-      }
-    },
-    "vercel": {
-      "default_model": "poolside/laguna-s-2.1-free",
-      "max_context_tokens": 256000,
-      "max_output_tokens": 32768,
-      "supports_reasoning": 1,
-      "supports_streaming": 1,
-      "supports_tools": 1,
-      "supports_vision": 1,
-      "reasoning_schema": {
-        "mode": "nested",
-        "param": "reasoning",
-        "effort_field": "effort",
-        "enabled_field": "enabled",
-        "values": [
-          "none",
-          "minimal",
-          "low",
-          "medium",
-          "high",
-          "xhigh"
-        ],
-        "default_effort": "medium"
       }
     },
     "sam": {
@@ -304,5 +282,5 @@
       }
     }
   },
-  "version": 3
+  "version": 2
 }

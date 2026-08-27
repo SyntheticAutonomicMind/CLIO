@@ -57,6 +57,19 @@ sub _run_adapt {
         minimax => 1,
         native_thinking_format => 1,
         sampling_defaults => { temperature => 1.0 },
+        reasoning_schema => {
+            mode => 'think_object',
+            think_param => 'thinking',
+            budget_param => 'budget_tokens',
+            budget_map => { low => 2000, medium => 4000, high => 8000 },
+            default_effort => 'high',
+            default_budget => 8000,
+            disabled_type => 'disabled',
+            max_tokens_rename => 'max_completion_tokens',
+            reasoning_split => 1,
+            message_transform => 'minimax',
+            send_budget_tokens => 1,
+        },
     };
     $am->{config} = FakeConfig->new(
         thinking_effort => $args{effort},

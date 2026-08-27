@@ -181,7 +181,12 @@ print "\n--- switch_to_version success shape ---\n";
     # Simulate a successful install by stubbing download and install
     local *CLIO::Update::download_version = sub {
         my ($self, $v) = @_;
-        return '/tmp/fake-clio-source';  # doesn't matter, won't actually install
+        # Return a path nested under a fake download root. switch_to_version
+        # cleanup uses dirname($source_dir) as the cleanup scope - if we
+        # returned /tmp/foo directly, dirname() would be /tmp and rmtree
+        # would walk the real /tmp tree (thousands of permission-denied
+        # warnings). Nest under a dedicated directory so cleanup stays scoped.
+        return '/tmp/clio-fake-update-root/fake-clio-source';
     };
     local *CLIO::Update::install_from_directory = sub {
         return 1;  # pretend success
