@@ -1090,7 +1090,7 @@ The most common invalidation events are: user sends new turn (user_input changes
 
 **Resume fast path preserves LCP.** `Session::State::last_api_payload` captures the conversation state at end of turn (after tool execution and final assistant response). On resume, `_try_resume_from_payload` returns the snapshot verbatim with fresh [4] and [5] appended. The snapshot must equal what `load_conversation_history` would return from session history — otherwise the fast path and rebuild path diverge and the LCP breaks.
 
-**Snapshot timing matters.** `_capture_api_payload` runs at end of turn (success path + iteration-limit exit), not before tool execution. Capturing before tool execution produces a stale pre-tool snapshot that diverges from session history — the bug CachyLLama reported on 2026-08-18. The snapshot includes only minimal normalization: strip ephemeral continuation nudges (not persisted to session history) and strip orphan tool_calls (defense-in-depth for stale snapshots). No reinterleave or user_context stripping is applied — the snapshot is a faithful copy of what the model saw.
+**Snapshot timing matters.** `_capture_api_payload` runs at end of turn (success path + iteration-limit exit), not before tool execution. Capturing before tool execution produces a stale pre-tool snapshot that diverges from session history — the bug CachyLLama reported on 2026-08-18. The snapshot includes normalisation steps to guarantee the canonical pipeline-protocol layout survives across turns (the proactive trim places `thread_summary` at the END of `@messages`, but the model's response + tool_results append AFTER it, pushing the summary back into the middle — see the mid-session agent restart bug, session f091a4e1, 2026-08-27): strip ephemeral continuation nudges, strip orphan tool_calls, `_strip_non_trailing_user_context` (dedup user_context, keep last), and `_normalize_payload_layout` (reposition `thread_summary` and `user_context` to their canonical slots: `[sys][context_files][dialog][summary][user_context][user_input...]`).
 
 **Unit-based trim (no deinterleave).** Both `trim_conversation_for_api` (pre-flight) and `MessageValidator::validate_and_truncate` (proactive/reactive) use unit-based trimming: each message unit (assistant + tool_calls + tool_results grouped together) is kept or dropped as a whole. This preserves the natural interleaved ordering of tool_calls with their tool_results, so no `reinterleave_tool_results` step is needed. The LCP cache stays stable because byte positions only change when messages are actually dropped, not when they are reordered.
 
@@ -1101,7 +1101,7 @@ The most common invalidation events are: user sends new turn (user_input changes
 - [0] — NEVER trimmed (system anchor)
 - [1] — NEVER trimmed (context_files, stable until /context change)
 - [2] — primary trim target (oldest dialog+tool pairs dropped first)
-- [3] — never trimmed (CSSS slot, bounded by `MAX_CSSR_SLOT_TOKENS` ceiling)
+- [3] — CSSS thread_summary (at END of dialog, before user_context — NOT after user_input or at position 1)
 - [4] — replaced in-place on every resume (dynamic, not trimmed)
 - [5] — fresh each turn (not trimmed)
 
@@ -1119,6 +1119,7 @@ Full spec: [`docs/SPECS/PROMPT_PIPELINE.md`](docs/SPECS/PROMPT_PIPELINE.md).
 - `tests/unit/test_cache_stable_summary.pl` — CSSS slot behavior + no-padding assertion
 - `tests/unit/test_csss_slot_lock_stability.pl` — summary bounded by MAX across trim cycles + no padding
 - `tests/unit/test_session_cached_payload.pl` — snapshot roundtrip + in-place user_context replacement + per-section signatures
+- `tests/unit/test_payload_layout_normalization.pl` — snapshot normalisation to canonical pipeline layout (regression: f091a4e1)
 - `tests/unit/test_trim_threshold_consistency.pl` — pre-flight and proactive trims agree on threshold
 - `tests/unit/test_drift_ratio_tools.pl` — drift ratio includes tool definition tokens
 - `tests/unit/test_conversation_manager.pl` — context_files injected as role=system

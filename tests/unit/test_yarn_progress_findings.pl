@@ -11,10 +11,10 @@
 # cause is Z" between tool calls — without this, plan progress evaporates
 # after a trim cycle.
 #
-# Three capture paths:
-#   1. metadata.collaboration flag (future programmatic use)
-#   2. [COLLABORATION] text prefix (existing tag, model-emitted)
-#   3. Progress-marker regex (new fallback for what the model forgot)
+# Two capture paths:
+#   1. metadata.collaboration flag (programmatic — interact tool sets this)
+#   2. Progress-marker regex (catches progress phrases in regular assistant
+#      responses like "Done with X", "Moving to Y", etc.)
 #
 # The regex fallback is conservative — it requires sentence-boundary
 # anchoring and a known progress phrase. False positives pollute the
@@ -94,17 +94,17 @@ sub ok_test {
     }
 }
 
-# Test 3: [COLLABORATION] tag still works
+# Test 3: metadata.collaboration flag (programmatic, set by interact)
 {
     my $yarn = CLIO::Memory::YaRN->new();
     my @msgs = (
         { role => 'user', content => 'What did you find?' },
-        { role => 'assistant', content => '[COLLABORATION] The bug is in the regex pattern.' },
+        { role => 'assistant', content => 'The bug is in the regex pattern.', metadata => { collaboration => 'request_input' } },
     );
     my $r = $yarn->compress_messages(\@msgs, original_task => 'What did you find?');
     my $content = $r->{content} || '';
-    ok_test($content =~ /Key decisions:/, '[COLLABORATION] tag captured');
-    ok_test($content =~ /The bug is in the regex pattern/, '[COLLABORATION] content present');
+    ok_test($content =~ /Key decisions:/, 'metadata.collaboration captured');
+    ok_test($content =~ /The bug is in the regex pattern/, 'collaboration content present');
 }
 
 # Test 4: mid-sentence "Found" with sentence-boundary anchor

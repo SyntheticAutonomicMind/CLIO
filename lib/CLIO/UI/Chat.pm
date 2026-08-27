@@ -7,7 +7,7 @@ use strict;
 use warnings;
 use CLIO::Core::Logger qw(log_debug log_info log_warning);
 use CLIO::Security::InvisibleCharFilter qw(filter_invisible_chars has_invisible_chars);
-use CLIO::Util::TextSanitizer qw(sanitize_text set_sanitize_mode);
+use CLIO::Util::TextSanitizer qw(sanitize_text set_sanitize_mode strip_session_markers);
 use CLIO::UI::Markdown;
 use CLIO::UI::ANSI;
 use CLIO::UI::Theme;
@@ -606,16 +606,11 @@ sub _make_thinking_callback {
     # next to a CLIO: prompt.
     $think_stream->reset();
 
-    my $strip_session_markers = sub {
-        my ($text) = @_;
-        return '' unless defined $text;
-        # Strip BOTH structured and simple forms. The structured form
-        # uses {...} for the JSON payload; the simple form is just an
-        # identifier. Either kind must be removed from visible output.
-        $text =~ s/\s*<!--session:\{[^}]*\}-->\s*//sg;
-        $text =~ s/\s*<!--session:[a-z][a-z0-9_-]{2,50}-->\s*//sgi;
-        return $text;
-    };
+    # Strip session markers from visible output. The AI may emit
+    # <!--session:name--> or <!--session:{"title":"name"}--> markers;
+    # these are internal control signals and must not appear in the
+    # rendered thinking stream.
+    my $strip_session_markers = \&strip_session_markers;
 
     my $flush_thinking = sub {
         # Route accumulated buffer through the StreamingController so it
@@ -894,16 +889,14 @@ sub _handle_ai_response {
     }
     
     if ($accumulated_content) {
-        $accumulated_content =~ s/\s*<!--session:\{[^}]*\}-->\s*//sg;  # Structured
-        $accumulated_content =~ s/\s*<!--session:[a-z][a-z0-9_-]{2,50}-->\s*//sgi;  # Simple
+        $accumulated_content = strip_session_markers($accumulated_content);
         $accumulated_content = $self->_detect_system_warning_references($accumulated_content);
     }
     
     if ($result && $result->{messages_saved_during_workflow}) {
         log_debug('Chat', "Skipping session save - messages already saved during workflow");
         my $display_response = $result->{final_response} // '';
-        $display_response =~ s/\s*<!--session:\{[^}]*\}-->\s*//sg;  # Structured
-        $display_response =~ s/\s*<!--session:[a-z][a-z0-9_-]{2,50}-->\s*//sgi;  # Simple
+        $display_response = strip_session_markers($display_response);
         $display_response = $self->_detect_system_warning_references($display_response);
         $display_response = $self->_detect_and_display_images($display_response);
         $self->add_to_buffer('assistant', $display_response) if $display_response;
@@ -911,9 +904,7 @@ sub _handle_ai_response {
         log_debug('Chat', "Storing final_response in session (length=" . length($result->{final_response}) . ")");
         my $sanitized = sanitize_text($result->{final_response});
         $self->{session}->add_message('assistant', $sanitized);
-        my $display_response = $result->{final_response};
-        $display_response =~ s/\s*<!--session:\{[^}]*\}-->\s*//sg;  # Structured
-        $display_response =~ s/\s*<!--session:[a-z][a-z0-9_-]{2,50}-->\s*//sgi;  # Simple
+        my $display_response = strip_session_markers($result->{final_response});
         $display_response = $self->_detect_system_warning_references($display_response);
         $display_response = $self->_detect_and_display_images($display_response);
         $self->add_to_buffer('assistant', $display_response);
@@ -3152,80 +3143,6 @@ sub colorize {
     return $text unless $color;
     
     return $self->{ansi}->parse($color . $text . '@RESET@');
-}
-
-
-=head2 _auto_name_session
-
-Auto-generate a human-friendly session name from the first user message.
-Called after the first successful AI response if no name is set.
-
-Extracts a concise title from the user's first non-system message,
-truncating to ~50 characters at a word boundary.
-
-=cut
-
-sub _auto_name_session {
-    my ($self) = @_;
-    
-    my $session = $self->{session};
-    return unless $session;
-    
-    my $state = $session->state();
-    return unless $state && $state->{history};
-    
-    # Find the first user message in history
-    my $first_user_msg;
-    for my $msg (@{$state->{history}}) {
-        next unless ref($msg) eq 'HASH';
-        next unless ($msg->{role} || '') eq 'user';
-        $first_user_msg = $msg->{content} || '';
-        last;
-    }
-    
-    return unless $first_user_msg && length($first_user_msg) > 0;
-    
-    # Generate a name from the first user message
-    my $name = _generate_session_name($first_user_msg);
-    
-    if ($name && length($name) > 0) {
-        $session->session_name($name);
-        log_debug('Chat', "Auto-generated session name: $name");
-    }
-}
-
-=head2 _generate_session_name($text)
-
-Generate a concise session name from user input text.
-Returns a string of up to 50 characters, truncated at word boundary.
-
-=cut
-
-sub _generate_session_name {
-    my ($text) = @_;
-    
-    return unless defined $text && length($text) > 0;
-    
-    # Clean up the text
-    my $name = $text;
-    
-    # Remove leading/trailing whitespace
-    $name =~ s/^\s+//;
-    $name =~ s/\s+$//;
-    
-    # Collapse multiple whitespace to single space
-    $name =~ s/\s+/ /g;
-    
-    # Remove common filler phrases at the start
-    $name =~ s/^(?:hey|hi|hello|please|can you|could you|i want to|i need to|i'd like to|let's)\s+//i;
-    
-    # Capitalize first letter
-    $name = ucfirst($name);
-    
-    # Final sanity check - must have some meaningful content
-    return undef if length($name) < 3;
-    
-    return $name;
 }
 
 =head1 AUTHOR

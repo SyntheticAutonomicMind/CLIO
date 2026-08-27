@@ -112,84 +112,14 @@ Returns: Tool instance, or undef if not found (after alias resolution)
 sub get_tool {
     my ($self, $name) = @_;
     
-    # Operation aliases - maps operation names to their parent tool with default operation
-    # This handles cases where AI calls "file_search" instead of "file_operations" with operation="file_search"
-    my %OPERATION_ALIASES = (
-        'file_search'     => { tool => 'file_operations', operation => 'file_search' },
-        'list_dir'        => { tool => 'file_operations', operation => 'list_dir' },
-        'read_file'       => { tool => 'file_operations', operation => 'read_file' },
-        'write_file'      => { tool => 'file_operations', operation => 'write_file' },
-        # 2026-08-26: create_file is now a silent alias for write_file (which
-        # creates-or-overwrites). The orchestrator injects operation='write_file'
-        # into the call, and the dispatch_table routes the result to the
-        # write_file handler. No special-case needed at alias resolution time.
-        'create_file'     => { tool => 'file_operations', operation => 'write_file' },
-        'delete_file'     => { tool => 'file_operations', operation => 'delete_file' },
-        'grep_search'     => { tool => 'file_operations', operation => 'grep_search' },
-        'semantic_search' => { tool => 'file_operations', operation => 'semantic_search' },
-        'file_exists'     => { tool => 'file_operations', operation => 'file_exists' },
-        'get_file_info'   => { tool => 'file_operations', operation => 'get_file_info' },
-        'rename_file'     => { tool => 'file_operations', operation => 'rename_file' },
-        # append_file is the legacy append-only operation. It now routes to
-        # write_file with append=1 injected into the args, so the legacy
-        # 'open with >>' behavior is preserved exactly while sharing the
-        # single write_file implementation.
-        'append_file'     => { tool => 'file_operations', operation => 'write_file', append => 1 },
-        'replace_string'  => { tool => 'file_operations', operation => 'replace_string' },
-        'insert_at_line'  => { tool => 'file_operations', operation => 'insert_at_line' },
-        'create_directory'=> { tool => 'file_operations', operation => 'create_directory' },
-        'get_errors'      => { tool => 'file_operations', operation => 'get_errors' },
-        'read_tool_result'=> { tool => 'file_operations', operation => 'read_tool_result' },
-        'git'             => { tool => 'version_control', operation => 'status' },
-        'status'          => { tool => 'version_control', operation => 'status' },
-        'log'             => { tool => 'version_control', operation => 'log' },
-        'diff'            => { tool => 'version_control', operation => 'diff' },
-        'commit'          => { tool => 'version_control', operation => 'commit' },
-        'push'            => { tool => 'version_control', operation => 'push' },
-        'pull'            => { tool => 'version_control', operation => 'pull' },
-        'branch'          => { tool => 'version_control', operation => 'branch' },
-        'stash'           => { tool => 'version_control', operation => 'stash' },
-        'shell'           => { tool => 'terminal_operations', operation => 'exec' },
-        'exec'            => { tool => 'terminal_operations', operation => 'exec' },
-        # Added 2026-08-26 audit: agents commonly say 'run X' or 'bash X' instead of
-        # 'exec X' or 'shell X'. Added to get_alias_info() above too.
-        'run'             => { tool => 'terminal_operations', operation => 'exec' },
-        'bash'            => { tool => 'terminal_operations', operation => 'exec' },
-        'cmd'             => { tool => 'terminal_operations', operation => 'exec' },
-        'store'           => { tool => 'memory_operations', operation => 'store' },
-        'retrieve'        => { tool => 'memory_operations', operation => 'retrieve' },
-        'search'          => { tool => 'memory_operations', operation => 'search' },
-        'recall_sessions' => { tool => 'memory_operations', operation => 'recall_sessions' },
-        'list'            => { tool => 'memory_operations', operation => 'list' },
-        'delete'          => { tool => 'memory_operations', operation => 'delete' },
-        # Added 2026-08-26 audit: 'get' (retrieve), 'save' (store), 'forget' (delete).
-        'get'             => { tool => 'memory_operations', operation => 'retrieve' },
-        'save'            => { tool => 'memory_operations', operation => 'store' },
-        'forget'          => { tool => 'memory_operations', operation => 'delete' },
-        'search_web'      => { tool => 'web_operations', operation => 'search_web' },
-        'fetch_url'       => { tool => 'web_operations', operation => 'fetch_url' },
-        # Added 2026-08-26: 'curl' / 'wget' / 'http' for fetch_url; 'google' for search_web.
-        'curl'            => { tool => 'web_operations', operation => 'fetch_url' },
-        'wget'            => { tool => 'web_operations', operation => 'fetch_url' },
-        'http'            => { tool => 'web_operations', operation => 'fetch_url' },
-        'google'          => { tool => 'web_operations', operation => 'search_web' },
-        'todo'            => { tool => 'todo_operations', operation => 'write' },
-        'todos'           => { tool => 'todo_operations', operation => 'read' },
-        'list_usages'    => { tool => 'code_intelligence', operation => 'list_usages' },
-        'search_history'  => { tool => 'code_intelligence', operation => 'search_history' },
-        'ask'             => { tool => 'interact', operation => 'request_input' },
-        'collab'          => { tool => 'interact', operation => 'request_input' },
-        'interact'        => { tool => 'interact', operation => 'request_input' },
-        'user_collaboration' => { tool => 'interact', operation => 'request_input' },
-        'spawn'           => { tool => 'agent_operations', operation => 'spawn' },
-        'agents'          => { tool => 'agent_operations', operation => 'list' },
-        'inbox'           => { tool => 'agent_operations', operation => 'inbox' },
-        'patch'           => { tool => 'apply_patch', operation => 'patch' },
-    );
+    # Delegate to shared _operation_aliases() method (single source of truth,
+    # replaces the previously duplicated hash that had drifted between
+    # get_tool() and get_alias_info()).
+    my $OPERATION_ALIASES = $self->_operation_aliases();
 
     # Check if name is an operation alias first
-    if (exists $OPERATION_ALIASES{$name}) {
-        my $alias = $OPERATION_ALIASES{$name};
+    if (exists $OPERATION_ALIASES->{$name}) {
+        my $alias = $OPERATION_ALIASES->{$name};
         log_debug('Registry', "Resolving alias '$name' -> '$alias->{tool}' with operation='$alias->{operation}'");
         $name = $alias->{tool};
     }
@@ -221,9 +151,24 @@ Returns: Hashref with { tool => '...', operation => '...' } or undef
 sub get_alias_info {
     my ($self, $name) = @_;
     
-    my %OPERATION_ALIASES = (
+    my $OPERATION_ALIASES = $self->_operation_aliases();
+    return $OPERATION_ALIASES->{$name};
+}
+
+=head2 _operation_aliases
+
+Internal method returning the canonical operation-alias map. Extracted
+from the previously duplicated hashes in get_tool() and get_alias_info()
+which had drifted (get_alias_info had extra entries and duplicate audit
+sections). Single source of truth.
+
+=cut
+
+sub _operation_aliases {
+    return {
+        # FileOperations canonical operation names - the LLM sees these in
+        # the operation enum and may call them as tool names.
         'file_search'     => { tool => 'file_operations', operation => 'file_search' },
-        'list_dir'        => { tool => 'file_operations', operation => 'list_dir' },
         'read_file'       => { tool => 'file_operations', operation => 'read_file' },
         'write_file'      => { tool => 'file_operations', operation => 'write_file' },
         # 2026-08-26: create_file is now a silent alias for write_file (which
@@ -231,22 +176,21 @@ sub get_alias_info {
         # into the call, and the dispatch_table routes the result to the
         # write_file handler. No special-case needed at alias resolution time.
         'create_file'     => { tool => 'file_operations', operation => 'write_file' },
-        'delete_file'     => { tool => 'file_operations', operation => 'delete_file' },
-        'grep_search'     => { tool => 'file_operations', operation => 'grep_search' },
-        'semantic_search' => { tool => 'file_operations', operation => 'semantic_search' },
+        'list_dir'        => { tool => 'file_operations', operation => 'list_dir' },
         'file_exists'     => { tool => 'file_operations', operation => 'file_exists' },
         'get_file_info'   => { tool => 'file_operations', operation => 'get_file_info' },
-        'rename_file'     => { tool => 'file_operations', operation => 'rename_file' },
-        # append_file is the legacy append-only operation. It now routes to
-        # write_file with append=1 injected into the args, so the legacy
-        # 'open with >>' behavior is preserved exactly while sharing the
-        # single write_file implementation.
+        'get_errors'      => { tool => 'file_operations', operation => 'get_errors' },
+        'grep_search'     => { tool => 'file_operations', operation => 'grep_search' },
+        'semantic_search' => { tool => 'file_operations', operation => 'semantic_search' },
+        'read_tool_result'=> { tool => 'file_operations', operation => 'read_tool_result' },
         'append_file'     => { tool => 'file_operations', operation => 'write_file', append => 1 },
         'replace_string'  => { tool => 'file_operations', operation => 'replace_string' },
         'insert_at_line'  => { tool => 'file_operations', operation => 'insert_at_line' },
+        'delete_file'     => { tool => 'file_operations', operation => 'delete_file' },
+        'rename_file'     => { tool => 'file_operations', operation => 'rename_file' },
         'create_directory'=> { tool => 'file_operations', operation => 'create_directory' },
-        'get_errors'      => { tool => 'file_operations', operation => 'get_errors' },
-        'read_tool_result'=> { tool => 'file_operations', operation => 'read_tool_result' },
+
+        # VersionControl canonical names.
         'git'             => { tool => 'version_control', operation => 'status' },
         'status'          => { tool => 'version_control', operation => 'status' },
         'log'             => { tool => 'version_control', operation => 'log' },
@@ -256,34 +200,42 @@ sub get_alias_info {
         'pull'            => { tool => 'version_control', operation => 'pull' },
         'branch'          => { tool => 'version_control', operation => 'branch' },
         'stash'           => { tool => 'version_control', operation => 'stash' },
+
+        # TerminalOperations: canonical + natural-language verbs for "run a shell command".
         'shell'           => { tool => 'terminal_operations', operation => 'exec' },
         'exec'            => { tool => 'terminal_operations', operation => 'exec' },
-        # Added 2026-08-26 audit: agents commonly say 'run X' or 'bash X' instead of
-        # 'exec X' or 'shell X'. Added to get_alias_info() above too.
         'run'             => { tool => 'terminal_operations', operation => 'exec' },
         'bash'            => { tool => 'terminal_operations', operation => 'exec' },
         'cmd'             => { tool => 'terminal_operations', operation => 'exec' },
+
+        # MemoryOperations: canonical names + natural-language verbs.
         'store'           => { tool => 'memory_operations', operation => 'store' },
         'retrieve'        => { tool => 'memory_operations', operation => 'retrieve' },
         'search'          => { tool => 'memory_operations', operation => 'search' },
         'recall_sessions' => { tool => 'memory_operations', operation => 'recall_sessions' },
         'list'            => { tool => 'memory_operations', operation => 'list' },
         'delete'          => { tool => 'memory_operations', operation => 'delete' },
-        # Added 2026-08-26 audit: 'get' (retrieve), 'save' (store), 'forget' (delete).
         'get'             => { tool => 'memory_operations', operation => 'retrieve' },
         'save'            => { tool => 'memory_operations', operation => 'store' },
         'forget'          => { tool => 'memory_operations', operation => 'delete' },
+
+        # WebOperations: canonical names + natural-language synonyms.
         'search_web'      => { tool => 'web_operations', operation => 'search_web' },
         'fetch_url'       => { tool => 'web_operations', operation => 'fetch_url' },
-        # Added 2026-08-26: 'curl' / 'wget' / 'http' for fetch_url; 'google' for search_web.
         'curl'            => { tool => 'web_operations', operation => 'fetch_url' },
         'wget'            => { tool => 'web_operations', operation => 'fetch_url' },
         'http'            => { tool => 'web_operations', operation => 'fetch_url' },
         'google'          => { tool => 'web_operations', operation => 'search_web' },
+
+        # TodoList
         'todo'            => { tool => 'todo_operations', operation => 'write' },
         'todos'           => { tool => 'todo_operations', operation => 'read' },
+
+        # CodeIntelligence: canonical names.
         'list_usages'     => { tool => 'code_intelligence', operation => 'list_usages' },
-        'search_history'   => { tool => 'code_intelligence', operation => 'search_history' },
+        'search_history'  => { tool => 'code_intelligence', operation => 'search_history' },
+
+        # Interact: canonical + natural-language verbs.
         'ask'             => { tool => 'interact', operation => 'request_input' },
         'collab'          => { tool => 'interact', operation => 'request_input' },
         'interact'        => { tool => 'interact', operation => 'request_input' },
@@ -291,34 +243,17 @@ sub get_alias_info {
         'ask_user'        => { tool => 'interact', operation => 'request_input' },
         'confirm'         => { tool => 'interact', operation => 'request_input' },
         'question'        => { tool => 'interact', operation => 'request_input' },
+
+        # AgentOperations
         'spawn'           => { tool => 'agent_operations', operation => 'spawn' },
         'agents'          => { tool => 'agent_operations', operation => 'list' },
         'inbox'           => { tool => 'agent_operations', operation => 'inbox' },
+
+        # ApplyPatch
         'patch'           => { tool => 'apply_patch', operation => 'patch' },
-
-        # terminal_operations aliases: natural-language verbs for "run a shell command".
-        # Added 2026-08-26 audit: agents commonly say 'run X' or 'bash X' instead of
-        # 'exec X' or 'shell X'.
-        'run'             => { tool => 'terminal_operations', operation => 'exec' },
-        'bash'            => { tool => 'terminal_operations', operation => 'exec' },
-        'cmd'             => { tool => 'terminal_operations', operation => 'exec' },
-
-        # memory_operations aliases: 'forget' / 'get' / 'save' are common natural
-        # verbs that didn't have aliases before. 'forget' -> delete is intentional;
-        # 'save' -> store mirrors how 'save_to_memory' is sometimes phrased.
-        'get'             => { tool => 'memory_operations', operation => 'retrieve' },
-        'save'            => { tool => 'memory_operations', operation => 'store' },
-        'forget'          => { tool => 'memory_operations', operation => 'delete' },
-
-        # web_operations aliases: 'curl' / 'wget' / 'fetch' are common synonyms.
-        'curl'            => { tool => 'web_operations', operation => 'fetch_url' },
-        'wget'            => { tool => 'web_operations', operation => 'fetch_url' },
-        'http'            => { tool => 'web_operations', operation => 'fetch_url' },
-        'google'          => { tool => 'web_operations', operation => 'search_web' },
-    );
-
-    return $OPERATION_ALIASES{$name};
+    };
 }
+
 
 =head2 get_all_tools
 

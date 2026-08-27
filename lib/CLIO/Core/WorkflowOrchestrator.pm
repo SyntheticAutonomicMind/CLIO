@@ -10,7 +10,7 @@ use Carp qw(croak);
 use CLIO::UI::Terminal qw(box_char);
 use CLIO::Core::Logger qw(log_error log_warning log_info log_debug should_log);
 use CLIO::Core::ErrorContext qw(classify_error format_error);
-use CLIO::Util::TextSanitizer qw(sanitize_text);
+use CLIO::Util::TextSanitizer qw(sanitize_text strip_session_markers);
 use CLIO::Util::JSONRepair qw(repair_malformed_json);
 use CLIO::Util::AnthropicXMLParser qw(is_anthropic_xml_format parse_anthropic_xml_to_json);
 use CLIO::UI::ToolOutputFormatter;
@@ -1360,6 +1360,14 @@ sub _build_turn_context {
         }
         $session->add_message('user', $history_content);
         log_debug('WorkflowOrchestrator', "Saved user message to session history (raw input)");
+
+        # Auto-name the session from the first user message if no name is set.
+        # CLIO owns session naming programmatically instead of requiring the
+        # model to emit an <!--session:name--> HTML comment marker.
+        my $state = $session->state();
+        if ($state && $state->can('auto_name_session')) {
+            $state->auto_name_session();
+        }
     }
 
     # Build tool definitions
@@ -1626,6 +1634,21 @@ sub _capture_api_payload {
     #    exit path, stale in-memory state) so snapshots stay clean.
     my @normalized = $self->_strip_continuation_nudges(@$messages_ref);
     @normalized   = $self->_strip_orphan_tool_calls(@normalized);
+    # Deduplicate user_context system messages — remove all but the last
+    # occurrence. Without this, a stale leading user_context (from a prior
+    # turn's proactive trim) can accumulate alongside a trailing one,
+    # diverging from the rebuild path and confusing the resume fast path.
+    @normalized   = $self->_strip_non_trailing_user_context(@normalized);
+    # Normalize the snapshot to the canonical pipeline-protocol layout:
+    #   [system_prompt][context_files][dialog][thread_summary][user_context]
+    # The proactive trim places thread_summary at the END of @messages, but
+    # the model's response + tool_results are appended AFTER it, pushing the
+    # summary back into the middle of the conversation. Without this fix,
+    # the snapshot captures <thread_summary> as a mid-conversation system
+    # block, which llama.cpp wraps in <system>...</system> tags and resets
+    # the model's context framing — causing the mid-session agent restart
+    # observed in session f091a4e1 (2026-08-27).
+    @normalized   = $self->_normalize_payload_layout(@normalized);
 
     my $model    = $self->{api_manager} ? $self->{api_manager}->get_current_model()    : undef;
     my $provider = $self->{api_manager} ? $self->{api_manager}->get_current_provider() : undef;
@@ -1797,6 +1820,207 @@ sub _strip_orphan_tool_calls {
     my ($self, @messages) = @_;
     my $cleaned = validate_tool_message_pairs(\@messages);
     return @$cleaned;
+}
+
+=head2 _normalize_payload_layout(\@messages)
+
+Normalize the captured snapshot to the canonical pipeline-protocol layout
+before saving it to last_api_payload. This is the safety net that guarantees
+the resume fast path always loads a correctly-structured cached payload.
+
+Canonical layout:
+  [system_prompt][context_files][dialog][thread_summary][user_context]
+
+Walk the messages, partitioning them into:
+- system_prompt:  first system message w/o thread_summary/userContext/[CONTEXT FILES] tag
+- context_files:  system messages with [CONTEXT FILES] tag
+- dialog:         all user/assistant/tool messages in original order
+- thread_summary:  the LAST <thread_summary> system message (CSSS slot)
+- user_context:   the LAST <userContext>/<dynamicContext>/<sessionGoals> system message
+
+Everything else (duplicate user_context, duplicate thread_summary, stray
+system messages at non-leading positions) is dropped. The last occurrence
+of each is kept because it reflects the most recent state.
+
+Root cause this fixes (session f091a4e1, 2026-08-27):
+The proactive trim places thread_summary at the END of @messages, but
+the model's response + tool_results are appended AFTER it, pushing the
+summary back into the middle of the conversation. Without this
+normalization, the snapshot captures <thread_summary> as a
+mid-conversation system block, which llama.cpp's chat template wraps in
+<system>...</system> tags and resets the model's context framing —
+causing the gradual degradation (empty content, error loops, agent
+restart) observed in long-running sessions.
+
+Similarly, user_context at a leading position (position 1) changes every
+minute (timestamp), shifting all downstream token positions and breaking
+the LCP cache prefix. This normalization repositions it to the trailing
+slot (after the summary, before where user_input will be appended on
+resume).
+
+Returns: normalized array of messages.
+
+=cut
+
+sub _normalize_payload_layout {
+    my ($self, @messages) = @_;
+
+    # Find the last user_context system message. This is the canonical
+    # split point: everything before it is "old stuff" (dialog + possibly
+    # summary/user_ctx at wrong positions), and everything after it is the
+    # "current turn" (user_input, assistant response, tool_results).
+    #
+    # We only split when there IS a user_context AND the last role=user
+    # message (user_input) appears AFTER it. If there's no user_context,
+    # or the user_input is before/before user_context, we treat the
+    # entire array as one block (first-turn case, or user_input embedded
+    # in the dialog).
+    my $uc_idx = -1;       # last user_context position
+    my $user_input_idx = -1;  # last role=user position
+
+    for my $i (reverse 0 .. $#messages) {
+        my $msg = $messages[$i];
+        next unless ref($msg) eq 'HASH';
+        my $content = $msg->{content} // '';
+
+        if (($msg->{role} // '') eq 'system') {
+            my $flat = $content;
+            if (ref($content) eq 'ARRAY') {
+                $flat = '';
+                for my $part (@$content) {
+                    if (ref($part) eq 'HASH' && ($part->{type} // '') eq 'text') {
+                        $flat .= ($part->{text} // '');
+                    } elsif (!ref($part)) {
+                        $flat .= $part;
+                    }
+                }
+            }
+            if ($flat =~ /<(?:userContext|dynamicContext|sessionGoals)[\s>]/ && $flat !~ /<thread_summary>/) {
+                $uc_idx = $i;
+                last;
+            }
+        }
+        elsif (($msg->{role} // '') eq 'user' && $user_input_idx < 0) {
+            $user_input_idx = $i;
+        }
+    }
+
+    # Only split if user_context exists and user_input is after it.
+    # Otherwise, don't split — process the entire array as one block.
+    my (@old_stuff, @current_turn);
+    if ($uc_idx >= 0 && $user_input_idx > $uc_idx) {
+        @old_stuff   = @messages[0 .. $user_input_idx - 1];
+        @current_turn = @messages[$user_input_idx .. $#messages];
+    } else {
+        @old_stuff = @messages;
+        @current_turn = ();
+    }
+
+    # Walk @old_stuff, extracting the LAST thread_summary and the LAST
+    # user_context. All other messages (system_prompt, context_files,
+    # dialog) keep their relative order.
+    my @normalized_old;
+    my @current_dialog;
+    my $summary_msg;      # last thread_summary
+    my $user_ctx_msg;     # last user_context
+    my $seen_summary = 0;
+
+    for my $msg (@old_stuff) {
+        next unless ref($msg) eq 'HASH';
+        my $role = $msg->{role} // '';
+        my $content = $msg->{content} // '';
+
+        if ($role eq 'system') {
+            # Flatten arrayref content for tag detection
+            my $flat_content = $content;
+            if (ref($content) eq 'ARRAY') {
+                $flat_content = '';
+                for my $part (@$content) {
+                    if (ref($part) eq 'HASH' && ($part->{type} // '') eq 'text') {
+                        $flat_content .= ($part->{text} // '');
+                    } elsif (!ref($part)) {
+                        $flat_content .= $part;
+                    }
+                }
+            }
+
+            if ($flat_content =~ /<thread_summary>/) {
+                # Keep only the LAST thread_summary — CSSS slot lock depends
+                # on exactly one summary at the end of the dialog.
+                $summary_msg = $msg;
+                $seen_summary++;
+                next;
+            }
+            elsif ($flat_content =~ /<(?:userContext|dynamicContext|sessionGoals)[\s>]/) {
+                # Keep only the LAST user_context — the most recent one.
+                $user_ctx_msg = $msg;
+                next;
+            }
+            # All other system messages (system_prompt, context_files,
+            # recovery notices) are emitted at the leading position.
+            push @normalized_old, $msg;
+            next;
+        }
+
+        # Non-system messages (dialog: user/assistant/tool) — emit in order.
+        push @normalized_old, $msg;
+    }
+
+    # Scan @current_turn for stray system messages (thread_summary /
+    # user_context that ended up AFTER the user_input due to the bug),
+    # extracting the last of each. Non-system messages (user_input,
+    # assistant, tool) are preserved in @current_dialog.
+    for my $msg (@current_turn) {
+        next unless ref($msg) eq 'HASH';
+        if (($msg->{role} // '') eq 'system') {
+            my $ct_content = $msg->{content} // '';
+            my $ct_flat = $ct_content;
+            if (ref($ct_content) eq 'ARRAY') {
+                $ct_flat = '';
+                for my $part (@$ct_content) {
+                    if (ref($part) eq 'HASH' && ($part->{type} // '') eq 'text') {
+                        $ct_flat .= ($part->{text} // '');
+                    } elsif (!ref($part)) {
+                        $ct_flat .= $part;
+                    }
+                }
+            }
+            if ($ct_flat =~ /<thread_summary>/) {
+                $summary_msg = $msg;
+                $seen_summary++;
+                next;
+            }
+            elsif ($ct_flat =~ /<(?:userContext|dynamicContext|sessionGoals)[\s>]/) {
+                $user_ctx_msg = $msg;
+                next;
+            }
+        }
+        push @current_dialog, $msg;
+    }
+
+    # Reassemble in canonical pipeline-protocol layout:
+    #   [system_prompt][context_files][dialog][thread_summary][user_context][user_input][assistant/tools]
+    #
+    # The summary goes BETWEEN old dialog and user_context/user_input —
+    # NOT after everything (the bug) and NOT at position 1 (the earlier bug).
+    # user_input and the current turn's assistant/tool results stay at the
+    # very end, preserving the conversation flow.
+    my @result = @normalized_old;
+    if ($summary_msg) {
+        push @result, $summary_msg;
+    }
+    if ($user_ctx_msg) {
+        push @result, $user_ctx_msg;
+    }
+    push @result, @current_dialog;
+
+    if (should_log('DEBUG') && $seen_summary > 1) {
+        log_debug('WorkflowOrchestrator',
+            "Normalised payload layout: $seen_summary thread_summary msg(s) -> 1 retained, "
+            . scalar(@result) . " total messages after layout normalisation");
+    }
+
+    return @result;
 }
 
 =head2 _compute_section_signatures(\@messages)

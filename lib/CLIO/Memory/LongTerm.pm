@@ -1450,6 +1450,56 @@ sub maybe_consolidate {
     return $self->consolidate(%args);
 }
 
+=head2 maybe_consolidate_and_save
+
+Check gate conditions, run consolidation if needed, and persist the result.
+Caller passes nothing — consolidation gates and save path are handled here
+so that callers (e.g. PromptManager) don't need to know about file paths
+or project-root resolution.
+
+This is the preferred entry point for production code paths. Direct callers
+of maybe_consolidate() that need to inspect stats without persisting
+(e.g. tests) can still use the base method.
+
+Returns: HashRef of consolidation stats, or undef if skipped.
+
+=cut
+
+sub maybe_consolidate_and_save {
+    my ($self, %args) = @_;
+
+    my $stats = $self->maybe_consolidate(%args);
+    return $stats unless $stats;
+
+    my $total_changes = $stats->{removed} + $stats->{decayed} + $stats->{deduped};
+    return $stats unless $total_changes > 0;
+
+    # Persist to .clio/ltm.json. The save path is resolved from the
+    # LTM's own metadata (set during load) rather than recomputing
+    # from CWD, so the file location is stable across turns.
+    eval {
+        if ($self->{ltm_file}) {
+            $self->save($self->{ltm_file});
+            log_debug('LTM', "Saved consolidated LTM to $self->{ltm_file}");
+        } else {
+            # Fallback: discover via PathResolver if the load-time path
+            # was not stored (e.g. freshly constructed in tests).
+            require CLIO::Util::PathResolver;
+            require Cwd;
+            my $clio_dir = CLIO::Util::PathResolver::find_clio_dir(Cwd::getcwd());
+            my $ltm_file = File::Spec->catfile($clio_dir, '.clio', 'ltm.json');
+            $self->{ltm_file} = $ltm_file;
+            $self->save($ltm_file);
+            log_debug('LTM', "Saved consolidated LTM to $ltm_file (discovered)");
+        }
+    };
+    if ($@) {
+        log_warning('LTM', "Failed to save consolidated LTM: $@");
+    }
+
+    return $stats;
+}
+
 =head2 _entry_text
 
 Extract text content from an entry for comparison.
@@ -1632,7 +1682,8 @@ sub load {
     my $self = $class->new(%args);
     $self->{patterns} = $data->{patterns} if $data->{patterns};
     $self->{metadata} = $data->{metadata} if $data->{metadata};
-    
+    $self->{ltm_file} = $file;  # Remember source path for save-after-consolidate
+
     log_debug('LTM', "Loaded from $file");
     return $self;
 }

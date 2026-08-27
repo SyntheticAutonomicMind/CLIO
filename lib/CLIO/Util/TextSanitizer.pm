@@ -32,7 +32,7 @@ call, covering all points where text enters the AI pipeline.
 =cut
 
 use Exporter 'import';
-our @EXPORT_OK = qw(sanitize_text set_sanitize_mode get_sanitize_mode strip_conversation_tags);
+our @EXPORT_OK = qw(sanitize_text set_sanitize_mode get_sanitize_mode strip_conversation_tags strip_session_markers);
 
 # Sanitize mode: 'strict' (default) warns on HIGH-severity invisible chars.
 # 'relaxed' still filters them but suppresses the warning - useful when working
@@ -205,6 +205,32 @@ sub strip_conversation_tags {
     $text =~ s/<dynamicContext>.*?<\/dynamicContext>//gs;
     $text =~ s/<userContext>.*?<\/userContext>//gs;
     $text =~ s/<sessionGoals>.*?<\/sessionGoals>//gs;
+
+    return $text;
+}
+
+=head2 strip_session_markers
+
+Remove HTML comment markers used for session naming and other internal
+control signals from visible text. Strips both the structured JSON form
+(<!--session:{"title":"name"}-->) and the simple form (<!--session:name-->).
+
+Arguments:
+- $text: Text potentially containing session markers
+
+Returns: Text with session markers removed
+
+=cut
+
+sub strip_session_markers {
+    my ($text) = @_;
+    return $text unless defined $text;
+
+    # Strip structured form: <!--session:{"title":"name",...}-->
+    $text =~ s/\s*<!--session:\{[^}]*\}-->\s*//sg;
+
+    # Strip simple form: <!--session:name-->
+    $text =~ s/\s*<!--session:[a-z][a-z0-9_-]{2,50}-->\s*//sgi;
 
     return $text;
 }

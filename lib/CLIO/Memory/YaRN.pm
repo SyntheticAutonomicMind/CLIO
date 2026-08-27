@@ -358,26 +358,18 @@ sub compress_messages {
             push @{$bucket->{user_requests}}, $summary;
         }
         elsif ($role eq 'assistant') {
-            # Collaboration/decision messages (identified by metadata,
-            # explicit [COLLABORATION] tag, or progress-marker regex).
+            # Collaboration/decision messages identified by metadata.
             #
-            # Three capture paths:
-            #   1. metadata.collaboration set (programmatic, future)
-            #   2. [COLLABORATION] text prefix (model-emitted tag)
-            #   3. Progress-marker regex (catches what the model forgot
-            #      to tag): "Done with X", "Moving to Y",
-            #      "Item N complete", "I found that...", etc.
-            #
-            # The regex fallback exists because we don't want to force
-            # the model to remember a tag. If it says something that
-            # clearly looks like progress, we capture it. False positives
-            # pollute the Decisions bucket, so the whitelist is tight.
+            # Two capture paths:
+            #   1. metadata.collaboration set (programmatic) — interact
+            #      tool calls already set this via State::add_message.
+            #   2. Progress-marker regex (catches progress phrases in
+            #      regular assistant responses like "Done with X",
+            #      "Moving to Y", "The fix is...", etc.).
             my $captured_decision;
             my $collab_type = $msg->{metadata} && $msg->{metadata}{collaboration};
             if ($collab_type) {
                 $captured_decision = $content;
-            } elsif ($content =~ /\[COLLABORATION\](.{1,500})/s) {
-                $captured_decision = $1;
             } else {
                 # Progress-marker heuristic. The pattern must:
                 #   - start at a sentence boundary (^|\.\s+|then\s+|\n\s*)

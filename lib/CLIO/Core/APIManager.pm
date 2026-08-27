@@ -2921,7 +2921,7 @@ sub _build_payload {
             push @leading_system, $msg;
         }
         if ($skipped_user_context && should_log('DEBUG')) {
-            log_warning('APIManager',
+            log_debug('APIManager',
                 "Stable prefix: excluded $skipped_user_context user_context message(s) "
                 . "from prompt_stable_prefix_tokens (dynamic content at leading "
                 . "position). Retained " . scalar(@leading_system) . " static "
@@ -3007,11 +3007,12 @@ sub _build_payload {
                         # to the server-side LCP collapse observed in server.log:
                         #   - stable prefix unchanged -> sim_best stays ~1.0 (cache hit)
                         #   - stable prefix CHANGED  -> sim_best collapses to ~0.2-0.5 (cache miss)
-                        # Without this log, the user has no visibility into why the cache
-                        # stopped hitting - they only see it in the llama.cpp server log.
+                        # Between turns. This is a debug-level diagnostic - a cache
+                        # miss is an internal implementation detail. Users don't
+                        # need to see it in normal operation; --debug reveals it.
                         my $old_tokens = $self->{_stable_prefix_cache}{tokens} // 0;
                         if ($old_tokens > 0) {
-                            log_warning('APIManager',
+                            log_debug('APIManager',
                                 "CACHE MISS: prompt_stable_prefix_tokens changed " .
                                 "$old_tokens -> $stable_tokens (" .
                                 ($stable_tokens - $old_tokens) . " tokens delta). " .

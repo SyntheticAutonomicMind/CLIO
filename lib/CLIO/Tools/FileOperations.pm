@@ -143,25 +143,40 @@ ALIASES: Each operation above also accepts common natural-language aliases
 preferred for clarity; aliases exist so calling code that uses the more
 familiar English form still dispatches correctly.
 },
+        # Canonical operation names only. These are the values that
+        # appear in the operation enum sent to the LLM. Short aliases are
+        # listed separately in operation_aliases and are accepted by the
+        # dispatch table but NOT advertised in the schema enum. This
+        # prevents the LLM from seeing e.g. "read" in the enum and calling
+        # it as a tool name instead of "file_operations" with operation="read_file".
         supported_operations => [qw(
-            read_file read
-            list_dir list_directory
-            file_exists exists
-            get_file_info stat_file
+            read_file
+            list_dir
+            file_exists
+            get_file_info
             get_errors
-            file_search find_files
-            grep_search search
+            file_search
+            grep_search
             semantic_search
-            read_tool_result read_result
-            create_file create
-            write_file write
-            append_file append
-            replace_string replace edit
-            multi_replace_string bulk_replace
-            insert_at_line insert_line insert
-            delete_file delete remove
-            rename_file rename mv
-            create_directory make_directory mkdir
+            read_tool_result
+            create_file
+            write_file
+            append_file
+            replace_string
+            multi_replace_string
+            insert_at_line
+            delete_file
+            rename_file
+            create_directory
+        )],
+        # Short, natural-language aliases. These are silently accepted as
+        # operation values (via validate_operation + dispatch_table) but are
+        # NOT included in the schema enum sent to the LLM, preventing the
+        # LLM from confusing them with tool names.
+        operation_aliases => [qw(
+            read list_directory exists stat_file find_files search
+            read_result create write append replace edit bulk_replace
+            insert_line insert delete remove rename mv make_directory mkdir
         )],
         %opts,
     );

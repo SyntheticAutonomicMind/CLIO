@@ -110,10 +110,10 @@ sub build_photonterm_session {
         };
     }
 
-    # Step 5: Progress marker
+    # Step 5: Progress marker (regex fallback captures this)
     push @messages, {
         role => 'assistant',
-        content => '[COLLABORATION] Done with item 1 (VTE insert mode fix). Moving to item 2 (DECCKM cursor key fix). The plan is to continue through all 8 items in order.'
+        content => 'Done with item 1 (VTE insert mode fix). Moving to item 2 (DECCKM cursor key fix). The plan is to continue through all 8 items in order.'
     };
 
     return @messages;

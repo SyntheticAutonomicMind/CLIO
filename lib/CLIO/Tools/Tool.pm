@@ -58,6 +58,12 @@ sub new {
         name => $opts{name},
         description => $opts{description},
         supported_operations => $opts{supported_operations},
+        # Short aliases for operations. These are accepted as operation
+        # values (via validate_operation + dispatch_table) but are NOT
+        # advertised in the operation enum sent to the LLM. This prevents
+        # the LLM from seeing e.g. "read" in the enum and calling it as a
+        # tool name instead of "file_operations" with operation="read_file".
+        operation_aliases => $opts{operation_aliases} || [],
         debug => $opts{debug} || 0,
         
         # Execution control metadata (SAM-inspired pattern + CLIO enhancements)
@@ -237,9 +243,12 @@ sub _suggest_operation {
 sub validate_operation {
     my ($self, $operation) = @_;
     
-    # Build hash lookup on first call (avoids linear grep on every tool dispatch)
+    # Build hash lookup on first call (avoids linear grep on every tool dispatch).
+    # Includes both canonical operations (sent in the schema enum to the LLM) and
+    # operation_aliases (silently accepted as operation values but not advertised).
     unless ($self->{_supported_ops_hash}) {
-        $self->{_supported_ops_hash} = { map { $_ => 1 } @{$self->{supported_operations}} };
+        my @all = (@{$self->{supported_operations}}, @{$self->{operation_aliases} || []});
+        $self->{_supported_ops_hash} = { map { $_ => 1 } @all };
     }
     return $self->{_supported_ops_hash}{$operation} ? 1 : 0;
 }

@@ -179,6 +179,13 @@ sub request_input {
     my $message = $params->{message};
     my $user_context = $params->{context} || '';
     
+    # Strip legacy [COLLABORATION] prefix from the message. CLIO handles
+    # context preservation through metadata.programmatically (set below via
+    # add_message's collaboration option), so the model no longer needs to
+    # emit this tag. Models trained on the old prompt may still include it;
+    # strip it so the user never sees internal markup in the prompt.
+    $message =~ s/^\s*\[COLLABORATION\]\s*//s;
+    
     log_debug('Interact', "Requesting user input");
     log_debug('Interact', "Message: $message");
     

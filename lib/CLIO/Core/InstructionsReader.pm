@@ -99,25 +99,23 @@ sub read_instructions {
         if (-f $custom_path) {
             log_debug('InstructionsReader', "Loading custom instructions from: $custom_path");
 
-            open(my $fh, '<:encoding(UTF-8)', $custom_path) or do {
+            my $fh;
+            if (open($fh, '<:encoding(UTF-8)', $custom_path)) {
+                my $content = do { local $/; <$fh> };
+                close($fh);
+
+                if ($content && length($content) > 0) {
+                    log_debug('InstructionsReader', "Loaded " . length($content) . " bytes from custom instructions");
+                    return $content;
+                }
+            } else {
                 log_warning('InstructionsReader', "Cannot read custom instructions file: $!");
-                # Fall through to normal loading
-                goto NORMAL_LOADING;
-            };
-
-            my $content = do { local $/; <$fh> };
-            close($fh);
-
-            if ($content) {
-                log_debug('InstructionsReader', "Loaded " . length($content) . " bytes from custom instructions");
-                return $content;
             }
         } else {
             log_warning('InstructionsReader', "CLIO_CUSTOM_INSTRUCTIONS file does not exist: $custom_path");
         }
     }
-
-    NORMAL_LOADING:
+    # Fall through to normal loading from .clio/instructions.md + AGENTS.md
     # Default to current working directory if not provided
     $workspace_path ||= getcwd();
 

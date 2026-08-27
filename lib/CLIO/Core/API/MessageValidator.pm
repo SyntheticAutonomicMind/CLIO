@@ -566,34 +566,68 @@ sub validate_and_truncate {
             push @truncated, $_ for @{$gs_unit->{messages}};
         }
     }
-    # Preserve user_context anchors (<dynamicContext>/<userContext>/<sessionGoals>)
-    # at their original positions relative to system_msg. Without this, the
-    # chat template's <system>...</system> block disappears from the prefix
-    # when the trim drops user_context at msg[1], causing llama.cpp's LCP
-    # cache match to fail (the CachyLLama full re-prompt bug observed 2026-08-18).
-    for my $user_ctx_unit (@$preserved_user_contexts) {
-        push @truncated, $_ for @{$user_ctx_unit->{messages}};
+    # CRITICAL FIX: Place the CSSS thread_summary BETWEEN the old dialog
+    # and the current turn's user_context/user_input, NOT after everything.
+    #
+    # Previously, the summary was pushed after ALL of @validated (which
+    # includes user_context + user_input + assistant response + tool_results
+    # from the current turn). This caused <thread_summary> to appear as a
+    # mid-conversation system block — after user_input, before the model's
+    # response — which the llama.cpp chat template wraps in <system>...</system>
+    # tags, resetting the model's context framing and causing gradual
+    # degradation (empty content, error loops, mid-session agent restart,
+    # observed in session f091a4e1 2026-08-27).
+    #
+    # Per the pipeline protocol, the canonical order is:
+    #   [sys][context_files][dialog][summary][user_context][user_input][...]
+    # The summary sits at the END of the old dialog, before the current
+    # turn's dynamic sections. This keeps the summary out of the active
+    # conversation flow and stabilises the LCP cache prefix.
+    #
+    # Split @validated at the last user_context system message to separate
+    # "old dialog" (before the current turn's user_context) from "current
+    # turn" (user_context, user_input, assistant, tool_results). If no
+    # user_context is present in @validated, the entire @validated is the
+    # dialog and the summary goes at the very end (first-turn case).
+    my $uc_split_idx = -1;
+    for my $i (reverse 0 .. $#validated) {
+        my $m = $validated[$i];
+        next unless ref($m) eq 'HASH';
+        my $content = $m->{content} // '';
+        next unless ($m->{role} // '') eq 'system';
+        next if $content =~ /<thread_summary>/;
+        if ($content =~ /<(?:userContext|dynamicContext|sessionGoals)[\s>]/) {
+            $uc_split_idx = $i;
+            last;
+        }
     }
-    # Cache-stable ordering: keep the summary at the END of the truncated
-    # messages so the LCP match can extend through the stable prefix
-    # (sys + dialog + tool_results + user_ctx + user_input) before
-    # breaking at the summary content boundary.
-    #
-    # llama.cpp's server-context.cpp prompt_stable_prefix_tokens floor is
-    # a minimum-prefix-match gate: if the cached slot's common_prefix with
-    # the new prompt is less than the hint, the slot is rejected. Placing
-    # the summary at position 1 (right after sys) forced the gate value to
-    # include the summary, and the cached slot (which doesn't have the
-    # summary yet on the first trim) always failed the gate, collapsing
-    # sim_best from ~0.99 to ~0.58 forever (the bug observed 2026-08-19,
-    # cache hit ratio collapse on first trim of a long-running session).
-    #
-    # With unit-based trim (no deinterleave), the dialog + tool_results
-    # stay in their natural interleaved order from newest to oldest,
-    # so the LCP prefix extends through the entire conversation before
-    # breaking at the summary boundary. Order: [system][dialog+tools][summary]
-    push @truncated, @validated;
+
+    my @dialog_part = $uc_split_idx >= 0 ? @validated[0 .. $uc_split_idx - 1] : @validated;
+    my @trailing_turn = $uc_split_idx >= 0 ? @validated[$uc_split_idx .. $#validated] : ();
+
+    # Emit old dialog, then the CSSS summary, then the current turn.
+    # This places the summary between old dialog and user_context/user_input
+    # per the pipeline protocol, preventing the summary from appearing as a
+    # mid-conversation system block that resets the model's context framing.
+    push @truncated, @dialog_part;
     push @truncated, $summary_to_use if $summary_to_use;
+
+    # Emit leading user_context anchors (extracted by the first pass when
+    # user_context was at a leading position) AFTER the summary, not before
+    # the dialog. Placing them at position 1 (leading) caused them to change
+    # every minute (timestamp), shifting all downstream token positions and
+    # permanently collapsing the LCP cache. After the summary is the correct
+    # canonical position. Skip if @validated already contains a trailing
+    # user_context (avoids duplicates — keep the most recent one).
+    if ($uc_split_idx < 0 && @$preserved_user_contexts) {
+        for my $uc_unit (@$preserved_user_contexts) {
+            push @truncated, $_ for @{$uc_unit->{messages}};
+        }
+    }
+
+    # Emit the current turn's messages (user_context, user_input,
+    # assistant response, tool_results) after the summary.
+    push @truncated, @trailing_turn;
 
     if (should_log('DEBUG')) {
         my $final_tokens = _estimate_tokens(\@truncated);

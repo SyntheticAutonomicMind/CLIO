@@ -430,6 +430,85 @@ sub session_name {
     return $self->{session_name};
 }
 
+=head2 auto_name_session
+
+Generate a session name from the first user message in history if no name
+is set yet. Called programmatically after the first user message is saved
+to session state — CLIO owns session naming instead of asking the model
+to emit an HTML comment marker.
+
+Returns: 1 if a name was assigned, 0 otherwise.
+
+=cut
+
+sub auto_name_session {
+    my ($self) = @_;
+
+    # Don't overwrite an existing name (from AI marker or explicit set)
+    return 0 if $self->{session_name};
+
+    my $history = $self->{history};
+    return 0 unless $history && ref($history) eq 'ARRAY';
+
+    # Find the first user message
+    my $first_user_msg;
+    for my $msg (@$history) {
+        next unless ref($msg) eq 'HASH';
+        next unless ($msg->{role} || '') eq 'user';
+        $first_user_msg = $msg->{content} || '';
+        last;
+    }
+
+    return 0 unless $first_user_msg && length($first_user_msg) > 0;
+
+    my $name = _generate_session_name($first_user_msg);
+    if ($name && length($name) > 0) {
+        $self->{session_name} = $name;
+        log_debug('State', "Auto-generated session name: $name");
+        return 1;
+    }
+
+    return 0;
+}
+
+=head2 _generate_session_name
+
+Generate a concise session name from user input text.
+Returns a string of up to 60 characters, truncated at word boundary.
+
+=cut
+
+sub _generate_session_name {
+    my ($text) = @_;
+
+    return unless defined $text && length($text) > 0;
+
+    my $name = $text;
+
+    # Remove leading/trailing whitespace
+    $name =~ s/^\s+//;
+    $name =~ s/\s+$//;
+
+    # Collapse multiple whitespace to single space
+    $name =~ s/\s+/ /g;
+
+    # Remove common filler phrases at the start
+    $name =~ s/^(?:hey|hi|hello|please|can you|could you|i want to|i need to|i'd like to|let's)\s+//i;
+
+    # Capitalize first letter
+    $name = ucfirst($name);
+
+    # Truncate to 60 chars at word boundary
+    if (length($name) > 60) {
+        $name = substr($name, 0, 60);
+        $name =~ s/\s+\S*$//;
+        $name .= '...' if length($name) > 0;
+    }
+
+    return undef if length($name) < 3;
+    return $name;
+}
+
 =head2 session_goals / get_session_goals / set_session_goals
 
 Persistent task-tracking goals managed by the model. Goals live in the
@@ -785,7 +864,8 @@ sub add_message {
             collaboration => $opts->{collaboration} || undef,  # Mark collaboration exchanges
             # Values: 'request_input', 'interrupt', 'checkpoint', etc.
             # Used by YaRN to identify and preserve collaboration exchanges
-            # during context trimming (replaces [COLLABORATION] text prefix)
+            # during context trimming. Set by Interact.pm and other tools
+            # that pause for user input.
             unix_timestamp => time(),  # Keep Unix timestamp for backwards compatibility
         },
     };

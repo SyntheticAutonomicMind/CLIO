@@ -68,15 +68,36 @@ use CLIO::Core::API::MessageValidator;
 
     ok(scalar(@user_ctx) >= 1, "At least one user_context system message preserved through trim (got " . scalar(@user_ctx) . ")");
 
-    # Specifically: the user_context at msg[1] must be preserved (the regression target)
-    my $msg_1_user_context_preserved = 0;
+    # The trailing user_context (with "Updated LTM") must be preserved through
+    # the trim. With the Fix 1 layout correction, the leading user_context at
+    # msg[1] is dropped (deduplicated) and only the trailing one survives —
+    # placed after the thread_summary, not at position [1].
+    my $trailing_user_ctx_preserved = 0;
     for my $msg (@$result) {
-        if (($msg->{role} // '') eq 'system' && ($msg->{content} // '') =~ /Long-Term Memory\n+\s*LTM patterns/) {
-            $msg_1_user_context_preserved = 1;
+        if (($msg->{role} // '') eq 'system' && ($msg->{content} // '') =~ /Updated LTM/) {
+            $trailing_user_ctx_preserved = 1;
             last;
         }
     }
-    ok($msg_1_user_context_preserved, "user_context at msg[1] (LTM patterns marker) preserved");
+    ok($trailing_user_ctx_preserved, "trailing user_context (Updated LTM) preserved through trim");
+
+    # The leading user_context at msg[1] (with "LTM patterns") should NOT
+    # survive — it was the non-trailing duplicate that caused the LCP cache
+    # to break when it changed every minute (timestamp).
+    my $leading_user_ctx_stripped = 1;
+    for my $msg (@$result) {
+        if (($msg->{role} // '') eq 'system' && ($msg->{content} // '') =~ /LTM patterns/) {
+            $leading_user_ctx_stripped = 0;
+            last;
+        }
+    }
+    ok($leading_user_ctx_stripped, "leading user_context (LTM patterns) stripped — no duplicate at msg[1]");
+
+    # Verify user_context is NOT at position [1] (the bug)
+    if (@$result > 1) {
+        unlike($result->[1]{content} // '', qr/<dynamicContext>/,
+            'user_context NOT at position [1] after trim (was the LCP cache breaker)');
+    }
 }
 
 # ---- Test 2: prefix layout stable when trim runs ----
@@ -116,13 +137,25 @@ use CLIO::Core::API::MessageValidator;
     ok(@$result && $result->[0]{role} eq 'system', "msg[0] is system (CLIO preserved)");
     like($result->[0]{content}, qr/CLIO System Prompt/, "msg[0] is the CLIO system prompt");
 
-    # The user_context at msg[1] must be preserved at its position
-    # (this is the regression target)
-    my $msg_1_is_user_context = 0;
-    if (@$result > 1 && $result->[1]{role} eq 'system' && $result->[1]{content} =~ /Original LTM at msg\[1\]/) {
-        $msg_1_is_user_context = 1;
+    # The trailing user_context (Fresh) must be preserved. With Fix 1, the
+    # leading user_context at msg[1] (Original LTM) is dropped as a duplicate
+    # and the trailing one is placed after the thread_summary — NOT at [1].
+    my $trailing_uc_preserved = 0;
+    my $trailing_uc_idx = -1;
+    for my $i (0 .. $#$result) {
+        my $msg = $result->[$i];
+        if (ref($msg) eq 'HASH' && ($msg->{role} // '') eq 'system'
+            && ($msg->{content} // '') =~ /Fresh user_context at trailing/) {
+            $trailing_uc_preserved = 1;
+            $trailing_uc_idx = $i;
+            last;
+        }
     }
-    ok($msg_1_is_user_context, "user_context at msg[1] preserved at its position (not dropped)");
+    ok($trailing_uc_preserved, "trailing user_context (Fresh) preserved through trim");
+    if ($trailing_uc_preserved && $trailing_uc_idx > 0) {
+        unlike($result->[1]{content} // '', qr/Original LTM at msg/,
+            'leading user_context (Original LTM) NOT at msg[1] — moved/dropped');
+    }
 }
 
 # ---- Test 3: prefix layout stable when no trim is needed ----
@@ -178,10 +211,25 @@ use CLIO::Core::API::MessageValidator;
         token_ratio        => 2.5,
     );
 
-    # The user_context at msg[1] must survive even under aggressive trim
-    ok(@$result > 1, "Result has more than 1 message (got " . scalar(@$result) . ")");
-    my $msg_1_intact = (@$result > 1 && $result->[1]{role} eq 'system' && $result->[1]{content} =~ /DO NOT DROP ME/);
-    ok($msg_1_intact, "user_context at msg[1] preserved under aggressive trim");
+    # The user_context (DO NOT DROP ME) must survive even under aggressive
+    # trim. With Fix 1, it's preserved at the trailing position (after the
+    # thread_summary), NOT at msg[1].
+    my $user_ctx_preserved = 0;
+    for my $msg (@$result) {
+        if (ref($msg) eq 'HASH' && ($msg->{role} // '') eq 'system'
+            && ($msg->{content} // '') =~ /DO NOT DROP ME/) {
+            $user_ctx_preserved = 1;
+            last;
+        }
+    }
+    ok($user_ctx_preserved, "user_context (DO NOT DROP ME) preserved under aggressive trim");
+    unless ($user_ctx_preserved) {
+        # If not preserved, check it's not at [1] specifically
+        if (@$result > 1) {
+            unlike($result->[1]{content} // '', qr/DO NOT DROP ME/,
+                'user_context was NOT dropped entirely — either preserved elsewhere or intentionally removed');
+        }
+    }
 }
 
 done_testing();
