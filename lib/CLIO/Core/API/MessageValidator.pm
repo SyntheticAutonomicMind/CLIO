@@ -204,6 +204,7 @@ sub validate_and_truncate {
         $previous_summary_content = $summary_unit->{messages}[0]{content} || '';
     }
     my @dropped_units;
+    my @error_units;  # BUG C: error units deferred to second pass
     
     my @remaining = @units[$start_unit .. $#units];
 
@@ -216,6 +217,11 @@ sub validate_and_truncate {
     # acts as absolute safety floor.
     my $post_trim_keep_limit = $effective_limit;
     $post_trim_keep_limit = CLIO::Core::Defaults::DEFAULT_POST_TRIM_FLOOR() if $post_trim_keep_limit < CLIO::Core::Defaults::DEFAULT_POST_TRIM_FLOOR();
+    # BUG C: Allow callers to disable the post-trim floor when they want
+    # to force aggressive trim for testing or tight-budget scenarios.
+    if ($args{disable_post_trim_floor}) {
+        $post_trim_keep_limit = $effective_limit;
+    }
     log_debug('MessageValidator', "Post-trim keep target: $post_trim_keep_limit tokens (prompt budget for $model)");
 
     for my $unit (reverse @remaining) {
@@ -232,7 +238,20 @@ sub validate_and_truncate {
             log_debug('MessageValidator', "Skipping trailing thread_summary in budget walk (CSSS slot preserved)");
             next;
         }
-        
+
+        # BUG C: Error-first trim priority.
+        # Units containing TOOL ERROR tool_results are the LOWEST priority
+        # for retention. They convey "this approach failed" but no longer
+        # serve a useful purpose once the model has moved on, and they can
+        # be 100+ tokens each (schema dumps). Drop them first when budget
+        # is tight, before any non-error units.
+        if ($unit->{has_tool_error}) {
+            # Error unit: defer to second pass. Push onto a separate list
+            # so we can decide later whether budget allows it.
+            push @error_units, $unit;
+            next;
+        }
+
         # Unit-based trim: keep or drop the ENTIRE unit (including any
         # tool_calls and tool_results it contains). This preserves the
         # natural interleaved ordering — no deinterleave/reinterleave
@@ -246,6 +265,32 @@ sub validate_and_truncate {
             }
         } else {
             push @dropped_units, $unit;
+        }
+    }
+
+    # Second pass (BUG C): walk error units in reverse (newest first) and
+    # include them only if remaining budget allows. Newest errors are most
+    # relevant (the model's recent failures); oldest error noise is dropped.
+    # If the unit budget was already exceeded by non-error units, the
+    # entire error stream goes to dropped_units and gets compressed into
+    # the thread_summary, which is desirable — a long error loop's content
+    # is summarized, not preserved verbatim.
+    if (@error_units) {
+        # Newest first
+        for my $unit (reverse @error_units) {
+            if ($current_tokens + $unit->{tokens} <= $post_trim_keep_limit) {
+                unshift @conversation, @{$unit->{messages}};
+                $current_tokens += $unit->{tokens};
+                for my $id (keys %{$unit->{tool_call_ids} || {}}) {
+                    $included_tool_ids{$id} = 1;
+                }
+                log_debug('MessageValidator',
+                    "Preserved error unit at end of budget (tokens=$unit->{tokens}, current=$current_tokens)");
+            } else {
+                push @dropped_units, $unit;
+                log_debug('MessageValidator',
+                    "Dropped error unit (would exceed budget: tokens=$unit->{tokens}, current=$current_tokens)");
+            }
         }
     }
     
@@ -644,6 +689,19 @@ sub _group_into_units {
         $msg_tokens += 8 if $msg->{role} && $msg->{role} eq 'tool';
         my $has_tool_calls = $msg->{tool_calls} && ref($msg->{tool_calls}) eq 'ARRAY' && @{$msg->{tool_calls}};
         my $is_tool_result = $msg->{tool_call_id} || ($msg->{role} && $msg->{role} eq 'tool');
+
+        # BUG C: Mark tool_results that contain TOOL ERROR responses so the
+        # budget walk can prefer them for dropping. These are the LOWEST
+        # priority content in the prompt — they convey "this approach
+        # failed" but no longer serve a useful purpose once the model has
+        # moved on. Keeping them costs token budget that should go to the
+        # actual task work. Only mark the FIRST tool_result that immediately
+        # follows the assistant's tool_call (i.e. a normal error response,
+        # not a follow-up retry error which might be in a different unit).
+        my $is_tool_error = 0;
+        if ($is_tool_result && ($msg->{content} // '') =~ /^\s*TOOL ERROR[: ]|^\s*ERROR[: ]|^STOP:/) {
+            $is_tool_error = 1;
+        }
         
         if ($has_tool_calls) {
             push @units, $current_unit if $current_unit;
@@ -669,6 +727,10 @@ sub _group_into_units {
             my $tool_id = $msg->{tool_call_id};
             
             if ($current_unit) {
+                # Track error tool_results separately so the budget walk can
+                # prefer to drop them. We attach the marker to the unit so
+                # when the whole unit is dropped the marker stays consistent.
+                $current_unit->{has_tool_error} = 1 if $is_tool_error;
                 push @{$current_unit->{messages}}, $msg;
                 $current_unit->{tokens} += $msg_tokens;
                 delete $pending_tool_ids{$tool_id} if $tool_id;

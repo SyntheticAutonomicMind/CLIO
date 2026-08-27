@@ -187,8 +187,31 @@ sub load_conversation_history {
                 ", has_tool_calls=$has_tool_calls, count=$tc_count");
         }
 
-        # Skip system messages - we build fresh system prompt in process_input
-        next if $msg->{role} eq 'system';
+        # System messages are normally rebuilt fresh in process_input and skipped here.
+        # EXCEPT thread_summary system messages written by Session::State::trim_context.
+        # Those contain the original task context and tool/file/decision summary that
+        # the model needs to remember what the session is about. Without preserving
+        # them, the model loses all task context on resume (observed in
+        # PhotonTERM session a6a0eb10: 43 history messages, zero user messages,
+        # thread_summary at idx 1 filtered out -> agent restarts from scratch).
+        #
+        # The fresh system prompt is built and prepended at process_input time, so
+        # keeping these summaries here doesn't conflict with the system prompt.
+        # The proactive trim in MessageValidator._extract_preserved_units already
+        # handles thread_summary positioning (puts it at END for CSSS cache stability).
+        if ($msg->{role} eq 'system') {
+            my $sys_content = $msg->{content} // '';
+            if ($sys_content =~ /<thread_summary>/ || $sys_content =~ /^\[CONTEXT TRIM:/) {
+                push @valid_messages, {
+                    role => $msg->{role},
+                    content => $sys_content,
+                };
+                log_debug('ConversationManager',
+                    "Preserving thread_summary system message (length=" . length($sys_content) . ")");
+                next;
+            }
+            next;
+        }
 
         # Skip tool result messages without tool_call_id
         # GitHub Copilot API REQUIRES tool_call_id for role=tool messages
