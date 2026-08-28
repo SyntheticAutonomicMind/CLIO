@@ -201,6 +201,30 @@
         "invalid_effort_default": "high"
       }
     },
+    "vercel": {
+      "default_model": "poolside/laguna-s-2.1-free",
+      "max_context_tokens": 256000,
+      "max_output_tokens": 32768,
+      "supports_reasoning": 1,
+      "supports_streaming": 1,
+      "supports_tools": 1,
+      "supports_vision": 1,
+      "reasoning_schema": {
+        "mode": "nested",
+        "param": "reasoning",
+        "effort_field": "effort",
+        "enabled_field": "enabled",
+        "values": [
+          "none",
+          "minimal",
+          "low",
+          "medium",
+          "high",
+          "xhigh"
+        ],
+        "default_effort": "medium"
+      }
+    },
     "sam": {
       "default_model": "local-model",
       "exposes_props": 1,
@@ -280,5 +304,5 @@
       }
     }
   },
-  "version": 2
+  "version": 3
 }

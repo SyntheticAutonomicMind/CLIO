@@ -174,7 +174,7 @@ sub _load_file {
 # Current schema version of the model-data JSON files. Bump when the on-disk
 # format changes incompatibly - older files will croak with a clear error
 # pointing the user at the upgrade path.
-our $SUPPORTED_DATA_VERSION = 2;
+our $SUPPORTED_DATA_VERSION = 3;
 
 sub _check_data_version {
     my ($data, $filename) = @_;

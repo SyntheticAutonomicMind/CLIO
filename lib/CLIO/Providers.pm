@@ -256,6 +256,27 @@ my %PROVIDERS = (
         },
     },
     
+    vercel => {
+        name => 'Vercel AI Gateway',
+        api_base => 'https://ai-gateway.vercel.sh/v1',
+        model => 'poolside/laguna-s-2.1-free',
+        requires_auth => 'apikey',
+        supports_tools => 1,
+        supports_streaming => 1,
+        supports_reasoning => 1,
+        supports_cache_control => 1,
+        chat_endpoint_suffix => '/chat/completions',
+        url_detection_patterns => [ qr{ai-gateway\.vercel\.sh}i ],
+        endpoint => {
+            path_suffix => '/chat/completions',
+            temperature_range => [0.0, 2.0],
+            supports_tools => 1,
+            # Vercel AI Gateway uses OpenAI Responses API-style reasoning object
+            # (reasoning: {effort, max_tokens, enabled, exclude}) for Chat Completions.
+            # The nested reasoning_schema in provider-defaults.json drives param injection.
+        },
+    },
+    
     google => {
         name => 'Google Gemini',
         api_base => 'https://generativelanguage.googleapis.com/v1beta',
