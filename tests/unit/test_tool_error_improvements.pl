@@ -199,7 +199,7 @@ isa_ok($wo, 'CLIO::Tools::WebOperations', 'WebOperations instance');
 {
     my $r = $wo->fetch_url({});
     is($r->{success}, 0, 'fetch_url with no url returns failure');
-    like($r->{error}, qr/Missing 'url'/, 'fetch_url no url error mentions "Missing url"');
+    like($r->{error}, qr/Missing required parameter: url/, 'fetch_url no url error mentions missing url');
 }
 
 # _categorize_http_error: build synthetic responses, exercise every category

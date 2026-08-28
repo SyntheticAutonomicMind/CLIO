@@ -436,7 +436,7 @@ sub commit {
     my $auto_stage = $params->{auto_stage} // 1;  # Default to true for backward compat
     my $result;
 
-    return $self->error_result("Missing 'message' parameter") unless $message;
+ return $self->error_result("Missing required parameter: message") unless $message;
 
     # Multi-agent coordination: Request git lock via broker
     my $lock_acquired = 0;
@@ -637,8 +637,8 @@ sub blame {
     my $file = $params->{file};
     my $result;
     
-    return $self->error_result("Missing 'file' parameter") unless $file;
-    
+ return $self->error_result("Missing required parameter: file") unless $file;
+
     eval {
         $result = _in_repo($repo_path, sub {
             my $output = `git blame @{[_sq($file)]} 2>&1`;
