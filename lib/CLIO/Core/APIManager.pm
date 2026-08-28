@@ -3758,6 +3758,27 @@ sub send_request_streaming {
                 my $sse_chunk = $1;
                 next unless $sse_chunk =~ /\S/;
 
+                # Check for user interrupt (ESC) after each SSE event.
+                # This is the PRIMARY interrupt detection point for streaming.
+                # It's called from regular code (not signal context), so
+                # Interrupt::check() can safely do the 50ms escape-sequence
+                # disambiguation. Checking here - between SSE events, not
+                # just between HTTP chunks - ensures we catch interrupts
+                # even when the ALRM handler hasn't fired yet or when
+                # chunks are large and infrequent.
+                if (eval { CLIO::Core::Interrupt::pending(session => $self->{session}) }
+                    || eval { CLIO::Core::Interrupt::check(session => $self->{session}) }) {
+                    log_info('APIManager', "Interrupt detected in SSE stream, aborting");
+                    $ss->{_user_interrupted} = 1;
+                    # Throw to break out of HTTP::Tiny/curl streaming loop.
+                    # For HTTP::Tiny this propagates through data_callback;
+                    # for curl the exception is caught by _request_via_curl_streaming's
+                    # own eval{}. Both cases set _interrupt_pending via the
+                    # orchestrator's on_chunk chain, and the post-streaming
+                    # check in send_request_streaming detects the abort.
+                    die "__CLIO_INTERRUPT_ABORT__\n";
+                }
+
                 my $event_type = '';
                 for my $line (split /\n/, $sse_chunk) {
                     if ($line =~ /^event:\s*(.+)$/) {
@@ -5565,6 +5586,15 @@ sub _send_native_streaming {
             
             # Process complete SSE events
             while ($buffer =~ s/^(.*?)\n//s) {
+                # Check for user interrupt after each SSE event.
+                # Uses the same two-tier check as send_request_streaming:
+                # pending() fast path (ALRM handler set the flag), then
+                # check() with a non-blocking ReadKey for active detection.
+                if (eval { CLIO::Core::Interrupt::pending(session => $self->{session}) }
+                    || eval { CLIO::Core::Interrupt::check(session => $self->{session}) }) {
+                    log_info('APIManager', "Interrupt detected in native SSE stream, aborting");
+                    last;
+                }
                 my $event = $provider->parse_stream_event($1);
                 next unless $event;
 

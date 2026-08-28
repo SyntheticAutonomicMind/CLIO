@@ -636,12 +636,19 @@ sub request {
         }
         
         my $response;
-        if ($use_curl) {
+        if ($use_curl || ($has_callback && $HAS_CURL)) {
+            # Use curl for streaming when available. HTTP::Tiny's internal
+            # _do_timeout() retries select() after EINTR without checking for
+            # interrupts, so the ALRM-handler-set flag is never checked until
+            # the next data chunk arrives — which can be seconds or minutes.
+            # Curl's sysread-based loop checks Interrupt::pending() after
+            # each EINTR and each chunk, enabling sub-second ESC detection.
+            # (When SSL IS available but curl is also available, we override
+            # the normal HTTP::Tiny path for streaming only; non-streaming
+            # requests still use HTTP::Tiny for connection pooling.)
             if ($has_callback) {
-                # Use curl with true streaming via pipe
                 $response = $self->_request_via_curl_streaming($method, $uri, \%headers, $content, $url_or_callback);
             } else {
-                # Use curl with buffered response
                 $response = $self->_request_via_curl($method, $uri, \%headers, $content);
             }
         } else {
