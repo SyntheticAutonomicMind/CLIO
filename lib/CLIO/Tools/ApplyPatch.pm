@@ -71,16 +71,20 @@ Return the tool definition for the API (OpenAI function-calling format).
 =cut
 
 sub get_tool_definition {
-    return {
-        name => 'apply_patch',
-        description => 'Apply a patch to create, modify, or delete files. Uses a lightweight diff format that is more efficient than full file rewrites. Each patch can contain multiple file operations. Prefer this over file_operations write_file/replace_string for multi-file changes.',
-        parameters => {
-            type => 'object',
-            required => ['patch'],
-            properties => {
-                patch => {
-                    type => 'string',
-                    description => '[REQUIRED] The patch text. Format:
+    my ($self) = @_;
+
+    # Use the base class definition (which includes 'operation' parameter
+    # with the enum of supported_operations and required => ['operation']),
+    # then extend it with the 'patch' parameter. This ensures the AI sees
+    # the operation field in the schema and is prompted to provide it,
+    # rather than relying on the execute() override to auto-inject it.
+    my $def = $self->SUPER::get_tool_definition();
+
+    $def->{parameters}{required} = ["operation", "patch"];
+    $def->{description} = 'Apply a patch to create, modify, or delete files. Uses a lightweight diff format that is more efficient than full file rewrites. Each patch can contain multiple file operations. Prefer this over file_operations write_file/replace_string for multi-file changes.';
+    $def->{parameters}{properties}{patch} = {
+        type => 'string',
+        description => '[REQUIRED] The patch text. Format:
 
 *** Begin Patch
 *** Add File: <path>
@@ -108,10 +112,9 @@ chunk" errors. When editing POD blocks or anything with mixed prose,
 prefer file_operations.replace_string with exact old_string/new_string.
 If you see "Unrecognized line in patch chunk" warnings, the chunk
 format is wrong - reread this rule.',
-                },
-            },
-        },
     };
+
+    return $def;
 }
 
 =head2 route_operation($operation, $params, $context)
@@ -126,23 +129,7 @@ sub dispatch_table {
     };
 }
 
-=head2 execute
-
-Override base execute to auto-inject operation='apply' since this tool
-has only one operation and the AI will call it without specifying one.
-
-=cut
-
-sub execute {
-    my ($self, $params, $context) = @_;
-    
-    # Auto-inject operation if not provided (AI calls apply_patch with just 'patch')
-    $params->{operation} //= 'apply';
-    
-    return $self->SUPER::execute($params, $context);
-}
-
-=head2 _do_apply(\%params, $context)
+=head2 _do_apply
 
 Execute the apply_patch tool.
 

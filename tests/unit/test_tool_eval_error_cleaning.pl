@@ -190,7 +190,7 @@ ok($r && !$r->{success}, 'vc.commit no_msg: failed as expected');
 is($r->{tool_name}, 'version_control', 'vc.commit no_msg: tool_name is set');
 unlike($r->{error}, qr{ at \S+ line \d+},
     'vc.commit no_msg: error does not leak caller-location');
-like($r->{error}, qr/Missing 'message' parameter/,
+like($r->{error}, qr/Missing required parameter: message/,
     'vc.commit no_msg: error mentions missing message');
 
 $r = $vc->execute({
@@ -201,7 +201,7 @@ ok($r && !$r->{success}, 'vc.blame no_file: failed as expected');
 is($r->{tool_name}, 'version_control', 'vc.blame no_file: tool_name is set');
 unlike($r->{error}, qr{ at \S+ line \d+},
     'vc.blame no_file: error does not leak caller-location');
-like($r->{error}, qr/Missing 'file' parameter/, 'vc.blame no_file: clean missing-file');
+like($r->{error}, qr/Missing required parameter: file/, 'vc.blame no_file: clean missing-file');
 
 $r = $vc->execute({
     operation => 'branch',
@@ -328,7 +328,7 @@ ok($r && !$r->{success}, 'rx.transfer_files: failed as expected');
 is($r->{tool_name}, 'remote_execution', 'rx.transfer_files: tool_name is set');
 unlike($r->{error}, qr{ at \S+ line \d+},
     'rx.transfer_files: error does not leak caller-location');
-like($r->{error}, qr/Missing or empty 'files' parameter/,
+like($r->{error}, qr/Missing required parameter: files/,
     'rx.transfer_files: clean missing-files');
 
 # retrieve_files() missing files param

@@ -119,7 +119,7 @@ sub fetch_url {
     my $url = $params->{url};
     my $timeout = $params->{timeout} || 30;
 
-    return $self->error_result("Missing 'url' parameter") unless $url;
+ return $self->error_result("Missing required parameter: url") unless $url;
 
     # Validate URL shape before any network call. HTTP::Tiny's "Invalid URI"
     # error gets lost in transport noise without this.
@@ -381,8 +381,8 @@ sub search_web {
     my $max_results = $params->{max_results} || 10;
     my $timeout = $params->{timeout} || 30;
     
-    return $self->error_result("Missing 'query' parameter") unless $query;
-    
+ return $self->error_result("Missing required parameter: query") unless $query;
+
     # Get config from context - check multiple locations
     my $config;
     if ($context && ref($context) eq 'HASH') {

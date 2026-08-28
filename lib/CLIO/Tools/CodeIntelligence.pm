@@ -204,8 +204,8 @@ sub search_history {
     my $since = $params->{since};
     my $author = $params->{author};
     
-    return $self->error_result("Missing 'query' parameter",
-        action_description => "Error: Missing 'query' parameter"
+    return $self->error_result("Missing required parameter: query",
+        action_description => "Error: Missing required parameter: query"
     ) unless $query;
     
     # Check if we're in a git repo
@@ -460,8 +460,8 @@ sub list_usages {
         $file_paths = [$file_paths];
     }
     
-    return $self->error_result("Missing 'symbol_name' parameter", 
-        action_description => "Error: Missing 'symbol_name' parameter"
+    return $self->error_result("Missing required parameter: symbol_name", 
+        action_description => "Error: Missing required parameter: symbol_name"
     ) unless $symbol_name;
     
     log_debug('CodeIntelligence', "Searching for symbol: $symbol_name");

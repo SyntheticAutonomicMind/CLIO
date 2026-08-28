@@ -106,11 +106,9 @@ AUTHORIZATION:
   Parameters: toolCallId (required), offset (optional, default: 0), length (optional, default: dynamic based on model context, max: 32768)
 
 ━━━━━━━━━━━━━━━━━━━━━ WRITE (7 operations) ━━━━━━━━━━━━━━━━━━━━━
--  write_file - Write content to a file. Creates the file if it doesn't exist,
+  write_file - Write content to a file. Creates the file if it doesn't exist,
   overwrites it if it does. Pass append=true to append instead of overwriting.
   Parameters: path (required), content (required), append (optional, default: false)
-  Replaces the older create_file (refused to overwrite) and append_file.
-  Both still work as silent aliases for backward compatibility.
 
 -  replace_string - Find and replace text in file
   Parameters: path (required), old_string (required), new_string (required)
@@ -134,7 +132,7 @@ AUTHORIZATION:
 ALIASES: Each operation above also accepts common natural-language aliases
 (e.g. `list_dir` / `list_directory`, `read` / `read_file`, `delete` /
 `delete_file`, `mv` / `rename_file`, `mkdir` / `create_directory`,
-`bulk_replace` / `multi_replace_string`, `create` / `create_file`,
+`bulk_replace` / `multi_replace_string`, `create` / `write_file`,
 `append` / `append_file`). The canonical names above are
 preferred for clarity; aliases exist so calling code that uses the more
 familiar English form still dispatches correctly.
@@ -148,16 +146,24 @@ familiar English form still dispatches correctly.
             file_search find_files
             grep_search search
             semantic_search
-            read_tool_result read_result
-            create_file create
-            write_file write
-            append_file append
-            replace_string replace edit
-            multi_replace_string bulk_replace
-            insert_at_line insert_line insert
-            delete_file delete remove
-            rename_file rename mv
-            create_directory make_directory mkdir
+            read_tool_result
+            write_file
+            replace_string
+            multi_replace_string
+            insert_at_line
+            delete_file
+            rename_file
+            create_directory
+        )],
+        # Short, natural-language aliases. These are silently accepted as
+        # operation values (via validate_operation + dispatch_table) but are
+        # NOT included in the schema enum sent to the LLM, preventing the
+        # LLM from confusing them with tool names.
+        operation_aliases => [qw(
+            read list_directory exists stat_file find_files search
+            read_result create write append replace edit bulk_replace
+            insert_line insert delete remove rename mv make_directory mkdir
+            create_file append_file
         )],
         %opts,
     );
@@ -1216,12 +1222,23 @@ sub grep_search {
     my ($self, $params, $context) = @_;
 
     my $query = $params->{query};
-    # Scope the search to a directory. Accept either 'directory' (canonical, matches file_search)
-    # or 'path' (alias for callers who expect the same parameter name they use elsewhere).
     my $pattern = $params->{pattern} || '**/*';
     my $is_regex = $params->{is_regex} || 0;
     my $max_results = $params->{max_results} || 50;  # Prevent runaway searches
-    my $directory = $self->_clean_path($params->{directory}) || $self->_clean_path($params->{path}) || '.';
+
+    # Resolve the search directory. 'directory' is canonical (matches file_search);
+    # 'path' is accepted as an explicit alias for callers who expect that parameter
+    # name. If BOTH are provided, 'directory' takes precedence (path is ignored
+    # with a debug log) — this prevents the AI from thinking both are needed
+    # when only one scoping path is used.
+    my $dir_param = $params->{directory};
+    if (!defined $dir_param && exists $params->{path}) {
+        $dir_param = $params->{path};
+        log_debug('FileOp', "grep_search: using 'path' as alias for 'directory': $dir_param");
+    } elsif (defined $dir_param && exists $params->{path} && $params->{path}) {
+        log_debug('FileOp', "grep_search: both 'directory' and 'path' provided, using 'directory': $dir_param");
+    }
+    my $directory = $self->_clean_path($dir_param) || '.';
 
     return $self->error_result("Missing required parameter: query") unless defined $query && length($query);
 

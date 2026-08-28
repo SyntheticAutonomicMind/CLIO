@@ -191,10 +191,34 @@ sub store {
     my $key = $params->{key};
     my $content = $params->{content};
     my $memory_dir = strip_path_quotes($params->{memory_dir}) || '.clio/memory';
-    
-    return $self->error_result("Missing 'key' parameter") unless $key;
-    return $self->error_result("Missing 'content' parameter") unless $content;
-    
+
+    return $self->error_result("Missing required parameter: key") unless $key;
+ return $self->error_result("Missing required parameter: content") unless $content;
+
+    # session_goals is routed to session state (not a separate file) so
+    # it survives context trims, is race-free across concurrent sessions,
+    # and is always visible in PromptBuilder::user_context without a load
+    # step. The file fallback stays for backward compatibility with
+    # sessions that have goals written before this routing was added.
+    if ($key eq 'session_goals' && $context && $context->{session}) {
+        my $session = $context->{session};
+        my $state = $session->can('state') ? $session->state() : undef;
+        if (ref($state) && $state->can('set_session_goals')) {
+            require CLIO::Util::JSON;
+            my $goals = eval { CLIO::Util::JSON::decode_json($content) };
+            if (ref($goals) eq 'ARRAY') {
+                $state->set_session_goals($goals);
+                my $action_desc = "storing session goals in session state";
+                return $self->success_result(
+                    "Session goals stored in session state",
+                    action_description => $action_desc,
+                    key => $key,
+                    count => scalar(@$goals),
+                );
+            }
+        }
+    }
+
     my $result;
     eval {
         mkdir $memory_dir unless -d $memory_dir;
@@ -234,9 +258,30 @@ sub retrieve {
     
     my $key = $params->{key};
     my $memory_dir = strip_path_quotes($params->{memory_dir}) || '.clio/memory';
-    
-    return $self->error_result("Missing 'key' parameter") unless $key;
-    
+
+ return $self->error_result("Missing required parameter: key") unless $key;
+
+    # session_goals lives in session state (not a separate file). Reads
+    # come from there first; the file is only a backward-compat fallback
+    # for sessions that wrote goals before the routing was added.
+    if ($key eq 'session_goals' && $context && $context->{session}) {
+        my $session = $context->{session};
+        my $state = $session->can('state') ? $session->state() : undef;
+        if (ref($state) && $state->can('get_session_goals')) {
+            my $goals = $state->get_session_goals();
+            if ($goals && @$goals) {
+                require CLIO::Util::JSON;
+                my $action_desc = "retrieving session goals from session state";
+                return $self->success_result(
+                    CLIO::Util::JSON::encode_json($goals),
+                    action_description => $action_desc,
+                    key => $key,
+                    count => scalar(@$goals),
+                );
+            }
+        }
+    }
+
     my $result;
     eval {
         my $file_path = File::Spec->catfile($memory_dir, "$key.json");
@@ -278,7 +323,7 @@ sub search {
     my $query = $params->{query};
     my $memory_dir = strip_path_quotes($params->{memory_dir}) || '.clio/memory';
     
-    return $self->error_result("Missing 'query' parameter") unless $query;
+    return $self->error_result("Missing required parameter: query") unless $query;
     
     my $result;
     eval {
@@ -401,7 +446,7 @@ sub delete {
     my $key = $params->{key};
     my $memory_dir = strip_path_quotes($params->{memory_dir}) || '.clio/memory';
     
-    return $self->error_result("Missing 'key' parameter") unless $key;
+    return $self->error_result("Missing required parameter: key") unless $key;
     
     my $result;
     eval {
@@ -450,7 +495,7 @@ sub recall_sessions {
     $max_sessions = 50 if $max_sessions > 50;
     $max_results = 20 if $max_results > 20;
     
-    return $self->error_result("Missing 'query' parameter") unless $query;
+ return $self->error_result("Missing required parameter: query") unless $query;
     
     my $result;
     eval {
@@ -801,7 +846,7 @@ sub add_discovery {
     my $fact = $params->{fact};
     my $confidence = $params->{confidence} // 0.8;
     
-    return $self->error_result("Missing 'fact' parameter") unless $fact;
+ return $self->error_result("Missing required parameter: fact") unless $fact;
     return $self->error_result("Confidence must be between 0 and 1") if $confidence < 0 || $confidence > 1;
     
     my $result;
@@ -849,8 +894,8 @@ sub add_solution {
     my $solution = $params->{solution};
     my $examples = $params->{examples} // [];
     
-    return $self->error_result("Missing 'error' parameter") unless $error;
-    return $self->error_result("Missing 'solution' parameter") unless $solution;
+ return $self->error_result("Missing required parameter: error") unless $error;
+ return $self->error_result("Missing required parameter: solution") unless $solution;
     
     my $result;
     eval {
@@ -897,7 +942,7 @@ sub add_pattern {
     my $confidence = $params->{confidence} // 0.7;
     my $examples = $params->{examples} // [];
     
-    return $self->error_result("Missing 'pattern' parameter") unless $pattern;
+ return $self->error_result("Missing required parameter: pattern") unless $pattern;
     return $self->error_result("Confidence must be between 0 and 1") if $confidence < 0 || $confidence > 1;
     
     my $result;
@@ -978,9 +1023,9 @@ sub update_ltm {
     my $replacement = $params->{replacement};
     my $type = $params->{entry_type} || $params->{type};
     
-    return $self->error_result("Missing 'search_text' parameter") unless $search;
-    return $self->error_result("Missing 'replacement' parameter") unless $replacement;
-    
+ return $self->error_result("Missing required parameter: search_text") unless $search;
+ return $self->error_result("Missing required parameter: replacement") unless $replacement;
+
     my $result;
     eval {
         my $ltm = $context->{ltm} || $context->{session}->{ltm} if ref($context) eq 'HASH';
@@ -1145,7 +1190,7 @@ sub add_corroboration {
     my $source_session = $params->{source_session};
     my $type = $params->{entry_type};
 
-    return $self->error_result("Missing 'search_text' parameter") unless $search_text;
+    return $self->error_result("Missing required parameter: search_text") unless $search_text;
 
     # Defensive identity fallback. LongTerm.pm reads $ENV{CLIO_AGENT_ID} /
     # $ENV{CLIO_SESSION_ID} as the default corroboration source key, and
