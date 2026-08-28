@@ -67,7 +67,7 @@ See [docs/USER_GUIDE.md](docs/USER_GUIDE.md#slash-commands) for the complete ref
 
 ## AI Providers
 
-CLIO ships with **18 provider configurations**. All API providers are OpenAI-compatible; Anthropic, Google, and NVIDIA have native protocol adapters.
+CLIO ships with **16 provider configurations**. All API providers are OpenAI-compatible; Anthropic, Google, and NVIDIA have native protocol adapters.
 
 | Provider | Auth |
 |----------|------|
@@ -77,8 +77,6 @@ CLIO ships with **18 provider configurations**. All API providers are OpenAI-com
 | **Google Gemini** | API Key |
 | **DeepSeek** | API Key |
 | **OpenRouter** | API Key |
-| **OrcaRouter** | API Key |
-| **KiloCode** | API Key |
 | **Ollama Cloud** | API Key |
 | **MiniMax** | API Key |
 | **MiniMax Token Plan** | API Key |
