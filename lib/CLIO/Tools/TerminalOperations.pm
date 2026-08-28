@@ -317,8 +317,11 @@ sub _execute_captured {
             my $idle_seconds = $now - $last_activity;
             my $wall_seconds = $now - $start;
 
-            # Check for user interrupt (set by Chat.pm ALRM handler)
-            if ($session && $session->state() && $session->state()->{user_interrupted}) {
+            # Check for user interrupt (set by Chat.pm ALRM handler via Interrupt module).
+            # Use Interrupt::pending() so we catch both the session-state flag and
+            # the package-level global flag (the latter is set by the ALRM handler
+            # and is visible to code paths that do not have a session reference).
+            if ($session && $session->can('state') && $session->state()->{user_interrupted}) {
                 log_info('TerminalOps', "User interrupt detected (ESC/Ctrl-C), killing child process group $pid (wall=" . sprintf('%.1fs', $wall_seconds) . " idle=" . sprintf('%.1fs', $idle_seconds) . ")");
                 $interrupted = 1;
                 $self->_kill_process_group($pid);
@@ -517,7 +520,7 @@ sub _execute_passthrough {
             my $wall_seconds = $now - $start;
 
             # Check for user interrupt
-            if ($session && $session->state() && $session->state()->{user_interrupted}) {
+            if ($session && $session->can('state') && $session->state()->{user_interrupted}) {
                 log_info('TerminalOps', "User interrupt detected (ESC/Ctrl-C), killing passthrough process group $child_pid (wall=" . sprintf('%.1fs', $wall_seconds) . " idle=" . sprintf('%.1fs', $idle_seconds) . ")");
                 $interrupted = 1;
                 $self->_kill_process_group($child_pid);

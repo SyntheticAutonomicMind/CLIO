@@ -129,8 +129,8 @@ test("_check_for_user_interrupt returns 0 when no TTY", sub {
     die "Result not boolean" unless $result == 0 || $result == 1;
 });
 
-# Test 5: Verify duplicate interrupt prevention
-test("Duplicate interrupts prevented when flag already set", sub {
+# Test 5: Verify interrupt detection when flag already set (fast path, no I/O)
+test("Interrupt detected via flag (fast path, no STDIN read)", sub {
     require CLIO::Core::WorkflowOrchestrator;
     require CLIO::Core::Config;
     require CLIO::Core::APIManager;
@@ -146,13 +146,19 @@ test("Duplicate interrupts prevented when flag already set", sub {
         debug => 0
     );
     
-    # Set interrupt flag
+    # Set interrupt flag (simulates ALRM handler having detected ESC)
     $session->state()->{user_interrupted} = 1;
     
-    # Try to check for interrupt (should return 0 immediately)
+    # Check for interrupt - should return 1 immediately via the pending() fast path,
+    # WITHOUT reading from STDIN (since the flag is already set by the ALRM handler).
+    # This is the correct behavior: pending=1 means "an interrupt was already
+    # detected, it is waiting to be handled."
     my $result = $orch->_check_for_user_interrupt($session);
     
-    die "Should return 0 when already interrupted, got: $result" if $result;
+    die "Should return 1 when interrupt flag is already set (pending), got: $result" unless $result;
+    
+    # Clean up
+    CLIO::Core::Interrupt::clear(session => $session);
 });
 
 # Test 6: Verify interrupt message format
