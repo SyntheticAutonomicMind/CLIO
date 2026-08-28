@@ -3855,13 +3855,53 @@ sub send_request_streaming {
                     # which dereferences $data unconditionally.
                     next unless ref($data) eq 'HASH';
 
-                    $event_type = $data->{type} if !$event_type && $data->{type};
+                   $event_type = $data->{type} if !$event_type && $data->{type};
                     $self->_process_sse_data($data, $event_type, $ss);
                 }
             }
         });
     };
-
+    
+    # Check if the user interrupted streaming. Two paths can trigger this:
+    # 1. The HTTP::Tiny data_callback threw __CLIO_INTERRUPT_ABORT__ when
+    #    Interrupt::pending() was true (HTTP::Tiny path, no curl).
+    # 2. The curl streaming loop killed the curl process and broke when
+    #    Interrupt::pending() was true (curl path, native + fallback).
+    # In both cases the ALRM handler set the global flag, and the SSE
+    # processing callback's on_chunk chain set _interrupt_pending on the
+    # orchestrator. Release rate-limiter/broker slots and return early
+    # with interrupted=1 so the orchestrator goes straight to _handle_interrupt.
+    my $http_error = $@;
+    my $user_interrupted = ($http_error && $http_error =~ /__CLIO_INTERRUPT_ABORT__/)
+        || (eval { CLIO::Core::Interrupt::pending(session => $self->{session}) });
+    if ($user_interrupted) {
+        log_info('APIManager', "Streaming interrupted by user (ESC)");
+        $self->{rate_limiter}->release($provider) if $provider && $provider ne 'unknown';
+        if ($self->{response_handler}) {
+            $self->{response_handler}->release_broker_slot($resp, 200);
+        }
+        # Do NOT clear the interrupt flag here - the orchestrator's
+        # _handle_interrupt / _check_and_handle_interrupt will detect it
+        # via Interrupt::pending() and clear it when the user is prompted.
+        # Clearing early would cause the flag to be missed by the
+        # orchestrator's post-API-check, and the ESC byte was already
+        # consumed by the ALRM handler, so check() could not re-detect it.
+        return {
+            success => 0,
+            error => 'Interrupted by user',
+            interrupted => 1,
+            retryable => 0,       # Do not auto-retry an interrupt
+            error_type => 'user_interrupt',
+            # Return any content streamed so far so the UI can show partial output
+            content => $ss->{accum_content},
+            ($ss->{tool_calls_acc} && keys(%{$ss->{tool_calls_acc}}) ? (tool_calls => [sort { $a <=> $b } values %{$ss->{tool_calls_acc}}]) : ()),
+        };
+    }
+    
+    # Restore $@ so _finalize_streaming_response sees the original HTTP error
+    # (if any). The eval{ pending() } above may have cleared $@ on success.
+    $@ = $http_error;
+    
     # Post-streaming cleanup
     $self->_cleanup_streaming_state($ss);
 
@@ -5723,6 +5763,39 @@ sub _send_native_streaming {
         });
     };
 
+    # Check for user interrupt during native streaming. The curl streaming
+    # loop in CLIO::Compat::HTTP kills the curl process and breaks when
+    # Interrupt::pending() is true (set by the ALRM handler). Detect it
+    # here and return an interrupted result instead of treating the
+    # killed-process response as an HTTP error.
+    if (eval { CLIO::Core::Interrupt::pending(session => $self->{session}) }) {
+        log_info('APIManager', "Native streaming interrupted by user (ESC)");
+        my $native_provider_label = undef;
+        if ($self->{_current_endpoint_config}) {
+            $native_provider_label = $self->{_current_endpoint_config}{requires_copilot_headers} ? 'GitHub Copilot'
+                            : $self->{_current_endpoint_config}{google} ? 'Google'
+                            : $self->{_current_endpoint_config}{anthropic} ? 'Anthropic'
+                            : $self->{_current_endpoint_config}{nvidia} ? 'NVIDIA'
+                            : 'API';
+        }
+        my $np = $native_provider_label ? lc($native_provider_label) : 'unknown';
+        $self->{rate_limiter}->release($np) if $self->{rate_limiter};
+        if ($self->{response_handler}) {
+            $self->{response_handler}->release_broker_slot($response, 200);
+        }
+        # Do NOT clear the interrupt flag here - let the orchestrator
+        # detect it via Interrupt::pending() and handle it.
+        return {
+            success => 0,
+            error => 'Interrupted by user',
+            interrupted => 1,
+            retryable => 0,
+            error_type => 'user_interrupt',
+            content => $accumulated_content,
+            ( @tool_calls ? (tool_calls => \@tool_calls) : () ),
+        };
+    }
+    
     if ($@) {
         log_error('APIManager', "Native streaming failed: $@");
         return { success => 0, error => $@ };

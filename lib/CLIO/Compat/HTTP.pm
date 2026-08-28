@@ -472,7 +472,20 @@ sub _request_via_curl_streaming {
         
         if (!defined $bytes) {
             # sysread error - likely EINTR from signal
-            next if $! == EINTR;  # Retry on signal interrupt
+            # On EINTR (signal interrupt), check whether the ALRM handler
+            # detected a user ESC interrupt. If so, kill curl and abort
+            # immediately instead of blindly retrying - this is what makes
+            # ESC interrupt a streaming response within ~250ms instead of
+            # waiting for the full server response.
+            if ($! == EINTR) {
+                if (eval { CLIO::Core::Interrupt::pending() }) {
+                    log_info('HTTP::curl_streaming', "User interrupt detected (EINTR), aborting stream");
+                    kill('TERM', $curl_pid);
+                    waitpid($curl_pid, 0);
+                    last;
+                }
+                next;  # Non-interrupt signal - retry
+            }
             last;  # Real error
         }
         
@@ -493,6 +506,16 @@ sub _request_via_curl_streaming {
             if ($@) {
                 log_warning('HTTP::curl_streaming', "Callback error: $@");
             }
+        }
+
+        # Check for user interrupt (ESC) after delivering the chunk.
+        # Even if the syscall didn't return EINTR, the ALRM handler
+        # may have set the global flag between iterations.
+        if (eval { CLIO::Core::Interrupt::pending() }) {
+            log_info('HTTP::curl_streaming', "User interrupt detected after chunk, aborting stream");
+            kill('TERM', $curl_pid);
+            waitpid($curl_pid, 0);
+            last;
         }
     }
     
@@ -681,6 +704,20 @@ sub request {
                     
                     # Deliver chunk to caller's callback
                     $url_or_callback->($chunk, $resp_obj_ref, undef);
+                    
+                    # Check for user interrupt (ESC) after delivering the chunk.
+                    # HTTP::Tiny does not support early abort from data_callback
+                    # via a return value, but if we die() here the exception
+                    # propagates through HTTP::Tiny's internal read loop (which
+                    # does not catch exceptions from data_callback) and is
+                    # caught by the eval{} in APIManager::send_request_streaming.
+                    # This lets the user abort a streaming response within
+                    # ~250ms (the ALRM interval) instead of waiting for the
+                    # server to finish its full response.
+                    if (eval { CLIO::Core::Interrupt::pending() }) {
+                        log_info('HTTP', "User interrupt detected during HTTP::Tiny streaming, aborting");
+                        die "__CLIO_INTERRUPT_ABORT__\n";
+                    }
                 };
                 
                 $response = $self->{http}->request($method, $uri, \%options);
