@@ -313,7 +313,7 @@ sub spawn {
     my ($self, $params, $handler, $context) = @_;
     
     my $task = $params->{task};
-    return $self->error_result("Missing 'task' parameter") unless $task;
+ return $self->error_result("Missing required parameter: task") unless $task;
     
     # Use explicitly requested model, or inherit the current session model
     my $model = $params->{model} || ($context && $context->{current_model}) || 'unknown';
@@ -603,7 +603,7 @@ sub status {
     my ($self, $params, $handler) = @_;
     
     my $agent_id = $params->{agent_id};
-    return $self->error_result("Missing 'agent_id' parameter") unless $agent_id;
+    return $self->error_result("Missing required parameter: agent_id") unless $agent_id;
     
     my $action_desc = "checking status of $agent_id";
     
@@ -647,8 +647,8 @@ sub kill {
     my ($self, $params, $handler, $context) = @_;
     
     my $agent_id = $params->{agent_id};
-    return $self->error_result("Missing 'agent_id' parameter") unless $agent_id;
-    
+ return $self->error_result("Missing required parameter: agent_id") unless $agent_id;
+
     my $action_desc = "terminating $agent_id";
     
     unless ($handler->{manager}) {
@@ -891,8 +891,8 @@ sub send {
     my $agent_id = $params->{agent_id};
     my $message = $params->{message};
     
-    return $self->error_result("Missing 'agent_id' parameter") unless $agent_id;
-    return $self->error_result("Missing 'message' parameter") unless $message;
+    return $self->error_result("Missing required parameter: agent_id") unless $agent_id;
+    return $self->error_result("Missing required parameter: message") unless $message;
     
     my $action_desc = "sending message to $agent_id";
     
@@ -927,7 +927,7 @@ sub broadcast {
     my ($self, $params, $handler) = @_;
     
     my $message = $params->{message};
-    return $self->error_result("Missing 'message' parameter") unless $message;
+    return $self->error_result("Missing required parameter: message") unless $message;
     
     my $action_desc = "broadcasting to all agents";
     

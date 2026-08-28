@@ -2323,6 +2323,13 @@ sub _prepare_tool_round {
             # Reuse pre-parsed args from Phase 1 validation (avoids redundant JSON decode)
             $params = $tool_call->{_parsed_args};
         } elsif ($tool_call->{function}->{arguments}) {
+            # We enter this branch when either: (a) _parsed_args was never set
+            # (shouldn't happen for validated tool calls, but defensive), or
+            # (b) $alias_info is truthy — meaning alias resolution above modified
+            # function.arguments to inject the operation param. In case (b) we
+            # MUST re-parse from the modified string, and we MUST also update
+            # _parsed_args so that ToolExecutor (which prefers _parsed_args) sees
+            # the same augmented arguments instead of the stale pre-injection copy.
             eval {
                 my $json_str = $tool_call->{function}->{arguments};
 
@@ -2343,7 +2350,14 @@ sub _prepare_tool_round {
                     }
                 }
 
-                my $json_bytes = encode_utf8($json_str);
+                # decode_json expects BYTES (not Perl's internal UTF-8 character strings).
+                # Only encode to bytes if the string has the UTF-8 flag set; if it's
+                # already a byte string (no flag), pass through directly. Without this
+                # guard, encode_utf8 on a byte string containing raw UTF-8 bytes is a
+                # no-op (correct), but the double-decode pattern in callers can
+                # produce surprising behavior when the string has been round-tripped
+                # through encode/decode cycles already.
+                my $json_bytes = utf8::is_utf8($json_str) ? encode_utf8($json_str) : $json_str;
                 $params = decode_json($json_bytes);
             };
             if ($@) {
@@ -2386,6 +2400,15 @@ sub _prepare_tool_round {
                 }
                 next;
             }
+
+            # BUG FIX: When alias resolution modified function.arguments (injected
+            # operation + alias defaults), update _parsed_args so ToolExecutor
+            # (which prefers _parsed_args) sees the augmented params instead of
+            # the stale pre-injection copy. This was the root cause of
+            # "Missing 'operation' parameter" errors for aliased tool calls
+            # (e.g. grep_search as tool name) where ToolExecutor used the old
+            # _parsed_args that lacked the injected operation field.
+            $tool_call->{_parsed_args} = $params if $alias_info;
         }
 
         # Determine interactive status (parameter overrides metadata)

@@ -989,7 +989,7 @@ sub transfer_files {
     }
     
     unless (ref($files) eq 'ARRAY' && @$files) {
-        return $self->error_result("Missing or empty 'files' parameter");
+        return $self->error_result("Missing required parameter: files");
     }
     
     my @transferred;
@@ -1059,7 +1059,7 @@ sub retrieve_files {
     }
     
     unless (ref($files) eq 'ARRAY' && @$files) {
-        return $self->error_result("Missing or empty 'files' parameter");
+        return $self->error_result("Missing required parameter: files");
     }
     
     my @retrieved;

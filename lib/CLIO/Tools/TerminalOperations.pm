@@ -739,7 +739,7 @@ sub validate_command {
 
     my $command = $params->{command};
 
-    return $self->error_result("Missing 'command' parameter") unless $command;
+ return $self->error_result("Missing required parameter: command") unless $command;
 
     # Get security settings from config
     my $config = ($context && $context->{config}) ? $context->{config} : undef;
