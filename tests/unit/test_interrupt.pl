@@ -6,7 +6,7 @@ use strict;
 use warnings;
 use FindBin qw($RealBin);
 use lib "$RealBin/../../lib";
-use Test::More tests => 45;
+use Test::More tests => 56;
 
 # Force a non-TTY environment so the helpers never try to read from STDIN.
 BEGIN {
@@ -260,7 +260,7 @@ END {
     # the drain loop performs one more read to confirm nothing follows.
     @bytes_to_return = ("\x03");
     $key_read_count = 0;
-    $session->{_state}{user_interrupted} = 0;
+    CLIO::Core::Interrupt::clear(session => $session);
     $alrm_sub->();
     is($key_read_count, 2, 'ALRM reads one Ctrl+C byte plus one drain probe');
     is($session->{_state}{user_interrupted}, 0,
@@ -270,7 +270,7 @@ END {
     # Same 2-read pattern: main byte + drain probe.
     @bytes_to_return = ("\x1b");
     $key_read_count = 0;
-    $session->{_state}{user_interrupted} = 0;
+    CLIO::Core::Interrupt::clear(session => $session);
     $alrm_sub->();
     is($key_read_count, 2, 'ALRM reads one ESC byte plus one drain probe');
     is($session->{_state}{user_interrupted}, 1,
@@ -282,7 +282,7 @@ END {
     # drained by the next check() call's 50ms disambiguation.
     @bytes_to_return = ("\x1b");
     $key_read_count = 0;
-    $session->{_state}{user_interrupted} = 0;
+    CLIO::Core::Interrupt::clear(session => $session);
     $alrm_sub->();
     is($session->{_state}{user_interrupted}, 1,
         'ESC followed by more bytes still flags interrupt at byte 0 (disambiguation in check())');
@@ -290,7 +290,7 @@ END {
     # Case 4: an unrelated byte (e.g. space, 0x20). No flag.
     @bytes_to_return = (" ");
     $key_read_count = 0;
-    $session->{_state}{user_interrupted} = 0;
+    CLIO::Core::Interrupt::clear(session => $session);
     $alrm_sub->();
     is($session->{_state}{user_interrupted}, 0,
         'Space (0x20) does not set user_interrupted');
@@ -302,8 +302,63 @@ END {
     # queue ends mid-sequence).
     @bytes_to_return = ("\x03", "\x03", "\x03");
     $key_read_count = 0;
-    $session->{_state}{user_interrupted} = 0;
+    CLIO::Core::Interrupt::clear(session => $session);
     $alrm_sub->();
     is($session->{_state}{user_interrupted}, 0,
         'Three Ctrl+C bytes do not set user_interrupted');
+}
+
+# --- Global interrupt flag (no session) ---
+# The global flag lets streaming loops in HTTP.pm check pending() without
+# a session reference. set()/clear()/pending() must manage it correctly.
+{
+    # Ensure clean state
+    CLIO::Core::Interrupt::clear();
+
+    ok(!CLIO::Core::Interrupt::pending(),
+        'global pending() returns 0 before any set()');
+
+    CLIO::Core::Interrupt::set(reason => 'global test');
+    ok(CLIO::Core::Interrupt::pending(),
+        'global pending() returns 1 after set() without session');
+
+    CLIO::Core::Interrupt::clear();
+    ok(!CLIO::Core::Interrupt::pending(),
+        'global pending() returns 0 after clear() without session');
+
+    # clear() without session should also clear a session-backed flag
+    my $s = _make_stub_session();
+    CLIO::Core::Interrupt::set(session => $s);
+    ok(CLIO::Core::Interrupt::pending(session => $s),
+        'session pending() returns 1 after set(session)');
+    CLIO::Core::Interrupt::clear(session => $s);
+    ok(!CLIO::Core::Interrupt::pending(session => $s),
+        'session pending() returns 0 after clear(session) clears both flags')
+}
+
+# --- set() with session sets both flags ---
+{
+    CLIO::Core::Interrupt::clear();
+    my $s = _make_stub_session();
+    CLIO::Core::Interrupt::set(session => $s);
+    ok($s->{_state}{user_interrupted},
+        'set(session) sets the session-state flag');
+    ok(CLIO::Core::Interrupt::pending(),
+        'set(session) also sets the global flag');
+    CLIO::Core::Interrupt::clear(session => $s);
+    ok(!$s->{_state}{user_interrupted},
+        'clear(session) clears the session-state flag');
+    ok(!CLIO::Core::Interrupt::pending(),
+        'clear(session) also clears the global flag');
+}
+
+# --- check() respects global flag even in non-TTY ---
+{
+    CLIO::Core::Interrupt::clear();
+    CLIO::Core::Interrupt::set(reason => 'non-TTY global');
+    ok(CLIO::Core::Interrupt::check(),
+        'check() returns 1 via global flag even in non-TTY (fast path)');
+    CLIO::Core::Interrupt::clear();
+    ok(!CLIO::Core::Interrupt::check(),
+        'check() returns 0 in non-TTY after clear()');
 }

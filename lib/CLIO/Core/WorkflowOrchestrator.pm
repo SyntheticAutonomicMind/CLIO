@@ -563,9 +563,17 @@ sub process_input {
         # This prevents the flag from being left over if an interrupt was partially
         # handled in a previous cycle (e.g. detected during streaming but the
         # _handle_interrupt path was skipped due to error recovery).
+        # Use Interrupt::clear() so both the session-state flag and the
+        # package-level global flag are reset - leaving the global flag set
+        # would cause pending() to return a false positive on the next
+        # iteration and incorrectly short-circuit the interrupt check.
         if ($session && $session->state() && $session->state()->{user_interrupted}) {
             log_debug('WorkflowOrchestrator', "Clearing stale user_interrupted flag from previous iteration");
-            $session->state()->{user_interrupted} = 0;
+            CLIO::Core::Interrupt::clear(session => $session);
+        } elsif (CLIO::Core::Interrupt::pending()) {
+            # Global flag set but session flag not (e.g. HTTP.pm streaming
+            # loop detected the interrupt without a session reference).
+            CLIO::Core::Interrupt::clear(session => $session);
         }
         
         # Capture process stats at iteration boundary
@@ -733,14 +741,20 @@ sub process_input {
         # Check for user interrupt after API call completes
         # The API call can take 30-60+ seconds, so this is a critical check point
         # Also check if interrupt was detected during streaming (via _interrupt_pending flag)
-        if ($self->{_interrupt_pending} || $self->_check_and_handle_interrupt($session, \@messages)) {
-            # _handle_interrupt was called (either by _check_and_handle_interrupt or below)
-            # It called interact directly and added user's response to messages
-            # Clear the pending flag since we've handled it
+        if ($self->{_interrupt_pending}) {
+            # Interrupt was detected during streaming (the on_chunk callback
+            # set _interrupt_pending when it saw the ALRM flag). _check_and_handle_interrupt
+        # short-circuits when _interrupt_pending is already set, so _handle_interrupt
+        # was never reached - the loop would just clear the flag and retry the API
+        # call, forcing the user to press ESC repeatedly (5+ times). Call _handle_interrupt
+        # directly here to prompt the user via the interact tool.
+            $self->_handle_interrupt($session, \@messages);
             $self->{_interrupt_pending} = 0;
-            
-            # Interrupt detected - skip tool execution and go to next iteration
-            # which will send the user's interrupt response to the AI
+            $iteration--;  # Don't count this iteration
+            next;
+        }
+        if ($self->_check_and_handle_interrupt($session, \@messages)) {
+            $self->{_interrupt_pending} = 0;
             $iteration--;  # Don't count this iteration
             next;
         }
@@ -2451,7 +2465,14 @@ sub _execute_tool_round {
 
     for my $i (0..$#$ordered_tools) {
         # Check for user interrupt between tool executions
-        if ($self->{_interrupt_pending} || $self->_check_and_handle_interrupt($session, $messages)) {
+        if ($self->{_interrupt_pending}) {
+            # Interrupt detected during a previous streaming chunk - handle
+            # it directly (same fix as the post-API-call check above).
+            $self->_handle_interrupt($session, $messages);
+            $self->{_interrupt_pending} = 0;
+            last;
+        }
+        if ($self->_check_and_handle_interrupt($session, $messages)) {
             log_info('WorkflowOrchestrator', "Interrupt detected between tool executions, skipping remaining tools");
             last;
         }

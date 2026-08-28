@@ -86,6 +86,13 @@ my $ALRM_INSTALLED = 0;
 my $ALRM_OWNER_PID = 0;
 my $ALRM_INTERVAL = 1;  # Default 1s; overridden by install_alrm_handler
 
+# Package-level interrupt flag. Set by set() and the ALRM handler (in
+# addition to the session-state flag) so that streaming loops in
+# CLIO::Compat::HTTP - which do not have a session object - can check
+# pending() without one. This is what makes ESC abort a streaming
+# response within ~250ms instead of waiting for the server to finish.
+my $GLOBAL_INTERRUPT_FLAG = 0;
+
 =head2 check
 
 Non-blocking interrupt check. Returns 1 if the user has pressed ESC
@@ -171,7 +178,12 @@ Returns: 1 if flagged, 0 otherwise
 sub pending {
     my (%opts) = @_;
     my $session = $opts{session};
-    return 0 unless $session;
+    # When no session is provided (e.g. streaming loops in HTTP.pm that
+    # do not have a session reference), fall back to the global flag.
+    # This is what enables early abort of streaming HTTP reads.
+    unless ($session) {
+        return $GLOBAL_INTERRUPT_FLAG ? 1 : 0;
+    }
     # Accept either a blessed session object (with ->state method) or a
     # bare hashref representing the state directly (test mocks and lightweight
     # callers use this form). Order matters: check can('state') FIRST
@@ -184,10 +196,17 @@ sub pending {
     } elsif (is_hashref($session)) {
         $state = $session;
     } else {
-        return 0;
+        # Session object without state() and not a hashref -
+        # fall back to the global flag.
+        return $GLOBAL_INTERRUPT_FLAG ? 1 : 0;
     }
     return 0 unless $state && is_hashref($state);
-    return $state->{user_interrupted} ? 1 : 0;
+    # Check both the session-state flag and the global flag. The ALRM
+    # handler sets both, but legacy code paths may clear only the session
+    # flag directly (e.g. WorkflowOrchestrator's loop-start stale-flag
+    # sweep). Checking both ensures pending() never returns a false
+    # negative when the global flag is still set.
+    return ($state->{user_interrupted} || $GLOBAL_INTERRUPT_FLAG) ? 1 : 0;
 }
 
 =head2 set
@@ -207,6 +226,11 @@ sub set {
     my (%opts) = @_;
     my $session = $opts{session};
     my $reason = $opts{reason} // 'user request';
+
+    # Always set the global flag so streaming loops (HTTP.pm sysread,
+    # HTTP::Tiny data_callback) can detect the interrupt without a
+    # session reference.
+    $GLOBAL_INTERRUPT_FLAG = 1;
 
     if ($session && $session->can('state')) {
         my $state = $session->state();
@@ -242,6 +266,10 @@ Returns: 1
 sub clear {
     my (%opts) = @_;
     my $session = $opts{session};
+
+    # Always clear the global flag.
+    $GLOBAL_INTERRUPT_FLAG = 0;
+
     if ($session && $session->can('state')) {
         my $state = $session->state();
         if ($state && is_hashref($state)) {
@@ -290,6 +318,13 @@ sub install_alrm_handler {
     # timeout is safe.
     $SIG{ALRM} = sub {
         return if $ALRM_INSTALLED == 0;  # race: uninstall happened mid-fire
+        # Check the global flag first - if already flagged, just re-arm.
+        # This avoids redundant work when the flag was set by a prior
+        # check() call or a concurrent set() from another code path.
+        if ($GLOBAL_INTERRUPT_FLAG) {
+            eval { alarm($ALRM_INTERVAL); };
+            return;
+        }
         return unless $session && $session->can('state');
         my $state = $session->state();
         return unless $state && is_hashref($state);
@@ -313,7 +348,11 @@ sub install_alrm_handler {
                 # the next check() call sees a clean buffer and can run
                 # the 50ms disambiguation on a fresh key.
                 while (defined(eval { ReadKey(-1) })) { }
+                # Set both the session-state flag and the global flag
+                # so streaming loops (HTTP.pm) can detect it without
+                # a session reference.
                 $state->{user_interrupted} = 1;
+                $GLOBAL_INTERRUPT_FLAG = 1;
                 # Re-arm best-effort. Use copy of interval to avoid
                 # surprises if the next install_alrm_handler call
                 # mutates $ALRM_INTERVAL between now and alarm().
@@ -362,6 +401,11 @@ sub uninstall_alrm_handler {
     $SIG{ALRM} = 'DEFAULT';
     $ALRM_INSTALLED = 0;
     $ALRM_OWNER_PID = 0;
+
+    # Clear the global flag when the handler is uninstalled so that
+    # a stale interrupt from a previous session/turn doesn't leak into
+    # the next one.
+    $GLOBAL_INTERRUPT_FLAG = 0;
     log_debug('Interrupt', 'Uninstalled ALRM handler');
     return 1;
 }
