@@ -225,44 +225,6 @@
         "default_effort": "medium"
       }
     },
-    "orca": {
-      "default_model": "orcarouter/free",
-      "max_context_tokens": 1000000,
-      "max_output_tokens": 16384,
-      "supports_reasoning": 1,
-      "supports_streaming": 1,
-      "supports_tools": 1,
-      "supports_cache_control": 1,
-      "reasoning_schema": {
-        "mode": "effort",
-        "param": "reasoning_effort",
-        "values": [
-          "low",
-          "medium",
-          "high"
-        ],
-        "default_effort": "medium"
-      }
-    },
-    "kilo": {
-      "default_model": "kilo-auto/free",
-      "max_context_tokens": 1000000,
-      "max_output_tokens": 128000,
-      "supports_reasoning": 1,
-      "supports_streaming": 1,
-      "supports_tools": 1,
-      "supports_cache_control": 1,
-      "reasoning_schema": {
-        "mode": "effort",
-        "param": "reasoning_effort",
-        "values": [
-          "low",
-          "medium",
-          "high"
-        ],
-        "default_effort": "medium"
-      }
-    },
     "sam": {
       "default_model": "local-model",
       "exposes_props": 1,
