@@ -356,7 +356,7 @@ Connect to external tool servers via the Model Context Protocol. See [MCP Integr
 
 ## 3. AI Providers
 
-CLIO supports 15 AI providers out of the box. Switch between them at any time - even mid-session.
+CLIO supports 18 AI providers out of the box. Switch between them at any time - even mid-session.
 
 | Provider | Type | Authentication |
 |----------|------|---------------|
@@ -374,6 +374,7 @@ CLIO supports 15 AI providers out of the box. Switch between them at any time - 
 | **Z.AI** | Cloud | API key |
 | **Z.AI Coding Plan** | Cloud | API key |
 | **NVIDIA NIM** | Cloud | API key |
+| **Vercel AI Gateway** | Cloud | API key |
 | **llama.cpp** | Local | None |
 | **LM Studio** | Local | None |
 | **SAM** | Local | API key (optional) |
@@ -448,7 +449,6 @@ Save a model list as a named, reusable profile. Profiles are stored in config un
 /api route add <name> <model1> [model2 model3 ...]   # Save a profile
 /api route list                                      # List saved profiles
 /api route use <name>                                # Activate a profile
-/api route replace <name> <model1> [model2 ...]      # Replace a profile's models
 /api route remove <name>                             # Delete a profile
 ```
 

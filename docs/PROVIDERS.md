@@ -22,6 +22,7 @@
 | **Z.AI** | `zai` | API Key |
 | **Z.AI Coding Plan** | `zai_coding` | API Key |
 | **NVIDIA NIM** | `nvidia` | API Key |
+| **Vercel AI Gateway** | `vercel` | API Key |
 | **llama.cpp** | `llama.cpp` | None |
 | **LM Studio** | `lmstudio` | None |
 | **SAM** | `sam` | API Key |
@@ -312,6 +313,36 @@ Models use the `upstream-provider/model` format:
 - Supports tools/function calling
 - Streaming responses
 - Automatic tool call repair and orphan cleanup
+
+---
+
+### Vercel AI Gateway
+
+**Best for:** Accessing models across providers via Vercel's AI Gateway, free poolside models with reasoning
+
+**Get API Key:**
+1. Go to [vercel.com](https://vercel.com) and sign in to the AI Gateway dashboard
+2. Get an API key from the dashboard
+
+**Configure CLIO:**
+```bash
+clio --new
+/api set provider vercel
+/api set key <your-api-key>
+/config save
+```
+
+**Available models:** Vercel AI Gateway exposes models from many providers. Use `/api models` for the current list. Free models include `poolside/laguna-s-2.1-free` (256K context, reasoning, tools). Access any other model as `vercel/<id>`.
+
+```bash
+/api set model vercel/poolside/laguna-s-2.1-free
+```
+
+**Features:**
+- Supports tools/function calling
+- Streaming responses
+- Supports reasoning (OpenAI Responses-style `reasoning` object with effort levels `none|minimal|low|medium|high|xhigh`)
+- Passes `cache_control` through to upstream models
 
 ---
 

@@ -183,7 +183,7 @@ All `/api set` commands save globally by default. To set a value for the current
 
 Use `/api show` to see your current configuration and whether any values are session overrides.
 
-See [PROVIDERS.md](PROVIDERS.md) for setup instructions for all 14 providers.
+See [PROVIDERS.md](PROVIDERS.md) for setup instructions for all 18 providers.
 
 **Optional Environment Variables**
 
@@ -455,7 +455,6 @@ CLIO provides 35+ slash commands. Type `/help` in any session to see the full li
 | `/api route add <name> <model>...` | Save a named model routing profile |
 | `/api route list` | List saved routing profiles |
 | `/api route use <name>` | Activate a named routing profile |
-| `/api route replace <name> <model>...` | Replace a routing profile's models |
 | `/api route remove <name>` | Delete a routing profile |
 | `/model <name>` | Quick model switch (saved globally) |
 | `/model` | Show current model and aliases |
