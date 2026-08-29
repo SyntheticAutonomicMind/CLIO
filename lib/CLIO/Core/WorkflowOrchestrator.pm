@@ -940,11 +940,18 @@ sub process_input {
                 # user_context duplicate mid-dialog; that broke the LCP cache
                 # because the duplicate landed after the system prompt and
                 # before the user_input, mid-dialog.
+                #
+                # The nudge must NOT include any framework metadata. The
+                # previous "[SYSTEM: Your previous response ended without
+                # completing your work...]" text told the model the framework
+                # had judged its output as incomplete - which primes the
+                # model to second-guess its state and abandon productive
+                # trajectories. A neutral "Please continue." carries the
+                # same functional effect (asking the model to keep going)
+                # without leaking that an automated check fired.
                 push @messages, {
                     role => 'user',
-                    content => "[SYSTEM: Your previous response ended without completing your work. " .
-                               "You were actively using tools and appear to have stopped mid-workflow. " .
-                               "Please continue where you left off - review your recent tool results and proceed with your plan.]"
+                    content => "Please continue."
                 };
 
                 # Don't count this as a full iteration
@@ -1201,7 +1208,15 @@ sub _build_turn_context {
             # tool_calls, tool_results) because those are part of the dialog
             # and must be visible to the model on resume. Only the stale
             # user_context content is replaced with the fresh version.
-            my $user_context = $self->{prompt_builder}->get_user_context($session);
+            #
+            # Also pass the substantive_user_task so the user_context can
+            # include the <activeTask> anchor for resumed sessions where
+            # the most recent user input was just "continue" (observed in
+            # session a6a0eb10 where this caused the agent to lose its
+            # place and emit "no actual user message yet" reasoning).
+            my $substantive_task = $self->_find_substantive_user_task($cached_messages, $user_input);
+            my $user_context = $self->{prompt_builder}->get_user_context($session,
+                { substantive_task => $substantive_task });
             if ($self->{non_interactive}) {
                 $user_context .= CLIO::Core::PromptBuilder::generate_non_interactive_section() . "\n\n";
                 log_debug('WorkflowOrchestrator', "Added non-interactive instruction to user context");
@@ -1297,7 +1312,16 @@ sub _build_turn_context {
     # payload sent to the model) and breaks the expectation that the session
     # stores exactly what the user typed.  Therefore we store only the plain
     # user input in the session history.
-    my $user_context = $self->{prompt_builder}->get_user_context($session);
+    #
+    # The substantive_user_task (when present) anchors the model on the
+    # original user request. This is critical for resumed sessions where
+    # the most recent user input is just "continue" - the model needs the
+    # original task description to keep its place after context trim.
+    # Without this anchor, the model concludes "no actual user message"
+    # and starts over (observed in session a6a0eb10, 2026-08-29).
+    my $substantive_task = $self->_find_substantive_user_task($history, $user_input);
+    my $user_context = $self->{prompt_builder}->get_user_context($session,
+        { substantive_task => $substantive_task });
 
     # Append turn-specific instructions to user context (not system prompt) for cacheability
     # Non-interactive mode instruction (only with --input flag)
@@ -1636,11 +1660,13 @@ sub _capture_api_payload {
     # content that are NOT persisted to session history and would cause
     # the snapshot to diverge from the rebuild path:
     #
-    # 1. Continuation nudges: "[SYSTEM: Your previous response ended..."
-    #    user messages injected when the model stops prematurely. These are
-    #    not saved to session history, so load_conversation_history would
-    #    never produce them. Leaving them in the snapshot causes the
-    #    resume fast path to diverge from the rebuild path.
+    # 1. Continuation nudges: "Please continue." user messages injected
+    #    when the model stops prematurely. These are not saved to session
+    #    history, so load_conversation_history would never produce them.
+    #    Leaving them in the snapshot causes the resume fast path to
+    #    diverge from the rebuild path. The legacy "[SYSTEM: Your previous
+    #    response ended..." form is also stripped for backward compat
+    #    with snapshots captured before the smell fix.
     #
     # 2. Orphan tool_calls: assistant tool_use blocks whose matching
     #    tool_result was dropped by a prior trim. With unit-based trim this
@@ -1726,10 +1752,9 @@ sub _capture_api_payload {
 =head2 _strip_continuation_nudges(\@messages)
 
 Remove user messages that are continuation nudges - ephemeral
-"[SYSTEM: Your previous response ended without completing your work...]"
-messages pushed when the model gets stuck mid-workflow. These are NOT
-persisted to session history, so the rebuild path never sees them.
-Leaving them in the snapshot causes the fast path to accumulate one
+"Please continue." messages pushed when the model gets stuck mid-workflow.
+These are NOT persisted to session history, so the rebuild path never sees
+them. Leaving them in the snapshot causes the fast path to accumulate one
 nudge per stuck cycle, diverging from the rebuild path after each cycle.
 
 Returns the cleaned messages array.
@@ -1744,7 +1769,12 @@ sub _strip_continuation_nudges {
         if (ref($msg) eq 'HASH'
             && ($msg->{role} // '') eq 'user') {
             my $content = $msg->{content} // '';
-            if ($content =~ /^\[SYSTEM: Your previous response ended without completing your work/) {
+            # Match the neutral "Please continue." nudge (current shape)
+            # and the legacy "[SYSTEM: Your previous response ended..."
+            # nudge (older versions) for backward compat with snapshots
+            # that were captured before the smell fix.
+            if ($content =~ /^Please continue\.\s*$/
+                || $content =~ /^\[SYSTEM: Your previous response ended without completing your work/) {
                 next;
             }
         }
@@ -3548,6 +3578,67 @@ This matches classic Unix behaviour: Ctrl+C breaks out of the
 foreground process, ESC interrupts the in-flight AI response. Other
 characters (mouse events, focus events, resize sequences, etc.) are
 drained and ignored to prevent false interrupts.
+
+Arguments:
+- $session: Session object (to check and set interrupt flag)
+
+Returns:
+- 1 if interrupt detected (ESC key pressed)
+- 0 if no interrupt
+
+=cut
+
+=head2 _find_substantive_user_task($messages, $current_user_input)
+
+Scan a messages arrayref for the most recent SUBSTANTIVE user task. A
+substantive task is one with content length >= 50 chars AND that is not
+a short directive like "continue", "go", "yes". Used by _build_turn_context
+to anchor the model on the original task description when the most recent
+user input is just a short directive (the common pattern in long-running
+autonomous tool loops).
+
+If the current_user_input itself is substantive (>= 50 chars), prefer it
+- there's no need to anchor if the user just gave a real task.
+
+Returns: the substantive user task string, or '' if none found.
+
+=cut
+
+sub _find_substantive_user_task {
+    my ($self, $messages, $current_user_input) = @_;
+    my $min_substantive_len = 50;
+
+    # If the current user input is itself substantive, use it directly.
+    if (defined $current_user_input
+        && ref($current_user_input) eq ''
+        && length($current_user_input) >= $min_substantive_len) {
+        return $current_user_input;
+    }
+
+    return '' unless $messages && ref($messages) eq 'ARRAY';
+
+    # Walk newest-to-oldest, skip the current (short) user_input if
+    # present in the array, and find the most recent substantive user.
+    for my $i (reverse 0 .. $#$messages) {
+        my $msg = $messages->[$i];
+        next unless $msg && ref($msg) eq 'HASH';
+        next unless ($msg->{role} // '') eq 'user';
+        my $content = $msg->{content} // '';
+        next if ref($content);  # skip non-string content (multimodal arrays)
+        # Skip chunk-pointer artifacts and short directives.
+        next if $content =~ /^\s*\w[\w\-_.]+\s+\([^)]+:\s*[^)]+\)\s*\(\d+\s*bytes/;
+        next if length($content) < $min_substantive_len;
+        return $content;
+    }
+
+    return '';
+}
+
+=head2 _check_for_user_interrupt
+
+Poll the user interrupt flag (set by the ALRM signal handler in
+Chat.pm) and return 1 if the user has pressed ESC. The flag is checked
+between every chunk during streaming and between tool calls.
 
 Arguments:
 - $session: Session object (to check and set interrupt flag)

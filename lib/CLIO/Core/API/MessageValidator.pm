@@ -182,10 +182,16 @@ sub validate_and_truncate {
     
     log_debug('MessageValidator', "Grouped " . scalar(@$messages) . " messages into " . scalar(@units) . " units");
     
-    # Extract system message and most recent user message
+    # Extract system message, most recent user message, AND the most
+    # recent SUBSTANTIVE user message. The substantive user is the
+    # original task anchor the model needs to keep its place after trim;
+    # if the most recent user is just "continue" (7 tokens) the
+    # substantive user holds the real task description and must be
+    # surfaced via user_context or injected as a real user message.
     my ($system_msg, $last_user_unit, $start_unit, $system_tokens, $last_user_tokens,
         $summary_unit, $summary_tokens, $preserved_user_contexts,
-        $preserved_general_system) =
+        $preserved_general_system,
+        $substantive_user_unit, $substantive_user_tokens, $substantive_user_content) =
         _extract_preserved_units(\@units);
     
     # Build conversation from newest to oldest. Unit-based walk: each unit
@@ -550,6 +556,55 @@ sub validate_and_truncate {
         if (length($task_content) > 0) {
             unshift @validated, { role => 'user', content => $task_content };
             log_info('MessageValidator', "Injected synthetic user message from thread_summary task");
+        }
+    }
+
+    # If the most recent user message in the conversation is too short to
+    # be a real task (e.g. "continue", "go", "yes" - < 50 chars) but a
+    # SUBSTANTIVE user message exists somewhere (in the dropped set or
+    # already-preserved tail), inject the substantive content as a fresh
+    # user message BEFORE the short one. This anchors the model on the
+    # original task even when the user has been issuing "continue"
+    # directives between major phases.
+    #
+    # Without this, the model sees only the short directive and concludes
+    # there is no active task. With it, the model sees both the original
+    # task description (its anchor) and the recent directive (its
+    # immediate instruction) in the correct chronological order.
+    #
+    # Only inject if the substantive user is NOT already in @validated
+    # (skip if it's the same as the most recent user - that path is
+    # already covered by the !has_user_msg branch above).
+    if ($substantive_user_content
+        && length($substantive_user_content) >= 50
+        && $last_user_unit
+        && $last_user_unit != $substantive_user_unit) {
+        my $already_has_substantive = 0;
+        for my $msg (@validated) {
+            next unless $msg->{role} && $msg->{role} eq 'user';
+            my $existing = $msg->{content} // '';
+            if ($existing eq $substantive_user_content) {
+                $already_has_substantive = 1;
+                last;
+            }
+        }
+        if (!$already_has_substantive) {
+            # Find the position of the most recent user message and
+            # insert the substantive one BEFORE it. Most recent is the
+            # last role=user entry in @validated.
+            my $insert_idx = scalar(@validated);
+            for (my $i = $#validated; $i >= 0; $i--) {
+                if ($validated[$i]{role} && $validated[$i]{role} eq 'user') {
+                    $insert_idx = $i;
+                    last;
+                }
+            }
+            splice @validated, $insert_idx, 0,
+                { role => 'user', content => $substantive_user_content };
+            log_info('MessageValidator',
+                "Injected original user task before 'continue' prompt "
+                . "(" . length($substantive_user_content) . " chars) - "
+                . "prevents the model from concluding 'no active task' after trim");
         }
     }
     my @truncated;
@@ -1119,11 +1174,69 @@ sub _extract_preserved_units {
         log_debug('MessageValidator', "Found most recent user message at unit $last_user_idx (tokens=$last_user_tokens)");
     }
 
+    # ALSO find the most recent SUBSTANTIVE user message - one whose
+    # content is a real task (>= 50 chars) rather than a short directive
+    # like "continue", "go", "yes", "ok". The substantive message is the
+    # original task anchor the model needs to keep its place after trim.
+    #
+    # Without this guard, a long autonomous tool loop (50+ iterations)
+    # where the user types "continue" between major phases ends up with
+    # "continue" (7 tokens) as the only user message in the conversation
+    # after the budget walk drops everything else. The model then sees
+    # only assistant+tool pairs + an empty "continue" prompt, concludes
+    # there's no active task, and starts over (observed in session
+    # a6a0eb10, 2026-08-29 — agent "lost its place" and emitted "no
+    # actual user message yet" reasoning).
+    #
+    # We walk the full unit list (not just from $start_unit) so the
+    # substantive user is found even when it ended up in the dropped
+    # tail (the common case after budget walk). The substantive user
+    # is NOT injected into the conversation by this function — that
+    # decision lives in the post-trim assembly, which decides whether
+    # to (a) inject the substantive user as a real user message, or
+    # (b) surface it via the user_context (<userContext>) system
+    # message so the model sees it as a fresh directive rather than
+    # archival metadata.
+    my $substantive_user_unit;
+    my $substantive_user_tokens = 0;
+    my $substantive_user_idx = -1;
+    my $substantive_user_content = '';
+    my $min_substantive_len = 50;
+    for my $i ($start_unit .. $#$units) {
+        my $unit = $units->[$i];
+        next unless $unit && $unit->{messages} && @{$unit->{messages}};
+        my $first_msg = $unit->{messages}[0];
+        next unless $first_msg && $first_msg->{role} && $first_msg->{role} eq 'user';
+        my $content = $first_msg->{content} // '';
+        # Skip the chunk-pointer artifacts YaRN.compress injects.
+        next if $content =~ /^\s*\w[\w\-_.]+\s+\([^)]+:\s*[^)]+\)\s*\(\d+\s*bytes/;
+        next if length($content) < $min_substantive_len;
+        $substantive_user_unit = $unit;
+        $substantive_user_tokens = $unit->{tokens};
+        $substantive_user_idx = $i;
+        $substantive_user_content = $content;
+        last;  # newest first
+    }
+
+    if ($substantive_user_unit) {
+        if ($substantive_user_idx == $last_user_idx) {
+            log_debug('MessageValidator',
+                "Found substantive user message at unit $substantive_user_idx "
+                . "(tokens=$substantive_user_tokens) - same as most recent user");
+        } else {
+            log_debug('MessageValidator',
+                "Found substantive user message at unit $substantive_user_idx "
+                . "(tokens=$substantive_user_tokens), distinct from most recent user at "
+                . "unit $last_user_idx (tokens=$last_user_tokens) - the original task is here");
+        }
+    }
+
     # Return both the unit (for the existing preserved-user-message
     # injection path) and the content (for any future path that wants
     # the bare text without the unit structure).
     return ($system_msg, $last_user_unit, $start_unit, $system_tokens, $last_user_tokens,
-            $summary_unit, $summary_tokens, \@preserved_user_contexts, \@preserved_general_system);
+            $summary_unit, $summary_tokens, \@preserved_user_contexts, \@preserved_general_system,
+            $substantive_user_unit, $substantive_user_tokens, $substantive_user_content);
 }
 
 sub _compress_dropped {

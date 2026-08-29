@@ -1224,8 +1224,11 @@ sub _format_ltm_patterns {
     
     log_debug('PromptManager', "LTM budgeted render: $included of $total entries, " . length($section) . " chars");
     
-    # Add recovery guidance at end
-    $section .= "\n_After context trimming, use these patterns plus `memory_operations(recall_sessions)` to recover context instead of reading handoff documents._\n";
+    # No recovery guidance line. Telling the model "after context
+    # trimming, do X" is a context distraction - it primes the model
+    # to second-guess its own state. LTM content speaks for itself;
+    # the model can use memory_operations whenever it actually needs
+    # to recall or store information, no priming required.
     
     return "\n" . $section;
 }

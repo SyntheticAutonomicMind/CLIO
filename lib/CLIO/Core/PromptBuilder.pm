@@ -543,7 +543,9 @@ Returns:
 =cut
 
 sub get_user_context {
-    my ($self, $session) = @_;
+    my ($self, $session, $options) = @_;
+    $options ||= {};
+    my $substantive_task = $options->{substantive_task};
 
     my $now = time();
     my $cache_ttl = 60;  # Cache TTL in seconds (1 minute)
@@ -570,11 +572,45 @@ sub get_user_context {
     # Base context (date/time/path/language) - cached per-minute
     $context .= $self->{_user_context_cache};
 
+    # Substantive user task - included when the caller knows that the
+    # most recent user input is too short to be a real task (e.g. a
+    # "continue" directive after a long autonomous tool loop). The
+    # substantive task is the original task description that was being
+    # worked on before the short directive. Without this anchor, the
+    # model loses its place after context trim (observed in session
+    # a6a0eb10, 2026-08-29: agent emitted "no actual user message
+    # yet" and started over).
+    #
+    # Placed in <activeTask>...</activeTask> so it's clearly the
+    # current goal, not archival metadata. Truncated to 500 chars to
+    # keep the user_context cache footprint small.
+    if ($substantive_task && length($substantive_task) > 0) {
+        my $task_display = $substantive_task;
+        if (length($task_display) > 500) {
+            $task_display = substr($task_display, 0, 497) . '...';
+        }
+        $context .= "<activeTask>\n";
+        $context .= "You are working on the following task (this is the ORIGINAL user request, not a follow-up directive):\n\n";
+        $context .= $task_display . "\n";
+        $context .= "\nContinue this work. Do not restart or re-evaluate the task - resume from where the recent tool activity left off.\n";
+        $context .= "</activeTask>\n\n";
+    }
+
     # Session goals - read fresh each call
     if ($session) {
         my $goals = $self->_read_session_goals($session);
         if ($goals) {
             $context .= $goals;
+        }
+
+        # Active todos - read fresh each call. This is the model's
+        # single source of truth for "what am I working on right now"
+        # after context trim. Critical for keeping the agent anchored
+        # to its current task when the original user message has been
+        # compressed into a thread_summary system message.
+        my $active_todos = $self->_read_active_todos($session);
+        if ($active_todos) {
+            $context .= $active_todos;
         }
     }
 
@@ -769,6 +805,90 @@ sub _read_session_goals {
     }
 
     return $goals_text;
+}
+
+=head2 _read_active_todos
+
+Internal: Read the active todo list (managed via todo_operations) and
+format the in-progress and not-started items as a compact <activeTodos>
+block for inclusion in the user context. This gives the model a single
+source of truth for "what am I doing right now" - critical after context
+trim when the original task description has been compressed into a
+thread_summary system message and the model needs an explicit anchor
+to keep its place.
+
+Each todo: {id, content, status, priority}
+Status values: pending | in-progress | completed | blocked
+
+The block includes:
+  - In-progress items (the model is actively working on these)
+  - Up to 5 not-started items (the queue)
+  - A compact "X of Y complete" summary line
+
+Returns:
+- Formatted active todos string, or empty string if no todos exist
+
+=cut
+
+sub _read_active_todos {
+    my ($self, $session) = @_;
+
+    return '' unless $session;
+
+    my $todos_text = '';
+    eval {
+        require CLIO::Session::TodoStore;
+        require Cwd;
+        require CLIO::Util::PathResolver;
+        my $clio_dir = CLIO::Util::PathResolver::find_clio_dir(Cwd::getcwd());
+        my $store = CLIO::Session::TodoStore->new(
+            clio_dir => $clio_dir,
+            session_id => $session->can('id') ? $session->id() : undef,
+        );
+        my $todos = $store->read();
+        return '' unless $todos && ref($todos) eq 'ARRAY' && @$todos;
+
+        my @in_progress = grep { ($_->{status} // '') eq 'in-progress' } @$todos;
+        my @not_started = grep { ($_->{status} // '') eq 'not-started' } @$todos;
+        my @completed   = grep { ($_->{status} // '') eq 'completed' } @$todos;
+        my @blocked     = grep { ($_->{status} // '') eq 'blocked' } @$todos;
+
+        # Skip emission if there's nothing actionable - avoids noise
+        # when the agent hasn't set up todos yet (most early turns).
+        return '' unless @in_progress || @not_started || @blocked;
+
+        $todos_text = "<activeTodos>\n";
+        $todos_text .= "Current todo state: "
+                     . scalar(@completed) . " of " . scalar(@$todos) . " complete";
+        $todos_text .= " (" . scalar(@in_progress) . " in progress, "
+                     . scalar(@not_started) . " queued, "
+                     . scalar(@blocked) . " blocked)\n";
+
+        for my $todo (@in_progress) {
+            $todos_text .= "  [IN PROGRESS] " . ($todo->{content} || 'Untitled') . "\n";
+        }
+        # Show up to 5 queued items so the model has the immediate next
+        # steps in view without bloating the user_context.
+        my $queued_count = 0;
+        for my $todo (@not_started) {
+            last if $queued_count >= 5;
+            $todos_text .= "  [QUEUED]     " . ($todo->{content} || 'Untitled') . "\n";
+            $queued_count++;
+        }
+        if (scalar(@not_started) > $queued_count) {
+            $todos_text .= "  ...and " . (scalar(@not_started) - $queued_count) . " more queued (use todo_operations to read full list)\n";
+        }
+        for my $todo (@blocked) {
+            $todos_text .= "  [BLOCKED]    " . ($todo->{content} || 'Untitled') . "\n";
+        }
+        $todos_text .= "</activeTodos>\n\n";
+    };
+    if ($@) {
+        log_debug('PromptBuilder', "Failed to read active todos: $@");
+        return '';
+    }
+
+    return $todos_text;
 }
 
 1;

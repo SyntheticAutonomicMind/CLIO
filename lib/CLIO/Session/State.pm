@@ -1050,10 +1050,10 @@ sub get_conversation_size {
 
 Intelligently trim context when approaching token limits.
 Preserves: system messages, recent messages (last 10), high-importance messages.
-Moves trimmed messages to YaRN for later recall.
-
-Also injects a notification message to inform the agent about what was trimmed
-and how to recover the context.
+Moves trimmed messages to YaRN for later recall. Compresses dropped messages
+into a <thread_summary> block that is preserved as a system message - the
+model treats it as just another piece of context, no notification of the
+trim event itself.
 
 =cut
 
@@ -1081,24 +1081,36 @@ sub trim_context {
     my @system = grep { defined $_->{role} && $_->{role} eq 'system' } @messages;
     my @non_system = grep { defined $_->{role} && $_->{role} ne 'system' } @messages;
 
-    # Keep the most recent non-system messages (the tail of the conversation)
-    my @recent = @non_system >= $keep_recent 
-        ? @non_system[-$keep_recent .. -1] 
-        : @non_system;
-    
+    # User messages are the model's anchor to its current task. They are
+    # ALWAYS preserved - they are small (typically < 500 tokens even for
+    # long tasks) and dropping them causes the agent to lose its place
+    # and start over, which is much worse than any context savings. The
+    # previous behavior of "keep last N messages" would silently drop
+    # older user messages as the conversation grew, which is the
+    # exact bug observed in session a6a0eb10 (2026-08-29) where the
+    # agent lost its anchor task after 50+ iterations.
+    my @user_messages = grep { defined $_->{role} && $_->{role} eq 'user' } @non_system;
+    my @non_user_non_system = grep { defined($_->{role}) && $_->{role} ne 'user' } @non_system;
+
+    # Keep ALL user messages plus the most recent non-user messages (the
+    # tail of the conversation).
+    my @recent_non_user = @non_user_non_system >= $keep_recent
+        ? @non_user_non_system[-$keep_recent .. -1]
+        : @non_user_non_system;
+
     my $before = scalar(@messages);
-    my $dropped_count = scalar(@non_system) - scalar(@recent);
-    
+    my $dropped_count = scalar(@non_user_non_system) - scalar(@recent_non_user);
+
     # Nothing to trim
     return if $dropped_count <= 0;
     
     # Collect dropped messages for YaRN compression
-    my $keep_start = scalar(@non_system) - scalar(@recent);
-    my @dropped = @non_system[0 .. ($keep_start - 1)];
-    
+    my $keep_start = scalar(@non_user_non_system) - scalar(@recent_non_user);
+    my @dropped = @non_user_non_system[0 .. ($keep_start - 1)];
+
     # Find the most recent user message for task context
     my $last_user_msg;
-    for my $msg (reverse @dropped) {
+    for my $msg (reverse @dropped, @user_messages) {
         if (($msg->{role} // '') eq 'user') {
             $last_user_msg = $msg;
             last;
@@ -1121,38 +1133,48 @@ sub trim_context {
         log_warning('SessionState', "YaRN compression in trim_context failed: $@");
     }
     
-    # Build trim notification - include compressed summary if available
-    my $trim_content;
+    # No trim notice is injected into the model. The compressed YaRN
+    # summary (when present) IS the work product - it replaces the dropped
+    # messages with a self-contained <thread_summary>...</thread_summary>
+    # block that the model can read as just another piece of context.
+    # Telling the model "you were trimmed" or giving it recovery
+    # instructions is a context distraction: the model becomes uncertain
+    # about its own state and may abandon productive trajectories to
+    # re-verify assumptions. The summary speaks for itself.
+    #
+    # When YaRN compression fails (no summary available), we simply drop
+    # the older messages - the model has the recent tail (last
+    # $keep_recent messages) plus all user messages (the task anchors)
+    # to continue from. No notification, no recovery hints, no brackets.
+    #
+    # If @system already contains a previous <thread_summary> from an
+    # earlier trim, drop it - the new summary already encompasses the
+    # dropped messages plus the prior summary content (YaRN's
+    # compress_messages walks the full @dropped list, which would
+    # include any earlier thread_summary that landed in conversation).
+    # Keeping both would bloat the slot without adding signal.
     if ($compressed_summary) {
-        $trim_content = "[CONTEXT TRIM: $dropped_count messages compressed]\n" .
-            "Older messages summarized below. Recent $keep_recent messages preserved in full.\n\n" .
-            $compressed_summary . "\n\n" .
-            "To recover more context:\n" .
-            "1. memory_operations(operation: 'retrieve', key: 'session_goals') for session goals\n" .
-            "2. memory_operations(operation: 'recall_sessions', query: '<keywords>') for session history\n" .
-            "3. git log and todo_operations(operation: 'read') to verify current state\n" .
-            "DO NOT read handoff documents in ai-assisted/ - use the tools above instead.";
-    } else {
-        $trim_content = "[CONTEXT TRIM: $dropped_count messages archived]\n" .
-            "Token limit approached. Older messages moved to YaRN archive.\n" .
-            "Recent $keep_recent messages preserved.\n\n" .
-            "To recover context, use these in order:\n" .
-            "1. Your LTM patterns (already in system prompt) have project knowledge\n" .
-            "2. memory_operations(operation: 'retrieve', key: 'session_progress') for recent progress\n" .
-            "3. memory_operations(operation: 'recall_sessions', query: '<keywords>') for session history\n" .
-            "4. git log and todo_operations(operation: 'read') to verify current state\n" .
-            "DO NOT read handoff documents in ai-assisted/ - use the tools above instead.";
+        @system = grep {
+            my $c = $_->{content} // '';
+            !($c =~ /<thread_summary>/ || $c =~ /^\[CONTEXT TRIM:/);
+        } @system;
+        # Inject the new summary as a system message so ConversationManager
+        # can preserve it on resume. Position it BEFORE the user messages
+        # and the recent tail. The CSSS cache-stability logic in
+        # MessageValidator will move it to a cache-stable tail position
+        # when building the API payload.
+        push @system, {
+            role    => 'system',
+            content => $compressed_summary,
+        };
     }
-    
-    my $trim_notice = {
-        role => 'system',
-        content => $trim_content,
-        _importance => 0.5,
-    };
-    
-    # Reconstruct: system messages + trim notice + recent tail
-    my @trimmed = (@system, $trim_notice, @recent);
-    
+
+    # Reconstruct: system messages (including the new summary if any) +
+    # user messages (preserved in full) + recent non-user tail. User
+    # messages stay anchored at their original positions so the model
+    # can see the original task description.
+    my @trimmed = (@system, @user_messages, @recent_non_user);
+
     # Log trimming
     my $after = scalar(@trimmed);
     if ($ENV{CLIO_DEBUG} || $self->{debug}) {
@@ -1160,8 +1182,9 @@ sub trim_context {
         my $before_tokens = CLIO::Memory::TokenEstimator::estimate_messages_tokens(\@messages);
         my $after_tokens = CLIO::Memory::TokenEstimator::estimate_messages_tokens(\@trimmed);
         log_info('SessionState', "Context trim: $before -> $after messages ($before_tokens -> $after_tokens tokens, " .
-                     int(($after_tokens / $before_tokens) * 100) . "% retained)");
-        log_debug('SessionState', "[STATE] Trim notification injected - agent notified of archived context");
+                     int(($after_tokens / $before_tokens) * 100) . "% retained) " .
+                     "[" . scalar(@user_messages) . " user msg preserved, " . $dropped_count . " non-user dropped, " .
+                     ($compressed_summary ? "summary present" : "no summary") . "]");
     }
     
     # Update history (trimmed messages already in YaRN from add_message)
