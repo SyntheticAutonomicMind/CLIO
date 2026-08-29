@@ -10,6 +10,7 @@ use utf8;
 use CLIO::Core::Logger qw(should_log log_error log_warning log_info log_debug);
 use CLIO::Util::JSON qw(decode_json encode_json safe_decode_json safe_encode_json);
 use CLIO::Util::RateLimit qw(format_reset_message parse_anthropic_reset_timestamp);
+use CLIO::Core::Defaults qw(DEFAULT_RATE_LIMIT_RETRY_AFTER);
 use Scalar::Util qw(blessed);
 
 =head1 NAME
@@ -330,7 +331,12 @@ sub _handle_error_response_impl {
     if ($status == 429) {
         $is_retryable_error = 1;
         $retryable = 1;
-        $retry_after = 60;
+        # Default to DEFAULT_RATE_LIMIT_RETRY_AFTER (5s) when no Retry-After
+        # header / body hint is present. The header/body parsing below will
+        # overwrite this whenever the provider gave guidance. 60s was too
+        # long: with infinite rate-limit retries, a header-less 429 parked
+        # the agent for a full minute per loop.
+        $retry_after = DEFAULT_RATE_LIMIT_RETRY_AFTER;
         $error_type = 'rate_limit';
 
         # Extract retry_after from multiple sources, in order of reliability
@@ -389,7 +395,7 @@ sub _handle_error_response_impl {
         }
         
         # Fallback: ensure retry_after has a value if not set by any branch
-        $retry_after //= 60;
+        $retry_after //= DEFAULT_RATE_LIMIT_RETRY_AFTER;
         
         # Ensure reset_timestamp is defined for logging
         $reset_timestamp //= '';
@@ -865,6 +871,11 @@ sub _handle_error_response_impl {
     elsif ($status == 503 && $error =~ /\bslow[\s_]?down\b/i) {
         $is_retryable_error = 1;
         $retryable = 1;
+        # 60s is intentional here, not DEFAULT_RATE_LIMIT_RETRY_AFTER (5s).
+        # OpenAI's "Slow Down" response indicates a hard rate ceiling has
+        # been hit and requires a sustained reduction in request rate for
+        # 15+ minutes. A 60s per-iteration backoff is the correct cadence
+        # to give the throttle time to enforce that ceiling.
         $retry_after = 60;
         $error_type = 'overloaded';
         $retry_info = "OpenAI 'Slow Down' detected. Provider requires 15+ minutes of reduced rate before recovery.";
@@ -1124,11 +1135,94 @@ sub _handle_error_response_impl {
         log_info('ResponseHandler', "Content filter triggered: $error");
     }
 
+    # Handle 402 Payment Required before the generic billing block.
+    # OpenRouter returns 402 with structured metadata that lets us tell
+    # recoverable (in-flight budget exhausted - retry after the budget
+    # recovers when in-flight requests settle) from hard (real credit
+    # exhaustion - no amount of waiting helps). Without this branch the
+    # billing regexes miss OpenRouter's "requires more credits" message
+    # and the 402 falls through to the unclassified generic error path
+    # (burning session errors until max_session_errors is hit).
+    elsif ($status == 402) {
+        my $metadata = ref($error_obj) eq 'HASH' ? ($error_obj->{metadata} // {}) : {};
+        my $reason  = $metadata->{reason} // '';
+        my $remedy  = $metadata->{remedy_hint} // '';
+        my $limit_source = $metadata->{limit_source} // '';
+
+        # Parse Retry-After from headers (real headers, not the curl stub)
+        # since OpenRouter sends it alongside the structured reason.
+        my $ra_header;
+        if (ref($passed_headers) eq 'HASH') {
+            $ra_header = $passed_headers->{'retry-after'};
+        } elsif ($passed_headers && $passed_headers->can('header')) {
+            $ra_header = $passed_headers->header('Retry-After');
+        }
+        my $ra_value;
+        if (defined $ra_header && $ra_header =~ /^([\d.]+)$/) {
+            $ra_value = int($1);
+        }
+
+        # Recoverable case: in-flight budget exhausted + a parseable
+        # Retry-After. OpenRouter's own remedy_hint says "Retry after
+        # your in-flight requests settle" - this clears as the broker
+        # completes in-flight turns.
+        if ($reason eq 'in_flight_budget_exhausted' && defined $ra_value) {
+            $is_retryable_error = 1;
+            $retryable = 1;
+            $retry_after = $ra_value;
+            $error_type = 'rate_limit';
+            $error = "OpenRouter in-flight budget exhausted. "
+                   . "Your account is allowed N concurrent in-flight requests; "
+                   . "wait for one to settle and try again "
+                   . "(Retry-After: ${ra_value}s).";
+            log_info('ResponseHandler', "OpenRouter in-flight budget 402 (retryable in ${ra_value}s, source=$limit_source)");
+        }
+        # Hard credit exhaustion: no usable Retry-After or real credit limit hit.
+        # This includes OpenRouter's openrouter_credits source AND any other 402
+        # without metadata (e.g. providers that just return a string).
+        else {
+            $is_retryable_error = 0;
+            $retryable = 0;
+            $error_type = 'billing_error';
+
+            # Structured breakdown: classify the failure mode for the user.
+            my $detail;
+            if ($reason eq 'openrouter_credits' || $limit_source eq 'openrouter_credits') {
+                # Extract "you requested up to N tokens, but can only afford M" hint.
+                my ($requested, $afforded);
+                if ($error =~ /requested up to (\d+)\s*tokens.*?can only afford (\d+)/i) {
+                    $requested = $1; $afforded = $2;
+                }
+                if (defined $requested && defined $afforded) {
+                    $detail = "Your remaining balance can cover $afforded prompt tokens, "
+                            . "but this request needs $requested. "
+                            . "Lower max_tokens or shorten the conversation, then add credits at "
+                            . "https://openrouter.ai/settings/credits.";
+                } else {
+                    $detail = "Your OpenRouter account has run out of credits. "
+                            . "Add credits at https://openrouter.ai/settings/credits or switch to "
+                            . "Auto mode to use a different provider.";
+                }
+            } elsif ($reason eq 'in_flight_budget_exhausted') {
+                # No Retry-After header - we genuinely don't know when to retry.
+                $detail = "OpenRouter in-flight budget exhausted but no Retry-After was provided. "
+                        . "Wait a few seconds for in-flight requests to settle, then retry. "
+                        . "Adding credits raises the in-flight budget ceiling.";
+            } else {
+                $detail = "Add credits or upgrade your plan before retrying.";
+            }
+            $error = "Your API account has run out of credits or hit a billing limit. $detail";
+            log_warning('ResponseHandler', "Billing error (non-retryable, reason=$reason, source=$limit_source): $error");
+        }
+    }
+
     # Handle billing/credit/quota errors distinct from rate limits (non-retryable).
     # Distinct from rate_limit because no amount of waiting fixes an empty balance.
     # Covers OpenAI/Anthropic "insufficient credit", Z.AI 1113-style, generic "payment required",
-    # HTTP 402 Payment Required, and provider-specific codes.
-    elsif (($status == 400 || $status == 402) && (
+    # HTTP 400 with credit/billing wording, and provider-specific codes.
+    # Note: 402 is handled by the dedicated branch above; this elsif covers
+    # providers that surface credit exhaustion as HTTP 400.
+    elsif ($status == 400 && (
         $error =~ /insufficient\s+(?:credit|credits|balance|quota|funds)/i
         || $error =~ /credit\s+balance\s+(?:is\s+)?(?:too\s+)?(?:low|insufficient|exceeded)/i
         || $error =~ /payment\s+required/i
@@ -1141,9 +1235,9 @@ sub _handle_error_response_impl {
         $is_retryable_error = 0;
         $retryable = 0;
         $error_type = 'billing_error';
+        # Structured breakdown - no raw provider dump. Keep it actionable.
         $error = "Your API account has run out of credits or hit a billing limit. "
-               . "Add credits or upgrade your plan before retrying.\n\n"
-               . "Provider detail: $error";
+               . "Add credits or upgrade your plan before retrying.";
         log_warning('ResponseHandler', "Billing error (non-retryable): $error");
     }
 

@@ -38,6 +38,7 @@ our @EXPORT_OK = qw(
     DEFAULT_MAX_RESPONSE_TOKENS
     DEFAULT_TOOL_OUTPUT_RESERVE
     DEFAULT_BINARY_SAMPLE_SIZE
+    DEFAULT_RATE_LIMIT_RETRY_AFTER
     DEFAULT_POST_TRIM_FLOOR
     MIN_CSSS_SLOT_TOKENS
     MAX_CSSS_SLOT_TOKENS
@@ -86,6 +87,16 @@ use constant TOOL_RESULT_MAX_CHUNK        => 32768;   # Hard ceiling per chunk (
 # File operations
 use constant DEFAULT_BINARY_SAMPLE_SIZE   => 8192;    # Bytes to sample for binary detection
 
+# Rate limiting fallback.
+# DEFAULT_RATE_LIMIT_RETRY_AFTER: Blind backoff used ONLY when the provider
+# returns a 429 (or 402 with a retryable reason) and neither a Retry-After
+# header, an x-ratelimit-reset header, nor a "retry in N seconds" body
+# message is present to tell us the real wait. This is the "we have no
+# information" fallback - header/body values always win. Lowered from 60s
+# to 5s: with infinite rate-limit retries (max_rate_limit_retries=0) a 60s
+# blind wait parks the agent for a full minute per loop when the provider
+# gave no guidance. 5s keeps the retry responsive while staying polite.
+
 # Conversation management
 use constant DEFAULT_POST_TRIM_FLOOR      => 24000;   # Minimum tokens to keep after trimming
                                                     # Balanced: earlier than 32K (less frequent trims)
@@ -108,6 +119,9 @@ use constant DEFAULT_POST_TRIM_FLOOR      => 24000;   # Minimum tokens to keep a
 # (no previous summary to lock to).
 use constant MIN_CSSS_SLOT_TOKENS         => 8192;    # Resume fallback gate (no longer padding floor)
 use constant MAX_CSSS_SLOT_TOKENS         => 12000;   # Summary ceiling - hard cap
+
+# Rate-limit blind-backoff fallback (see above). Header/body values always win.
+use constant DEFAULT_RATE_LIMIT_RETRY_AFTER => 5;    # Seconds to wait when no Retry-After is known
 
 # Trim priority tier constants (see docs/SPECS/TRIM_PRIORITY.md).
 # MAX_PRESERVED_HIGH_VALUE: the most recent N dialog units (Tier 2) are

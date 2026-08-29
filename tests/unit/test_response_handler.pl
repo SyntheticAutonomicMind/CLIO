@@ -92,6 +92,19 @@ subtest 'handle_error_response - 429 rate limit' => sub {
     ok($result->{retry_after} > 0, 'Has retry_after');
 };
 
+subtest 'handle_error_response - 429 with no headers/body hint uses DEFAULT_RATE_LIMIT_RETRY_AFTER' => sub {
+    my $handler = CLIO::Core::API::ResponseHandler->new();
+    my $resp = MockResponse->new(
+        code => 429,
+        status_line => '429 Too Many Requests',
+        content => '{"error":{"message":"rate limited"}}',
+    );
+    my $result = $handler->handle_error_response($resp, '{}', 0);
+    is($result->{retryable}, 1, 'Still retryable');
+    is($result->{error_type}, 'rate_limit', 'Error type is rate_limit');
+    is($result->{retry_after}, 5, 'Blind default is 5s (was 60s before 2026-08-29)');
+};
+
 subtest 'handle_error_response - 502 server error' => sub {
     my $handler = CLIO::Core::API::ResponseHandler->new();
     my $resp = MockResponse->new(
@@ -612,6 +625,52 @@ subtest 'handle_error_response - 402 payment_required' => sub {
     my $result = $handler->handle_error_response($resp, '{}', 0);
     is($result->{retryable}, 0, '402 Payment Required is NOT retryable');
     is($result->{error_type}, 'billing_error', 'Error type is billing_error');
+};
+
+subtest 'handle_error_response - 402 OpenRouter in_flight_budget_exhausted (retryable)' => sub {
+    my $handler = CLIO::Core::API::ResponseHandler->new();
+    my $resp = MockResponse->new(
+        code => 402,
+        status_line => '402 Payment Required',
+        content => '{"error":{"message":"This request would exceed your available credits given your current in-flight requests. Retry after in-flight requests settle, or add credits.","code":402,"metadata":{"reason":"in_flight_budget_exhausted","limit_source":"openrouter_in_flight_budget","remedy_hint":"Retry after your in-flight requests settle (see the Retry-After header). Adding credits at https://openrouter.ai/settings/credits raises your in-flight budget, up to a capped ceiling."}}}',
+    );
+
+    my $result = $handler->handle_error_response($resp, '{}', 0, headers => { 'retry-after' => '120' });
+    is($result->{retryable}, 1, 'in_flight_budget_exhausted with Retry-After IS retryable');
+    is($result->{error_type}, 'rate_limit', 'Error type is rate_limit');
+    is($result->{retry_after}, 120, 'retry_after extracted from Retry-After header (120s)');
+    like($result->{error}, qr/in-flight budget exhausted/i, 'User message names the failure mode');
+};
+
+subtest 'handle_error_response - 402 OpenRouter in_flight_budget_exhausted without Retry-After' => sub {
+    my $handler = CLIO::Core::API::ResponseHandler->new();
+    my $resp = MockResponse->new(
+        code => 402,
+        status_line => '402 Payment Required',
+        content => '{"error":{"message":"in-flight budget exhausted","metadata":{"reason":"in_flight_budget_exhausted"}}}',
+    );
+
+    my $result = $handler->handle_error_response($resp, '{}', 0);
+    is($result->{retryable}, 0, 'in_flight_budget_exhausted WITHOUT Retry-After is NOT retryable (we do not know when to retry)');
+    is($result->{error_type}, 'billing_error', 'Error type is billing_error when retry timing unknown');
+    like($result->{error}, qr/no Retry-After/i, 'User message explains why we cannot auto-retry');
+};
+
+subtest 'handle_error_response - 402 OpenRouter openrouter_credits (hard stop with hint)' => sub {
+    my $handler = CLIO::Core::API::ResponseHandler->new();
+    my $resp = MockResponse->new(
+        code => 402,
+        status_line => '402 Payment Required',
+        content => '{"error":{"message":"This request requires more credits, or fewer max_tokens. You requested up to 131072 tokens, but can only afford 12843. To increase, visit https://openrouter.ai/settings/credits and add more credits","code":402,"metadata":{"reason":"openrouter_credits","limit_source":"openrouter_credits"}}}',
+    );
+
+    my $result = $handler->handle_error_response($resp, '{}', 0);
+    is($result->{retryable}, 0, 'openrouter_credits 402 is NOT retryable (real credit exhaustion)');
+    is($result->{error_type}, 'billing_error', 'Error type is billing_error');
+    like($result->{error}, qr/131072/, 'User message surfaces requested token count');
+    like($result->{error}, qr/12843/, 'User message surfaces affordable token count');
+    like($result->{error}, qr/credits/i, 'User message points to credits');
+    ok(index($result->{error}, 'Provider detail:') == -1, 'No raw provider dump appended (deduped)');
 };
 
 subtest 'handle_error_response - 400 billing_error (payment required string)' => sub {

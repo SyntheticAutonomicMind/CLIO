@@ -4803,8 +4803,27 @@ sub _finalize_streaming_response {
     # Check success - use status code directly
     my $is_error = defined($status) && $status !~ /^(2\d{2})$/;
 
-    # Set streaming headers BEFORE error check so rate limit detection can use them
-    $s{streaming_headers} //= $resp->headers if $resp->can('headers');
+    # Set streaming headers BEFORE error check so rate limit detection can use them.
+    # The streaming callback captures headers from a preliminary response stub (curl
+    # streaming passes a stub with headers => {} before the real -D header file is
+    # parsed). If the captured headers turned out to be empty, fall back to the
+    # real response object's headers so Retry-After / x-ratelimit-* are not lost.
+    if ($resp->can('headers')) {
+        my $captured = $s{streaming_headers};
+        my $has_fields = 0;
+        if (ref($captured)) {
+            if ($captured->can('header_field_names')) {
+                $has_fields = scalar($captured->header_field_names());
+            } elsif ($captured->can('header')) {
+                # HTTP::Headers-style: header_field_names may not exist
+                $has_fields = 1;  # assume populated; _handle_streaming_http_error re-checks
+            }
+        }
+        unless ($has_fields) {
+            $s{streaming_headers} = $resp->headers;
+            log_debug('APIManager', "Replaced empty streaming_headers with real response headers");
+        }
+    }
 
     # Surface SSE error chunks captured during streaming. Three cases:
     #   1. Error on first chunk (no content/tool_calls streamed) - the
@@ -5064,8 +5083,20 @@ sub _handle_streaming_http_error {
         $resp->{content} = $body;
     }
 
-    # Use streaming headers if available (passed from _finalize_streaming_response)
-    my $headers = $s->{streaming_headers} || $resp->headers;
+    # Use streaming headers if available (passed from _finalize_streaming_response).
+    # Belt-and-suspenders: also fall back to the real response headers when the
+    # captured streaming_headers has no fields (curl streaming stub fallback).
+    my $headers = $s->{streaming_headers};
+    my $headers_empty = 0;
+    if ($headers && ref($headers) && $headers->can('header_field_names')) {
+        $headers_empty = 1 unless scalar($headers->header_field_names());
+    }
+    if (!$headers || $headers_empty) {
+        my $fallback = $resp->can('headers') ? $resp->headers : undef;
+        log_debug('APIManager', "Using real response headers (streaming_headers was " .
+            (!$headers ? 'undef' : 'empty') . ")") if $fallback;
+        $headers = $fallback if $fallback;
+    }
 
     # Debug: log ALL headers from the response to see what's actually available
     if ($headers && ref($headers) && $headers->can('header')) {
@@ -5074,12 +5105,12 @@ sub _handle_streaming_http_error {
             my $all_headers_str = join(", ", map { "$_=" . (defined($headers->header($_)) ? "'" . $headers->header($_) . "'" : 'undef') } @header_names);
             log_debug('APIManager', "All response headers (${\scalar(@header_names)}): $all_headers_str");
         } else {
-            log_info('APIManager', "Headers object exists but has NO fields - headers hash dump:");
+            log_debug('APIManager', "Headers object exists but has NO fields - headers hash dump:");
             # Dump the internal hash directly to see what it actually contains
             if (ref($headers) eq 'CLIO::Compat::HTTP::Headers') {
                 my %h = %{$headers->{headers}} if ref($headers->{headers}) eq 'HASH';
                 while (my ($k, $v) = each %h) {
-                    log_info('APIManager', "  header[$k] = $v");
+                    log_debug('APIManager', "  header[$k] = $v");
                 }
             }
         }
