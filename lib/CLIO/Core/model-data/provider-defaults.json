@@ -1,1 +1,346 @@
-{"providers":{"anthropic":{"default_model":"claude-sonnet-4-20250514","max_context_tokens":200000,"max_output_tokens":64000,"supports_reasoning":1,"supports_streaming":1,"supports_tools":1,"supports_vision":1},"deepseek":{"default_model":"deepseek-v4-pro","max_context_tokens":1048576,"max_output_tokens":32768,"supports_reasoning":1,"supports_streaming":1,"supports_tools":1},"github_copilot":{"default_model":"claude-sonnet-4.6","max_context_tokens":128000,"max_output_tokens":16384,"supports_reasoning":1,"supports_streaming":1,"supports_tools":1},"google":{"default_model":"gemini-2.5-flash","max_context_tokens":1048576,"max_output_tokens":16384,"supports_reasoning":1,"supports_streaming":1,"supports_tools":1},"llama.cpp":{"default_model":"local-model","exposes_props":1,"local_inference":1,"max_context_tokens":32000,"max_output_tokens":16384,"supports_streaming":1,"supports_tools":1},"lmstudio":{"default_model":"local-model","exposes_props":1,"local_inference":1,"max_context_tokens":32000,"max_output_tokens":16384,"supports_streaming":1,"supports_tools":1},"minimax":{"default_model":"MiniMax-M3","max_context_tokens":1000000,"max_output_tokens":131072,"supports_reasoning":1,"supports_streaming":1,"supports_tools":1,"supports_vision":1},"minimax_token":{"default_model":"MiniMax-M3","max_context_tokens":1000000,"max_output_tokens":131072,"supports_reasoning":1,"supports_streaming":1,"supports_tools":1,"supports_vision":1},"nvidia":{"default_model":"nvidia/nemotron-3-ultra-550b-a55b","max_context_tokens":1048576,"max_output_tokens":16384,"supports_reasoning":1,"supports_streaming":1,"supports_tools":1},"ollama_cloud":{"default_model":"gemma4:31b","max_context_tokens":128000,"max_output_tokens":16384,"supports_streaming":1,"supports_tools":1},"openai":{"default_model":"gpt-4.1","max_context_tokens":128000,"max_output_tokens":16384,"supports_reasoning":1,"supports_streaming":1,"supports_tools":1},"openrouter":{"default_model":"meta-llama/llama-3.1-405b-instruct:free","max_context_tokens":128000,"max_output_tokens":16384,"supports_streaming":1,"supports_tools":1},"sam":{"default_model":"local-model","exposes_props":1,"local_inference":1,"max_context_tokens":32000,"max_output_tokens":16384,"supports_streaming":1,"supports_tools":1},"zai":{"default_model":"glm-5.1","max_context_tokens":200000,"max_output_tokens":131072,"supports_reasoning":1,"supports_streaming":1,"supports_tools":1,"supports_vision":1},"zai_coding":{"default_model":"glm-5.1","max_context_tokens":200000,"max_output_tokens":131072,"supports_reasoning":1,"supports_streaming":1,"supports_tools":1,"supports_vision":1}},"version":1}
+{
+  "providers": {
+    "anthropic": {
+      "default_model": "claude-sonnet-4-20250514",
+      "max_context_tokens": 200000,
+      "max_output_tokens": 64000,
+      "supports_reasoning": 1,
+      "supports_streaming": 1,
+      "supports_tools": 1,
+      "supports_vision": 1,
+      "reasoning_schema": {
+        "mode": "native"
+      }
+    },
+    "deepseek": {
+      "default_model": "deepseek-v4-pro",
+      "max_context_tokens": 1048576,
+      "max_output_tokens": 32768,
+      "supports_reasoning": 1,
+      "supports_streaming": 1,
+      "supports_tools": 1,
+      "reasoning_schema": {
+        "mode": "effort",
+        "param": "reasoning_effort",
+        "values": [
+          "low",
+          "medium",
+          "high"
+        ],
+        "default_effort": "medium",
+        "delete_stream_options": true
+      }
+    },
+    "github_copilot": {
+      "default_model": "claude-sonnet-4.6",
+      "max_context_tokens": 128000,
+      "max_output_tokens": 16384,
+      "supports_reasoning": 1,
+      "supports_streaming": 1,
+      "supports_tools": 1,
+      "reasoning_schema": {
+        "mode": "effort",
+        "param": "reasoning_effort",
+        "values": [
+          "low",
+          "medium",
+          "high"
+        ],
+        "default_effort": "medium"
+      }
+    },
+    "google": {
+      "default_model": "gemini-2.5-flash",
+      "max_context_tokens": 1048576,
+      "max_output_tokens": 16384,
+      "supports_reasoning": 1,
+      "supports_streaming": 1,
+      "supports_tools": 1,
+      "reasoning_schema": {
+        "mode": "native"
+      }
+    },
+    "llama.cpp": {
+      "default_model": "local-model",
+      "exposes_props": 1,
+      "local_inference": 1,
+      "max_context_tokens": 32000,
+      "max_output_tokens": 16384,
+      "supports_streaming": 1,
+      "supports_tools": 1,
+      "reasoning_schema": {
+        "mode": "disabled"
+      }
+    },
+    "lmstudio": {
+      "default_model": "local-model",
+      "exposes_props": 1,
+      "local_inference": 1,
+      "max_context_tokens": 32000,
+      "max_output_tokens": 16384,
+      "supports_streaming": 1,
+      "supports_tools": 1,
+      "reasoning_schema": {
+        "mode": "disabled"
+      }
+    },
+    "minimax": {
+      "default_model": "MiniMax-M3",
+      "max_context_tokens": 1000000,
+      "max_output_tokens": 131072,
+      "supports_reasoning": 1,
+      "supports_streaming": 1,
+      "supports_tools": 1,
+      "supports_vision": 1,
+      "reasoning_schema": {
+        "mode": "think_object",
+        "think_param": "thinking",
+        "budget_param": "budget_tokens",
+        "budget_map": {
+          "low": 2000,
+          "medium": 4000,
+          "high": 8000
+        },
+        "default_effort": "high",
+        "default_budget": 8000,
+        "disabled_type": "disabled",
+        "max_tokens_rename": "max_completion_tokens",
+        "reasoning_split": true,
+        "message_transform": "minimax"
+      }
+    },
+    "minimax_token": {
+      "default_model": "MiniMax-M3",
+      "max_context_tokens": 1000000,
+      "max_output_tokens": 131072,
+      "supports_reasoning": 1,
+      "supports_streaming": 1,
+      "supports_tools": 1,
+      "supports_vision": 1,
+      "reasoning_schema": {
+        "mode": "think_object",
+        "think_param": "thinking",
+        "budget_param": "budget_tokens",
+        "budget_map": {
+          "low": 2000,
+          "medium": 4000,
+          "high": 8000
+        },
+        "default_effort": "high",
+        "default_budget": 8000,
+        "disabled_type": "disabled",
+        "max_tokens_rename": "max_completion_tokens",
+        "reasoning_split": true,
+        "message_transform": "minimax"
+      }
+    },
+    "nvidia": {
+      "default_model": "nvidia/nemotron-3-ultra-550b-a55b",
+      "max_context_tokens": 1048576,
+      "max_output_tokens": 16384,
+      "supports_reasoning": 1,
+      "supports_streaming": 1,
+      "supports_tools": 1,
+      "reasoning_schema": {
+        "mode": "effort",
+        "param": "reasoning_effort",
+        "values": [
+          "low",
+          "medium",
+          "high"
+        ],
+        "default_effort": "medium"
+      }
+    },
+    "ollama_cloud": {
+      "default_model": "gemma4:31b",
+      "max_context_tokens": 128000,
+      "max_output_tokens": 16384,
+      "supports_streaming": 1,
+      "supports_tools": 1,
+      "reasoning_schema": {
+        "mode": "disabled"
+      }
+    },
+    "openai": {
+      "default_model": "gpt-4.1",
+      "max_context_tokens": 128000,
+      "max_output_tokens": 16384,
+      "supports_reasoning": 1,
+      "supports_streaming": 1,
+      "supports_tools": 1,
+      "reasoning_schema": {
+        "mode": "effort",
+        "param": "reasoning_effort",
+        "values": [
+          "low",
+          "medium",
+          "high"
+        ],
+        "default_effort": "medium"
+      }
+    },
+    "openrouter": {
+      "default_model": "meta-llama/llama-3.1-405b-instruct:free",
+      "max_context_tokens": 128000,
+      "max_output_tokens": 16384,
+      "supports_streaming": 1,
+      "supports_tools": 1,
+      "reasoning_schema": {
+        "mode": "nested",
+        "param": "reasoning",
+        "effort_field": "effort",
+        "enabled_field": "enabled",
+        "values": [
+          "low",
+          "medium",
+          "high",
+          "max"
+        ],
+        "default_effort": "medium",
+        "invalid_effort_default": "high"
+      }
+    },
+    "vercel": {
+      "default_model": "poolside/laguna-s-2.1-free",
+      "max_context_tokens": 256000,
+      "max_output_tokens": 32768,
+      "supports_reasoning": 1,
+      "supports_streaming": 1,
+      "supports_tools": 1,
+      "supports_vision": 1,
+      "reasoning_schema": {
+        "mode": "nested",
+        "param": "reasoning",
+        "effort_field": "effort",
+        "enabled_field": "enabled",
+        "values": [
+          "none",
+          "minimal",
+          "low",
+          "medium",
+          "high",
+          "xhigh"
+        ],
+        "default_effort": "medium"
+      }
+    },
+    "orca": {
+      "default_model": "orcarouter/free",
+      "max_context_tokens": 1000000,
+      "max_output_tokens": 16384,
+      "supports_reasoning": 1,
+      "supports_streaming": 1,
+      "supports_tools": 1,
+      "supports_cache_control": 1,
+      "reasoning_schema": {
+        "mode": "effort",
+        "param": "reasoning_effort",
+        "values": [
+          "low",
+          "medium",
+          "high"
+        ],
+        "default_effort": "medium"
+      }
+    },
+    "kilo": {
+      "default_model": "kilo-auto/free",
+      "max_context_tokens": 1000000,
+      "max_output_tokens": 128000,
+      "supports_reasoning": 1,
+      "supports_streaming": 1,
+      "supports_tools": 1,
+      "supports_cache_control": 1,
+      "reasoning_schema": {
+        "mode": "effort",
+        "param": "reasoning_effort",
+        "values": [
+          "low",
+          "medium",
+          "high"
+        ],
+        "default_effort": "medium"
+      }
+    },
+    "sam": {
+      "default_model": "local-model",
+      "exposes_props": 1,
+      "local_inference": 1,
+      "max_context_tokens": 32000,
+      "max_output_tokens": 16384,
+      "supports_streaming": 1,
+      "supports_tools": 1,
+      "reasoning_schema": {
+        "mode": "disabled"
+      }
+    },
+    "zai": {
+      "default_model": "glm-5.1",
+      "max_context_tokens": 200000,
+      "max_output_tokens": 131072,
+      "supports_reasoning": 1,
+      "supports_streaming": 1,
+      "supports_tools": 1,
+      "supports_vision": 1,
+      "reasoning_schema": {
+        "mode": "mixed",
+        "think_param": "thinking",
+        "think_value": {
+          "type": "enabled"
+        },
+        "effort_param": "reasoning_effort",
+        "values": [
+          "max",
+          "xhigh",
+          "high",
+          "medium",
+          "low",
+          "minimal",
+          "none"
+        ],
+        "value_map": {
+          "xhigh": "max",
+          "turbo": "high"
+        },
+        "default_effort": "high",
+        "delete_stream_options": true,
+        "coding_plan_peak": true
+      }
+    },
+    "zai_coding": {
+      "default_model": "glm-5.1",
+      "max_context_tokens": 200000,
+      "max_output_tokens": 131072,
+      "supports_reasoning": 1,
+      "supports_streaming": 1,
+      "supports_tools": 1,
+      "supports_vision": 1,
+      "reasoning_schema": {
+        "mode": "mixed",
+        "think_param": "thinking",
+        "think_value": {
+          "type": "enabled"
+        },
+        "effort_param": "reasoning_effort",
+        "values": [
+          "max",
+          "xhigh",
+          "high",
+          "medium",
+          "low",
+          "minimal",
+          "none"
+        ],
+        "value_map": {
+          "xhigh": "max",
+          "turbo": "high"
+        },
+        "default_effort": "high",
+        "delete_stream_options": true,
+        "coding_plan_peak": true
+      }
+    }
+  },
+  "version": 3
+}

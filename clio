@@ -99,6 +99,7 @@ EXAMPLES:
     clio --debug --new            # Start with debug logging
     clio --dir /path/to/project   # Start in specific directory
     clio --model gpt-4.1 --new    # Start with specific model
+    clio --model "openrouter/foo:free kilo/bar:free" --new  # Model routing with fallback
     clio --prompt minimal --new   # Start with a custom system prompt
     clio --enable file_operations,terminal_operations --input "list files"
     clio --disable web_operations,remote_execution --new
@@ -167,10 +168,19 @@ if ($reduced_motion) {
 # Pre-parse --model so we can auto-derive provider from "provider/model" prefix
 # before the provider check. Without this, `clio --model nvidia/...` would hit
 # the no-provider path because the full CLI parse runs *after* it.
+# Also supports multiple space-separated models for model routing:
+#   --model "openrouter/foo kilo/bar vercel/baz"
 my $cli_model_override;
+my $cli_model_candidates;
 for (my $i = 0; $i < @ARGV; $i++) {
     if ($ARGV[$i] eq '--model' && defined $ARGV[$i+1]) {
         $cli_model_override = $ARGV[$i+1];
+        # Split on whitespace to detect multiple models for routing
+        my @parts = split(/\s+/, $ARGV[$i+1]);
+        if (@parts > 1) {
+            $cli_model_candidates = \@parts;
+            $cli_model_override = $parts[0];  # First model for pre-parse provider detection
+        }
     }
 }
 
@@ -292,7 +302,11 @@ for (my $i = 0; $i < @ARGV; $i++) {
         $sandbox_mode = 1;
     }
     if ($ARGV[$i] eq '--model' && defined $ARGV[$i+1]) {
-        $model_override = $ARGV[$i+1];
+        if ($cli_model_candidates && @$cli_model_candidates > 1) {
+            $model_override = $cli_model_override;  # First model from the routing list
+        } else {
+            $model_override = $ARGV[$i+1];
+        }
     }
     if ($ARGV[$i] eq '--enable' && defined $ARGV[$i+1]) {
         $enable_tools = $ARGV[$i+1];
@@ -318,6 +332,15 @@ for (my $i = 0; $i < @ARGV; $i++) {
     if ($ARGV[$i] eq '--list-spinners') {
         $mode = 'list_spinners';
     }
+}
+
+# Store model candidates for routing if multiple models were passed via --model
+if ($cli_model_candidates && @$cli_model_candidates > 1) {
+    # Store as transient (0 => don't mark as user_set, won't persist to config file)
+    # consistent with how $model_override is handled below
+    $config->set('model_candidates', $cli_model_candidates, 0);
+    $config->set('model_routing_index', 0, 0);
+    log_debug('Main', "Model routing enabled with " . scalar(@{$cli_model_candidates}) . " candidates");
 }
 
 # Validate --enable and --disable are mutually exclusive

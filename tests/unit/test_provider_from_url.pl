@@ -39,6 +39,10 @@ subtest 'standard API providers' => sub {
         'Z.AI Coding Plan detected');
     is(provider_from_url('https://integrate.api.nvidia.com/v1'), 'nvidia',
         'NVIDIA detected');
+    is(provider_from_url('https://api.orcarouter.ai/v1/chat/completions'), 'orca',
+        'OrcaRouter detected');
+    is(provider_from_url('https://api.kilo.ai/api/gateway/chat/completions'), 'kilo',
+        'KiloCode detected');
 };
 
 # =============================================================================

@@ -49,6 +49,8 @@ sub _setup {
         'lmstudio'    => 'http://localhost:1234/v1/chat/completions',
         'ollama_cloud'=> 'https://ollama.com/v1/chat/completions',
         'openrouter'  => 'https://openrouter.ai/api/v1/chat/completions',
+        'orca'        => 'https://api.orcarouter.ai/v1/chat/completions',
+        'kilo'        => 'https://api.kilo.ai/api/gateway/chat/completions',
         'openai'      => 'https://api.openai.com/v1/chat/completions',
         'deepseek'    => 'https://api.deepseek.com/v1/chat/completions',
         'google'      => 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',

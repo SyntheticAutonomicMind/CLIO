@@ -67,30 +67,28 @@ See [docs/USER_GUIDE.md](docs/USER_GUIDE.md#slash-commands) for the complete ref
 
 ## AI Providers
 
-CLIO ships with 15 provider configurations. All API providers are OpenAI-compatible; Anthropic and Google have native protocol adapters.
+CLIO ships with **18 provider configurations**. All API providers are OpenAI-compatible; Anthropic, Google, and NVIDIA have native protocol adapters.
 
-| Provider | Auth | Best For |
-|----------|------|----------|
-| **GitHub Copilot** | OAuth | Multiple models (GPT, Claude, MiniMax), easiest setup |
-| **Anthropic** | API Key | Claude models, extended thinking, native API |
-| **OpenAI** | API Key | GPT and o-series models |
-| **Google Gemini** | API Key | Large context (1M+), multimodal, native API |
-| **DeepSeek** | API Key | Coding, reasoning |
-| **OpenRouter** | API Key | Access to hundreds of models |
-| **Ollama Cloud** | API Key | Hosted open-source models (Qwen, Gemma, DeepSeek) |
-| **MiniMax** | API Key | High-throughput coding, 1M context |
-| **Z.AI** | API Key | GLM-5 models, long-horizon tasks, vision |
-| **NVIDIA NIM** | API Key | Nemotron, Llama, enterprise-grade inference |
-| **llama.cpp** | None | Local, offline, privacy-first |
-| **LM Studio** | None | GUI-based local model management |
-| **SAM** | API Key | Integration with SAM ecosystem |
-
-Variant providers target the same backends but with different billing endpoints or quotas:
-
-| Variant | Difference |
-|---------|-----------|
-| **MiniMax Token Plan** | MiniMax Token Plan subscription (quota-based, separate billing) |
-| **Z.AI Coding Plan** | Z.AI `/api/coding/paas/v4` endpoint with coding-plan subscription pricing |
+| Provider | Auth |
+|----------|------|
+| **GitHub Copilot** | OAuth |
+| **Anthropic** | API Key |
+| **OpenAI** | API Key |
+| **Google Gemini** | API Key |
+| **DeepSeek** | API Key |
+| **OpenRouter** | API Key |
+| **OrcaRouter** | API Key |
+| **KiloCode** | API Key |
+| **Ollama Cloud** | API Key |
+| **MiniMax** | API Key |
+| **MiniMax Token Plan** | API Key |
+| **Z.AI** | API Key |
+| **Z.AI Coding Plan** | API Key |
+| **NVIDIA NIM** | API Key |
+| **Vercel AI Gateway** | API Key |
+| **llama.cpp** | None |
+| **LM Studio** | None |
+| **SAM** | API Key |
 
 See [docs/PROVIDERS.md](docs/PROVIDERS.md) for setup instructions for each provider.
 
