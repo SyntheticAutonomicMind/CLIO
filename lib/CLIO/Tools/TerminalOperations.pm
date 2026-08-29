@@ -902,6 +902,25 @@ sub _prompt_command_confirmation {
         return 0;
     }
 
+    # Suspend ALRM handler first - Chat.pm's 1-second timer calls ReadKey(-1)
+    # which would consume keystrokes before <STDIN> can read them.
+    my $saved_alrm = $SIG{ALRM};
+    my $remaining_alarm = alarm(0);
+
+    # Switch to cooked (normal) mode BEFORE displaying the prompt.
+    # Previously, the terminal stayed in cbreak mode during the prompt, and
+    # a ReadKey(-1) flush ran AFTER the user typed their response - consuming
+    # the user's actual keystrokes (e.g. "n" + Enter). This caused <STDIN>
+    # to block, the user to re-type (often "y"), and the security denial to
+    # be silently ignored: the command ran, the session saved, and the
+    # prompt reappeared for the same command.
+    #
+    # In cooked mode, <STDIN> reads a full line with proper line buffering
+    # and echo. The ALRM is suspended above so it cannot fire during the
+    # prompt to interfere with input.
+    require CLIO::Compat::Terminal;
+    CLIO::Compat::Terminal::ReadMode(0);
+
     my $spinner = ($context && $context->{spinner}) ? $context->{spinner} : undef;
     $spinner->stop() if $spinner && $spinner->can('stop');
 
@@ -919,7 +938,7 @@ sub _prompt_command_confirmation {
             $options,
         );
         if ($is_critical) {
-            print "\n\e[1;31m⚠ CRITICAL RISK\e[0m\n$prompt_line\n$input_line";
+            print "\n\e[1;31m[WARN] CRITICAL RISK\e[0m\n$prompt_line\n$input_line";
         } else {
             print "\n$prompt_line\n$input_line";
         }
@@ -938,17 +957,9 @@ sub _prompt_command_confirmation {
         }
     }
 
-    # Suspend ALRM handler - Chat.pm's 1-second timer calls ReadKey(-1)
-    # which consumes keystrokes before <STDIN> can read them
-    my $saved_alrm = $SIG{ALRM};
-    my $remaining_alarm = alarm(0);
-
-    require CLIO::Compat::Terminal;
-
-    # Flush any buffered ReadKey input from cbreak mode
-    while (defined(eval { CLIO::Compat::Terminal::ReadKey(-1) })) { }
-
-    CLIO::Compat::Terminal::ReadMode(0);
+    # Flush stdout so the prompt is visible before blocking on input
+    my $old_fh = select(STDOUT);
+    $| = 1; select($old_fh);
 
     my $response = <STDIN>;
     chomp($response) if defined $response;

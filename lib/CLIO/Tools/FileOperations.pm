@@ -278,7 +278,7 @@ sub get_additional_parameters {
         
         # Write parameters - DUAL PARAMETER SUPPORT
         %{$self->add_dual_json_parameters('content', {
-            description => '[REQUIRED for write_file] File content to write (as string - escape JSON quotes if needed).',
+            description => '[REQUIRED for write_file, insert_at_line] File content. For insert_at_line: content is inserted verbatim at the line — it does NOT auto-add newlines. Include a trailing newline in your content if needed.',
             string_format => 'any',
         })},
 
