@@ -375,8 +375,99 @@ sub _normalize_local_inference_url {
         . "path and it will be left alone.");
 }
 
+=head2 _set_model_candidates($models, $session_only)
+
+Handle /api set model with multiple space-separated models for routing.
+Stores the list as model_candidates and sets the first as the active model.
+
+Arguments:
+  $models       - Arrayref of model strings (e.g. ["openrouter/foo", "kilo/bar"])
+  $session_only - If true, store as session-only override
+
+=cut
+
+sub _set_model_candidates {
+    my ($self, $models, $session_only) = @_;
+
+    my @candidates;
+    for my $m (@$models) {
+        next unless $m && length($m);
+        my $resolved = $self->{config}->get_model_alias($m);
+        push @candidates, $resolved || $m;
+    }
+
+    unless (@candidates) {
+        $self->display_error_message("No valid models provided");
+        return;
+    }
+
+    # Validate each model has a valid provider
+    my @validated;
+    for my $m (@candidates) {
+        my ($full_model, $display_model, $target_provider, $api_model) =
+            $self->_resolve_model_details($m);
+
+        if ($target_provider ne ($self->{config}->get('provider') || '')) {
+            my ($has_auth, $auth_error) = $self->_check_provider_auth($target_provider);
+            unless ($has_auth) {
+                $self->display_error_message($auth_error);
+                $self->display_system_message("Set it with: /api set provider $target_provider && /api set key <your-key>");
+                return;
+            }
+        }
+
+        if ($target_provider eq 'github_copilot') {
+            my ($valid, $error) = $self->_validate_github_copilot_model($api_model);
+            unless ($valid) {
+                $self->display_error_message($error);
+                return;
+            }
+        }
+
+        push @validated, $full_model;
+    }
+
+    # Store candidates and set first as active
+    if ($session_only) {
+        if ($self->{session} && $self->{session}->can('state')) {
+            my $state = $self->{session}->state();
+            $state->{api_config} ||= {};
+            $state->{api_config}{model_candidates} = \@validated;
+            $state->{api_config}{model_routing_index} = 0;
+            $self->{session}->save();
+        }
+    } else {
+        $self->{config}->set_model_candidates(\@validated);
+        $self->{config}->set_model_routing_index(0);
+        $self->{config}->save();
+    }
+
+    $self->display_system_message("Model routing enabled with " . scalar(@validated) . " models:");
+    for my $i (0 .. $#validated) {
+        my $marker = ($i == 0) ? ' (active)' : '';
+        $self->display_system_message("  [$i] $validated[$i]$marker");
+    }
+    $self->display_system_message("Active model: $validated[0]" . ($session_only ? " (session only)" : " (saved)"));
+    $self->display_system_message("On API errors, CLIO will automatically try the next model in the list");
+
+    $self->_set_api_setting('model', $validated[0], $session_only);
+    $self->_get_auth_helper()->reinit_api_manager();
+
+    my ($first_provider, $first_model) = $self->_resolve_model_details($validated[0]);
+    $self->_update_billing_state($validated[0], $first_provider);
+    $self->_post_set_model_validation($validated[0], $first_model);
+}
+
 sub _set_model {
     my ($self, $value, $session_only) = @_;
+
+    # Handle multiple space-separated models for routing:
+    #   /api set model "openrouter/foo kilo/bar vercel/baz"
+    my @model_list = split(/\s+/, $value);
+    if (@model_list > 1) {
+        $self->_set_model_candidates(\@model_list, $session_only);
+        return;
+    }
 
     # Resolve model aliases
     my $resolved = $self->{config}->get_model_alias($value);

@@ -27,10 +27,32 @@ use CLIO::Providers qw(
 use CLIO::Core::Defaults qw(
     DEFAULT_LOCAL_CONTEXT_WINDOW DEFAULT_CONTEXT_WINDOW
 );
+use CLIO::Core::ModelDataLoader;
+
+# JSON defaults per provider (centralized model data inserts these).
+# The function checks JSON defaults first, then falls back to
+# DEFAULT_LOCAL_CONTEXT_WINDOW / DEFAULT_CONTEXT_WINDOW constants.
+my %PROVIDER_DEFAULT_CONTEXT = (
+    'sam'           => 32000,
+    'lmstudio'      => 32000,
+    'llama.cpp'     => 32000,
+    'openai'        => 128000,
+    'anthropic'     => 200000,
+    'google'        => 1048576,
+    'minimax'       => 1000000,
+    'zai'           => 200000,
+    'deepseek'      => 1048576,
+    'nvidia'        => 1048576,
+    'github_copilot' => 128000,
+    'openrouter'    => 128000,
+    'orca'          => 1000000,
+    'kilo'          => 1000000,
+    'ollama_cloud'  => 128000,
+);
 
 # Each tier name + the providers that should belong to it.
 my @LOCAL_NAMES  = qw(sam lmstudio llama.cpp);
-my @CLOUD_NAMES  = qw(openai anthropic google minimax zai deepseek nvidia github_copilot openrouter ollama_cloud);
+my @CLOUD_NAMES  = qw(openai anthropic google minimax zai deepseek nvidia github_copilot openrouter ollama_cloud orca kilo);
 
 # ============================================================================
 # Registry must declare the flags on every named local provider
@@ -183,7 +205,7 @@ for my $name (@CLOUD_NAMES) {
 
     # Providers without a dedicated fetcher return undef so the caller
     # can fall back to the generic OpenAI-compatible path.
-    for my $name (qw(openai ollama_cloud openrouter sam lmstudio)) {
+    for my $name (qw(openai ollama_cloud openrouter orca kilo sam lmstudio)) {
         is(capability_fetcher($name), undef,
             "$name has no dedicated fetcher -> undef (caller falls back)");
     }

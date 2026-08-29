@@ -624,6 +624,52 @@ sub _resolve_model_placeholder {
     my ($self, $placeholder) = @_;
     
     return $placeholder unless $placeholder;
+
+# Cycle to the next model in the routing candidates list.
+# Used by model routing: when an API error occurs, this switches to the
+# next provider/model in the candidates list so the next request uses
+# a different upstream. The _prepare_endpoint_config method resolves the
+# provider/api_base/api_key from the model's prefix on each call, so
+# updating the config model is sufficient for cross-provider routing.
+#
+# Arguments: none
+# Returns: ($new_model, $old_model) or (undef, undef) if no candidates
+
+sub cycle_model {
+    my ($self) = @_;
+
+    my $candidates = $self->{config}->get_model_candidates()
+        if $self->{config} && $self->{config}->can('get_model_candidates');
+    return (undef, undef) unless $candidates && ref($candidates) eq 'ARRAY' && @$candidates > 1;
+
+    my $idx = $self->{config}->get_model_routing_index() // 0;
+    $idx = ($idx + 1) % scalar(@$candidates);
+    $self->{config}->set_model_routing_index($idx)
+        if $self->{config}->can('set_model_routing_index');
+
+    my $old_model = $self->get_current_model();
+    my $new_model = $candidates->[$idx];
+    $self->{config}->set('model', $new_model, 0);  # 0 = don't mark as user_set (temp override)
+    $self->{model} = $new_model;  # Also set on instance for immediate use
+
+    # Reset learned state for the new model
+    $self->{_model_capabilities_cache} = undef;
+
+    log_info('APIManager', "Model routing: switched from '$old_model' to '$new_model' (index $idx)");
+
+    return ($new_model, $old_model);
+}
+
+# Check if model routing is active (candidates list has more than 1 model).
+# Returns the number of candidates, or 0 if routing is not active.
+
+sub model_routing_active {
+    my ($self) = @_;
+    return 0 unless $self->{config} && $self->{config}->can('get_model_candidates');
+    my $candidates = $self->{config}->get_model_candidates();
+    return 0 unless $candidates && ref($candidates) eq 'ARRAY' && @$candidates > 1;
+    return scalar(@$candidates);
+}
     
     require CLIO::Providers;
     return $placeholder unless CLIO::Providers::provider_exists($placeholder);
@@ -1598,8 +1644,14 @@ sub get_model_capabilities {
     # If we didn't get models from GitHubCopilotModelsAPI, fetch directly
     unless (@$models) {
         my $ua = $self->_create_http_client(timeout => 30);
+        # Use the per-provider API key when querying a different provider's models endpoint
+        my $lookup_key = $self->{api_key};
+        if ($target_provider && $target_provider ne ($self->{config} ? ($self->{config}->get('provider') || '') : '')) {
+            my $per_provider_key = $self->{config} ? $self->{config}->get_provider_key($target_provider) : undef;
+            $lookup_key = $per_provider_key if $per_provider_key;
+        }
         my %headers = (
-            'Authorization' => "Bearer $self->{api_key}",
+            'Authorization' => "Bearer $lookup_key",
         );
         $headers{'Editor-Version'} = 'CLIO/1.0' if $api_type eq 'github-copilot';
         
@@ -2056,6 +2108,8 @@ sub _detect_api_type_and_url {
         'lmstudio'       => ['lmstudio', 'http://localhost:1234/v1/models'],
         'ollama-cloud'   => ['ollama-cloud', 'https://ollama.com/v1/models'],
         'openrouter'     => ['openrouter', 'https://openrouter.ai/api/v1/models'],
+        'orca'           => ['orca', 'https://api.orcarouter.ai/v1/models'],
+        'kilo'           => ['kilo', 'https://api.kilo.ai/api/gateway/models'],
     );
     
     # Check if it's a known logical name
@@ -2076,6 +2130,8 @@ sub _detect_api_type_and_url {
         'openai'         => ['openai', 'https://api.openai.com/v1/models'],
         'google'         => ['google', 'https://generativelanguage.googleapis.com/v1beta/models'],
         'openrouter'     => ['openrouter', 'https://openrouter.ai/api/v1/models'],
+        'orca'           => ['orca', 'https://api.orcarouter.ai/v1/models'],
+        'kilo'           => ['kilo', 'https://api.kilo.ai/api/gateway/models'],
         'minimax'        => ['minimax', 'https://api.minimax.io/v1/models'],
         'ollama-cloud'   => ['ollama-cloud', 'https://ollama.com/v1/models'],
         'lmstudio'       => ['lmstudio', 'http://localhost:1234/v1/models'],

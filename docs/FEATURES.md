@@ -366,6 +366,8 @@ CLIO supports 15 AI providers out of the box. Switch between them at any time - 
 | **Google Gemini** | Cloud | API key |
 | **DeepSeek** | Cloud | API key |
 | **OpenRouter** | Cloud | API key |
+| **OrcaRouter** | Cloud | API key |
+| **KiloCode** | Cloud | API key |
 | **Ollama Cloud** | Cloud | API key |
 | **MiniMax** | Cloud | API key |
 | **MiniMax Token Plan** | Cloud | API key (usage-based) |

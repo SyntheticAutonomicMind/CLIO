@@ -157,6 +157,7 @@ sub _display_api_help {
             ['/api show',                         'Display current API configuration', 40],
             ['/api set model <name>',             'Set AI model (saved globally)', 40],
             ['/api set model <provider>/<model>', 'Set model with provider prefix', 40],
+            ['/api set model "m1 m2 m3"',        'Set multiple models for routing (auto-fallback)', 40],
             ['/api set provider <name>',          'Set provider (google, minimax, etc.)', 40],
             ['/api set base <url>',               'Set API base URL', 40],
             ['/api set key <value>',              'Set API key (stored per-provider)', 40],

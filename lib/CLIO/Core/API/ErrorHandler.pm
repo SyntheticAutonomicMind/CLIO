@@ -106,6 +106,49 @@ sub handle_api_error {
         log_debug('ErrorHandler', "API response for retry check: $api_response_json (retryable=" . ($api_response->{retryable} // 'undef') . ")");
     }
 
+    # ── Model Routing ────────────────────────────────────────────────
+    # When multiple models are configured (via --model or /api set model
+    # with multiple space-separated entries), switch to the next model on
+    # ANY API error (rate limit, server error, billing error, etc.).
+    # The _prepare_endpoint_config method resolves the provider/api_base/
+    # api_key from the model's prefix on each request, so updating the
+    # config model is sufficient for cross-provider routing.
+    # Total attempts = len(candidates) * max_retries (e.g. 3 * 3 = 9).
+    if ($wo->{api_manager} && $wo->{api_manager}->can('model_routing_active')) {
+        my $num_candidates = $wo->{api_manager}->model_routing_active();
+        if ($num_candidates > 1) {
+            my $routing_attempts = $session && $session->{routing_attempts} ? $session->{routing_attempts} : 0;
+            $routing_attempts++;
+            $session->{routing_attempts} = $routing_attempts if $session;
+
+            my $max_total = $num_candidates * $max_retries;
+            if ($routing_attempts >= $max_total) {
+                # All routing attempts exhausted across all models
+                if ($session) {
+                    delete $session->{routing_attempts};
+                }
+                log_error('ErrorHandler', "Model routing exhausted: $num_candidates models, $max_total total attempts");
+                return {
+                    success         => 0,
+                    error           => "Model routing exhausted: all $num_candidates models failed after $max_total total attempts. Last error: $error",
+                    iterations      => $iteration,
+                    tool_calls_made => $tool_calls_made,
+                };
+            }
+
+            # Cycle to the next model (wraps around at the end)
+            my ($new_model, $old_model) = $wo->{api_manager}->cycle_model();
+            if ($new_model && $on_system_message) {
+                $on_system_message->("API error, rerouting to $new_model");
+            }
+            # Reset retry count so the new model gets a fresh retry budget
+            $$retry_count_ref = 0;
+            $wo->{consecutive_errors} = 0 if $wo;
+            log_info('ErrorHandler', "Model routing: switched to '$new_model' (attempt $routing_attempts/$max_total total)");
+            return 'retry';
+        }
+    }
+
     # ── Retryable errors ──────────────────────────────────────────────
     if ($api_response->{retryable}) {
         $$retry_count_ref++;
