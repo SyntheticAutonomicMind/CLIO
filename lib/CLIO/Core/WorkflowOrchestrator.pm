@@ -1214,7 +1214,11 @@ sub _build_turn_context {
             # the most recent user input was just "continue" (observed in
             # session a6a0eb10 where this caused the agent to lose its
             # place and emit "no actual user message yet" reasoning).
-            my $substantive_task = $self->_find_substantive_user_task($cached_messages, $user_input);
+            # Pass $session so the fallback path can recover the original
+            # task from the YaRN thread when state->{history} no longer
+            # contains it (trimmed in a prior session run before the
+            # user-message preservation fix).
+            my $substantive_task = $self->_find_substantive_user_task($cached_messages, $user_input, $session);
             my $user_context = $self->{prompt_builder}->get_user_context($session,
                 { substantive_task => $substantive_task });
             if ($self->{non_interactive}) {
@@ -1319,7 +1323,9 @@ sub _build_turn_context {
     # original task description to keep its place after context trim.
     # Without this anchor, the model concludes "no actual user message"
     # and starts over (observed in session a6a0eb10, 2026-08-29).
-    my $substantive_task = $self->_find_substantive_user_task($history, $user_input);
+    # Pass $session so the fallback can recover the original task from
+    # the YaRN thread when state->{history} no longer contains it.
+    my $substantive_task = $self->_find_substantive_user_task($history, $user_input, $session);
     my $user_context = $self->{prompt_builder}->get_user_context($session,
         { substantive_task => $substantive_task });
 
@@ -3588,7 +3594,7 @@ Returns:
 
 =cut
 
-=head2 _find_substantive_user_task($messages, $current_user_input)
+=head2 _find_substantive_user_task($messages, $current_user_input, $session)
 
 Scan a messages arrayref for the most recent SUBSTANTIVE user task. A
 substantive task is one with content length >= 50 chars AND that is not
@@ -3600,12 +3606,24 @@ autonomous tool loops).
 If the current_user_input itself is substantive (>= 50 chars), prefer it
 - there's no need to anchor if the user just gave a real task.
 
+If no substantive user task is found in $messages, fall back to the YaRN
+thread (when $session is provided). The thread is the durable store of
+every message ever added to the session and is NOT trimmed - so it
+contains user messages that the reactive trim_context dropped from
+state->{history}. Without this fallback, sessions whose original task
+was trimmed in a prior session run lose the model anchor entirely,
+causing the model to hallucinate "no active task" (observed in session
+a6a0eb10, 2026-08-29: original "I would like you to do a full code
+review of PhotonTERM..." was trimmed from state->{history} by the
+pre-fix reactive trim; the model then lost its anchor on resume and
+emitted confused hallucinations about LTM and session goals).
+
 Returns: the substantive user task string, or '' if none found.
 
 =cut
 
 sub _find_substantive_user_task {
-    my ($self, $messages, $current_user_input) = @_;
+    my ($self, $messages, $current_user_input, $session) = @_;
     my $min_substantive_len = 50;
 
     # If the current user input is itself substantive, use it directly.
@@ -3615,20 +3633,58 @@ sub _find_substantive_user_task {
         return $current_user_input;
     }
 
-    return '' unless $messages && ref($messages) eq 'ARRAY';
+    if ($messages && ref($messages) eq 'ARRAY') {
+        # Walk newest-to-oldest, skip the current (short) user_input if
+        # present in the array, and find the most recent substantive user.
+        for my $i (reverse 0 .. $#$messages) {
+            my $msg = $messages->[$i];
+            next unless $msg && ref($msg) eq 'HASH';
+            next unless ($msg->{role} // '') eq 'user';
+            my $content = $msg->{content} // '';
+            next if ref($content);  # skip non-string content (multimodal arrays)
+            # Skip chunk-pointer artifacts and short directives.
+            next if $content =~ /^\s*\w[\w\-_.]+\s+\([^)]+:\s*[^)]+\)\s*\(\d+\s*bytes/;
+            next if length($content) < $min_substantive_len;
+            return $content;
+        }
+    }
 
-    # Walk newest-to-oldest, skip the current (short) user_input if
-    # present in the array, and find the most recent substantive user.
-    for my $i (reverse 0 .. $#$messages) {
-        my $msg = $messages->[$i];
-        next unless $msg && ref($msg) eq 'HASH';
-        next unless ($msg->{role} // '') eq 'user';
-        my $content = $msg->{content} // '';
-        next if ref($content);  # skip non-string content (multimodal arrays)
-        # Skip chunk-pointer artifacts and short directives.
-        next if $content =~ /^\s*\w[\w\-_.]+\s+\([^)]+:\s*[^)]+\)\s*\(\d+\s*bytes/;
-        next if length($content) < $min_substantive_len;
-        return $content;
+    # Fallback: no substantive user task in state->{history} (likely
+    # trimmed in a prior session run). Look in the YaRN thread, which
+    # preserves every message ever added to the session regardless of
+    # state->{history} trims. Scan oldest-to-newest so the FIRST user
+    # message (the original task) wins over later "continue"/"yes"
+    # short directives. This restores the model anchor for sessions
+    # that lost their original task to a pre-fix trim.
+    if ($session && $session->can('yarn') && $session->yarn) {
+        my $thread_id;
+        # Find the session ID - different session objects expose it
+        # differently. Manager has session_id, State has session_id.
+        for my $method (qw(session_id id)) {
+            if ($session->can($method)) {
+                my $val = $session->$method();
+                if (defined $val && $val !~ /^-?\d+$/) {
+                    $thread_id = $val;
+                    last;
+                }
+            }
+        }
+        if ($thread_id) {
+            my $thread = $session->yarn->get_thread($thread_id);
+            if ($thread && ref($thread) eq 'ARRAY') {
+                for my $i (0 .. $#$thread) {
+                    my $msg = $thread->[$i];
+                    next unless $msg && ref($msg) eq 'HASH';
+                    next unless ($msg->{role} // '') eq 'user';
+                    my $content = $msg->{content} // '';
+                    next if ref($content);
+                    next if $content =~ /^\s*\w[\w\-_.]+\s+\([^)]+:\s*[^)]+\)\s*\(\d+\s*bytes/;
+                    next if length($content) < $min_substantive_len;
+                    log_info('WorkflowOrchestrator', "Substantive user task not found in state->{history}; recovering from YaRN thread (index=$i, length=" . length($content) . ")");
+                    return $content;
+                }
+            }
+        }
     }
 
     return '';

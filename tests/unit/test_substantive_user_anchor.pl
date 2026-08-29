@@ -114,10 +114,10 @@ sub slurp { my ($f) = @_; local $/; open my $fh, '<', $f or die "open($f): $!"; 
     my $src = slurp('lib/CLIO/Core/WorkflowOrchestrator.pm');
     like($src, qr/sub _find_substantive_user_task/,
          '_find_substantive_user_task helper exists');
-    like($src, qr/\$self->_find_substantive_user_task\(\$history,\s*\$user_input\)/,
-         '_find_substantive_user_task is called in _build_turn_context rebuild path');
-    like($src, qr/\$self->_find_substantive_user_task\(\$cached_messages,\s*\$user_input\)/,
-         '_find_substantive_user_task is called in _build_turn_context resume fast path');
+    like($src, qr/\$self->_find_substantive_user_task\(\$history,\s*\$user_input,\s*\$session\)/,
+         '_find_substantive_user_task is called in _build_turn_context rebuild path (with $session for YaRN fallback)');
+    like($src, qr/\$self->_find_substantive_user_task\(\$cached_messages,\s*\$user_input,\s*\$session\)/,
+         '_find_substantive_user_task is called in _build_turn_context resume fast path (with $session for YaRN fallback)');
     like($src, qr/\$self->\{prompt_builder\}->get_user_context\(\$session,\s*\{\s*substantive_task\s*=>\s*\$substantive_task\s*\}\)/,
          'Substantive task is passed to get_user_context');
 }
