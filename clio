@@ -76,6 +76,8 @@ OPTIONS:
     --input <text>     Process input and exit
     --exit             Exit after processing (with --input)
     --model <name>     Use specific model (temporary, not persisted)
+    --model "m1 m2 m3" Use multiple models with automatic fallback routing
+    --route <name>     Use a saved model routing profile
     --prompt <name>    Use specific system prompt (see /prompt list)
     --enable <tools>   Only enable these tools (comma-separated)
     --disable <tools>  Disable these tools (comma-separated)
@@ -100,6 +102,7 @@ EXAMPLES:
     clio --dir /path/to/project   # Start in specific directory
     clio --model gpt-4.1 --new    # Start with specific model
     clio --model "openrouter/foo:free kilo/bar:free" --new  # Model routing with fallback
+    clio --route my-route --new   # Use a saved routing profile
     clio --prompt minimal --new   # Start with a custom system prompt
     clio --enable file_operations,terminal_operations --input "list files"
     clio --disable web_operations,remote_execution --new
@@ -262,6 +265,7 @@ my $model_override = undef;  # Temporary model override from --model flag
 my $enable_tools = undef;   # --enable: allowlist of tools (comma-separated)
 my $disable_tools = undef;  # --disable: blocklist of tools (comma-separated)
 my $prompt_override = undef;  # --prompt: system prompt name override
+my $route_name;                # --route: named routing profile to activate
 for (my $i = 0; $i < @ARGV; $i++) {
     if ($ARGV[$i] eq '--input' && defined $ARGV[$i+1]) {
         $input = $ARGV[$i+1];
@@ -329,6 +333,9 @@ for (my $i = 0; $i < @ARGV; $i++) {
     if ($ARGV[$i] eq '--list-themes') {
         $mode = 'list_themes';
     }
+    if ($ARGV[$i] eq '--route' && defined $ARGV[$i+1]) {
+        $route_name = $ARGV[$i+1];
+    }
     if ($ARGV[$i] eq '--list-spinners') {
         $mode = 'list_spinners';
     }
@@ -341,6 +348,34 @@ if ($cli_model_candidates && @$cli_model_candidates > 1) {
     $config->set('model_candidates', $cli_model_candidates, 0);
     $config->set('model_routing_index', 0, 0);
     log_debug('Main', "Model routing enabled with " . scalar(@{$cli_model_candidates}) . " candidates");
+}
+
+# Load a named routing profile (--route <name>)
+if ($route_name && length($route_name)) {
+    my $routes = { $config->list_model_routes() };
+    if (exists $routes->{$route_name}) {
+        my $models = $routes->{$route_name};
+        if (@$models > 1) {
+            $config->set('model_candidates', $models, 0);
+            $config->set('model_routing_index', 0, 0);
+            $config->set('model', $models->[0], 0);
+            # Resolve provider from first model
+            if ($models->[0] =~ m{^([a-z][a-z0-9_.-]*)/(.+)$}i && CLIO::Providers::provider_exists($1)) {
+                my $rp = $1;
+                my $rpkey = $config->get_provider_key($rp);
+                if ($rpkey) {
+                    $config->set_provider($rp);
+                    $provider = $rp;
+                    log_info('Main', "Activated route '$route_name' with provider '$rp'");
+                }
+            }
+            log_debug('Main', "Route '$route_name' loaded with " . scalar(@$models) . " models");
+        }
+    } else {
+        print STDERR "Unknown route: $route_name\n";
+        print STDERR "Available routes: " . join(", ", sort keys %{$routes}) . "\n" if %$routes;
+        exit 1;
+    }
 }
 
 # Validate --enable and --disable are mutually exclusive
