@@ -67,6 +67,12 @@ sub new {
         session_id => $opts{session_id},
         debug => $opts{debug} || 0,
         sessions_dir => $opts{sessions_dir} || 'sessions',
+        # Invalidates any downstream caches (e.g. PromptBuilder's
+        # user_context TTL cache) when a todo mutation lands. The model
+        # must see its new todo state on the very next turn, not 60s
+        # later. The callback is invoked with $self so subscribers can
+        # identify which session mutated.
+        _on_invalidate => undef,
     };
     
     bless $self, $class;
@@ -78,6 +84,38 @@ sub new {
     }
     
     return $self;
+}
+
+=head2 set_invalidation_hook
+
+Register a callback to fire after any successful mutation (write/add/
+update). Used by PromptBuilder to clear its user_context cache so the
+model sees the new todo state on the very next turn instead of waiting
+out the 60s cache TTL.
+
+Arguments:
+- $callback: coderef, called as $callback->($self) after a mutation.
+             Pass undef to clear.
+
+Returns: undef.
+
+=cut
+
+sub set_invalidation_hook {
+    my ($self, $callback) = @_;
+    $self->{_on_invalidate} = $callback;
+    return undef;
+}
+
+sub _fire_invalidation {
+    my ($self) = @_;
+    my $cb = $self->{_on_invalidate};
+    return unless $cb && ref($cb) eq 'CODE';
+    eval { $cb->($self); };
+    if ($@) {
+        log_debug('TodoStore', "Invalidation hook threw: $@");
+    }
+    return;
 }
 
 =head2 read
@@ -180,6 +218,7 @@ sub write {
     }
     
     log_debug('TodoStore', "Wrote " . scalar(@$todos) . " todos for session $self->{session_id}");
+    $self->_fire_invalidation();
     return (1, undef);
 }
 
@@ -277,6 +316,7 @@ sub update {
         return (0, $error_msg);
     }
     
+    $self->_fire_invalidation();
     return (1, {
         summary => $summary,
         applied => \@applied,
@@ -343,6 +383,7 @@ sub add {
     }
     
     log_debug('TodoStore', "Added " . scalar(@$new_todos) . " new todos");
+    $self->_fire_invalidation();
     return (1, undef);
 }
 
