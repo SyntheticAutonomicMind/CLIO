@@ -129,6 +129,23 @@ sub dispatch_table {
     };
 }
 
+=head2 execute
+
+Override to default operation to 'apply' when the LLM omits it.
+ApplyPatch has a single operation and the only parameter is 'patch'
+(which does not match any operation name), so _infer_operation_from_params
+in the base class cannot recover it. Defaulting operation='apply' here
+restores backward compatibility with models trained on the old schema
+that called apply_patch without the operation field.
+
+=cut
+
+sub execute {
+    my ($self, $params, $context) = @_;
+    $params->{operation} //= 'apply';
+    return $self->SUPER::execute($params, $context);
+}
+
 =head2 _do_apply
 
 Execute the apply_patch tool.

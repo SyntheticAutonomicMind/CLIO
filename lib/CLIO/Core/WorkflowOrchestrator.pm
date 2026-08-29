@@ -1265,7 +1265,7 @@ sub _build_turn_context {
             my $uc_replaced = 0;
             for my $i (0 .. $#{$cached_messages}) {
                 if ($cached_messages->[$i]{role} eq 'system'
-                    && ($cached_messages->[$i]{content} // '') =~ /<(?:userContext|dynamicContext|sessionGoals)[\s>]/) {
+                    && ($cached_messages->[$i]{content} // '') =~ /^\s*<(?:userContext|dynamicContext|sessionGoals)[\s>]/) {
                     $cached_messages->[$i]{content} = $user_context;
                     $uc_replaced = 1;
                     log_debug('WorkflowOrchestrator',
@@ -1888,7 +1888,7 @@ sub _strip_non_trailing_user_context {
         # its goals after a trim.
         next if $content =~ /^\[CONTEXT TRIM:/;
 
-        next unless $content =~ /<(?:userContext|dynamicContext|sessionGoals)[\s>]/;
+        next unless $content =~ /^\s*<(?:userContext|dynamicContext|sessionGoals)[\s>]/;
         push @user_context_indices, $i;
     }
 
@@ -2011,7 +2011,7 @@ sub _normalize_payload_layout {
                     }
                 }
             }
-            if ($flat =~ /<(?:userContext|dynamicContext|sessionGoals)[\s>]/ && $flat !~ /\A<thread_summary>/) {
+            if ($flat =~ /^\s*<(?:userContext|dynamicContext|sessionGoals)[\s>]/ && $flat !~ /\A<thread_summary>/) {
                 $uc_idx = $i;
                 last;
             }
@@ -2071,7 +2071,7 @@ sub _normalize_payload_layout {
                 $seen_summary++;
                 next;
             }
-            elsif ($flat_content =~ /<(?:userContext|dynamicContext|sessionGoals)[\s>]/) {
+            elsif ($flat_content =~ /^\s*<(?:userContext|dynamicContext|sessionGoals)[\s>]/) {
                 # Keep only the LAST user_context — the most recent one.
                 $user_ctx_msg = $msg;
                 next;
@@ -2110,7 +2110,7 @@ sub _normalize_payload_layout {
                 $seen_summary++;
                 next;
             }
-            elsif ($ct_flat =~ /<(?:userContext|dynamicContext|sessionGoals)[\s>]/) {
+            elsif ($ct_flat =~ /^\s*<(?:userContext|dynamicContext|sessionGoals)[\s>]/) {
                 $user_ctx_msg = $msg;
                 next;
             }
@@ -2204,7 +2204,7 @@ sub _compute_section_signatures {
             } elsif ($content =~ /\[CONTEXT FILES\]/) {
                 $sections{context_files} .= _stable_content($content);
                 $state = 'dialog';
-            } elsif ($content =~ /<(?:userContext|dynamicContext|sessionGoals)[\s>]/) {
+            } elsif ($content =~ /^\s*<(?:userContext|dynamicContext|sessionGoals)[\s>]/) {
                 $sections{user_context} .= _stable_content($content);
                 $state = 'user_ctx';
             } elsif ($state eq 'system') {
@@ -3775,7 +3775,7 @@ sub _inject_thread_summary {
         next unless ($m->{role} // '') eq 'system';
         my $content = $m->{content} // '';
         next if $content =~ /\A<thread_summary>/;  # already handled above
-        if ($content =~ /<(?:userContext|dynamicContext|sessionGoals)[\s>]/) {
+        if ($content =~ /^\s*<(?:userContext|dynamicContext|sessionGoals)[\s>]/) {
             $inject_idx = $i;
             last;
         }

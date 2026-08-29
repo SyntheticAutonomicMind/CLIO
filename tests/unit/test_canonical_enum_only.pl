@@ -29,7 +29,7 @@ my %enum_set = map { $_ => 1 } @$enum;
 # --- Canonical names MUST be in the enum ---
 my @canonical = qw(read_file list_dir file_exists get_file_info get_errors
     file_search grep_search semantic_search read_tool_result
-    create_file write_file append_file replace_string multi_replace_string
+    write_file replace_string multi_replace_string
     insert_at_line delete_file rename_file create_directory);
 
 for my $name (@canonical) {
@@ -41,6 +41,13 @@ my @short_aliases = qw(read list_directory exists stat_file find_files
     read_result create write append replace edit bulk_replace
     insert_line insert remove rename mv make_directory mkdir);
 
+# Legacy canonical names that were moved to operation_aliases by the
+# alias refactor (2026-08-28). They are NOT in the schema enum but ARE
+# still registered as tool-name aliases in the Registry for backward
+# compatibility (models may have learned to call create_file/append_file
+# directly).
+my @legacy_aliases = qw(create_file append_file);
+
 # Note: 'search' and 'delete' are excluded from this check because they are
 # canonical operations for MemoryOperations (which legitimately appear in the
 # Registry's OPERATION_ALIASES mapping to memory_operations).
@@ -48,9 +55,12 @@ my @short_aliases = qw(read list_directory exists stat_file find_files
 for my $alias (@short_aliases) {
     ok(!exists $enum_set{$alias}, "short alias '$alias' is NOT in the schema enum");
 }
+for my $alias (@legacy_aliases) {
+    ok(!exists $enum_set{$alias}, "legacy alias '$alias' is NOT in the schema enum");
+}
 
-# --- validate_operation must still accept short aliases ---
-my @all_aliases = (@short_aliases, qw(search delete));
+# --- validate_operation must still accept short aliases and legacy names ---
+my @all_aliases = (@short_aliases, @legacy_aliases, qw(search delete));
 for my $alias (@all_aliases) {
     ok($tool->validate_operation($alias), "validate_operation accepts alias '$alias'");
 }
@@ -68,6 +78,16 @@ $registry->register_tool($tool);
 for my $alias (@short_aliases) {
     my $info = $registry->get_alias_info($alias);
     ok(!defined $info, "Registry does NOT map short alias '$alias' to a tool (no tool-name confusion)");
+}
+
+# --- Legacy aliases (create_file, append_file) ARE still registered as
+#     tool-name aliases for backward compatibility. Models may have
+#     learned to call these directly, so the Registry must still resolve
+#     them to file_operations. ---
+for my $alias (@legacy_aliases) {
+    my $info = $registry->get_alias_info($alias);
+    ok(defined $info && $info->{tool} eq 'file_operations',
+       "Registry still maps legacy alias '$alias' -> file_operations (backward compat)");
 }
 
 # --- Registry: canonical FileOperations names DO resolve as tool-name aliases ---

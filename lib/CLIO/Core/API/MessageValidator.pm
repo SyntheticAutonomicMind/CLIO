@@ -245,84 +245,19 @@ sub validate_and_truncate {
     }
     log_debug('MessageValidator', "Post-trim keep target: $post_trim_keep_limit tokens (prompt budget for $model)");
 
-    # Trim priority multi-pass walk (see docs/SPECS/TRIM_PRIORITY.md).
-    # Tier 4 (errors, empty assistant, acks) is dropped FIRST, before any
-    # Tier 3 unit, when the budget is tight. The existing reverse-walk
-    # already routes errors via @error_units. Here we extend the same
-    # drop-first pattern to ack/empty units, walking them OLDEST-FIRST
-    # within the tier so the newest noise is most likely to survive.
-    #
-    # Approach: rebuild the conversation walking ONLY Tier 4 units first,
-    # then re-add the surviving Tier 3+ units. This guarantees Tier 4
-    # is dropped before Tier 3 even when budget is loose enough that
-    # Pass 1 (existing reverse-walk) would otherwise include Tier 4.
-    my @ack_empty_units;
-    for my $u (@remaining) {
-        next unless $u;
-        next if $u->{is_trailing_summary} || $u->{is_orphan_tool_result};
-        next if $u->{has_tool_error};
-        if ($u->{has_empty_assistant} || $u->{is_acknowledgement}) {
-            push @ack_empty_units, $u;
-        }
-    }
-    if (@ack_empty_units) {
-        my $kept = 0;
-        my $dropped = 0;
-        # Walk oldest-first within Tier 4 so the newest noise is most
-        # likely to survive. Collect which units to remove from
-        # @conversation (they were included by the reverse-walk but
-        # should be dropped).
-        my @to_remove;
-        for my $unit (@ack_empty_units) {
-            if ($current_tokens + $unit->{tokens} <= $post_trim_keep_limit) {
-                # Check if the unit is already in @conversation.
-                # The earlier reverse-walk may have included it.
-                my $already_included = grep { $_ == $unit } @conversation;
-                if (!$already_included) {
-                    unshift @conversation, @{$unit->{messages}};
-                    $current_tokens += $unit->{tokens};
-                    for my $id (keys %{$unit->{tool_call_ids} || {}}) {
-                        $included_tool_ids{$id} = 1;
-                    }
-                    $kept++;
-                }
-            } else {
-                push @to_remove, $unit;
-                push @dropped_units, $unit;
-                $dropped++;
-            }
-        }
-        # Remove any ack/empty units from @conversation that the budget
-        # no longer allows. This is the key Tier 4 enforcement step.
-        if (@to_remove) {
-            my %to_remove_set = map { $_ => 1 } @to_remove;
-            my @filtered;
-            for my $msg (@conversation) {
-                # Check if this message belongs to a unit to remove.
-                my $belongs_to_removed = 0;
-                for my $u (@to_remove) {
-                    if (grep { $_ == $msg } @{$u->{messages}}) {
-                        $belongs_to_removed = 1;
-                        last;
-                    }
-                }
-                if (!$belongs_to_removed) {
-                    push @filtered, $msg;
-                } else {
-                    $current_tokens -= CLIO::Memory::TokenEstimator::estimate_tokens($msg->{content} || '') + 4;
-                }
-            }
-            @conversation = @filtered;
-        }
-        log_debug('MessageValidator', sprintf(
-            "Tier 4 ack/empty pass: kept %d, dropped %d",
-            $kept, $dropped)) if @ack_empty_units;
-    }
-
     # Walk the conversation, building the in-budget list NEWEST-FIRST
-    # (reverse chronological order), then reverse at the end. This is
-    # the original behavior. The Tier 4 ack/empty removal pass happens
-    # AFTER this walk to drop any noise that survived Pass 1.
+    # (reverse chronological order), then reverse at the end. Tier 4
+    # (ack/empty) units are routed straight to @dropped_units — never
+    # added to @conversation. A dedicated cleanup pass after this walk
+    # removes any ack/empty units that were already in @conversation
+    # (from preserved leading messages), guaranteeing Tier 4 is dropped
+    # before Tier 3 regardless of budget tightness.
+    #
+    # NOTE: A previous first-pass (adding Tier 4 units to @conversation
+    # before the main walk) was removed because it corrupted $current_tokens:
+    # it inflated the counter, causing Tier 3 units to be dropped that
+    # would have fit, then the cleanup pass removed the Tier 4 units
+    # anyway — net waste and incorrect retention.
     for my $unit (reverse @remaining) {
         if ($unit->{is_orphan_tool_result}) {
             log_debug('MessageValidator', "Skipping orphan tool_result unit (tool_id: $unit->{orphan_tool_id})");
@@ -351,8 +286,9 @@ sub validate_and_truncate {
             next;
         }
 
-        # Skip Tier 4 (ack/empty) units here - already handled by the
-        # dedicated Tier 4 pass above.
+        # Skip Tier 4 (ack/empty) units — never add to @conversation.
+        # The dedicated Tier 4 cleanup pass below removes any that were
+        # already in @conversation from preserved leading messages.
         if ($unit->{has_empty_assistant} || $unit->{is_acknowledgement}) {
             push @dropped_units, $unit;
             next;
@@ -1407,7 +1343,6 @@ sub _make_anchor_summary {
             compressed_tokens => int(length($trimmed) / 3.5) + 6,  # rough estimate
             compressed_count  => 0,  # no dialog was compressed
             original_tokens   => 0,
-            anchor_summary    => 1,  # marker so validate_and_truncate can detect this
         },
     };
 }

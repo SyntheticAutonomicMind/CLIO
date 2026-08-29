@@ -273,5 +273,3 @@ __END__
 CLIO Project
 
 =cut
-
-1;

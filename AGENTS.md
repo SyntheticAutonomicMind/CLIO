@@ -82,7 +82,7 @@ Terminal Output (with color/theme)
 |------|---------|
 | `lib/CLIO.pm` | Root package loader |
 | `lib/CLIO/Update.pm` | Self-update flow |
-| `lib/CLIO/Core/` | System core (APIs, workflow, config, prompts, diagnostics) |
+| `lib/CLIO/Core/` | System core (APIs, workflow, config, prompts, diagnostics, model budget) |
 | `lib/CLIO/Core/API/` | APIManager sub-modules (ResponseHandler, MessageValidator, ErrorHandler, PayloadSanitizer) |
 | `lib/CLIO/Core/SkillRepository.pm` | Skill repository configuration and management |
 | `lib/CLIO/Core/RepositoryLoader.pm` | Load skills from cached Git repositories |
@@ -108,7 +108,7 @@ Terminal Output (with color/theme)
 | `docs/` | User/dev documentation |
 | `styles/` | Terminal color styles (26 themes: dark, light, retro, cyberpunk, monokai, etc.) |
 | `themes/` | UI themes (compact, console, default, verbose) |
-| `tools/` | Repo-local tooling (assess_codebase.pl, ASSESSMENT_METHODOLOGY.md) |
+| `tools/` | Repo-local tooling (assess_codebase.pl, ASSESSMENT_METHODOLOGY.md, cache_health.pl, context_inspector.pl, prompt_layout.pl, prompt_diff.pl, trim_dryrun.pl, session_stats.pl) |
 | `tests/unit/` | Single module tests |
 | `tests/integration/` | Cross-module tests (e2e, subagent, broker) |
 | `tests/manual/` | Manual test scripts |
@@ -290,14 +290,14 @@ log_error('ModuleName', 'something failed: %s', $error);
 
 | Prefix | Purpose | Examples |
 |--------|---------|----------|
-| `CLIO::Core::` | System core | APIManager, WorkflowOrchestrator, ToolExecutor, Config, PromptManager, ModelCapabilitiesManager, ModelDataLoader |
+| `CLIO::Core::` | System core | APIManager, WorkflowOrchestrator, ToolExecutor, Config, PromptManager, ModelCapabilitiesManager, ModelDataLoader, ModelBudget |
 | `CLIO::Core::API::` | APIManager sub-modules | ResponseHandler, MessageValidator, ErrorHandler, PayloadSanitizer |
 | `CLIO::Tools::` | AI-callable tools | FileOperations, VersionControl, TerminalOperations, MemoryOperations, Interact, ApplyPatch, CodeIntelligence, RemoteExecution, SubAgentOperations, TodoList, WebOperations, SkillOperations, MCPBridge, PluginBridge, Registry, Tool |
 | `CLIO::UI::` | Terminal interface | Chat, Markdown, Theme, ANSI, CommandHandler, DiffRenderer, Display, HostProtocol, Multiplexer, PaginationManager, ProgressSpinner, StreamingController, Terminal, ToolOutputFormatter |
 | `CLIO::UI::Commands::` | Slash command handlers | AI, API, Billing, Config, Context, Device, File, Git, Log, Memory, Mux, Profile, Project, Prompt, Session, Skills, Spec, Stats, SubAgent, System, Todo, Update |
 | `CLIO::Session::` | Session management | Manager, State, FileVault, Lock, Export, TodoStore, ToolResultStore |
 | `CLIO::Memory::` | Context/memory | ShortTerm, LongTerm, YaRN, TokenEstimator |
-| `CLIO::Providers::` | Provider registry + native providers | Anthropic, Google, NVIDIA, Base (15 providers configured in Providers.pm) |
+| `CLIO::Providers::` | Provider registry + native providers | Anthropic, Google, NVIDIA, Base, DeepSeek, MiniMax, Z.AI, OpenRouter, Ollama Cloud, GitHub Copilot, SAM, llama.cpp, LM Studio, Vercel AI Gateway (16 providers configured in Providers.pm) |
 | `CLIO::Coordination::` | Multi-agent coordination | Broker, Client, SubAgent |
 | `CLIO::MCP::` | Model Context Protocol | Manager, Client, Transport::Stdio, Transport::HTTP, Auth::OAuth |
 | `CLIO::Profile::` | User profiling | Analyzer, Manager |
@@ -1112,6 +1112,7 @@ The most common invalidation events are: user sends new turn (user_input changes
 - **llama.cpp**: sets `prompt_stable_prefix_tokens` = sum of leading system message tokens (system_prompt + context_files), excluding user_context. The CSSS summary at END is outside the stable prefix, so CSSS regeneration only invalidates the summary tokens, not the stable prefix. Since summaries grow organically (not padded), the stable prefix boundary is stable as long as the summary does not exceed its prior position - a one-time cost per growth event.
 
 Full spec: [`docs/SPECS/PROMPT_PIPELINE.md`](docs/SPECS/PROMPT_PIPELINE.md).
+Related: [`docs/SPECS/TRIM_PRIORITY.md`](docs/SPECS/TRIM_PRIORITY.md), [`docs/SPECS/MODEL_BUDGETS.md`](docs/SPECS/MODEL_BUDGETS.md).
 
 **Tests covering the protocol:**
 

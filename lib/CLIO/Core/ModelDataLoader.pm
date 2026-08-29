@@ -133,7 +133,6 @@ sub _ensure_loaded {
     $self->_load_models();
     $self->_load_provider_defaults();
     $self->_load_heuristics();
-    $self->_load_provider_mapping();
     
     $self->{_loaded} = 1;
     log_debug('ModelDataLoader', "Loaded all model data from $self->{data_dir}");
@@ -231,19 +230,6 @@ sub _load_heuristics {
     $self->{_cache}{heuristics_prefix_strip} = $data->{prefix_strip} || [];
     $self->{_cache}{heuristics_quantization_strip} = $data->{quantization_suffix_strip} || '';
     _check_data_version($data, 'heuristics.json');
-}
-
-=head2 _load_provider_mapping
-
-Load provider-mapping.json with provider-to-model mappings.
-
-=cut
-
-sub _load_provider_mapping {
-    my ($self) = @_;
-    my $data = $self->_load_file('provider-mapping.json');
-    $self->{_cache}{provider_mapping} = $data->{mappings} || {};
-    _check_data_version($data, 'provider-mapping.json');
 }
 
 =head2 get_model_capabilities
