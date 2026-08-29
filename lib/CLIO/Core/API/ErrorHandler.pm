@@ -458,7 +458,10 @@ sub handle_api_error {
     # avoids the misleading "Token limit exceeded" fallback that the retry/escalate path would
     # produce for a problem that retrying or trimming context cannot fix.
     if (defined($api_response->{error_type}) && $api_response->{error_type} eq 'provider_unavailable') {
-        log_warning('ErrorHandler', "Provider backend unavailable - returning error immediately without retry/trim");
+        # Demoted from log_warning -> log_info. The themed error display path
+        # surfaces the user-facing message; this log was duplicating it on
+        # the user's terminal before the styled line.
+        log_info('ErrorHandler', "Provider backend unavailable - returning error immediately without retry/trim");
         return {
             success         => 0,
             error           => $api_response->{error},
@@ -469,7 +472,9 @@ sub handle_api_error {
 
     # Billing error - non-retryable. No amount of waiting fixes an empty balance.
     if (defined($api_response->{error_type}) && $api_response->{error_type} eq 'billing_error') {
-        log_warning('ErrorHandler', "Billing error (out of credits) - returning error immediately");
+        # Demoted from log_warning -> log_info. The themed error display path
+        # surfaces the user-facing message.
+        log_info('ErrorHandler', "Billing error (out of credits) - returning error immediately");
         return {
             success         => 0,
             error           => $api_response->{error},
@@ -480,7 +485,9 @@ sub handle_api_error {
 
     # Model not found - non-retryable. The model literally doesn't exist for this provider/account.
     if (defined($api_response->{error_type}) && $api_response->{error_type} eq 'model_not_found') {
-        log_warning('ErrorHandler', "Model not found - returning error immediately");
+        # Demoted from log_warning -> log_info. The themed error display path
+        # surfaces the user-facing message.
+        log_info('ErrorHandler', "Model not found - returning error immediately");
         return {
             success         => 0,
             error           => $api_response->{error},
@@ -491,7 +498,9 @@ sub handle_api_error {
 
     # Region unavailable - non-retryable. The model isn't accessible from the user's region.
     if (defined($api_response->{error_type}) && $api_response->{error_type} eq 'region_unavailable') {
-        log_warning('ErrorHandler', "Region unavailable - returning error immediately");
+        # Demoted from log_warning -> log_info. The themed error display path
+        # surfaces the user-facing message.
+        log_info('ErrorHandler', "Region unavailable - returning error immediately");
         return {
             success         => 0,
             error           => $api_response->{error},
@@ -502,7 +511,9 @@ sub handle_api_error {
 
     # Account disabled - non-retryable. User must contact support/admin to restore access.
     if (defined($api_response->{error_type}) && $api_response->{error_type} eq 'account_disabled') {
-        log_warning('ErrorHandler', "Account disabled - returning error immediately");
+        # Demoted from log_warning -> log_info. The themed error display path
+        # surfaces the user-facing message.
+        log_info('ErrorHandler', "Account disabled - returning error immediately");
         return {
             success         => 0,
             error           => $api_response->{error},
@@ -1000,7 +1011,9 @@ sub trim_for_token_limit {
 
     # Nothing trimmed means context isn't the problem
     if ($trimmed_count == 0) {
-        log_warning('ErrorHandler', "Context trim removed 0 messages - problem is not context size. Escalating to non-retryable.");
+        # Demoted from log_warning -> log_info. The themed error display
+        # below surfaces the user-facing message.
+        log_info('ErrorHandler', "Context trim removed 0 messages - problem is not context size. Escalating to non-retryable.");
 
         dump_diagnostic(
             trigger      => 'persistent_400',

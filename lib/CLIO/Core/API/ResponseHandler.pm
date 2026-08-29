@@ -722,7 +722,9 @@ sub _handle_error_response_impl {
         $error = "The model is not available in your region or data-residency setting. "
                . "Switch to a model deployed in a region you can access.\n\n"
                . "Provider detail: $error";
-        log_warning('ResponseHandler', "Region unavailable (non-retryable): $error");
+        # Demoted from log_warning -> log_info. Themed error display is the
+        # user-facing surface.
+        log_info('ResponseHandler', "Region unavailable (non-retryable): $error");
     }
 
     # Handle account-level deactivation BEFORE auth (non-retryable - user must contact support or admin).
@@ -738,7 +740,9 @@ sub _handle_error_response_impl {
         $error = "Your account or organization has been deactivated/suspended by the provider. "
                . "Contact the provider's support or your account admin to restore access.\n\n"
                . "Provider detail: $error";
-        log_warning('ResponseHandler', "Account disabled (non-retryable): $error");
+        # Demoted from log_warning -> log_info. Themed error display is the
+        # user-facing surface.
+        log_info('ResponseHandler', "Account disabled (non-retryable): $error");
     }
 
     elsif ($status == 401 || $status == 403) {
@@ -820,7 +824,9 @@ sub _handle_error_response_impl {
         $error = "The AI provider reports this model is currently unavailable on their infrastructure. "
                . "Try a different model, or wait and retry later.\n\n"
                . "Provider detail: $detail";
-        log_warning('ResponseHandler', "Provider unavailable (non-retryable): $detail");
+        # Demoted from log_warning -> log_info. Themed error display is the
+        # user-facing surface.
+        log_info('ResponseHandler', "Provider unavailable (non-retryable): $detail");
     }
 
     # Handle upstream timeouts distinctly from generic server_error.
@@ -1212,7 +1218,10 @@ sub _handle_error_response_impl {
                 $detail = "Add credits or upgrade your plan before retrying.";
             }
             $error = "Your API account has run out of credits or hit a billing limit. $detail";
-            log_warning('ResponseHandler', "Billing error (non-retryable, reason=$reason, source=$limit_source): $error");
+            # Demoted from log_warning -> log_info. The themed error
+            # display path surfaces this to the user; the raw log line
+            # was duplicating the message and clobbering the styled output.
+            log_info('ResponseHandler', "Billing error (non-retryable, reason=$reason, source=$limit_source): $error");
         }
     }
 
@@ -1238,7 +1247,9 @@ sub _handle_error_response_impl {
         # Structured breakdown - no raw provider dump. Keep it actionable.
         $error = "Your API account has run out of credits or hit a billing limit. "
                . "Add credits or upgrade your plan before retrying.";
-        log_warning('ResponseHandler', "Billing error (non-retryable): $error");
+        # Demoted from log_warning -> log_info. The themed error
+        # display path surfaces this to the user.
+        log_info('ResponseHandler', "Billing error (non-retryable): $error");
     }
 
     # Handle model-not-found errors (non-retryable - the model doesn't exist for this provider/account).
@@ -1257,7 +1268,9 @@ sub _handle_error_response_impl {
                . "The model name may be wrong, deprecated, or not enabled on your plan.\n\n"
                . "Try a different model with: /api model <provider>/<model>\n\n"
                . "Provider detail: $error";
-        log_warning('ResponseHandler', "Model not found (non-retryable): $error");
+        # Demoted from log_warning -> log_info. Themed error display is the
+        # user-facing surface.
+        log_info('ResponseHandler', "Model not found (non-retryable): $error");
     }
 
     # Handle generic 400 (transient backend error, content encoding issue, etc.)
