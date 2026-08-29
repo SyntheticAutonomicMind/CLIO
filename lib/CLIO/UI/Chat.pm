@@ -899,35 +899,48 @@ sub _handle_ai_response {
         $accumulated_content = $self->_detect_system_warning_references($accumulated_content);
     }
     
-    if ($result && $result->{messages_saved_during_workflow}) {
-        log_debug('Chat', "Skipping session save - messages already saved during workflow");
-        my $display_response = $result->{final_response} // '';
-        $display_response =~ s/\s*<!--session:\{[^}]*\}-->\s*//sg;  # Structured
-        $display_response =~ s/\s*<!--session:[a-z][a-z0-9_-]{2,50}-->\s*//sgi;  # Simple
-        $display_response = $self->_detect_system_warning_references($display_response);
-        $display_response = $self->_detect_and_display_images($display_response);
-        $self->add_to_buffer('assistant', $display_response) if $display_response;
-    } elsif ($result && $result->{final_response}) {
-        log_debug('Chat', "Storing final_response in session (length=" . length($result->{final_response}) . ")");
-        my $sanitized = sanitize_text($result->{final_response});
-        $self->{session}->add_message('assistant', $sanitized);
-        my $display_response = $result->{final_response};
-        $display_response =~ s/\s*<!--session:\{[^}]*\}-->\s*//sg;  # Structured
-        $display_response =~ s/\s*<!--session:[a-z][a-z0-9_-]{2,50}-->\s*//sgi;  # Simple
-        $display_response = $self->_detect_system_warning_references($display_response);
-        $display_response = $self->_detect_and_display_images($display_response);
-        $self->add_to_buffer('assistant', $display_response);
-    } elsif ($accumulated_content) {
-        log_debug('Chat', "Storing accumulated_content in session (length=" . length($accumulated_content) . ")");
-        my $sanitized = sanitize_text($accumulated_content);
-        $self->{session}->add_message('assistant', $sanitized);
-        $accumulated_content = $self->_detect_and_display_images($accumulated_content);
-        $accumulated_content = $self->_detect_system_warning_references($accumulated_content);
-        $self->add_to_buffer('assistant', $accumulated_content);
+    # When the result is a failure, do NOT store the wrapper text (e.g.
+    # "I'm sorry, I encountered an error: ...") as an assistant message.
+    # The styled `display_error_message` path below is the only correct way
+    # to surface failures to the user. Storing the wrapper as an assistant
+    # message caused the error to be rendered with assistant-theme colors
+    # (white) AND duplicated as a styled error.
+    if ($result && $result->{success}) {
+        if ($result && $result->{messages_saved_during_workflow}) {
+            log_debug('Chat', "Skipping session save - messages already saved during workflow");
+            my $display_response = $result->{final_response} // '';
+            $display_response = strip_session_markers($display_response);
+            $display_response = $self->_detect_system_warning_references($display_response);
+            $display_response = $self->_detect_and_display_images($display_response);
+            $self->add_to_buffer('assistant', $display_response) if $display_response;
+        } elsif ($result && $result->{final_response}) {
+            log_debug('Chat', "Storing final_response in session (length=" . length($result->{final_response}) . ")");
+            my $sanitized = sanitize_text($result->{final_response});
+            $self->{session}->add_message('assistant', $sanitized);
+            my $display_response = strip_session_markers($result->{final_response});
+            $display_response = $self->_detect_system_warning_references($display_response);
+            $display_response = $self->_detect_and_display_images($display_response);
+            $self->add_to_buffer('assistant', $display_response);
+        } elsif ($accumulated_content) {
+            log_debug('Chat', "Storing accumulated_content in session (length=" . length($accumulated_content) . ")");
+            my $sanitized = sanitize_text($accumulated_content);
+            $self->{session}->add_message('assistant', $sanitized);
+            $accumulated_content = $self->_detect_and_display_images($accumulated_content);
+            $accumulated_content = $self->_detect_system_warning_references($accumulated_content);
+            $self->add_to_buffer('assistant', $accumulated_content);
+        }
+    } else {
+        log_debug('Chat', "Result is a failure - skipping assistant message write (error will be displayed via display_error_message)");
     }
     
     if (!$result || !$result->{success}) {
         my $error_msg = $result->{error} || $result->{final_response} || "No response received from AI";
+        # Strip the legacy "I'm sorry, I encountered an error: " wrapper if
+        # the orchestrator/agent still emits it. The themed error display
+        # is the canonical user-facing surface - the wrapper is duplicated
+        # noise that makes the line read like a plain agent reply.
+        $error_msg =~ s/^I'm sorry,? I encountered an error:?\s*//i;
+        $error_msg = "No response received from AI" unless $error_msg =~ /\S/;
         log_debug('Chat', "Error occurred: $error_msg");
         $self->display_error_message($error_msg);
         if ($self->{session}) {
