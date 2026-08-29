@@ -306,7 +306,13 @@ sub retrieve {
         return $self->error_result("Failed to retrieve memory: " . $self->_clean_eval_error($@));
     }
 
-    return $result;
+    # Defensive: ensure we always return a proper result hashref. The eval
+    # block's return inside error_result("Memory not found") returns from
+    # the method directly (Perl behavior), but if the eval block exits
+    # normally without setting $result (edge case), we fall back to a
+    # clean error instead of returning undef to the ToolExecutor.
+    return $result if $result && ref($result) eq 'HASH';
+    return $self->error_result("Memory key not found: $key");
 }
 
 sub search {

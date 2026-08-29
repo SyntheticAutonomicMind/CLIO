@@ -641,7 +641,20 @@ sub blame {
 
     eval {
         $result = _in_repo($repo_path, sub {
-            my $output = `git blame @{[_sq($file)]} 2>&1`;
+            my $start_line = $params->{start_line};
+            my $max_lines  = $params->{max_lines};
+
+            # Scope blame output to avoid dumping entire large files
+            # into the context window. git blame -L <start>,<end> limits
+            # the annotated lines. Default to 200 lines starting from
+            # line 1 (or the requested start_line).
+            my $blame_args = _sq($file);
+            if (defined $max_lines || defined $start_line) {
+                my $start = defined $start_line ? $start_line : 1;
+                my $end   = defined $max_lines  ? ($start + $max_lines - 1) : $start + 199;
+                $blame_args = "-L $start,$end " . _sq($file);
+            }
+            my $output = `git blame $blame_args 2>&1`;
             return $self->success_result(
                 $output,
                 action_description => "viewing blame for $file",
@@ -1044,6 +1057,14 @@ sub get_additional_parameters {
         file => {
             type => "string",
             description => "[REQUIRED for blame, OPTIONAL for diff] File path to annotate or diff.",
+        },
+        start_line => {
+            type => "integer",
+            description => "[OPTIONAL for blame] Starting line number to annotate (1-indexed). Defaults to 1. Ignored for non-blame operations.",
+        },
+        max_lines => {
+            type => "integer",
+            description => "[OPTIONAL for blame] Maximum number of blame entries to return. Defaults to 200. Prevents full-file dumps for large files. Use start_line + max_lines to page through.",
         },
         sub_action => {
             type => "string",
