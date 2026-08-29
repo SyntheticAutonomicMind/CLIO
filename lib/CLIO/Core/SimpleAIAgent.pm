@@ -296,15 +296,22 @@ sub process_user_request {
             my $error = $orchestrator_result->{error} || "Unknown error in workflow orchestration";
             push @{$result->{errors}}, $error;
             $result->{success} = 0;
-            # Include the actual error so users can diagnose issues
-            $result->{final_response} = "I'm sorry, I encountered an error: $error";
+            # Don't wrap the error in a "I'm sorry, I encountered an error: "
+            # sentence. Chat.pm's themed display_error_message path is the
+            # canonical user-facing surface, and the wrapper makes the line
+            # read like a plain agent reply (white) instead of a styled
+            # error (red). Just pass the raw error through; Chat.pm applies
+            # the theme.
+            $result->{error} = $error;
+            $result->{final_response} = $error;
         }
     };
     
     if ($@) {
         push @{$result->{errors}}, "API exception: $@";
         $result->{success} = 0;
-        $result->{final_response} = "I'm experiencing technical difficulties. Please try again.";
+        $result->{error} = "API exception: $@";
+        $result->{final_response} = "API exception: $@";
         log_error('SimpleAIAgent', "API error: $@");
     }
     

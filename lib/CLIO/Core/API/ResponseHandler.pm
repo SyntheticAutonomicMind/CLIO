@@ -710,7 +710,9 @@ sub _handle_error_response_impl {
         $error = "The model is not available in your region or data-residency setting. "
                . "Switch to a model deployed in a region you can access.\n\n"
                . "Provider detail: $error";
-        log_warning('ResponseHandler', "Region unavailable (non-retryable): $error");
+        # Demoted from log_warning -> log_info. Themed error display is the
+        # user-facing surface.
+        log_info('ResponseHandler', "Region unavailable (non-retryable): $error");
     }
 
     # Handle account-level deactivation BEFORE auth (non-retryable - user must contact support or admin).
@@ -726,7 +728,9 @@ sub _handle_error_response_impl {
         $error = "Your account or organization has been deactivated/suspended by the provider. "
                . "Contact the provider's support or your account admin to restore access.\n\n"
                . "Provider detail: $error";
-        log_warning('ResponseHandler', "Account disabled (non-retryable): $error");
+        # Demoted from log_warning -> log_info. Themed error display is the
+        # user-facing surface.
+        log_info('ResponseHandler', "Account disabled (non-retryable): $error");
     }
 
     elsif ($status == 401 || $status == 403) {
@@ -808,7 +812,9 @@ sub _handle_error_response_impl {
         $error = "The AI provider reports this model is currently unavailable on their infrastructure. "
                . "Try a different model, or wait and retry later.\n\n"
                . "Provider detail: $detail";
-        log_warning('ResponseHandler', "Provider unavailable (non-retryable): $detail");
+        # Demoted from log_warning -> log_info. Themed error display is the
+        # user-facing surface.
+        log_info('ResponseHandler', "Provider unavailable (non-retryable): $detail");
     }
 
     # Handle upstream timeouts distinctly from generic server_error.
@@ -1064,6 +1070,90 @@ sub _handle_error_response_impl {
         log_info('ResponseHandler', "Content filter triggered: $error");
     }
 
+    # Handle 402 Payment Required before the generic billing block.
+    # OpenRouter returns 402 with structured metadata that lets us tell
+    # recoverable (in-flight budget exhausted - retry after the budget
+    # recovers when in-flight requests settle) from hard (real credit
+    # exhaustion - no amount of waiting helps). Without this branch the
+    # billing regexes miss OpenRouter's "requires more credits" message
+    # and the 402 falls through to the unclassified generic error path
+    # (burning session errors until max_session_errors is hit).
+    elsif ($status == 402) {
+        my $metadata = ref($error_obj) eq 'HASH' ? ($error_obj->{metadata} // {}) : {};
+        my $reason  = $metadata->{reason} // '';
+        my $remedy  = $metadata->{remedy_hint} // '';
+        my $limit_source = $metadata->{limit_source} // '';
+
+        # Parse Retry-After from headers (real headers, not the curl stub)
+        # since OpenRouter sends it alongside the structured reason.
+        my $ra_header;
+        if (ref($passed_headers) eq 'HASH') {
+            $ra_header = $passed_headers->{'retry-after'};
+        } elsif ($passed_headers && $passed_headers->can('header')) {
+            $ra_header = $passed_headers->header('Retry-After');
+        }
+        my $ra_value;
+        if (defined $ra_header && $ra_header =~ /^([\d.]+)$/) {
+            $ra_value = int($1);
+        }
+
+        # Recoverable case: in-flight budget exhausted + a parseable
+        # Retry-After. OpenRouter's own remedy_hint says "Retry after
+        # your in-flight requests settle" - this clears as the broker
+        # completes in-flight turns.
+        if ($reason eq 'in_flight_budget_exhausted' && defined $ra_value) {
+            $is_retryable_error = 1;
+            $retryable = 1;
+            $retry_after = $ra_value;
+            $error_type = 'rate_limit';
+            $error = "OpenRouter in-flight budget exhausted. "
+                   . "Your account is allowed N concurrent in-flight requests; "
+                   . "wait for one to settle and try again "
+                   . "(Retry-After: ${ra_value}s).";
+            log_info('ResponseHandler', "OpenRouter in-flight budget 402 (retryable in ${ra_value}s, source=$limit_source)");
+        }
+        # Hard credit exhaustion: no usable Retry-After or real credit limit hit.
+        # This includes OpenRouter's openrouter_credits source AND any other 402
+        # without metadata (e.g. providers that just return a string).
+        else {
+            $is_retryable_error = 0;
+            $retryable = 0;
+            $error_type = 'billing_error';
+
+            # Structured breakdown: classify the failure mode for the user.
+            my $detail;
+            if ($reason eq 'openrouter_credits' || $limit_source eq 'openrouter_credits') {
+                # Extract "you requested up to N tokens, but can only afford M" hint.
+                my ($requested, $afforded);
+                if ($error =~ /requested up to (\d+)\s*tokens.*?can only afford (\d+)/i) {
+                    $requested = $1; $afforded = $2;
+                }
+                if (defined $requested && defined $afforded) {
+                    $detail = "Your remaining balance can cover $afforded prompt tokens, "
+                            . "but this request needs $requested. "
+                            . "Lower max_tokens or shorten the conversation, then add credits at "
+                            . "https://openrouter.ai/settings/credits.";
+                } else {
+                    $detail = "Your OpenRouter account has run out of credits. "
+                            . "Add credits at https://openrouter.ai/settings/credits or switch to "
+                            . "Auto mode to use a different provider.";
+                }
+            } elsif ($reason eq 'in_flight_budget_exhausted') {
+                # No Retry-After header - we genuinely don't know when to retry.
+                $detail = "OpenRouter in-flight budget exhausted but no Retry-After was provided. "
+                        . "Wait a few seconds for in-flight requests to settle, then retry. "
+                        . "Adding credits raises the in-flight budget ceiling.";
+            } else {
+                $detail = "Add credits or upgrade your plan before retrying.";
+            }
+            $error = "Your API account has run out of credits or hit a billing limit. $detail";
+            # Demoted from log_warning -> log_info. The themed error
+            # display path surfaces this to the user; the raw log line
+            # was duplicating the message and clobbering the styled output.
+            log_info('ResponseHandler', "Billing error (non-retryable, reason=$reason, source=$limit_source): $error");
+        }
+    }
+
     # Handle billing/credit/quota errors distinct from rate limits (non-retryable).
     # Distinct from rate_limit because no amount of waiting fixes an empty balance.
     # Covers OpenAI/Anthropic "insufficient credit", Z.AI 1113-style, generic "payment required",
@@ -1082,9 +1172,10 @@ sub _handle_error_response_impl {
         $retryable = 0;
         $error_type = 'billing_error';
         $error = "Your API account has run out of credits or hit a billing limit. "
-               . "Add credits or upgrade your plan before retrying.\n\n"
-               . "Provider detail: $error";
-        log_warning('ResponseHandler', "Billing error (non-retryable): $error");
+               . "Add credits or upgrade your plan before retrying.";
+        # Demoted from log_warning -> log_info. The themed error
+        # display path surfaces this to the user.
+        log_info('ResponseHandler', "Billing error (non-retryable): $error");
     }
 
     # Handle model-not-found errors (non-retryable - the model doesn't exist for this provider/account).
@@ -1103,7 +1194,9 @@ sub _handle_error_response_impl {
                . "The model name may be wrong, deprecated, or not enabled on your plan.\n\n"
                . "Try a different model with: /api model <provider>/<model>\n\n"
                . "Provider detail: $error";
-        log_warning('ResponseHandler', "Model not found (non-retryable): $error");
+        # Demoted from log_warning -> log_info. Themed error display is the
+        # user-facing surface.
+        log_info('ResponseHandler', "Model not found (non-retryable): $error");
     }
 
     # Handle generic 400 (transient backend error, content encoding issue, etc.)
