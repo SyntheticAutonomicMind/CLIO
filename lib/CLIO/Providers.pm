@@ -276,7 +276,50 @@ my %PROVIDERS = (
             # The nested reasoning_schema in provider-defaults.json drives param injection.
         },
     },
-    
+
+    orca => {
+        name => 'OrcaRouter',
+        api_base => 'https://api.orcarouter.ai/v1/chat/completions',
+        model => 'orcarouter/free',  # Auto-routing free model
+        requires_auth => 'apikey',
+        supports_tools => 1,
+        supports_streaming => 1,
+        supports_reasoning => 1,
+        supports_cache_control => 1,  # Passes cache_control through to upstream
+        url_detection_patterns => [ qr{api\.orcarouter\.ai}i ],
+        endpoint => {
+            path_suffix => '',
+            temperature_range => [0.0, 2.0],
+            supports_tools => 1,
+            # OrcaRouter is OpenAI-compatible but routes to upstreams
+            # with different reasoning formats. Native thinking format
+            # skips the OpenAI-compat reasoning_effort injection; the
+            # reasoning_schema in provider-defaults.json governs injection.
+            native_thinking_format => 1,
+        },
+    },
+
+    kilo => {
+        name => 'KiloCode',
+        api_base => 'https://api.kilo.ai/api/gateway/chat/completions',
+        model => 'kilo-auto/free',  # Auto-rotating free model
+        requires_auth => 'apikey',
+        supports_tools => 1,
+        supports_streaming => 1,
+        supports_reasoning => 1,
+        supports_cache_control => 1,
+        url_detection_patterns => [ qr{api\.kilo\.ai}i ],
+        endpoint => {
+            path_suffix => '',
+            temperature_range => [0.0, 2.0],
+            supports_tools => 1,
+            # KiloCode is OpenAI-compatible with nested reasoning support
+            # (reasoning: {effort, enabled}). The reasoning_schema in
+            # provider-defaults.json drives param injection.
+            native_thinking_format => 1,
+        },
+    },
+
     google => {
         name => 'Google Gemini',
         api_base => 'https://generativelanguage.googleapis.com/v1beta',
@@ -915,6 +958,8 @@ sub provider_from_url {
     return 'zai-coding'     if $url =~ m{api\.z\.ai.*coding}i;
     return 'zai'            if $url =~ m{api\.z\.ai}i;
     return 'nvidia'         if $url =~ m{integrate\.api\.nvidia\.com}i;
+    return 'orca'            if $url =~ m{api\.orcarouter\.ai}i;
+    return 'kilo'            if $url =~ m{api\.kilo\.ai}i;
 
     # DashScope variants (unified under 'dashscope' provider)
     return 'dashscope' if $url =~ m{dashscope.*\.aliyuncs\.com}i;

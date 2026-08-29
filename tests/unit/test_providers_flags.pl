@@ -45,12 +45,14 @@ my %PROVIDER_DEFAULT_CONTEXT = (
     'nvidia'        => 1048576,
     'github_copilot' => 128000,
     'openrouter'    => 128000,
+    'orca'          => 1000000,
+    'kilo'          => 1000000,
     'ollama_cloud'  => 128000,
 );
 
 # Each tier name + the providers that should belong to it.
 my @LOCAL_NAMES  = qw(sam lmstudio llama.cpp);
-my @CLOUD_NAMES  = qw(openai anthropic google minimax zai deepseek nvidia github_copilot openrouter ollama_cloud);
+my @CLOUD_NAMES  = qw(openai anthropic google minimax zai deepseek nvidia github_copilot openrouter ollama_cloud orca kilo);
 
 # ============================================================================
 # Registry must declare the flags on every named local provider
@@ -208,7 +210,7 @@ for my $name (@CLOUD_NAMES) {
 
     # Providers without a dedicated fetcher return undef so the caller
     # can fall back to the generic OpenAI-compatible path.
-    for my $name (qw(openai ollama_cloud openrouter sam lmstudio)) {
+    for my $name (qw(openai ollama_cloud openrouter orca kilo sam lmstudio)) {
         is(capability_fetcher($name), undef,
             "$name has no dedicated fetcher -> undef (caller falls back)");
     }

@@ -14,6 +14,8 @@
 | **Google Gemini** | `google` | API Key |
 | **DeepSeek** | `deepseek` | API Key |
 | **OpenRouter** | `openrouter` | API Key |
+| **OrcaRouter** | `orca` | API Key |
+| **KiloCode** | `kilo` | API Key |
 | **Ollama Cloud** | `ollama_cloud` | API Key |
 | **MiniMax** | `minimax` | API Key |
 | **MiniMax Token Plan** | `minimax_token` | API Key |
@@ -271,6 +273,68 @@ Models use the `provider/model` format:
 ```
 
 **Reasoning Support:** OpenRouter returns reasoning metadata that CLIO parses into standard capability format. Use `/api set thinking_effort low|medium|high` to control reasoning effort.
+
+---
+
+### OrcaRouter
+
+**Best for:** Accessing models across providers via a single API, free model routing
+
+**Get API Key:**
+1. Go to [orcarouter.ai](https://orcarouter.ai) and sign in
+2. Get an API key from the dashboard
+
+**Configure CLIO:**
+```bash
+clio --new
+/api set provider orca
+/api set key sk-orca-...your-key...
+/config save
+```
+
+**Available models:** OrcaRouter routes to models from multiple providers. Use `/api models` for the current list. Free models include `orcarouter/free` (auto-routing) and specific models like `deepseek/deepseek-v4-flash-free`.
+
+Models use the `upstream-provider/model` format (provider prefix is part of the model ID):
+```bash
+/api set model orcarouter/free
+/api set model deepseek/deepseek-v4-flash-free
+```
+
+**Features:**
+- Supports tools/function calling
+- Streaming responses
+- Passes `cache_control` through to upstream models
+
+---
+
+### KiloCode
+
+**Best for:** Access to 500+ models via a single gateway, free tier with auto-routing
+
+**Get API Key:**
+1. Go to [kilo.ai](https://kilo.ai) and sign in
+2. Get an API key from the dashboard
+
+**Configure CLIO:**
+```bash
+clio --new
+/api set provider kilo
+/api set key <your-api-key>
+/config save
+```
+
+**Available models:** KiloCode provides access to hundreds of models. Use `/api models` for the current list. Free models include `kilo-auto/free` (auto-rotating), `poolside/laguna-s-2.1:free`, `stepfun/step-3.7-flash:free`, and more.
+
+Models use the `upstream-provider/model` format:
+```bash
+/api set model kilo-auto/free
+/api set model poolside/laguna-s-2.1:free
+```
+
+**Features:**
+- Supports tools/function calling
+- Streaming responses
+- Automatic tool call repair and orphan cleanup
 
 ---
 

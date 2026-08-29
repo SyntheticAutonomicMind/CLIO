@@ -96,7 +96,7 @@ Terminal Output (with color/theme)
 | `lib/CLIO/Memory/` | Context/memory system (YaRN, TokenEstimator, ShortTerm, LongTerm) |
 | `lib/CLIO/Profile/` | User personality profile (Analyzer, Manager) |
 | `lib/CLIO/Protocols/` | Complex workflows (Puppeteer) |
-| `lib/CLIO/Providers/` | Direct API providers (Anthropic, Google, NVIDIA, Base, DeepSeek, MiniMax, Z.AI, OpenRouter, Ollama Cloud, GitHub Copilot, SAM, llama.cpp, LM Studio) |
+| `lib/CLIO/Providers/` | Direct API providers (Anthropic, Google, NVIDIA, Base, DeepSeek, MiniMax, Z.AI, OpenRouter, OrcaRouter, KiloCode, Ollama Cloud, GitHub Copilot, SAM, llama.cpp, LM Studio) |
 | `lib/CLIO/Coordination/` | Multi-agent coordination (Broker, Client, SubAgent) |
 | `lib/CLIO/MCP/` | Model Context Protocol (Manager, Client, Transport::HTTP, Transport::Stdio, Auth::OAuth) |
 | `lib/CLIO/Security/` | Auth/authz (Auth, Authz, AuthorizationRelay, CommandAnalyzer, InvisibleCharFilter, PathAuthorizer, SecretRedactor) |
@@ -297,7 +297,7 @@ log_error('ModuleName', 'something failed: %s', $error);
 | `CLIO::UI::Commands::` | Slash command handlers | AI, API, Billing, Config, Context, Device, File, Git, Log, Memory, Mux, Profile, Project, Prompt, Session, Skills, Spec, Stats, SubAgent, System, Todo, Update |
 | `CLIO::Session::` | Session management | Manager, State, FileVault, Lock, Export, TodoStore, ToolResultStore |
 | `CLIO::Memory::` | Context/memory | ShortTerm, LongTerm, YaRN, TokenEstimator |
-| `CLIO::Providers::` | Provider registry + native providers | Anthropic, Google, NVIDIA, Base, DeepSeek, MiniMax, Z.AI, OpenRouter, Ollama Cloud, GitHub Copilot, SAM, llama.cpp, LM Studio, Vercel AI Gateway (16 providers configured in Providers.pm) |
+| `CLIO::Providers::` | Provider registry + native providers | Anthropic, Google, NVIDIA, Base, DeepSeek, MiniMax, Z.AI, OpenRouter, OrcaRouter, KiloCode, Ollama Cloud, GitHub Copilot, SAM, llama.cpp, LM Studio, Vercel AI Gateway (18 providers configured in Providers.pm) |
 | `CLIO::Coordination::` | Multi-agent coordination | Broker, Client, SubAgent |
 | `CLIO::MCP::` | Model Context Protocol | Manager, Client, Transport::Stdio, Transport::HTTP, Auth::OAuth |
 | `CLIO::Profile::` | User profiling | Analyzer, Manager |

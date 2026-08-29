@@ -61,6 +61,8 @@ use constant MODEL_SCOPED_KEYS => [
 # Provider-specific defaults come from CLIO::Providers
 use constant DEFAULT_CONFIG => {
     model_configs => {},  # Per-model scoped config
+    model_candidates => [],  # List of models for routing (e.g. ["openrouter/foo", "kilo/bar"])
+    model_routing_index => 0,  # Current index into model_candidates
     api_key => '',
     api_keys => {},  # Per-provider API keys: { google => 'AIza...', minimax => '...' }
     api_bases => {},  # Per-provider API base URLs: { 'llama.cpp' => 'http://localhost:9090/...' }
@@ -833,6 +835,70 @@ sub set_model_alias {
     $self->{config}->{model_aliases}{lc($name)} = $model;
     $self->{user_set}->{model_aliases} = 1;
     
+    return 1;
+}
+
+=head2 get_model_candidates()
+
+Get the list of model routing candidates from config.
+
+Returns: Arrayref of model strings (e.g. ["openrouter/foo", "kilo/bar"]),
+or empty arrayref if no candidates are set.
+
+=cut
+
+sub get_model_candidates {
+    my ($self) = @_;
+    my $candidates = $self->{config}->{model_candidates} || [];
+    return ref($candidates) eq 'ARRAY' ? $candidates : [];
+}
+
+=head2 set_model_candidates($candidates)
+
+Set the list of model routing candidates.
+
+Arguments:
+  $candidates - Arrayref of model strings (e.g. ["openrouter/foo", "kilo/bar"])
+
+Returns: 1 on success
+
+=cut
+
+sub set_model_candidates {
+    my ($self, $candidates) = @_;
+    $self->{config}->{model_candidates} = $candidates || [];
+    $self->{user_set}->{model_candidates} = 1;
+    return 1;
+}
+
+=head2 get_model_routing_index()
+
+Get the current index into the model_candidates list.
+
+Returns: Integer index (0-based)
+
+=cut
+
+sub get_model_routing_index {
+    my ($self) = @_;
+    return $self->{config}->{model_routing_index} // 0;
+}
+
+=head2 set_model_routing_index($idx)
+
+Set the current index into the model_candidates list.
+
+Arguments:
+  $idx - Integer index (0-based)
+
+Returns: 1 on success
+
+=cut
+
+sub set_model_routing_index {
+    my ($self, $idx) = @_;
+    $self->{config}->{model_routing_index} = $idx // 0;
+    $self->{user_set}->{model_routing_index} = 1;
     return 1;
 }
 
