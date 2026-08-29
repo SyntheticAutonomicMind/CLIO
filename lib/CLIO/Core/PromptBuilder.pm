@@ -60,6 +60,11 @@ sub new {
         _skills_section_cache => undef,
         _user_context_cache => undef,
         _user_context_cache_time => 0,
+        # Which session this cache belongs to. The TodoStore mutation
+        # hook uses this to scope invalidation - if a future refactor
+        # shares a PromptBuilder across sessions, one session's mutation
+        # shouldn't flush another session's cache.
+        _user_context_cache_session_id => undef,
     }, $class;
 }
 
@@ -587,11 +592,24 @@ sub get_user_context {
     my $now = time();
     my $cache_ttl = 60;  # Cache TTL in seconds (1 minute)
 
-    # Refresh cache if expired
-    if (!$self->{_user_context_cache} || ($now - $self->{_user_context_cache_time}) >= $cache_ttl) {
+    # Refresh cache if expired OR if invalidated by a TodoStore mutation.
+    # Without the mutation check, a todo_operations call followed by another
+    # API call within 60s would serve the model stale <activeTodos> state
+    # (the cache TTL outranks the mutation). The set_invalidation_hook in
+    # _read_active_todos clears the cache when a mutation lands, so the
+    # next get_user_context rebuilds fresh.
+    my $session_id = $session && $session->can('id') ? $session->id() : undef;
+    my $cache_mismatch = defined $self->{_user_context_cache_session_id}
+                      && defined $session_id
+                      && $self->{_user_context_cache_session_id} ne $session_id;
+    if (!$self->{_user_context_cache}
+        || ($now - $self->{_user_context_cache_time}) >= $cache_ttl
+        || $cache_mismatch) {
         $self->{_user_context_cache} = $self->_generate_user_context_section();
         $self->{_user_context_cache_time} = $now;
-        log_debug('PromptBuilder', "User context cache refreshed at " . scalar(localtime($now)));
+        $self->{_user_context_cache_session_id} = $session_id;
+        log_debug('PromptBuilder', "User context cache refreshed at " . scalar(localtime($now))
+                  . ($cache_mismatch ? " (session changed)" : ""));
     }
 
     # Dynamic context (LTM, loaded skills, OpenSpec) comes FIRST - it's
@@ -614,6 +632,24 @@ sub get_user_context {
         my $goals = $self->_read_session_goals($session);
         if ($goals) {
             $context .= $goals;
+        }
+
+        # Active todos - read fresh each call AND invalidated on every
+        # mutation. This is the model's single source of truth for "what
+        # am I working on right now" after context trim. Critical for
+        # keeping the agent anchored to its current task when the
+        # original user message has been compressed into a
+        # thread_summary system message.
+        #
+        # The set_invalidation_hook installed inside _read_active_todos
+        # ensures a todo_operations(add|update|complete) call is
+        # reflected in <activeTodos> on the very NEXT prompt build
+        # (clears the user_context cache). Without the hook, the 60s
+        # cache TTL would mean a model that adds a todo and then makes
+        # another API call would see stale state.
+        my $active_todos = $self->_read_active_todos($session);
+        if ($active_todos) {
+            $context .= $active_todos;
         }
     }
 
@@ -789,6 +825,123 @@ sub _read_session_goals {
     }
 
     return $goals_text;
+}
+
+=head2 _read_active_todos
+
+Internal: Read the active todo list (managed via todo_operations) and
+format the in-progress and not-started items as a compact <activeTodos>
+block for inclusion in the user context. This gives the model a single
+source of truth for "what am I doing right now" - critical after context
+trim when the original task description has been compressed into a
+thread_summary system message and the model needs an explicit anchor
+to keep its place.
+
+This function also subscribes to TodoStore's set_invalidation_hook so a
+todo mutation (add/update/complete via todo_operations) is reflected in
+<activeTodos> on the very next prompt build, not after the 60s cache TTL
+expires. The hook clears the user_context cache for the matching
+session.
+
+Each todo: {id, content, status, priority}
+Status values: pending | in-progress | completed | blocked
+
+The block includes:
+  - In-progress items (the model is actively working on these)
+  - Up to 5 not-started items (the queue)
+  - A compact "X of Y complete" summary line
+
+Returns:
+- Formatted active todos string, or empty string if no todos exist
+
+=cut
+
+sub _read_active_todos {
+    my ($self, $session) = @_;
+
+    return '' unless $session;
+
+    my $todos_text = '';
+    eval {
+        require CLIO::Session::TodoStore;
+        require Cwd;
+        require CLIO::Util::PathResolver;
+        my $clio_dir = CLIO::Util::PathResolver::find_clio_dir(Cwd::getcwd());
+        my $store = CLIO::Session::TodoStore->new(
+            clio_dir => $clio_dir,
+            session_id => $session->can('id') ? $session->id() : undef,
+        );
+        # Subscribe to todo mutations so the activeTodos block reflects
+        # the new state on the very next prompt build, not 60s later
+        # when the user_context cache TTL expires. Without this, the
+        # model could call todo_operations(operation: 'add'/'update'/
+        # 'complete'), then make another API call within 60s and see
+        # the OLD todo state in <activeTodos>. The model would then
+        # re-issue the same mutation (cluttering the conversation)
+        # or, worse, conclude that its previous mutation had no effect.
+        # The cache invalidation is scoped to the cached <userContext>
+        # base (date/time/path) - activeTodos itself is read fresh on
+        # every call, but it lives inside get_user_context which is
+        # cached. Clearing _user_context_cache forces a full rebuild
+        # of the user_context on the next prompt.
+        $store->set_invalidation_hook(sub {
+            my ($store_self) = @_;
+            my $sid = $store_self->{session_id} // 'unknown';
+            my $cached_sid = $self->{_user_context_cache_session_id};
+            # Only invalidate if the cache belongs to this same session.
+            # (Defensive: a future refactor could share PromptBuilder
+            # across sessions, and we don't want one session's mutation
+            # to flush another session's cache.)
+            if (!defined $cached_sid || $cached_sid eq $sid) {
+                $self->{_user_context_cache} = undef;
+                $self->{_user_context_cache_time} = 0;
+                log_debug('PromptBuilder', "Invalidated user_context cache due to todo mutation (session=$sid)");
+            }
+        });
+        my $todos = $store->read();
+        return '' unless $todos && ref($todos) eq 'ARRAY' && @$todos;
+
+        my @in_progress = grep { ($_->{status} // '') eq 'in-progress' } @$todos;
+        my @not_started = grep { ($_->{status} // '') eq 'not-started' } @$todos;
+        my @completed   = grep { ($_->{status} // '') eq 'completed' } @$todos;
+        my @blocked     = grep { ($_->{status} // '') eq 'blocked' } @$todos;
+
+        # Skip emission if there's nothing actionable - avoids noise
+        # when the agent hasn't set up todos yet (most early turns).
+        return '' unless @in_progress || @not_started || @blocked;
+
+        $todos_text = "<activeTodos>\n";
+        $todos_text .= "Current todo state: "
+                     . scalar(@completed) . " of " . scalar(@$todos) . " complete";
+        $todos_text .= " (" . scalar(@in_progress) . " in progress, "
+                     . scalar(@not_started) . " queued, "
+                     . scalar(@blocked) . " blocked)\n";
+
+        for my $todo (@in_progress) {
+            $todos_text .= "  [IN PROGRESS] " . ($todo->{content} || 'Untitled') . "\n";
+        }
+        # Show up to 5 queued items so the model has the immediate next
+        # steps in view without bloating the user_context.
+        my $queued_count = 0;
+        for my $todo (@not_started) {
+            last if $queued_count >= 5;
+            $todos_text .= "  [QUEUED]     " . ($todo->{content} || 'Untitled') . "\n";
+            $queued_count++;
+        }
+        if (scalar(@not_started) > $queued_count) {
+            $todos_text .= "  ...and " . (scalar(@not_started) - $queued_count) . " more queued (use todo_operations to read full list)\n";
+        }
+        for my $todo (@blocked) {
+            $todos_text .= "  [BLOCKED]    " . ($todo->{content} || 'Untitled') . "\n";
+        }
+        $todos_text .= "</activeTodos>\n\n";
+    };
+    if ($@) {
+        log_debug('PromptBuilder', "Failed to read active todos: $@");
+        return '';
+    }
+
+    return $todos_text;
 }
 
 1;
