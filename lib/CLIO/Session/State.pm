@@ -1153,10 +1153,19 @@ sub trim_context {
     # compress_messages walks the full @dropped list, which would
     # include any earlier thread_summary that landed in conversation).
     # Keeping both would bloat the slot without adding signal.
+    #
+    # Match ONLY messages that ARE a thread_summary, not messages
+    # that merely mention the literal text "<thread_summary>".
+    # The system prompt template contains a section explaining CSSS
+    # that uses the literal string "<thread_summary>", and a substring
+    # match on the system prompt would cause the entire 70K-char
+    # system prompt to be dropped on trim (observed in session
+    # 6b09ac2d-b4e7-4f7b-8943-eb448449227a, 2026-08-29 on
+    # Ayaneo Flip). Anchored to start of content.
     if ($compressed_summary) {
         @system = grep {
             my $c = $_->{content} // '';
-            !($c =~ /<thread_summary>/ || $c =~ /^\[CONTEXT TRIM:/);
+            !($c =~ /\A<thread_summary>/ || $c =~ /^\[CONTEXT TRIM:/);
         } @system;
         # Inject the new summary as a system message so ConversationManager
         # can preserve it on resume. Position it BEFORE the user messages

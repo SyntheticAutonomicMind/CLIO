@@ -201,7 +201,23 @@ sub load_conversation_history {
         # handles thread_summary positioning (puts it at END for CSSS cache stability).
         if ($msg->{role} eq 'system') {
             my $sys_content = $msg->{content} // '';
-            if ($sys_content =~ /<thread_summary>/ || $sys_content =~ /^\[CONTEXT TRIM:/) {
+            # Match ONLY messages that ARE a thread_summary, not messages
+            # that merely mention the literal text "<thread_summary>". The
+            # latter case is critical: the system prompt template contains
+            # a section explaining the CSSS that uses the literal string
+            # "<thread_summary>", and a substring match on the system
+            # prompt would cause the entire 70K-char system prompt to
+            # be treated as a "thread_summary" and preserved verbatim,
+            # doubling the per-request token cost (observed in session
+            # 6b09ac2d-b4e7-4f7b-8943-eb448449227a, 2026-08-29 on
+            # Ayaneo Flip with 64K Qwen3.6-35B-A3B-UD-Q4_K_XL: the regex
+            # match caused a 71,949-char system prompt to be preserved
+            # AND a fresh 80,973-char system prompt to be added on top,
+            # blowing past the 65,536-token context window on iter 9).
+            # Real thread_summary messages start with "<thread_summary>"
+            # at offset 0 (YaRN renders it as the first line). Match
+            # anchored to the start of content.
+            if ($sys_content =~ /\A<thread_summary>/ || $sys_content =~ /^\[CONTEXT TRIM:/) {
                 push @valid_messages, {
                     role => $msg->{role},
                     content => $sys_content,
@@ -443,7 +459,10 @@ sub trim_conversation_for_api {
     my @summary_indices;
     for my $i (0 .. $#messages) {
         my $msg = $messages[$i];
-        if (($msg->{role} // '') eq 'system' && ($msg->{content} // '') =~ /<thread_summary>/) {
+        # Match ONLY messages that ARE a thread_summary, not messages
+        # that merely mention the literal text. See the comment in
+        # _build_turn_context above for the full rationale.
+        if (($msg->{role} // '') eq 'system' && ($msg->{content} // '') =~ /\A<thread_summary>/) {
             push @summary_indices, $i;
         }
     }
@@ -470,7 +489,7 @@ sub trim_conversation_for_api {
     for my $i (0 .. $#messages) {
         my $msg = $messages[$i];
         last if ($msg->{role} // '') ne 'system';
-        next if ($msg->{content} // '') =~ /<thread_summary>/;
+        next if ($msg->{content} // '') =~ /\A<thread_summary>/;
         push @preserved_system_msgs, $msg;
     }
 

@@ -650,7 +650,11 @@ sub validate_and_truncate {
         next unless ref($m) eq 'HASH';
         my $content = $m->{content} // '';
         next unless ($m->{role} // '') eq 'system';
-        next if $content =~ /<thread_summary>/;
+        # Match ONLY messages that ARE a thread_summary, not messages
+        # that merely mention the literal text "<thread_summary>" (e.g.
+        # the system prompt template's CSSS section explains the
+        # thread_summary tag). Anchored to start of content.
+        next if $content =~ /\A<thread_summary>/;
         if ($content =~ /<(?:userContext|dynamicContext|sessionGoals)[\s>]/) {
             $uc_split_idx = $i;
             last;
@@ -1074,7 +1078,11 @@ sub _extract_preserved_units {
 
         my $first_msg = $unit->{messages}[0];
         my $content = $first_msg->{content} || '';
-        if ($content =~ /<thread_summary>/) {
+        # Match ONLY messages that ARE a thread_summary, not messages
+        # that merely mention the literal text "<thread_summary>" (e.g.
+        # the system prompt template's CSSS section explains the
+        # thread_summary tag). Anchored to start of content.
+        if ($content =~ /\A<thread_summary>/) {
             $summary_unit = $unit;
             $summary_tokens = $unit->{tokens};
             $start_unit = $i + 1;
@@ -1124,7 +1132,10 @@ sub _extract_preserved_units {
         next unless $unit && $unit->{messages} && @{$unit->{messages}};
         my $first_msg = $unit->{messages}[0];
         my $content = $first_msg->{content} || '';
-        if ($content =~ /<thread_summary>/) {
+        # Match ONLY messages that ARE a thread_summary, not messages
+        # that merely mention the literal text "<thread_summary>". See
+        # the comment in _extract_preserved_units above.
+        if ($content =~ /\A<thread_summary>/) {
             $summary_unit = $unit;
             $summary_tokens = $unit->{tokens};
             $unit->{is_trailing_summary} = 1;

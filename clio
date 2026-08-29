@@ -712,17 +712,26 @@ if ($mode eq 'new' || $mode eq 'chat') {
     # Add system prompt to session history ONCE at session start (not on every request!)
     if ($session) {
         use CLIO::Core::PromptManager;
-        my $pm = CLIO::Core::PromptManager->new(debug => $debug, skip_custom => $skip_custom);
-        
-        # For chat mode, use chat prompt and skip custom instructions
-        if ($mode eq 'chat') {
-            $pm->{metadata}->{active_prompt} = 'chat';
-            log_debug('Main', "Chat mode: set active_prompt to 'chat'");
-        }
-        
-        my $system_prompt = $pm->get_system_prompt($session);  # Pass session for LTM injection
-        $session->add_message('system', $system_prompt);
-        log_debug('Main', 'Added system prompt to session history (' . length($system_prompt) . ' chars)');
+        # NOTE: The system prompt is NOT added to session history at
+        # session creation. WorkflowOrchestrator::process_input builds
+        # a fresh system prompt (with tools + LTM + user_context) on
+        # every turn and prepends it to the messages array. Adding the
+        # system prompt to history on top of that would double the
+        # per-turn prompt cost (observed in session
+        # 6b09ac2d-b4e7-4f7b-8943-eb448449227a, 2026-08-29 on Ayaneo
+        # Flip with 64K Qwen3.6-35B-A3B-UD-Q4_K_XL: a 71,949-char
+        # system prompt in history + a fresh 80,973-char system prompt
+        # on top = 152K chars = ~76K tokens, blowing past the
+        # 65,536-token context window on iteration 9).
+        #
+        # The previous "add system prompt to session history ONCE"
+        # comment was misguided - history is the durable record of
+        # what was said, not a place to anchor the system prompt. The
+        # system prompt is rebuilt fresh on every turn and the
+        # persisted copy in history was dead weight that cost the model
+        # ~36K tokens per turn before the regex/anchor fix would even
+        # start to help. See also the system-prompt-as-thread_summary
+        # fix in ConversationManager.pm.
     }
 } elsif ($mode eq 'resume') {
     my $eval_err;
@@ -793,21 +802,11 @@ if ($mode eq 'new' || $mode eq 'chat') {
         log_debug('Main', "Created new session (fallback): $session_id") if $session_id;
         log_debug('Main', "Error during fallback create: $eval_err") if $eval_err;
         log_debug('Main', 'After fallback create: session defined? ' . (defined $session ? 'yes' : 'no'));
-        
-        # Add system prompt to fallback session (same as regular new session)
-        if ($session) {
-            use CLIO::Core::PromptManager;
-            my $pm = CLIO::Core::PromptManager->new(debug => $debug, skip_custom => $skip_custom);
-            
-            # For chat mode, use chat prompt and skip custom instructions
-            if ($mode eq 'chat') {
-                $pm->{metadata}->{active_prompt} = 'chat';
-            }
-            
-            my $system_prompt = $pm->get_system_prompt($session);  # Pass session for LTM injection
-            $session->add_message('system', $system_prompt);
-            log_debug('Main', 'Added system prompt to fallback session (' . length($system_prompt) . ' chars)');
-        }
+
+        # NOTE: System prompt is NOT added to session history here either.
+        # See the comment in the 'new' branch above for the full rationale.
+        # WorkflowOrchestrator::process_input builds a fresh system prompt
+        # on every turn.
     } else {
         $session_id = $session->{session_id} // ($session->{state} ? $session->{state}->{session_id} : undef);
         log_debug('Main', "Resumed session: $session_id");

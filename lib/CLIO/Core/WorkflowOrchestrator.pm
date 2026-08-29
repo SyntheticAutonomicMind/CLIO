@@ -1305,8 +1305,38 @@ sub _build_turn_context {
     }
 
     if ($history && @$history) {
+        # Skip any leading system messages from history - process_input
+        # builds a fresh system prompt below and pushes it on top of
+        # @messages. Older sessions may have a stale system prompt
+        # persisted in history (added by clio on session creation, before
+        # the "don't persist system prompt" fix), and including it would
+        # double the per-turn prompt cost (observed in session
+        # 6b09ac2d-b4e7-4f7b-8943-eb448449227a, 2026-08-29 on Ayaneo
+        # Flip with 64K Qwen3.6-35B-A3B-UD-Q4_K_XL: a 71,949-char
+        # persisted system prompt + a fresh 80,973-char system prompt
+        # = 152K chars = ~76K tokens, blowing past the 65,536-token
+        # context window on iteration 9).
+        #
+        # thread_summary system messages ARE preserved (they're the
+        # work-product replacement for trimmed messages, not redundant
+        # system prompts).
+        my $first_non_system_idx = 0;
+        for my $i (0 .. $#$history) {
+            my $m = $history->[$i];
+            last if ($m->{role} // '') ne 'system';
+            # Keep thread_summary - it's a model-facing work product, not
+            # a system prompt.
+            next if ($m->{content} // '') =~ /\A<thread_summary>/;
+            # Otherwise (system prompt, [CONTEXT TRIM:] notices, error
+            # messages), drop. A fresh system prompt will be added below.
+            $first_non_system_idx = $i + 1;
+        }
+        if ($first_non_system_idx > 0) {
+            log_debug('WorkflowOrchestrator', "Skipped $first_non_system_idx leading system message(s) from history (redundant with fresh system prompt)");
+            $history = [@$history[$first_non_system_idx .. $#$history]];
+        }
         push @messages, @$history;
-        log_debug('WorkflowOrchestrator', "Loaded " . scalar(@$history) . " messages from history (after pre-flight trim)");
+        log_debug('WorkflowOrchestrator', "Loaded " . scalar(@$history) . " messages from history (after pre-flight trim, after dropping redundant system messages)");
     }
 
     # Get user context (date/time, working directory) - cached per‑minute
@@ -1945,7 +1975,7 @@ sub _normalize_payload_layout {
                     }
                 }
             }
-            if ($flat =~ /<(?:userContext|dynamicContext|sessionGoals)[\s>]/ && $flat !~ /<thread_summary>/) {
+            if ($flat =~ /<(?:userContext|dynamicContext|sessionGoals)[\s>]/ && $flat !~ /\A<thread_summary>/) {
                 $uc_idx = $i;
                 last;
             }
@@ -1994,9 +2024,13 @@ sub _normalize_payload_layout {
                 }
             }
 
-            if ($flat_content =~ /<thread_summary>/) {
+            if ($flat_content =~ /\A<thread_summary>/) {
                 # Keep only the LAST thread_summary — CSSS slot lock depends
-                # on exactly one summary at the end of the dialog.
+                # on exactly one summary at the end of the dialog. Match
+                # anchored to start of content so messages that merely
+                # mention the literal text "<thread_summary>" (e.g. the
+                # system prompt's CSSS section) don't get treated as
+                # summaries.
                 $summary_msg = $msg;
                 $seen_summary++;
                 next;
@@ -2035,7 +2069,7 @@ sub _normalize_payload_layout {
                     }
                 }
             }
-            if ($ct_flat =~ /<thread_summary>/) {
+            if ($ct_flat =~ /\A<thread_summary>/) {
                 $summary_msg = $msg;
                 $seen_summary++;
                 next;
@@ -2124,7 +2158,11 @@ sub _compute_section_signatures {
         my $content = $msg->{content} // '';
 
         if ($role eq 'system') {
-            if ($content =~ /<thread_summary>/) {
+            # Match ONLY messages that ARE a thread_summary, not messages
+            # that merely mention the literal text "<thread_summary>".
+            # See the comment in ConversationManager.pm for the full
+            # rationale. Anchored to start of content.
+            if ($content =~ /\A<thread_summary>/) {
                 $sections{summary} .= _stable_content($content);
                 $state = 'dialog';  # After summary, dialog begins
             } elsif ($content =~ /\[CONTEXT FILES\]/) {
@@ -2336,7 +2374,11 @@ sub _try_resume_from_payload {
     for my $msg (@$payload) {
         my $content = $msg->{content} // '';
         $payload_tokens += CLIO::Memory::TokenEstimator::estimate_tokens($content);
-        $has_thread_summary = 1 if $content =~ /<thread_summary>/;
+        # Match ONLY messages that ARE a thread_summary, not messages
+        # that merely mention the literal text "<thread_summary>".
+        # See the comment in ConversationManager.pm for the full
+        # rationale. Anchored to start of content.
+        $has_thread_summary = 1 if $content =~ /\A<thread_summary>/;
     }
     
     # Only reject small payloads if they contain a thread_summary (i.e., were
@@ -3845,7 +3887,11 @@ sub _compress_dropped_for_recovery {
     my @actual_messages;
     for my $msg (@$dropped_messages) {
         my $content = $msg->{content} || '';
-        if ($msg->{role} && $msg->{role} eq 'system' && $content =~ /<thread_summary>/) {
+        # Match ONLY messages that ARE a thread_summary, not messages
+        # that merely mention the literal text "<thread_summary>".
+        # See the comment in ConversationManager.pm for the full
+        # rationale. Anchored to start of content.
+        if ($msg->{role} && $msg->{role} eq 'system' && $content =~ /\A<thread_summary>/) {
             $previous_summary = $content;
         } else {
             push @actual_messages, $msg;
