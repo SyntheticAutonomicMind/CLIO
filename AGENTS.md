@@ -108,7 +108,7 @@ Terminal Output (with color/theme)
 | `docs/` | User/dev documentation |
 | `styles/` | Terminal color styles (26 themes: dark, light, retro, cyberpunk, monokai, etc.) |
 | `themes/` | UI themes (compact, console, default, verbose) |
-| `tools/` | Repo-local tooling (assess_codebase.pl, ASSESSMENT_METHODOLOGY.md) |
+| `tools/` | Repo-local tooling (assess_codebase.pl, ASSESSMENT_METHODOLOGY.md, cache_health.pl, context_inspector.pl, context_inspector_README.md, lint_size_regression.pl, parse_llama_log.pl, prompt_diff.pl, prompt_layout.pl, session_stats.pl, track_assessment.sh, trim_dryrun.pl) |
 | `tests/unit/` | Single module tests |
 | `tests/integration/` | Cross-module tests (e2e, subagent, broker) |
 | `tests/manual/` | Manual test scripts |
