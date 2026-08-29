@@ -194,6 +194,22 @@ sub dump_diagnostic {
 
     for (my $i = 0; $i < @$messages; $i++) {
         my $msg = $messages->[$i];
+        # Defensive: skip non-hashref elements. dump_diagnostic is called
+        # from the error-handling path (e.g. persistent 400 after retries)
+        # where the message array may still contain the corrupted
+        # non-hashref element that caused the original failure. A crash
+        # HERE would turn "API error: ..." into "API exception: Not a HASH
+        # reference" — masking the real problem. Report the corrupt
+        # element as a diagnostic note instead of dying.
+        if (ref($msg) ne 'HASH') {
+            my $r = ref($msg) // 'undef';
+            print $fh sprintf("[%4d] role=%-10s NON-HASHREF (%s)\n",
+                $i, '(corrupt)', $r);
+            print $fh "       value: " . (defined($msg) ? substr("$msg", 0, 200) : 'undef') . "\n";
+            $grand_total_tokens += 0;
+            $role_counts{'(corrupt non-hashref)'}++;
+            next;
+        }
         my $role = $msg->{role} || 'unknown';
         my $content = $msg->{content} || '';
         my $content_len = length($content);
@@ -205,6 +221,7 @@ sub dump_diagnostic {
         if ($msg->{tool_calls} && ref($msg->{tool_calls}) eq 'ARRAY') {
             $tc_count = scalar(@{$msg->{tool_calls}});
             for my $tc (@{$msg->{tool_calls}}) {
+                next unless ref($tc) eq 'HASH';
                 my $json = safe_encode_json($tc, '');
                 $tc_tokens += estimate_tokens($json);
             }
@@ -234,7 +251,7 @@ sub dump_diagnostic {
     print $fh "Total estimated tokens: $grand_total_tokens\n";
     for my $role (sort keys %role_counts) {
         print $fh sprintf("  %-12s %4d messages, %7d tokens\n",
-            "$role:", $role_counts{$role}, $role_tokens{$role});
+            "$role:", $role_counts{$role}, $role_tokens{$role} // 0);
     }
     print $fh "\n";
 
@@ -244,9 +261,11 @@ sub dump_diagnostic {
         my %tr_ids;   # tool_call_id => message index (from results)
         for (my $i = 0; $i < @$messages; $i++) {
             my $msg = $messages->[$i];
+            next unless ref($msg) eq 'HASH';
             if ($msg->{role} && $msg->{role} eq 'assistant' &&
                 $msg->{tool_calls} && ref($msg->{tool_calls}) eq 'ARRAY') {
                 for my $tc (@{$msg->{tool_calls}}) {
+                    next unless ref($tc) eq 'HASH';
                     $tc_ids{$tc->{id}} = $i if $tc->{id};
                 }
             }

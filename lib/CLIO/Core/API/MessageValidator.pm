@@ -505,6 +505,29 @@ sub validate_and_truncate {
         # No new drops - keep the existing summary intact
         $summary_to_use = $summary_unit->{messages}[0];
         log_debug('MessageValidator', "No dropped messages - preserving existing thread_summary");
+    } elsif ($substantive_user_content && length($substantive_user_content) > 0) {
+        # No drops AND no existing summary — generate a minimal anchor
+        # so the model has a work-product reference on the very first
+        # turn, before any trim event has fired. Without this, the model
+        # falls back to the "Session Start Protocol" template from
+        # default.md on every turn because it has no other way to orient
+        # (observed in sessions 00128874 and 6b09ac2d on Qwen3.6-35B
+        # llama.cpp: model emitted "Let me start by following the
+        # Session Start Protocol and then systematically examine the
+        # codebase" 8 turns in, with no thread_summary ever present,
+        # because the budget walk had nothing to drop).
+        #
+        # The minimal summary is just "Current task: X" (~44 tokens).
+        # It's small enough to fit comfortably in the budget but stable
+        # enough to anchor the model across turns. Once a real trim
+        # drops units, the full compress_messages pass replaces this
+        # with a richer summary.
+        $summary_to_use = _make_anchor_summary($substantive_user_content);
+        if ($summary_to_use) {
+            log_info('MessageValidator', "Generated minimal anchor summary (" . ($summary_to_use->{_metadata}{compressed_tokens} // '?') . " tokens) for first-time session without prior thread_summary");
+        } else {
+            log_debug('MessageValidator', "Could not generate anchor summary (no yarn available)");
+        }
     }
     
     # Post-truncation validation: drop orphaned tool_results whose tool_call
@@ -733,9 +756,22 @@ sub validate_tool_message_pairs {
     
     for (my $i = 0; $i < @$messages; $i++) {
         my $msg = $messages->[$i];
-        if ($msg->{role} && $msg->{role} eq 'assistant' && 
+        # Defensive: skip anything that isn't a hashref. Non-hashref
+        # elements (plain strings, undef, or arrayrefs that leaked in
+        # from malformed session snapshots or test fixtures) would
+        # crash $msg->{role} with "Not a HASH reference" — a fatal
+        # error that kills the model's turn mid-request. Filter them
+        # out here so a single malformed element can't abort the
+        # entire API request. Observed in session 2b80d82f
+        # (minimax-m3:free/OpenRouter, 2026-08-29): a non-hashref
+        # element in the loaded message array caused validate-and-
+        # truncate-chain to die, which surfaced as an unrecoverable
+        # API exception to the user.
+        next unless ref($msg) eq 'HASH';
+        if ($msg->{role} && $msg->{role} eq 'assistant' &&
             $msg->{tool_calls} && ref($msg->{tool_calls}) eq 'ARRAY') {
             for my $tc (@{$msg->{tool_calls}}) {
+                next unless ref($tc) eq 'HASH';
                 $tc_id_to_assistant_idx{$tc->{id}} = $i if $tc->{id};
             }
         }
@@ -761,10 +797,16 @@ sub validate_tool_message_pairs {
         }
     }
     
-    # If no orphans, return original
+    # If no orphans, return original. BUT always filter out non-hashref
+    # elements — corrupted snapshots can contain plain strings or other
+    # non-hashrefs that would crash every downstream consumer (the API
+    # call, the streaming callback, session save, etc.). This is cheaper
+    # than crashing and is a no-op on clean input.
     if (!keys %orphaned_tc_ids && !keys %orphaned_result_indices) {
-        log_debug('MessageValidator', "Tool message validation: all pairs valid");
-        return $messages;
+        my $filtered = _filter_hashref_messages($messages);
+        log_debug('MessageValidator', "Tool message validation: all pairs valid" .
+            (scalar(@$filtered) < scalar(@$messages) ? " (filtered " . (scalar(@$messages) - scalar(@$filtered)) . " non-hashref" : ""));
+        return $filtered;
     }
     
     # Rebuild: remove orphaned results entirely, selectively strip orphaned tool_calls
@@ -772,6 +814,10 @@ sub validate_tool_message_pairs {
     my $fixes = 0;
     for (my $i = 0; $i < @$messages; $i++) {
         my $msg = $messages->[$i];
+        
+        # Defensive: skip non-hashref elements (same guard as the map loop
+        # above). A single malformed element should not abort the rebuild.
+        next unless ref($msg) eq 'HASH';
         
         # Drop orphaned tool results
         if ($orphaned_result_indices{$i}) {
@@ -787,6 +833,11 @@ sub validate_tool_message_pairs {
             my @kept_calls;
             my @dropped_calls;
             for my $tc (@{$msg->{tool_calls}}) {
+                # Defensive: skip malformed tool_call entries that aren't
+                # hashrefs (e.g. a plain ID string or a JSON array element
+                # from a corrupted snapshot). $tc->{id} would crash on a
+                # non-hashref with "Not a HASH reference".
+                next unless ref($tc) eq 'HASH';
                 if ($tc->{id} && $orphaned_tc_ids{$tc->{id}}) {
                     push @dropped_calls, $tc->{id};
                 } else {
@@ -822,6 +873,23 @@ sub validate_tool_message_pairs {
     return \@validated;
 }
 
+=head2 _filter_hashref_messages
+
+Internal: Filter an arrayref, keeping only hashref elements. Used by
+validate_tool_message_pairs to scrub non-hashref elements (plain
+strings, undef, arrayrefs) out of corrupted session snapshots before
+they crash downstream consumers.
+
+This is a no-op on clean input.
+
+=cut
+
+sub _filter_hashref_messages {
+    my ($messages) = @_;
+    return [] unless $messages && ref($messages) eq 'ARRAY';
+    return [ grep { ref($_) eq 'HASH' } @$messages ];
+}
+
 =head2 preflight_validate
 
 Lightweight pre-flight validation. Returns ArrayRef of error strings.
@@ -840,10 +908,17 @@ sub preflight_validate {
     
     for (my $i = 0; $i < @$messages; $i++) {
         my $msg = $messages->[$i];
+        # Defensive: skip non-hashref elements. Same class of bug as
+        # validate_tool_message_pairs line 759 ("Not a HASH reference"):
+        # a single corrupted element (plain string, undef, arrayref) in
+        # the message array crashes every downstream consumer. preflight
+        # is the pre-API-call sanity check — it must never die, only report.
+        next unless ref($msg) eq 'HASH';
         my $role = $msg->{role} || '';
         
         if ($role eq 'assistant' && $msg->{tool_calls} && ref($msg->{tool_calls}) eq 'ARRAY') {
             for my $tc (@{$msg->{tool_calls}}) {
+                next unless ref($tc) eq 'HASH';
                 my $id = $tc->{id};
                 if ($id) {
                     push @errors, "Duplicate tool_call_id: $id" if $seen_ids{$id};
@@ -898,6 +973,8 @@ sub _estimate_tokens {
 
     my $total = 0;
     for my $msg (@$messages) {
+        # Defensive: skip non-hashref elements (see validate_tool_message_pairs).
+        next unless ref($msg) eq 'HASH';
         # Per-message overhead: role field, message separators, formatting tokens
         # Every message has role + boundary tokens (~4)
         # Tool messages have additional name + tool_call_id fields (~8)
@@ -907,6 +984,7 @@ sub _estimate_tokens {
         $total += estimate_tokens($msg->{content} || '');
         if ($msg->{tool_calls} && ref($msg->{tool_calls}) eq 'ARRAY') {
             for my $tc (@{$msg->{tool_calls}}) {
+                next unless ref($tc) eq 'HASH';
                 my $json = safe_encode_json($tc);
                 $total += estimate_tokens($json || '');
             }
@@ -924,6 +1002,8 @@ sub _group_into_units {
     my %tool_call_id_to_unit_idx;
 
     for my $msg (@$messages) {
+        # Defensive: skip non-hashref elements (corrupted snapshot content).
+        next unless ref($msg) eq 'HASH';
         my $msg_tokens = estimate_tokens($msg->{content} || '') + 4;
         $msg_tokens += 8 if $msg->{role} && $msg->{role} eq 'tool';
         my $has_tool_calls = $msg->{tool_calls} && ref($msg->{tool_calls}) eq 'ARRAY' && @{$msg->{tool_calls}};
@@ -1291,6 +1371,45 @@ sub _compress_dropped {
     }
     
     return $compressed;
+}
+
+=head2 _make_anchor_summary
+
+Build a minimal "<thread_summary>Current task: X</thread_summary>"
+anchor from the substantive user task. Used as a work-product anchor
+on the first turn (before any trim has happened) so the model has a
+stable reference for the original task across turns.
+
+The anchor is intentionally tiny (~44 tokens for a typical task
+description) so it fits in the budget even on small-context models
+(64K Qwen3.6-35B observed in sessions 00128874 and 6b09ac2d).
+Once a real trim drops dialog, _compress_dropped replaces this anchor
+with a richer summary that captures the work product.
+
+Arguments:
+- $substantive_user_content: The most recent substantive user task
+  (>= 50 chars, not a short directive like "continue" or "yes").
+
+Returns: A message hashref with role=system and the thread_summary
+content, or undef if the input is unusable.
+
+=cut
+
+sub _make_anchor_summary {
+    my ($substantive_user_content) = @_;
+    return undef unless defined $substantive_user_content && length($substantive_user_content) > 0;
+    my $trimmed = substr($substantive_user_content, 0, 300);
+    $trimmed =~ s/\s+/ /g;
+    return {
+        role    => 'system',
+        content => "<thread_summary>\n\nCurrent task: $trimmed\n\n</thread_summary>\n",
+        _metadata => {
+            compressed_tokens => int(length($trimmed) / 3.5) + 6,  # rough estimate
+            compressed_count  => 0,  # no dialog was compressed
+            original_tokens   => 0,
+            anchor_summary    => 1,  # marker so validate_and_truncate can detect this
+        },
+    };
 }
 
 1;

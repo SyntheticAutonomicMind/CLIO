@@ -649,6 +649,42 @@ sub process_input {
             }
         }
 
+        # Always ensure a <thread_summary> work-product anchor is in @messages
+        # BEFORE the API call. The proactive trim only creates a summary when
+        # it drops units, but a session that's been growing gradually can
+        # reach the budget without a single drop (each individual unit fits
+        # but the total is over). Without an anchor, the model has no
+        # work-product reference and falls back to the "Session Start
+        # Protocol" template from default.md on every turn (observed in
+        # sessions 00128874 and 6b09ac2d on Qwen3.6-35B llama.cpp: model
+        # emitted "Let me start by following the Session Start Protocol and
+        # then systematically examine the codebase" 8+ turns in, with no
+        # thread_summary ever present). The anchor is a small
+        # "<thread_summary>Current task: X</thread_summary>" block
+        # (~44 tokens) that fits in any budget and gives the model
+        # continuous "what am I doing" context.
+        #
+        # The anchor is only generated when:
+        #  - No existing thread_summary is in @messages (legitimate or
+        #    anchor), AND
+        #  - We have a substantive user task to anchor on
+        # If a real thread_summary already exists (from a trim or prior
+        # anchor), it's left untouched — _inject_thread_summary is a
+        # no-op in that case.
+        #
+        # BUG FIX (was: `@messages = $self->_inject_thread_summary(\@messages, $user_input)`):
+        # _inject_thread_summary returns an arrayREF and modifies \@messages IN
+        # PLACE (via splice). Assigning the return value to a list (@messages)
+        # does NOT dereference it — it makes @messages a single-element array
+        # whose sole element is the arrayref. That corrupted @messages into
+        # [ARRAY_REF], which validate_tool_message_pairs then filtered to [],
+        # sending messages:[] to the API → "Input required: specify
+        # 'prompt' or 'messages'" 400. Since the function already mutates
+        # \@messages in place, just call it without reassigning.
+        if ($self->can('_inject_thread_summary')) {
+            $self->_inject_thread_summary(\@messages, $user_input);
+        }
+
         # Enforce message alternation
         # Must be done before EVERY API call, as messages array is modified during tool calling
         my $provider = $self->{api_manager}->get_current_provider() || 'github_copilot';
@@ -3663,6 +3699,91 @@ emitted confused hallucinations about LTM and session goals).
 Returns: the substantive user task string, or '' if none found.
 
 =cut
+
+=head2 _inject_thread_summary(\@messages, $user_input)
+
+Ensure a <thread_summary> work-product anchor is present in @messages
+on every turn. The proactive trim only generates a summary when it
+drops units; a session that gradually grows without a single drop
+would have no thread_summary at all, leaving the model with no
+work-product reference. Without one, the model falls back to the
+"Session Start Protocol" template from default.md on every turn
+(observed in sessions 00128874 and 6b09ac2d on Qwen3.6-35B
+llama.cpp: model emitted "Let me start by following the Session Start
+Protocol and then systematically examine the codebase" 8+ turns in,
+with no thread_summary ever present, because the budget walk never
+dropped anything).
+
+Behavior:
+  - If @messages already contains a role=system message whose content
+    starts with <thread_summary>, return @messages unchanged (legitimate
+    summary from a prior trim or anchor).
+  - If @messages has no <thread_summary> AND we have a substantive
+    user task, build a minimal "<thread_summary>Current task: X</thread_summary>"
+    anchor from the substantive task and inject it at the CSSS slot
+    position (between the dialog and the current-turn user_context/user_input).
+  - If no substantive user task is available, return @messages unchanged.
+
+Arguments:
+  - $messages_ref: Arrayref of message hashes (will be modified in place)
+  - $user_input: The current user input string (for fallback task discovery)
+
+Returns: The (possibly modified) @messages arrayref.
+
+=cut
+
+sub _inject_thread_summary {
+    my ($self, $messages_ref, $user_input) = @_;
+    return $messages_ref unless $messages_ref && ref($messages_ref) eq 'ARRAY';
+
+    # Already have a thread_summary in @messages? Leave it alone — it's
+    # either a legitimate summary from a prior trim or a previously-injected
+    # anchor. Don't disturb the cache-stable position.
+    for my $msg (@$messages_ref) {
+        next unless ref($msg) eq 'HASH';
+        next unless ($msg->{role} // '') eq 'system';
+        my $content = $msg->{content} // '';
+        # Match ONLY messages that ARE a thread_summary, not messages
+        # that merely mention the literal text (anchored).
+        if ($content =~ /\A<thread_summary>/) {
+            return $messages_ref;
+        }
+    }
+
+    # Find the substantive task. The current user input is preferred; if it's
+    # too short or absent, walk the messages for the most recent substantive
+    # user task. This matches _find_substantive_user_task's policy.
+    my $task = $self->_find_substantive_user_task($messages_ref, $user_input, undef);
+    return $messages_ref unless defined $task && length($task) >= 50;
+
+    # Build the anchor summary. Use the MessageValidator helper since it
+    # already produces the canonical "<thread_summary>Current task: X</thread_summary>"
+    # block with the same token accounting the budget walk uses.
+    require CLIO::Core::API::MessageValidator;
+    my $anchor = CLIO::Core::API::MessageValidator::_make_anchor_summary($task);
+    return $messages_ref unless $anchor;
+
+    # Inject at the CSSS slot. Per the pipeline protocol, the canonical
+    # order is [sys][context_files][dialog][summary][user_context][user_input].
+    # The summary sits at the END of the dialog (just before user_context).
+    # Find the last user_context system message; if present, inject
+    # immediately before it. Otherwise inject at the very end.
+    my $inject_idx = scalar(@$messages_ref);  # default: end
+    for my $i (reverse 0 .. $#{$messages_ref}) {
+        my $m = $messages_ref->[$i];
+        next unless ref($m) eq 'HASH';
+        next unless ($m->{role} // '') eq 'system';
+        my $content = $m->{content} // '';
+        next if $content =~ /\A<thread_summary>/;  # already handled above
+        if ($content =~ /<(?:userContext|dynamicContext|sessionGoals)[\s>]/) {
+            $inject_idx = $i;
+            last;
+        }
+    }
+    splice @$messages_ref, $inject_idx, 0, $anchor;
+    log_debug('WorkflowOrchestrator', "Injected thread_summary anchor (" . ($anchor->{_metadata}{compressed_tokens} // '?') . " tokens) at index $inject_idx");
+    return $messages_ref;
+}
 
 sub _find_substantive_user_task {
     my ($self, $messages, $current_user_input, $session) = @_;

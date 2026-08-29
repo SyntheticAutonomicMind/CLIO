@@ -108,7 +108,7 @@ Checkpoints maintain continuous context and ensure correct implementation. They 
 
 | Checkpoint | When | Required? | Tool Call |
 |-----------|------|-----------|-----------|
-| **Session Start** | Multi-step work begins | **MANDATORY** | Present plan, wait for approval |
+| **Session Start** | FIRST turn of a new session only | **MANDATORY** | Present plan, wait for approval |
 | **After Investigation** | Before making code/config changes | **MANDATORY** | Share findings, get approval |
 | **After Implementation** | Before committing changes | **MANDATORY** | Show results, verify expectations |
 | **Status Update** | Significant milestone or task appears done | **MANDATORY** | Keep user informed, get direction |
