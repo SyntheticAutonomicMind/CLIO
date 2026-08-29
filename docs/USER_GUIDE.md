@@ -157,7 +157,7 @@ Use `/api` commands interactively. All save globally by default, or use `--sessi
 
 Use `/api show` to see your current configuration and whether any values are session overrides.
 
-See [PROVIDERS.md](PROVIDERS.md) for setup instructions for all 14 providers.
+See [PROVIDERS.md](PROVIDERS.md) for setup instructions for all 18 providers.
 
 **Optional Environment Variables**
 
@@ -426,6 +426,10 @@ CLIO provides 35+ slash commands. Type `/help` in any session to see the full li
 | `/api alias <name> <model>` | Create a model alias |
 | `/api alias` | List all model aliases |
 | `/api alias <name> --delete` | Remove a model alias |
+| `/api route add <name> <model>...` | Save a named model routing profile |
+| `/api route list` | List saved routing profiles |
+| `/api route use <name>` | Activate a named routing profile |
+| `/api route remove <name>` | Delete a routing profile |
 | `/model <name>` | Quick model switch (saved globally) |
 | `/model` | Show current model and aliases |
 | `/api login` | Authenticate with GitHub Copilot |
