@@ -93,6 +93,7 @@ sub handle_api_command {
     if ($action eq 'logout')    { $self->{auth}->handle_logout(@args); return; }
     if ($action eq 'quota')     { $self->{auth}->handle_quota(@args); return; }
     if ($action eq 'alias')     { $self->{cfg}->handle_alias(@args); return; }
+    if ($action eq 'route')     { $self->{cfg}->handle_route(@args); return; }
     if ($action eq 'remove' || $action eq 'rm') { $self->{cfg}->handle_remove(@args); return; }
 
     # Backward compatibility
@@ -158,6 +159,10 @@ sub _display_api_help {
             ['/api set model <name>',             'Set AI model (saved globally)', 40],
             ['/api set model <provider>/<model>', 'Set model with provider prefix', 40],
             ['/api set model "m1 m2 m3"',        'Set multiple models for routing (auto-fallback)', 40],
+            ['/api route add <name> m1 m2...',   'Save a named model routing profile', 40],
+            ['/api route list',                  'List saved routing profiles', 40],
+            ['/api route use <name>',            'Activate a named routing profile', 40],
+            ['/api route remove <name>',         'Delete a routing profile', 40],
             ['/api set provider <name>',          'Set provider (google, minimax, etc.)', 40],
             ['/api set base <url>',               'Set API base URL', 40],
             ['/api set key <value>',              'Set API key (stored per-provider)', 40],

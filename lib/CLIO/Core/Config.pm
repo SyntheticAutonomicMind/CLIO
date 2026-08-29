@@ -63,6 +63,7 @@ use constant DEFAULT_CONFIG => {
     model_configs => {},  # Per-model scoped config
     model_candidates => [],  # List of models for routing (e.g. ["openrouter/foo", "kilo/bar"])
     model_routing_index => 0,  # Current index into model_candidates
+    model_routes => {},  # Named routing profiles: { "route-name" => ["model1", "model2"] }
     api_key => '',
     api_keys => {},  # Per-provider API keys: { google => 'AIza...', minimax => '...' }
     api_bases => {},  # Per-provider API base URLs: { 'llama.cpp' => 'http://localhost:9090/...' }
@@ -930,6 +931,74 @@ sub list_model_aliases {
     my ($self) = @_;
     
     return %{$self->{config}->{model_aliases} || {}};
+}
+
+=head2 get_model_route($name)
+
+Get a named model routing profile (list of models).
+
+Arguments:
+  $name - Route name
+
+Returns: Arrayref of model strings, or undef if not found.
+
+=cut
+
+sub get_model_route {
+    my ($self, $name) = @_;
+    return unless $name;
+    my $routes = $self->{config}->{model_routes} || {};
+    my $route = $routes->{lc($name)};
+    return ref($route) eq 'ARRAY' ? $route : undef;
+}
+
+=head2 set_model_route($name, $models)
+
+Save a named model routing profile.
+
+Arguments:
+  $name    - Route name
+  $models  - Arrayref of model strings
+
+Returns: 1 on success
+
+=cut
+
+sub set_model_route {
+    my ($self, $name, $models) = @_;
+    return 0 unless $name && $models && ref($models) eq 'ARRAY';
+    $self->{config}->{model_routes} ||= {};
+    $self->{config}->{model_routes}{lc($name)} = $models;
+    $self->{user_set}->{model_routes} = 1;
+    return 1;
+}
+
+=head2 delete_model_route($name)
+
+Remove a named model routing profile. Returns 1 if deleted, 0 if not found.
+
+=cut
+
+sub delete_model_route {
+    my ($self, $name) = @_;
+    return 0 unless $name;
+    my $routes = $self->{config}->{model_routes} || {};
+    return 0 unless exists $routes->{lc($name)};
+    delete $routes->{lc($name)};
+    $self->{user_set}->{model_routes} = 1;
+    return 1;
+}
+
+=head2 list_model_routes
+
+Return hash of all routing profiles (name => [models]).
+
+=cut
+
+sub list_model_routes {
+    my ($self) = @_;
+    my $routes = $self->{config}->{model_routes} || {};
+    return %$routes;
 }
 
 =head2 get_all
