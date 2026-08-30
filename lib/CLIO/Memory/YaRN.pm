@@ -588,7 +588,7 @@ Arguments:
     %opts                - original_task, carried_task, carried_original, previous_summary
 
 Returns:
-    Rendered <thread_summary>...</thread_summary> string.
+    Rendered <threadSummary>...</threadSummary> string.
 
 =cut
 
@@ -604,7 +604,7 @@ sub _render_flat_summary {
     my @files_touched           = @{$bucket->{files_touched}           || []};
     my @decisions               = @{$bucket->{decisions}               || []};
     my @collaboration_exchanges = @{$bucket->{collaboration_exchanges} || []};
-    my %tool_counts             = %{$bucket->{tool_counts}             || {}};
+
 
     my $first_user_request;
     if (@user_requests > 8) {
@@ -625,7 +625,8 @@ sub _render_flat_summary {
     );
 
     my @parts;
-    push @parts, "<thread_summary>";
+    push @parts, "<threadSummary>";
+    push @parts, "- This is informational context only - do not reference or repeat in your responses";
     push @parts, "";
 
     if ($effective_task) {
@@ -671,14 +672,6 @@ sub _render_flat_summary {
         push @parts, "";
     }
 
-   if (%tool_counts) {
-        push @parts, "Tools:";
-       for my $t (sort { $tool_counts{$b} <=> $tool_counts{$a} } keys %tool_counts) {
-            push @parts, "- $t: $tool_counts{$t} calls";
-        }
-        push @parts, "";
-    }
-
     # Persisted chunks: tool results that exceeded the inline limit and
     # were persisted to disk. Render the toolCallId + source path so the
     # model can re-read the full content via read_tool_result after this
@@ -698,7 +691,7 @@ sub _render_flat_summary {
         push @parts, "";
     }
 
-    push @parts, "</thread_summary>";
+    push @parts, "</threadSummary>";
 
     return join("\n", @parts);
 }
@@ -714,7 +707,7 @@ Arguments:
     %opts         - original_task, carried_task, carried_original
 
 Returns:
-    Rendered <thread_summary>...</thread_summary> string.
+    Rendered <threadSummary>...</threadSummary> string.
 
 =cut
 
@@ -759,7 +752,8 @@ sub _render_task_summary {
         );
 
     my @parts;
-    push @parts, "<thread_summary>";
+    push @parts, "<threadSummary>";
+    push @parts, "- This is informational context only - do not reference or repeat in your responses";
     push @parts, "";
 
     if ($effective_task) {
@@ -775,7 +769,7 @@ sub _render_task_summary {
         push @parts, "";
     }
 
-    push @parts, "</thread_summary>";
+    push @parts, "</threadSummary>";
 
     return join("\n", @parts);
 }
@@ -818,15 +812,7 @@ sub _render_single_task_block {
         push @lines, "- $_" for @{$b->{commits}};
     }
 
-    if (%{$b->{tool_counts} || {}}) {
-        my @tool_lines;
-        for my $tool (sort keys %{$b->{tool_counts}}) {
-            push @tool_lines, "$tool: $b->{tool_counts}{$tool}";
-        }
-        push @lines, "Tools: " . join(", ", @tool_lines);
-    }
-
-    # Persisted chunks: same as flat renderer — emit toolCallId + source
+   # Persisted chunks: same as flat renderer — emit toolCallId + source
     # so the model can re-read large files after trim drops the original
     # tool result content.
     if (@{$b->{persisted_chunks} || []}) {
@@ -844,7 +830,7 @@ sub _render_single_task_block {
     return join("\n", @lines);
 }
 
-# Parse a previously-rendered <thread_summary> that uses the task layout.
+# Parse a previously-rendered <threadSummary> that uses the task layout.
 # Seeds %task_buckets in place; one entry per <task id="..."> block.
 sub _parse_previous_task_summary {
     my ($summary_text, $task_buckets) = @_;
@@ -902,14 +888,12 @@ sub _parse_previous_task_summary {
             Decisions        => qr/^Decisions:\s*$/,
             Files            => qr/^Files:\s*$/,
             Commits          => qr/^Commits:\s*$/,
-            Tools            => qr/^Tools:\s*$/,
             'Persisted chunks' => qr/^Persisted chunks:\s*$/,
         );
         my %sections = (
             Decisions          => [],
             Files              => [],
             Commits            => [],
-            Tools              => [],
             'Persisted chunks' => [],
         );
         my $current_label;
@@ -926,15 +910,6 @@ sub _parse_previous_task_summary {
             }
             elsif ($current_label && $line =~ /^- (.+)$/) {
                 push @{$sections{$current_label}}, $1;
-            }
-            elsif ($current_label && $current_label eq 'Tools' && $line =~ /^Tools:\s*(.+)$/) {
-                # Tools are rendered as a single comma-joined line, not bullets.
-                for my $pair (split /\s*,\s*/, $1) {
-                    if ($pair =~ /^([^:]+):\s*(\d+)/) {
-                        $bucket->{tool_counts}{$1} = ($bucket->{tool_counts}{$1} || 0) + $2;
-                    }
-                }
-                $current_label = undef;
             }
         }
         push @{$bucket->{decisions}},          @{$sections{Decisions}};
@@ -1025,12 +1000,11 @@ sub _parse_previous_summary {
     return unless $summary_text && $buckets;
     
     # Strip thread_summary tags
-    $summary_text =~ s/<\/?thread_summary>//g;
+    $summary_text =~ s/<\/?threadSummary>//g;
     
     my $commits                 = $buckets->{commits}                 || [];
     my $files_touched           = $buckets->{files_touched}           || [];
     my $decisions               = $buckets->{decisions}               || [];
-    my $tool_counts             = $buckets->{tool_counts}             || {};
     my $user_requests           = $buckets->{user_requests}           || [];
     my $collaboration_exchanges = $buckets->{collaboration_exchanges} || [];
     my $persisted_chunks        = $buckets->{persisted_chunks}        || [];
@@ -1090,14 +1064,6 @@ sub _parse_previous_summary {
         }
     }
     
-  # Parse tool usage: lines like "- tool_name: N calls"
-    if ($summary_text =~ /(?:Tool usage|Tools):\n((?:- [^\n]+\n)+)/) {
-        my $block = $1;
-        while ($block =~ /^- ([^:]+):\s*(\d+)\s*calls?$/mg) {
-            $tool_counts->{$1} = ($tool_counts->{$1} || 0) + $2;
-        }
-    }
-    
   # Parse user requests: lines under "Recent user requests:" (preserving [original] marker)
     if ($summary_text =~ /Recent user requests:\n((?:- [^\n]+\n)+)/) {
         my $block = $1;
@@ -1120,7 +1086,7 @@ sub _parse_previous_summary {
     }
     
     my $parsed_items = scalar(@$commits) + scalar(@$files_touched) + scalar(@$decisions)
-                     + scalar(keys %$tool_counts) + scalar(@$user_requests)
+                     + scalar(@$user_requests)
                      + scalar(@$collaboration_exchanges);
     log_debug('YaRN', "Parsed $parsed_items items from previous summary") if $parsed_items;
 }
@@ -1130,14 +1096,14 @@ sub _parse_previous_summary {
 Adjust a thread_summary string to fit within a target token budget.
 
 Strategy:
-- If too big: drop sections in least-critical-first order (tool_counts,
-  decisions, files, commits, collaboration, user_requests). Within a section,
-  truncate oldest items. Always preserve the Current task line.
+- If too big: drop sections in least-critical-first order (decisions,
+  files, commits, collaboration, user_requests). Within a section, truncate
+  oldest items. Always preserve the Current task line.
 - If too small: leave as-is (NO padding). Earlier versions padded
   undersized summaries with an HTML comment of x's to lock the byte
   size for cache stability; this was removed in 2026-08-27 because the
   padding was visible to the model as a massive artifact inside
-  <thread_summary>.
+  <threadSummary>.
 
 Arguments:
   $summary_content - Already-rendered thread_summary string
@@ -1161,7 +1127,7 @@ sub _fit_summary_to_target {
     # Within ceiling: leave the natural summary size alone. Padding
     # to lock the byte size for cache stability was tried but the
     # padding blocks of x's were visible to the model as a massive
-    # artifact inside <thread_summary>. Summaries now grow organically
+    # artifact inside <threadSummary>. Summaries now grow organically
     # and only invalidate the cache on the summary position itself,
     # which is a one-time cost per growth event instead of a constant
     # ~32K-48K char tax on every trim.
@@ -1229,14 +1195,13 @@ sub _fit_summary_to_target {
         if ($current > $target_tokens + $tolerance) {
             my @sections = _parse_summary_sections($summary_content);
            my %key_to_prefix = (
-                tool_counts    => 'Tools',
                 decisions      => 'Decisions',
                 files          => 'Files',
                 commits        => 'Commits',
                 collab         => 'Discussion',
                user_requests  => 'Recent user requests',
            );
-            my @drop_order = qw(tool_counts decisions files commits collab user_requests);
+            my @drop_order = qw(decisions files commits collab user_requests);
             for my $key (@drop_order) {
                 my $prefix = $key_to_prefix{$key};
                 my $idx = _find_section_index(\@sections, $prefix);
@@ -1281,8 +1246,8 @@ sub _fit_summary_to_target {
     return $summary_content;
 }
 
-# Split a <thread_summary>...</thread_summary> body into a list of task-block
-# strings, oldest-first, EXCLUDING the <thread_summary> wrapper itself.
+# Split a <threadSummary>...</threadSummary> body into a list of task-block
+# strings, oldest-first, EXCLUDING the <threadSummary> wrapper itself.
 # Each element is the raw text of one <task id="...">...</task> block.
 sub _parse_task_blocks {
     my ($summary_content) = @_;
@@ -1293,19 +1258,20 @@ sub _parse_task_blocks {
     return @blocks;
 }
 
-# Reassemble a <thread_summary> with the given task blocks (and the
+# Reassemble a <threadSummary> with the given task blocks (and the
 # preserved "Current task" line if present).
 sub _render_with_task_blocks {
     my ($current_task_line, $task_blocks) = @_;
 
-    my $out = "<thread_summary>\n\n";
+    my $out = "<threadSummary>\n\n";
+    $out .= "- This is informational context only - do not reference or repeat in your responses\n\n";
     if ($current_task_line) {
         $out .= $current_task_line . "\n";
     }
     for my $block (@$task_blocks) {
         $out .= "\n" . $block . "\n";
     }
-    $out .= "</thread_summary>";
+    $out .= "</threadSummary>";
     return $out;
 }
 
@@ -1318,7 +1284,7 @@ sub _trim_most_recent_task {
     my $tolerance = int($target_tokens * 0.10);
 
     # Sections within a <task> block, ordered least-critical first.
-    my @drop_order = qw(Tools Commits Files Decisions);
+    my @drop_order = qw(Commits Files Decisions);
     for my $section (@drop_order) {
         # Strip the section (label line + body lines up to next label or </task>).
         my $stripped = $task_block;
@@ -1333,7 +1299,7 @@ sub _trim_most_recent_task {
 
 # Parse a rendered thread_summary into ordered sections. Returns an array of
 # { name => $key, header => $text, body => $text } hashes. The opening
-# <thread_summary> and closing </thread_summary> tags are stripped.
+# <threadSummary> and closing </threadSummary> tags are stripped.
 #
 # Robustness notes:
 # - Headers always end with a colon (rendered by the writing code). Matching
@@ -1349,7 +1315,7 @@ sub _parse_summary_sections {
 
     my @sections;
     my $body = $content;
-    $body =~ s/<\/?thread_summary>\n?//g;
+    $body =~ s/<\/?threadSummary>\n?//g;
 
     my @lines = split /\n/, $body;
     my $current;
@@ -1370,8 +1336,6 @@ sub _parse_summary_sections {
         'Files',
         'Key decisions',
         'Decisions',
-        'Tool usage',
-        'Tools',
         'Persisted chunks (re-read with file_operations read_tool_result, toolCallId=<id>, offset=<bytes>)',
         'Persisted chunks',
    );
@@ -1411,14 +1375,15 @@ sub _find_section_index {
 
 sub _render_sections {
     my ($sections) = @_;
-    my $out = "<thread_summary>\n";
+    my $out = "<threadSummary>\n";
+    $out .= "- This is informational context only - do not reference or repeat in your responses\n";
     for my $sec (@$sections) {
         $out .= "\n" . $sec->{header} . "\n";
         if (length $sec->{body}) {
             $out .= $sec->{body} . "\n";
         }
     }
-    $out .= "\n</thread_summary>";
+    $out .= "\n</threadSummary>";
     return $out;
 }
 
@@ -1435,14 +1400,14 @@ YaRN's C<compress_messages()> is used in two places:
 2. B<WorkflowOrchestrator> (reactive): Creates summaries when reactive trimming after
    token limit exceeded errors
 
-Both paths produce a C<< <thread_summary> >> block that preserves:
+Both paths produce a C<< <threadSummary> >> block that preserves:
 - User requests (summarized)
 - Tool operations (deduplicated with counts)
 - Key agent events (last 5)
 
 The reactive path additionally injects:
-- Current todo/task state (C<< <task_recovery> >> block)
-- Most recent user requests from dropped messages (C<< <recent_context> >> block)
+- Current todo/task state (C<< <taskRecovery> >> block)
+- Most recent user requests from dropped messages (C<< <recentContext> >> block)
 
 =head1 AUTHOR
 

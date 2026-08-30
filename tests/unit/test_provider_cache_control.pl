@@ -88,7 +88,7 @@ sub apply_cache_control {
 subtest 'cache_control marker placed on system prompt (first leading system)' => sub {
     my $messages = [
         { role => 'system', content => 'SYSTEM PROMPT' },
-        { role => 'system', content => '<thread_summary>summary</thread_summary>' },
+        { role => 'system', content => '<threadSummary>summary</threadSummary>' },
         { role => 'user',      content => 'q1' },
         { role => 'assistant', content => 'a1' },
     ];

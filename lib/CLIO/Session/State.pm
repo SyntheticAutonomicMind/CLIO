@@ -1051,7 +1051,7 @@ sub get_conversation_size {
 Intelligently trim context when approaching token limits.
 Preserves: system messages, recent messages (last 10), high-importance messages.
 Moves trimmed messages to YaRN for later recall. Compresses dropped messages
-into a <thread_summary> block that is preserved as a system message - the
+into a <threadSummary> block that is preserved as a system message - the
 model treats it as just another piece of context, no notification of the
 trim event itself.
 
@@ -1135,7 +1135,7 @@ sub trim_context {
     
     # No trim notice is injected into the model. The compressed YaRN
     # summary (when present) IS the work product - it replaces the dropped
-    # messages with a self-contained <thread_summary>...</thread_summary>
+    # messages with a self-contained <threadSummary>...</threadSummary>
     # block that the model can read as just another piece of context.
     # Telling the model "you were trimmed" or giving it recovery
     # instructions is a context distraction: the model becomes uncertain
@@ -1147,7 +1147,7 @@ sub trim_context {
     # $keep_recent messages) plus all user messages (the task anchors)
     # to continue from. No notification, no recovery hints, no brackets.
     #
-    # If @system already contains a previous <thread_summary> from an
+    # If @system already contains a previous <threadSummary> from an
     # earlier trim, drop it - the new summary already encompasses the
     # dropped messages plus the prior summary content (YaRN's
     # compress_messages walks the full @dropped list, which would
@@ -1155,9 +1155,9 @@ sub trim_context {
     # Keeping both would bloat the slot without adding signal.
     #
     # Match ONLY messages that ARE a thread_summary, not messages
-    # that merely mention the literal text "<thread_summary>".
+    # that merely mention the literal text "<threadSummary>".
     # The system prompt template contains a section explaining CSSS
-    # that uses the literal string "<thread_summary>", and a substring
+    # that uses the literal string "<threadSummary>", and a substring
     # match on the system prompt would cause the entire 70K-char
     # system prompt to be dropped on trim (observed in session
     # 6b09ac2d-b4e7-4f7b-8943-eb448449227a, 2026-08-29 on
@@ -1165,7 +1165,7 @@ sub trim_context {
     if ($compressed_summary) {
         @system = grep {
             my $c = $_->{content} // '';
-            !($c =~ /\A<thread_summary>/ || $c =~ /^\[CONTEXT TRIM:/);
+            !($c =~ /\A<threadSummary>/ || $c =~ /^\[CONTEXT TRIM:/);
         } @system;
         # Inject the new summary as a system message so ConversationManager
         # can preserve it on resume. Position it BEFORE the user messages

@@ -32,26 +32,24 @@ sub ok_test {
     
     # Simulate a previous summary with accumulated history
     my $old_summary = <<'END';
-<thread_summary>
-(Compressed 52 messages to free context space)
+<threadSummary>
 
-Original task: Build a widget system
+- This is informational context only - do not reference or repeat in your responses
 
-Git commits made during compressed period:
+Current task: Build a widget system
+
+Commits:
 - abc1234: feat: add widget base class
 - def5678: feat: add widget rendering
 
-Files created/modified:
+Files:
 - lib/Widget.pm
 - lib/WidgetRenderer.pm
 
-Key decisions:
+Decisions:
 - Use composition over inheritance for widgets
 
-Tool usage:
-- file_operations: 25 calls
-- terminal_operations: 10 calls
-</thread_summary>
+</threadSummary>
 END
 
     # New messages being compressed - different work
@@ -72,23 +70,20 @@ END
     
     my $content = $result->{content} || '';
     
-    # Previous commits should be preserved
+    # Commits, files, and decisions from the previous summary are preserved
     ok_test($content =~ /abc1234/, "Previous commit abc1234 preserved in new summary");
     ok_test($content =~ /def5678/, "Previous commit def5678 preserved in new summary");
-    
-    # Previous files should be preserved
     ok_test($content =~ /Widget\.pm/, "Previous file Widget.pm preserved");
     ok_test($content =~ /WidgetRenderer\.pm/, "Previous file WidgetRenderer.pm preserved");
-    
-    # Previous decisions should be preserved
     ok_test($content =~ /composition over inheritance/, "Previous decision preserved");
-    
+
     # New content should also be present
     ok_test($content =~ /test_widget/, "New file from current messages included");
     ok_test($content =~ /1234567/, "New commit from current messages included");
-    
-    # Tool counts should be accumulated
-    ok_test($content =~ /file_operations:\s*2[56]/, "file_operations count accumulated (25 + 1 = 26)");
+
+    # Tool counts are NOT rendered — only work product survives
+    ok_test($content !~ /Tool usage:/, "No 'Tool usage:' section in summary");
+    ok_test($content !~ /file_operations:\s*\d+\s+calls/, "No file_operations call count");
 }
 
 # Test 2: YaRN without previous_summary still works
@@ -105,7 +100,7 @@ END
     
     my $result = $yarn->compress_messages(\@messages, original_task => 'Test task');
     ok_test($result && $result->{content}, "Compression without previous_summary works");
-    ok_test($result->{content} =~ /terminal_operations/, "Tool usage tracked without previous summary");
+    ok_test($result->{content} =~ /Current task:/, "Current task line present without previous_summary");
 }
 
 # Test 3: _parse_previous_summary handles empty/missing content
@@ -136,7 +131,7 @@ END
     # Simulate a message array with an old thread_summary
     my @messages = (
         { role => 'system', content => 'System prompt goes here' },
-        { role => 'system', content => '<thread_summary>Old accumulated summary content</thread_summary>' },
+        { role => 'system', content => '<threadSummary>Old accumulated summary content</threadSummary>' },
         { role => 'user', content => 'First user message' },
         { role => 'assistant', content => 'Response 1' },
         { role => 'user', content => 'Second message' },
@@ -159,7 +154,7 @@ END
         # Check that the result has a thread_summary message
         my $has_summary = 0;
         for my $msg (@$result) {
-            if ($msg->{content} && $msg->{content} =~ /<thread_summary>/) {
+            if ($msg->{content} && $msg->{content} =~ /<threadSummary>/) {
                 $has_summary = 1;
                 last;
             }
@@ -172,7 +167,7 @@ END
 {
     my @messages = (
         { role => 'system', content => 'System prompt' },
-        { role => 'system', content => '<thread_summary>Preserved old summary with commits and files</thread_summary>' },
+        { role => 'system', content => '<threadSummary>Preserved old summary with commits and files</threadSummary>' },
         { role => 'user', content => 'First user message' },
         { role => 'assistant', content => 'Short response' },
     );

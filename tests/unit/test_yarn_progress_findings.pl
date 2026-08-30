@@ -178,11 +178,10 @@ sub ok_test {
     );
     my $r = $yarn->compress_messages(\@msgs, original_task => 'Review code');
     my $content = $r->{content} || '';
-    my $files_idx = index($content, 'Files');
+    my $files_idx = index($content, 'Files:');
     my $decisions_idx = index($content, 'Decisions:');
-    my $tool_idx = index($content, 'Tools:');
-    ok_test($files_idx > 0 && $decisions_idx > $files_idx && $tool_idx > $decisions_idx,
-        'render order: Files < Decisions < Tools');
+    ok_test($files_idx > 0 && $decisions_idx > $files_idx,
+        'render order: Files < Decisions');
 }
 
 print "\n$passed passed, $failed failed\n";

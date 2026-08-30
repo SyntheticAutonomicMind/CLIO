@@ -133,7 +133,7 @@ subtest 'snapshot drops user_context anchors' => sub {
 subtest 'snapshot preserves thread_summary' => sub {
     my @history = (
         { role => 'system', content => 'sys' },
-        { role => 'system', content => '<thread_summary>Current task: foo</thread_summary>' },
+        { role => 'system', content => '<threadSummary>Current task: foo</threadSummary>' },
         { role => 'user', content => 'task' },
         { role => 'assistant', content => 'reasoning' },
     );
@@ -142,7 +142,7 @@ subtest 'snapshot preserves thread_summary' => sub {
     is(scalar(@$snap), 4, 'snapshot has all 4 messages');
     my $has_summary = 0;
     for my $m (@$snap) {
-        $has_summary = 1 if (($m->{content} // '') =~ /<thread_summary>/);
+        $has_summary = 1 if (($m->{content} // '') =~ /<threadSummary>/);
     }
     ok($has_summary, 'thread_summary preserved in snapshot');
 };

@@ -45,7 +45,7 @@ sub build_session_with_hard_truncated_summary {
         # hard-truncate in _fit_summary_to_target.
         {
             role    => 'system',
-            content => "<thread_summary>\n\nCurrent task: do X\n\n" .
+            content => "<threadSummary>\n\nCurrent task: do X\n\n" .
                        ('detail ' x 30) . "\n[Summary truncated to fit cache-stable slot of 199 tokens]",
             _metadata => {
                 compressed_tokens => 539,
@@ -66,7 +66,7 @@ sub build_session_with_hard_truncated_summary {
 sub summary_tokens {
     my ($result) = @_;
     for my $m (@$result) {
-        if (($m->{role} // '') eq 'system' && ($m->{content} // '') =~ /<thread_summary>/) {
+        if (($m->{role} // '') eq 'system' && ($m->{content} // '') =~ /<threadSummary>/) {
             require CLIO::Memory::TokenEstimator;
             return CLIO::Memory::TokenEstimator::estimate_tokens($m->{content});
         }
@@ -91,7 +91,7 @@ subtest 'slot recovers from previously hard-truncated 199 to recorded 539' => su
         { role => 'system', content => 'CLIO System Prompt ' . ('S' x 6000) },
         {
             role    => 'system',
-            content => "<thread_summary>\n\nCurrent task: do X\n\n" .
+            content => "<threadSummary>\n\nCurrent task: do X\n\n" .
                        ('detail ' x 30) . "\n[Summary truncated to fit cache-stable slot of 199 tokens]",
             _metadata => {
                 compressed_tokens => 539,
@@ -139,7 +139,7 @@ subtest 'without _metadata: slot stays at 199, summary hard-truncated (the bug)'
         {
             role    => 'system',
             # Hard-truncated content but NO _metadata - can't recover.
-            content => "<thread_summary>\n\nCurrent task: do X\n\n" .
+            content => "<threadSummary>\n\nCurrent task: do X\n\n" .
                        ('detail ' x 30) . "\n[Summary truncated to fit cache-stable slot of 199 tokens]",
         },
         { role => 'user', content => 'task description ' . ('u' x 4000) },
@@ -180,8 +180,8 @@ subtest 'no hard-truncate: slot stays at existing size (no recovery log)' => sub
     # to produce; we set it equal to the actual content size so no
     # hard-truncate is implied.
     require CLIO::Memory::TokenEstimator;
-    my $content = "<thread_summary>\n\nCurrent task: do X\n\n" .
-                  ('detail ' x 200) . "</thread_summary>\n";
+    my $content = "<threadSummary>\n\nCurrent task: do X\n\n" .
+                  ('detail ' x 200) . "</threadSummary>\n";
     my $existing = CLIO::Memory::TokenEstimator::estimate_tokens($content);
 
     my @msgs = (
@@ -231,7 +231,7 @@ subtest 'no _metadata: recovery path does not run, fallback behavior' => sub {
         { role => 'system', content => 'CLIO System Prompt ' . ('S' x 6000) },
         {
             role    => 'system',
-            content => "<thread_summary>\n\nCurrent task: do X\n\n" .
+            content => "<threadSummary>\n\nCurrent task: do X\n\n" .
                        ('detail ' x 30),
             # No _metadata - recovery can't run.
         },
@@ -268,7 +268,7 @@ subtest 'recovery is capped at MAX_CSSS_SLOT_TOKENS' => sub {
         { role => 'system', content => 'CLIO System Prompt ' . ('S' x 6000) },
         {
             role    => 'system',
-            content => "<thread_summary>\n\nCurrent task: do X\n\n" .
+            content => "<threadSummary>\n\nCurrent task: do X\n\n" .
                        ('detail ' x 50),
             _metadata => {
                 compressed_tokens => 50000,  # way more than MAX

@@ -648,7 +648,7 @@ sub process_input {
             }
         }
 
-        # Always ensure a <thread_summary> work-product anchor is in @messages
+        # Always ensure a <threadSummary> work-product anchor is in @messages
         # BEFORE the API call. The proactive trim only creates a summary when
         # it drops units, but a session that's been growing gradually can
         # reach the budget without a single drop (each individual unit fits
@@ -659,7 +659,7 @@ sub process_input {
         # emitted "Let me start by following the Session Start Protocol and
         # then systematically examine the codebase" 8+ turns in, with no
         # thread_summary ever present). The anchor is a small
-        # "<thread_summary>Current task: X</thread_summary>" block
+        # "<threadSummary>Current task: X</threadSummary>" block
         # (~44 tokens) that fits in any budget and gives the model
         # continuous "what am I doing" context.
         #
@@ -1365,7 +1365,7 @@ sub _build_turn_context {
             last if ($m->{role} // '') ne 'system';
             # Keep thread_summary - it's a model-facing work product, not
             # a system prompt.
-            next if ($m->{content} // '') =~ /\A<thread_summary>/;
+            next if ($m->{content} // '') =~ /\A<threadSummary>/;
             # Otherwise (system prompt, [CONTEXT TRIM:] notices, error
             # messages), drop. A fresh system prompt will be added below.
             $first_non_system_idx = $i + 1;
@@ -1779,7 +1779,7 @@ sub _capture_api_payload {
     # The proactive trim places thread_summary at the END of @messages, but
     # the model's response + tool_results are appended AFTER it, pushing the
     # summary back into the middle of the conversation. Without this fix,
-    # the snapshot captures <thread_summary> as a mid-conversation system
+    # the snapshot captures <threadSummary> as a mid-conversation system
     # block, which llama.cpp wraps in <system>...</system> tags and resets
     # the model's context framing — causing the mid-session agent restart
     # observed in session f091a4e1 (2026-08-27).
@@ -1974,7 +1974,7 @@ Walk the messages, partitioning them into:
 - system_prompt:  first system message w/o thread_summary/userContext/[CONTEXT FILES] tag
 - context_files:  system messages with [CONTEXT FILES] tag
 - dialog:         all user/assistant/tool messages in original order
-- thread_summary:  the LAST <thread_summary> system message (CSSS slot)
+- thread_summary:  the LAST <threadSummary> system message (CSSS slot)
 - user_context:   the LAST <userContext>/<dynamicContext>/<sessionGoals> system message
 
 Everything else (duplicate user_context, duplicate thread_summary, stray
@@ -1985,7 +1985,7 @@ Root cause this fixes (session f091a4e1, 2026-08-27):
 The proactive trim places thread_summary at the END of @messages, but
 the model's response + tool_results are appended AFTER it, pushing the
 summary back into the middle of the conversation. Without this
-normalization, the snapshot captures <thread_summary> as a
+normalization, the snapshot captures <threadSummary> as a
 mid-conversation system block, which llama.cpp's chat template wraps in
 <system>...</system> tags and resets the model's context framing —
 causing the gradual degradation (empty content, error loops, agent
@@ -2034,7 +2034,7 @@ sub _normalize_payload_layout {
                     }
                 }
             }
-            if ($flat =~ /^\s*<(?:userContext|dynamicContext|sessionGoals)[\s>]/ && $flat !~ /\A<thread_summary>/) {
+            if ($flat =~ /^\s*<(?:userContext|dynamicContext|sessionGoals)[\s>]/ && $flat !~ /\A<threadSummary>/) {
                 $uc_idx = $i;
                 last;
             }
@@ -2083,11 +2083,11 @@ sub _normalize_payload_layout {
                 }
             }
 
-            if ($flat_content =~ /\A<thread_summary>/) {
+            if ($flat_content =~ /\A<threadSummary>/) {
                 # Keep only the LAST thread_summary — CSSS slot lock depends
                 # on exactly one summary at the end of the dialog. Match
                 # anchored to start of content so messages that merely
-                # mention the literal text "<thread_summary>" (e.g. the
+                # mention the literal text "<threadSummary>" (e.g. the
                 # system prompt's CSSS section) don't get treated as
                 # summaries.
                 $summary_msg = $msg;
@@ -2128,7 +2128,7 @@ sub _normalize_payload_layout {
                     }
                 }
             }
-            if ($ct_flat =~ /\A<thread_summary>/) {
+            if ($ct_flat =~ /\A<threadSummary>/) {
                 $summary_msg = $msg;
                 $seen_summary++;
                 next;
@@ -2173,8 +2173,8 @@ section. Sections that don't exist in the array (e.g. no summary yet,
 no context files, no user_context) are omitted from the result hash.
 
 Section identification (canonical pipeline protocol order):
-- system_prompt: position 0, role=system, no [CONTEXT FILES] / <thread_summary> / <userContext> tag
-- summary: role=system, content has <thread_summary> tag
+- system_prompt: position 0, role=system, no [CONTEXT FILES] / <threadSummary> / <userContext> tag
+- summary: role=system, content has <threadSummary> tag
 - context_files: role=system, content has [CONTEXT FILES] tag
 - dialog: alternating user / assistant messages (every consecutive user/assistant pair)
 - tool_results: role=tool messages (with tool_call_id)
@@ -2218,10 +2218,10 @@ sub _compute_section_signatures {
 
         if ($role eq 'system') {
             # Match ONLY messages that ARE a thread_summary, not messages
-            # that merely mention the literal text "<thread_summary>".
+            # that merely mention the literal text "<threadSummary>".
             # See the comment in ConversationManager.pm for the full
             # rationale. Anchored to start of content.
-            if ($content =~ /\A<thread_summary>/) {
+            if ($content =~ /\A<threadSummary>/) {
                 $sections{summary} .= _stable_content($content);
                 $state = 'dialog';  # After summary, dialog begins
             } elsif ($content =~ /\[CONTEXT FILES\]/) {
@@ -2434,10 +2434,10 @@ sub _try_resume_from_payload {
         my $content = $msg->{content} // '';
         $payload_tokens += CLIO::Memory::TokenEstimator::estimate_tokens($content);
         # Match ONLY messages that ARE a thread_summary, not messages
-        # that merely mention the literal text "<thread_summary>".
+        # that merely mention the literal text "<threadSummary>".
         # See the comment in ConversationManager.pm for the full
         # rationale. Anchored to start of content.
-        $has_thread_summary = 1 if $content =~ /\A<thread_summary>/;
+        $has_thread_summary = 1 if $content =~ /\A<threadSummary>/;
     }
     
     # Only reject small payloads if they contain a thread_summary (i.e., were
@@ -3747,7 +3747,7 @@ Returns: the substantive user task string, or '' if none found.
 
 =head2 _inject_thread_summary(\@messages, $user_input)
 
-Ensure a <thread_summary> work-product anchor is present in @messages
+Ensure a <threadSummary> work-product anchor is present in @messages
 on every turn. The proactive trim only generates a summary when it
 drops units; a session that gradually grows without a single drop
 would have no thread_summary at all, leaving the model with no
@@ -3761,10 +3761,10 @@ dropped anything).
 
 Behavior:
   - If @messages already contains a role=system message whose content
-    starts with <thread_summary>, return @messages unchanged (legitimate
+    starts with <threadSummary>, return @messages unchanged (legitimate
     summary from a prior trim or anchor).
-  - If @messages has no <thread_summary> AND we have a substantive
-    user task, build a minimal "<thread_summary>Current task: X</thread_summary>"
+  - If @messages has no <threadSummary> AND we have a substantive
+    user task, build a minimal "<threadSummary>Current task: X</threadSummary>"
     anchor from the substantive task and inject it at the CSSS slot
     position (between the dialog and the current-turn user_context/user_input).
   - If no substantive user task is available, return @messages unchanged.
@@ -3790,7 +3790,7 @@ sub _inject_thread_summary {
         my $content = $msg->{content} // '';
         # Match ONLY messages that ARE a thread_summary, not messages
         # that merely mention the literal text (anchored).
-        if ($content =~ /\A<thread_summary>/) {
+        if ($content =~ /\A<threadSummary>/) {
             return $messages_ref;
         }
     }
@@ -3802,7 +3802,7 @@ sub _inject_thread_summary {
     return $messages_ref unless defined $task && length($task) >= 50;
 
     # Build the anchor summary. Use the MessageValidator helper since it
-    # already produces the canonical "<thread_summary>Current task: X</thread_summary>"
+    # already produces the canonical "<threadSummary>Current task: X</threadSummary>"
     # block with the same token accounting the budget walk uses.
     require CLIO::Core::API::MessageValidator;
     my $anchor = CLIO::Core::API::MessageValidator::_make_anchor_summary($task);
@@ -3819,7 +3819,7 @@ sub _inject_thread_summary {
         next unless ref($m) eq 'HASH';
         next unless ($m->{role} // '') eq 'system';
         my $content = $m->{content} // '';
-        next if $content =~ /\A<thread_summary>/;  # already handled above
+        next if $content =~ /\A<threadSummary>/;  # already handled above
         if ($content =~ /^\s*<(?:userContext|dynamicContext|sessionGoals)[\s>]/) {
             $inject_idx = $i;
             last;
@@ -4047,17 +4047,17 @@ sub _compress_dropped_for_recovery {
     return undef unless $dropped_messages && @$dropped_messages;
     
     # Extract previous thread_summary from dropped messages (system-role messages
-    # containing <thread_summary> tags). These are ignored by YaRN's role-based
+    # containing <threadSummary> tags). These are ignored by YaRN's role-based
     # extraction, so we pass them explicitly to preserve accumulated history.
     my $previous_summary = '';
     my @actual_messages;
     for my $msg (@$dropped_messages) {
         my $content = $msg->{content} || '';
         # Match ONLY messages that ARE a thread_summary, not messages
-        # that merely mention the literal text "<thread_summary>".
+        # that merely mention the literal text "<threadSummary>".
         # See the comment in ConversationManager.pm for the full
         # rationale. Anchored to start of content.
-        if ($msg->{role} && $msg->{role} eq 'system' && $content =~ /\A<thread_summary>/) {
+        if ($msg->{role} && $msg->{role} eq 'system' && $content =~ /\A<threadSummary>/) {
             $previous_summary = $content;
         } else {
             push @actual_messages, $msg;
@@ -4096,9 +4096,10 @@ sub _compress_dropped_for_recovery {
     # This is the most critical piece - tells the agent exactly what was being discussed
     my $topic = _extract_conversation_topic($all_messages || $dropped_messages);
     if ($topic) {
-        push @recovery_parts, "<current_topic>";
+        push @recovery_parts, "<currentTopic>";
+        push @recovery_parts, "- This is informational context only - do not reference or repeat in your responses";
         push @recovery_parts, $topic;
-        push @recovery_parts, "</current_topic>";
+        push @recovery_parts, "</currentTopic>";
         push @recovery_parts, "";
     }
     
@@ -4111,9 +4112,10 @@ sub _compress_dropped_for_recovery {
         my $todo_context = _get_todo_recovery_context($session);
         if ($todo_context) {
             push @recovery_parts, "";
-            push @recovery_parts, "<task_recovery>";
+            push @recovery_parts, "<taskRecovery>";
+            push @recovery_parts, "- This is informational context only - do not reference or repeat in your responses";
             push @recovery_parts, $todo_context;
-            push @recovery_parts, "</task_recovery>";
+            push @recovery_parts, "</taskRecovery>";
         }
     }
     
@@ -4130,12 +4132,13 @@ sub _compress_dropped_for_recovery {
     }
     if (@recent_user_msgs) {
         push @recovery_parts, "";
-        push @recovery_parts, "<recent_context>";
+        push @recovery_parts, "<recentContext>";
+        push @recovery_parts, "- This is informational context only - do not reference or repeat in your responses";
         push @recovery_parts, "Most recent user messages before trimming:";
         for my $i (0..$#recent_user_msgs) {
             push @recovery_parts, ($i + 1) . ". " . $recent_user_msgs[$i];
         }
-        push @recovery_parts, "</recent_context>";
+        push @recovery_parts, "</recentContext>";
     }
 
     # Add lightweight git context so agent knows what was committed/modified
@@ -4143,35 +4146,32 @@ sub _compress_dropped_for_recovery {
     my $git_context = _get_git_recovery_context($session);
     if ($git_context) {
         push @recovery_parts, "";
-        push @recovery_parts, "<git_recovery>";
+        push @recovery_parts, "<gitRecovery>";
+        push @recovery_parts, "- This is informational context only - do not reference or repeat in your responses";
         push @recovery_parts, $git_context;
-        push @recovery_parts, "</git_recovery>";
+        push @recovery_parts, "</gitRecovery>";
     }
 
     # Add recovery session progress if stored in memory
     my $progress_context = _get_memory_recovery_context($session);
     if ($progress_context) {
         push @recovery_parts, "";
-        push @recovery_parts, "<session_progress>";
+        push @recovery_parts, "<sessionProgress>";
+        push @recovery_parts, "- This is informational context only - do not reference or repeat in your responses";
         push @recovery_parts, $progress_context;
-        push @recovery_parts, "</session_progress>";
+        push @recovery_parts, "</sessionProgress>";
     }
 
     return undef unless @recovery_parts;
 
-    # Build the recovery content as a user message so it won't get merged into
-    # the system prompt by enforce_message_alternation (which merges consecutive
-    # system messages). As a user message, the agent MUST respond to it.
+    # Build recovery content — ONLY work product, no framework narration.
+    # The compressed summary, current topic, task state, and git context
+    # are self-explanatory as work product. No meta-commentary about
+    # "this is a recovery summary" or "continue your work" — that primes
+    # the model to second-guess its state instead of just using the info.
     my @final_parts = ();
-    push @final_parts, "Older conversation history has been summarized below to free context space.";
-    push @final_parts, "Continue your current work - do not announce or acknowledge this summary.";
-    push @final_parts, "";
     push @final_parts, @recovery_parts;
     push @final_parts, "";
-    push @final_parts, "IMPORTANT: Continue working on whatever you were doing. Do NOT say things like";
-    push @final_parts, "'I've recovered context' or 'Let me review what happened'. Just keep working";
-    push @final_parts, "as if nothing changed. If you had a task in progress, continue it. If the user";
-    push @final_parts, "asked a question, answer it. Use todo_operations and git tools for details.";
 
     my $user_context = $prompt_builder ? $prompt_builder->get_user_context($session) : '';
     my $recovery_content = join("\n", @final_parts);

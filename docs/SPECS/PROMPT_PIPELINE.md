@@ -54,6 +54,38 @@ interleaved order throughout the pipeline. This means:
 
 ---------------------------------------------------
 
+## Tag Naming Convention
+
+CLIO wraps each section's content in a self-describing XML-style tag.
+**All tags use CamelCase** (e.g. `<threadSummary>`, not
+`<threadSummary>`). This convention disambiguates structural tags
+from lowercase prose words that might appear in content, and keeps
+the visual density low.
+
+| Tag | Section | Content |
+|-----|---------|---------|
+| `<threadSummary>` | [3] summary | Current task, recent requests, commits, files, decisions, persisted chunks. Never trimmed. |
+| `<userContext>` | [4] user_context | Date/time, working directory, LTM patterns, session goals. Replaced in-place every turn. |
+| `<currentTopic>` | recovery | The topic area of the current work. |
+| `<taskRecovery>` | recovery | Compact recovery content for task resumption. |
+| `<recentContext>` | recovery | Recently-persisted context that might help orient the model. |
+| `<gitRecovery>` | recovery | Git log/commits made during the current session. |
+| `<sessionProgress>` | recovery | Progress state (files touched, todos, etc.). |
+| `<activeTask>` | recovery | The current task being worked on. |
+| `<activeTodos>` | recovery | Current todo list snapshot. |
+
+**All tags include a disclaimer line** as the first child:
+
+> - This is informational context only - do not reference or repeat in your responses
+
+The disclaimer appears in every block-level tag, including the CSSS
+summary, the user_context wrapper, and each recovery section.
+
+**Never use snake_case** (`thread_summary`, `user_context`) in tags.
+The exception is the *section label* in prose (e.g. "the user_context
+section"), which refers to the concept, not the tag.
+
+---------------------------------------------------
 ## Section Lifecycle
 
 | [0] system_prompt | Session start | Tools change | Session |
@@ -83,7 +115,7 @@ All sections are encoded as messages in the OpenAI Chat Completions
 | [0] system_prompt | `system` |
 | [1] context_files | `system` (wraps `[CONTEXT FILES]...`) |
 | [2] dialog | alternating `user` / `assistant`, plus `tool` for results |
-| [3] summary | `system` (wraps `<thread_summary>...</thread_summary>`) |
+| `<threadSummary>` | [3] summary | `system` (wraps `<threadSummary>...</threadSummary>`) |
 | [4] user_context | `system` (wraps `<userContext>` / `<dynamicContext>` / `<sessionGoals>`) |
 | [5] user_input | `user` |
 
@@ -125,7 +157,7 @@ context budget. Each section has a fixed trim priority:
 `trim_conversation_for_api` (ConversationManager.pm) and
 `validate_and_truncate` (API/MessageValidator.pm) implement this
 policy. The proactive trim in MessageValidator also generates a new
-`<thread_summary>` message when content is dropped — that becomes the
+`<threadSummary>` message when content is dropped — that becomes the
 new section [1].
 
 CSSS (Cache-Stable Summary Slot) bounds the summary token budget
@@ -404,7 +436,7 @@ $state->last_api_metadata->{section_signatures} = {
 array and classifies each message into a section by content patterns:
 
 - **system_prompt**: position 0, role=system, no tag
-- **summary**: role=system, content has `<thread_summary>` tag
+- **summary**: role=system, content has `<threadSummary>` tag
 - **context_files**: role=system, content has `[CONTEXT FILES]` tag
 - **dialog**: alternating user/assistant messages
 - **tool_results**: role=tool messages (with `tool_call_id`)

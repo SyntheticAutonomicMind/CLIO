@@ -129,7 +129,7 @@ sub ok_test {
 {
     my @messages;
     push @messages, { role => 'system', content => 'You are CLIO.' };
-    push @messages, { role => 'system', content => '<thread_summary>Current task: do something</thread_summary>' };
+    push @messages, { role => 'system', content => '<threadSummary>Current task: do something</threadSummary>' };
     push @messages, {
         role => 'assistant',
         content => 'Working autonomously.',

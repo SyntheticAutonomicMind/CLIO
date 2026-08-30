@@ -391,7 +391,7 @@ sub validate_and_truncate {
     # Earlier versions tried to lock the summary at a constant byte size
     # for cache stability, padding undersized summaries with thousands
     # of x's to fill the slot. The padding was visible to the model as
-    # a massive artifact inside <thread_summary> and burned context
+    # a massive artifact inside <threadSummary> and burned context
     # budget. See git history of YaRN.pm:_fit_summary_to_target.
     #
     # Current policy: target_tokens is a CEILING, not an exact target.
@@ -635,7 +635,7 @@ sub validate_and_truncate {
     #
     # Previously, the summary was pushed after ALL of @validated (which
     # includes user_context + user_input + assistant response + tool_results
-    # from the current turn). This caused <thread_summary> to appear as a
+    # from the current turn). This caused <threadSummary> to appear as a
     # mid-conversation system block — after user_input, before the model's
     # response — which the llama.cpp chat template wraps in <system>...</system>
     # tags, resetting the model's context framing and causing gradual
@@ -660,10 +660,10 @@ sub validate_and_truncate {
         my $content = $m->{content} // '';
         next unless ($m->{role} // '') eq 'system';
         # Match ONLY messages that ARE a thread_summary, not messages
-        # that merely mention the literal text "<thread_summary>" (e.g.
+        # that merely mention the literal text "<threadSummary>" (e.g.
         # the system prompt template's CSSS section explains the
         # thread_summary tag). Anchored to start of content.
-        next if $content =~ /\A<thread_summary>/;
+        next if $content =~ /\A<threadSummary>/;
         if ($content =~ /<(?:userContext|dynamicContext|sessionGoals)[\s>]/) {
             $uc_split_idx = $i;
             last;
@@ -1145,10 +1145,10 @@ sub _extract_preserved_units {
         my $first_msg = $unit->{messages}[0];
         my $content = $first_msg->{content} || '';
         # Match ONLY messages that ARE a thread_summary, not messages
-        # that merely mention the literal text "<thread_summary>" (e.g.
+        # that merely mention the literal text "<threadSummary>" (e.g.
         # the system prompt template's CSSS section explains the
         # thread_summary tag). Anchored to start of content.
-        if ($content =~ /\A<thread_summary>/) {
+        if ($content =~ /\A<threadSummary>/) {
             $summary_unit = $unit;
             $summary_tokens = $unit->{tokens};
             $start_unit = $i + 1;
@@ -1199,9 +1199,9 @@ sub _extract_preserved_units {
         my $first_msg = $unit->{messages}[0];
         my $content = $first_msg->{content} || '';
         # Match ONLY messages that ARE a thread_summary, not messages
-        # that merely mention the literal text "<thread_summary>". See
+        # that merely mention the literal text "<threadSummary>". See
         # the comment in _extract_preserved_units above.
-        if ($content =~ /\A<thread_summary>/) {
+        if ($content =~ /\A<threadSummary>/) {
             $summary_unit = $unit;
             $summary_tokens = $unit->{tokens};
             $unit->{is_trailing_summary} = 1;
@@ -1361,7 +1361,7 @@ sub _compress_dropped {
 
 =head2 _make_anchor_summary
 
-Build a minimal "<thread_summary>Current task: X</thread_summary>"
+Build a minimal "<threadSummary>Current task: X</threadSummary>"
 anchor from the substantive user task. Used as a work-product anchor
 on the first turn (before any trim has happened) so the model has a
 stable reference for the original task across turns.
@@ -1388,11 +1388,12 @@ sub _make_anchor_summary {
     $trimmed =~ s/\s+/ /g;
     return {
         role    => 'system',
-        content => "<thread_summary>\n\nCurrent task: $trimmed\n\n</thread_summary>\n",
+        content => "<threadSummary>\n\n- This is informational context only - do not reference or repeat in your responses\n\nCurrent task: $trimmed\n\n</threadSummary>\n",
         _metadata => {
             compressed_tokens => int(length($trimmed) / 3.5) + 6,  # rough estimate
             compressed_count  => 0,  # no dialog was compressed
             original_tokens   => 0,
+            anchor_summary    => 1,
         },
     };
 }

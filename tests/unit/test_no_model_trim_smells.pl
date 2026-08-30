@@ -14,7 +14,7 @@
 # the "[SYSTEM: Your previous response ended without completing your work...]"
 # nudge that was injected when the model stopped mid-workflow.
 #
-# The fix: keep only the work product (the YaRN <thread_summary> block,
+# The fix: keep only the work product (the YaRN <threadSummary> block,
 # the original task, the current todo state) and strip every meta-message
 # about "what the framework did" or "how to recover".
 
@@ -48,11 +48,11 @@ sub slurp { my ($f) = @_; local $/; open my $fh, '<', $f or die "open($f): $!"; 
 
     # The work product (YaRN summary) is still injected as a system message.
     like($state, qr/push \@system, \{\s*role\s*=>\s*'system',\s*content\s*=>\s*\$compressed_summary/s,
-         'Session/State.pm still injects the YaRN <thread_summary> as a system message');
+         'Session/State.pm still injects the YaRN <threadSummary> as a system message');
 
     # Stale prior summaries are removed to avoid double-summary bloat.
-    like($state, qr/<thread_summary>/,
-         'Session/State.pm detects prior <thread_summary> messages to replace them');
+    like($state, qr/<threadSummary>/,
+         'Session/State.pm detects prior <threadSummary> messages to replace them');
 }
 
 # ── Smell 2: PromptManager LTM section no longer references trim ─────
@@ -104,8 +104,8 @@ sub slurp { my ($f) = @_; local $/; open my $fh, '<', $f or die "open($f): $!"; 
     # Sanity check: the YaRN summary format is still a work-product block,
     # not a meta-message about the trim event.
     my $yarn = slurp('lib/CLIO/Memory/YaRN.pm');
-    like($yarn, qr/<thread_summary>/,
-         'YaRN summary still uses <thread_summary>...</thread_summary> format (work product)');
+    like($yarn, qr/<threadSummary>/,
+         'YaRN summary still uses <threadSummary>...</threadSummary> format (work product)');
     like($yarn, qr/Current task:/,
          'YaRN summary still contains the "Current task:" work-product line');
 }

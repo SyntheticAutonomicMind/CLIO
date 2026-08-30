@@ -78,10 +78,10 @@ When the context window needs trimming, `compress_messages()` takes the messages
 | **Current task** | Most recent user message - the active work being done |
 | **Git commits** | Commit hashes and messages from tool output |
 | **Files touched** | File paths from tool call arguments (path, new_path, old_path) |
-| **Key decisions** | Collaboration exchanges (question + user response) |
-| **Tool usage** | Counts of each tool type used |
+| **Key decisions** | Notable decisions extracted from messages |
+| **Persisted chunks** | Tool result pointers (toolCallId + source path) for re-reading large content |
 
-The result is a single system message wrapped in `<thread_summary>` tags that gets injected into the trimmed context. Critically, the `<thread_summary>` is **preserved across multiple trim cycles** - each new compression merges with the previous summary, building an accumulating record of the entire session.
+The result is a single system message wrapped in `<threadSummary>` tags that gets injected into the trimmed context. Critically, the `<threadSummary>` is **preserved across multiple trim cycles** - each new compression merges with the previous summary, building an accumulating record of the entire session.
 
 ### Transparent Recovery
 

@@ -67,7 +67,7 @@ sub find_summary {
     my ($msgs) = @_;
     for my $i (reverse 0 .. $#$msgs) {
         my $msg = $msgs->[$i];
-        if (($msg->{role} // '') eq 'system' && ($msg->{content} // '') =~ /<thread_summary>/) {
+        if (($msg->{role} // '') eq 'system' && ($msg->{content} // '') =~ /<threadSummary>/) {
             return ($i, $msg);
         }
     }
@@ -168,7 +168,7 @@ subtest 'Summary at END of conversation for LCP cache stability' => sub {
     my $first_role = $trimmed->[0]{role};
     my $first_content = $trimmed->[0]{content} // '';
     is($first_role, 'system', "First message is system");
-    unlike($first_content, qr/<thread_summary>/, "First message is NOT a summary (it's the system prompt)");
+    unlike($first_content, qr/<threadSummary>/, "First message is NOT a summary (it's the system prompt)");
 };
 
 # ===== Test 3: compute_prompt_budget uses DEFAULT_TOOL_OUTPUT_RESERVE with tools =====
@@ -234,7 +234,7 @@ subtest 'YaRN _fit_summary_to_target truncates when summary too big' => sub {
 # ===== Test 6: YaRN _fit_summary_to_target pads undersized summary =====
 # Earlier versions of CLIO padded undersized summaries with thousands of
 # 'x' characters to lock the byte size for cache stability. The padding
-# was visible to the model as a massive artifact inside <thread_summary>
+# was visible to the model as a massive artifact inside <threadSummary>
 # and burned context budget on every trim. See YaRN.pm:_fit_summary_to_target.
 # The fix removes padding entirely: summaries grow organically and only
 # the ceiling is enforced.
@@ -300,7 +300,7 @@ subtest 'Pre-flight trim preserves thread_summary for CSSS' => sub {
     # to drop messages to fit budget.
     my @msgs = (
         { role => 'system', content => "You are CLIO. " . ("System context. " x 500) },
-        { role => 'system', content => "<thread_summary>\nCurrent task: Build a thing.\nFiles: a.c, b.c\n</thread_summary>" },
+        { role => 'system', content => "<threadSummary>\nCurrent task: Build a thing.\nFiles: a.c, b.c\n</threadSummary>" },
         { role => 'user', content => "Original task" },
     );
     for my $i (1..200) {
@@ -335,7 +335,7 @@ subtest 'Pre-flight trim preserves thread_summary for CSSS' => sub {
     ok($summary_idx >= 0, "Pre-flight trim preserved existing thread_summary message");
 
     # The summary content should match the original - not regenerated
-    my $original_summary = "<thread_summary>\nCurrent task: Build a thing.\nFiles: a.c, b.c\n</thread_summary>";
+    my $original_summary = "<threadSummary>\nCurrent task: Build a thing.\nFiles: a.c, b.c\n</threadSummary>";
     is($summary->{content}, $original_summary,
         "Pre-flight trim preserved summary content verbatim (not regenerated)");
 };

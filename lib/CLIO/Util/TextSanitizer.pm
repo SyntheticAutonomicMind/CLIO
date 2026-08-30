@@ -201,10 +201,17 @@ sub strip_conversation_tags {
     # on the next turn and cause the snapshot normalizer to mis-categorize
     # the message. Strip them at the boundary so history and snapshot
     # stay aligned.
-    $text =~ s/<thread_summary>.*?<\/thread_summary>//gs;
+    $text =~ s/<threadSummary>.*?<\/threadSummary>//gs;
     $text =~ s/<dynamicContext>.*?<\/dynamicContext>//gs;
     $text =~ s/<userContext>.*?<\/userContext>//gs;
     $text =~ s/<sessionGoals>.*?<\/sessionGoals>//gs;
+    $text =~ s/<activeTask>.*?<\/activeTask>//gs;
+    $text =~ s/<activeTodos>.*?<\/activeTodos>//gs;
+    $text =~ s/<currentTopic>.*?<\/currentTopic>//gs;
+    $text =~ s/<taskRecovery>.*?<\/taskRecovery>//gs;
+    $text =~ s/<recentContext>.*?<\/recentContext>//gs;
+    $text =~ s/<gitRecovery>.*?<\/gitRecovery>//gs;
+    $text =~ s/<sessionProgress>.*?<\/sessionProgress>//gs;
 
     return $text;
 }

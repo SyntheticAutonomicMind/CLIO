@@ -6,7 +6,7 @@
 # csss:padding marker. Earlier versions of CLIO generated summaries with
 # thousands of 'x' characters inside an HTML comment to lock the byte
 # size for llama.cpp cache stability. The padding was visible to the
-# model as a massive artifact inside <thread_summary> (the user-reported
+# model as a massive artifact inside <threadSummary> (the user-reported
 # bug: "The CSS padding noise is massive and distracting").
 #
 # This test pins the fix across all entry points:
@@ -36,7 +36,7 @@ sub no_padding_in_summaries {
     for my $m (@$msgs) {
         next unless ($m->{role} // '') eq 'system';
         my $content = $m->{content} // '';
-        next unless $content =~ /<thread_summary>/;
+        next unless $content =~ /<threadSummary>/;
         return 0, "found csss:padding in summary message" if $content =~ /csss:padding/;
         # Defensive: also catch any other long x-runs inside the summary,
         # which is the visible symptom of the bug regardless of marker.
@@ -109,7 +109,7 @@ subtest 'validate_and_truncate never emits csss:padding in summary' => sub {
     # Find the summary and confirm its size is bounded by MAX.
     my $found_summary = 0;
     for my $m (@$result) {
-        if (($m->{role} // '') eq 'system' && ($m->{content} // '') =~ /<thread_summary>/) {
+        if (($m->{role} // '') eq 'system' && ($m->{content} // '') =~ /<threadSummary>/) {
             $found_summary = 1;
             my $tokens = estimate_tokens($m->{content});
             ok($tokens <= 12000 + 1000,
@@ -217,7 +217,7 @@ subtest 'multiple sequential trims never accumulate csss:padding' => sub {
 subtest 'pre-flight trim path (trim_conversation_for_api) has no padding' => sub {
     # Build a session with an existing thread_summary at position [1].
     # Pre-flight trims shouldn't introduce padding.
-    my $existing_summary = "<thread_summary>\nCurrent task: Original work.\nFiles: a.c, b.c\n</thread_summary>";
+    my $existing_summary = "<threadSummary>\nCurrent task: Original work.\nFiles: a.c, b.c\n</threadSummary>";
     my @msgs = (
         { role => 'system', content => 'You are CLIO. ' . ('S' x 500) },
         { role => 'system', content => $existing_summary },

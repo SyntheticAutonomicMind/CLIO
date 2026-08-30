@@ -68,7 +68,7 @@ our %EXPORT_TAGS = (all => \@EXPORT_OK);
 # versions used it as a hard lock with padding to enforce byte-level
 # stability for llama.cpp cache; that approach was abandoned because
 # the padding was visible to the model as a massive artifact inside
-# <thread_summary>. See YaRN.pm:_fit_summary_to_target.
+# <threadSummary>. See YaRN.pm:_fit_summary_to_target.
 my %DEFAULT_BUDGETS = (
     'XS' => {
         # <= 32K context. Aggressive scaling: drop everything that's not

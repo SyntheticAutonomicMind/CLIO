@@ -110,7 +110,7 @@ subtest 'f091a4e1 broken layout normalised to canonical protocol layout' => sub 
         ] },
         { role => 'tool', content => 'r2', tool_call_id => 'tc2' },
         # BROKEN: thread_summary in the MIDDLE (after user_input, before more dialog)
-        { role => 'system', content => "<thread_summary>\nCurrent task: Original task\n</thread_summary>" },
+        { role => 'system', content => "<threadSummary>\nCurrent task: Original task\n</threadSummary>" },
         # more conversation AFTER the summary (the degradation)
         { role => 'assistant', content => '' },
         { role => 'tool', content => '[]', tool_call_id => 'tc3' },
@@ -131,7 +131,7 @@ subtest 'f091a4e1 broken layout normalised to canonical protocol layout' => sub 
     }
 
     # thread_summary must be BEFORE user_context, not in the middle
-    my $summary_idx = find_tag_at_idx(\@normalized, qr/<thread_summary>/);
+    my $summary_idx = find_tag_at_idx(\@normalized, qr/<threadSummary>/);
     my $uc_idx = find_tag_at_idx(\@normalized, qr/<userContext>/);
     ok($summary_idx >= 0, "thread_summary exists in normalised output");
     ok($uc_idx >= 0, "user_context exists in normalised output");
@@ -150,7 +150,7 @@ subtest 'f091a4e1 broken layout normalised to canonical protocol layout' => sub 
     }
 
     # Only ONE of each
-    my $summary_count = grep { ref($_) eq 'HASH' && ($_->{role} // '') eq 'system' && ($_->{content} // '') =~ /<thread_summary>/ } @normalized;
+    my $summary_count = grep { ref($_) eq 'HASH' && ($_->{role} // '') eq 'system' && ($_->{content} // '') =~ /<threadSummary>/ } @normalized;
     is($summary_count, 1, "Exactly one thread_summary after normalisation");
     my $uc_count = grep { ref($_) eq 'HASH' && ($_->{role} // '') eq 'system' && ($_->{content} // '') =~ /<userContext>/ } @normalized;
     is($uc_count, 1, "Exactly one user_context after normalisation");
@@ -164,7 +164,7 @@ subtest 'Already-correct layout is preserved (no-op on good input)' => sub {
         { role => 'system', content => 'SYSTEM PROMPT' },
         { role => 'user', content => 'q1' },
         { role => 'assistant', content => 'a1' },
-        { role => 'system', content => '<thread_summary>summary</thread_summary>' },
+        { role => 'system', content => '<threadSummary>summary</threadSummary>' },
         { role => 'system', content => '<userContext>date: 2026-08-28</userContext>' },
         { role => 'user', content => 'q2' },
         { role => 'assistant', content => 'final' },
@@ -173,7 +173,7 @@ subtest 'Already-correct layout is preserved (no-op on good input)' => sub {
     my @normalized = $orchestrator->_normalize_payload_layout(@correct);
     is(scalar(@normalized), 7, "Same count preserved");
 
-    my $summary_idx = find_tag_at_idx(\@normalized, qr/<thread_summary>/);
+    my $summary_idx = find_tag_at_idx(\@normalized, qr/<threadSummary>/);
     my $uc_idx = find_tag_at_idx(\@normalized, qr/<userContext>/);
     my $last_user_idx = find_last_role(\@normalized, 'user');
 
@@ -202,7 +202,7 @@ subtest '_capture_api_payload normalises broken snapshot before saving' => sub {
         { role => 'assistant', content => 'a1', tool_calls => [
             { id => 'tc2', type => 'function', function => { name => 'file_operations', arguments => '{}' } },
         ] },
-        { role => 'system', content => '<thread_summary>summary</thread_summary>' },
+        { role => 'system', content => '<threadSummary>summary</threadSummary>' },
         { role => 'assistant', content => 'a2' },
         { role => 'tool', content => 'r2', tool_call_id => 'tc2' },
     ];
@@ -218,7 +218,7 @@ subtest '_capture_api_payload normalises broken snapshot before saving' => sub {
     }
 
     # Summary must be BEFORE user_context
-    my $summary_idx = find_tag_at_idx($stored, qr/<thread_summary>/);
+    my $summary_idx = find_tag_at_idx($stored, qr/<threadSummary>/);
     my $uc_idx = find_tag_at_idx($stored, qr/<userContext>/);
     ok($summary_idx >= 0 && $uc_idx >= 0, 'Both summary and user_context exist');
     if ($summary_idx >= 0 && $uc_idx >= 0) {
@@ -233,7 +233,7 @@ subtest '_capture_api_payload normalises broken snapshot before saving' => sub {
             my $m = $stored->[$i];
             if (ref($m) eq 'HASH' && ($m->{role} // '') eq 'system') {
                 my $c = $m->{content} // '';
-                ok($c !~ /<thread_summary>/, "No thread_summary after user_context at $i in snapshot");
+                ok($c !~ /<threadSummary>/, "No thread_summary after user_context at $i in snapshot");
             }
         }
     }
@@ -253,12 +253,12 @@ subtest 'Summary at END when no user_context (first-turn scenario)' => sub {
         { role => 'system', content => 'SYS' },
         { role => 'user', content => 'q1' },
         { role => 'assistant', content => 'a1' },
-        { role => 'system', content => '<thread_summary>summary</thread_summary>' },
+        { role => 'system', content => '<threadSummary>summary</threadSummary>' },
         { role => 'assistant', content => 'a2' },
     );
 
     my @normalized = $orchestrator->_normalize_payload_layout(@no_uc);
-    my $summary_idx = find_tag_at_idx(\@normalized, qr/<thread_summary>/);
+    my $summary_idx = find_tag_at_idx(\@normalized, qr/<threadSummary>/);
     ok($summary_idx >= 0, 'summary exists');
     if ($summary_idx >= 0) {
         is($summary_idx, $#normalized,
@@ -312,7 +312,7 @@ subtest 'Resume roundtrip: broken snapshot normalised, then clean on resume' => 
         { role => 'assistant', content => 'a1 thinking: ' . $pad, tool_calls => [
             { id => 'tc2', type => 'function', function => { name => 'file_operations', arguments => '{}' } },
         ] },
-        { role => 'system', content => '<thread_summary>summary of old work</thread_summary>' },
+        { role => 'system', content => '<threadSummary>summary of old work</threadSummary>' },
         { role => 'assistant', content => 'a2: ' . $pad },
         { role => 'tool', content => 'r2: ' . $pad, tool_call_id => 'tc2' },
     ];
@@ -323,7 +323,7 @@ subtest 'Resume roundtrip: broken snapshot normalised, then clean on resume' => 
     my $stored = $real_state->last_api_payload;
     ok($stored && @$stored, 'payload stored');
 
-    my $s_idx = find_tag_at_idx($stored, qr/<thread_summary>/);
+    my $s_idx = find_tag_at_idx($stored, qr/<threadSummary>/);
     my $u_idx = find_tag_at_idx($stored, qr/<userContext>/);
     if ($s_idx >= 0 && $u_idx >= 0) {
         ok($s_idx < $u_idx,
@@ -345,7 +345,7 @@ subtest 'Resume roundtrip: broken snapshot normalised, then clean on resume' => 
     }
 
     # Summary should be before user_context
-    my $rs_idx = find_tag_at_idx($resumed, qr/<thread_summary>/);
+    my $rs_idx = find_tag_at_idx($resumed, qr/<threadSummary>/);
     my $ru_idx = find_tag_at_idx($resumed, qr/<userContext>/);
     if ($rs_idx >= 0 && $ru_idx >= 0) {
         ok($rs_idx < $ru_idx,

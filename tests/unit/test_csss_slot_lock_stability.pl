@@ -7,7 +7,7 @@
 #
 # Earlier versions locked the slot size to MIN_CSSS_SLOT_TOKENS via
 # padding. The padding was thousands of x characters inside the
-# <thread_summary> block and was visible to the model as a massive
+# <threadSummary> block and was visible to the model as a massive
 # artifact (the user-reported bug).
 #
 # Current behavior (2026-08-27 fix):
@@ -41,7 +41,7 @@ use CLIO::Core::Defaults qw(MAX_CSSS_SLOT_TOKENS);
 sub no_padding_in_result {
     my ($result) = @_;
     for my $m (@$result) {
-        if (($m->{role} // '') eq 'system' && ($m->{content} // '') =~ /<thread_summary>/) {
+        if (($m->{role} // '') eq 'system' && ($m->{content} // '') =~ /<threadSummary>/) {
             return 0 if $m->{content} =~ /csss:padding/;
         }
     }
@@ -88,7 +88,7 @@ sub build_session {
 sub summary_tokens {
     my ($result) = @_;
     for my $m (@$result) {
-        if (($m->{role} // '') eq 'system' && ($m->{content} // '') =~ /<thread_summary>/) {
+        if (($m->{role} // '') eq 'system' && ($m->{content} // '') =~ /<threadSummary>/) {
             require CLIO::Memory::TokenEstimator;
             return CLIO::Memory::TokenEstimator::estimate_tokens($m->{content});
         }

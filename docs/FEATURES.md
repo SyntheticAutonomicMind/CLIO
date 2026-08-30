@@ -755,7 +755,7 @@ How it works:
 1. **First trim:** Summary grows organically with dropped content, up to `MAX_CSSS_SLOT_TOKENS` (12K)
 2. **Subsequent trims:** `YaRN::compress_messages` enforces the MAX_CSSS_SLOT_TOKENS ceiling (not a fixed lock)
 3. **Proactive growth:** If a single trim drops >1.5x the current slot, the slot grows to absorb more tokens (capped at MAX)
-4. **No padding:** Summaries below the ceiling are left at their natural size. Earlier versions padded with HTML comments filled with x's, but this was removed (2026-08-27) — the padding was visible to the model as a massive artifact inside `<thread_summary>`
+4. **No padding:** Summaries below the ceiling are left at their natural size. Earlier versions padded with HTML comments filled with x's, but this was removed (2026-08-27) — the padding was visible to the model as a massive artifact inside `<threadSummary>`
 
 The summary sits at the **end** of the prompt, so even when it grows, only the summary position onward is invalidated by cache changes — the system prompt and live dialog stay cached.
 

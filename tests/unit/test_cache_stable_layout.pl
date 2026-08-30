@@ -28,7 +28,7 @@ sub find_summary {
     my ($msgs) = @_;
     for my $i (0 .. $#$msgs) {
         my $msg = $msgs->[$i];
-        if (($msg->{role} // '') eq 'system' && ($msg->{content} // '') =~ /<thread_summary>/) {
+        if (($msg->{role} // '') eq 'system' && ($msg->{content} // '') =~ /<threadSummary>/) {
             return ($i, $msg);
         }
     }
@@ -270,7 +270,7 @@ subtest 'LCP position is stable across trims (sys at 0, summary at END)' => sub 
 subtest 'Pre-flight trim produces cache-stable layout' => sub {
     my @msgs = (
         { role => 'system', content => "You are CLIO. " . ("Context. " x 500) },
-        { role => 'system', content => "<thread_summary>\nCurrent task: Build a thing.\n</thread_summary>" },
+        { role => 'system', content => "<threadSummary>\nCurrent task: Build a thing.\n</threadSummary>" },
         { role => 'user', content => "Original task" },
     );
     for my $i (1..50) {

@@ -18,7 +18,7 @@
 #
 # Fix: When no summary exists AND no units were dropped, generate a
 # minimal anchor summary from the most recent substantive user task.
-# The anchor is "<thread_summary>\n\nCurrent task: X\n\n</thread_summary>"
+# The anchor is "<threadSummary>\n\nCurrent task: X\n\n</threadSummary>"
 # (~44 tokens for a typical task), small enough to fit in the budget
 # even on 64K-context models, and stable enough to anchor the model
 # across turns.
@@ -40,9 +40,9 @@ use CLIO::Core::API::MessageValidator;
     );
     ok($r, '_make_anchor_summary returns a result for a substantive task');
     is($r->{role}, 'system', 'Anchor summary has role=system');
-    like($r->{content}, qr/\A<thread_summary>/, 'Anchor content starts with <thread_summary>');
+    like($r->{content}, qr/\A<threadSummary>/, 'Anchor content starts with <threadSummary>');
     like($r->{content}, qr/Current task: /, 'Anchor content has "Current task:" line');
-    like($r->{content}, qr/<\/thread_summary>/, 'Anchor content has closing </thread_summary> tag');
+    like($r->{content}, qr/<\/threadSummary>/, 'Anchor content has closing </threadSummary> tag');
     is($r->{_metadata}{anchor_summary}, 1, 'Anchor summary marker is set in _metadata');
 }
 
@@ -67,12 +67,12 @@ use CLIO::Core::API::MessageValidator;
 
 # ── Test 4: Anchor summary is anchored to start of content (CSSS) ────
 {
-    # The legacy /<thread_summary>/ substring match would catch the
-    # system prompt's CSSS section. The anchor regex /\A<thread_summary>/
+    # The legacy /<threadSummary>/ substring match would catch the
+    # system prompt's CSSS section. The anchor regex /\A<threadSummary>/
     # (anchored) only matches messages that ARE a thread_summary.
     my $r = CLIO::Core::API::MessageValidator::_make_anchor_summary('test task');
-    like($r->{content}, qr/\A<thread_summary>/,
-         'Anchor content starts with <thread_summary> (anchored match works)');
+    like($r->{content}, qr/\A<threadSummary>/,
+         'Anchor content starts with <threadSummary> (anchored match works)');
 }
 
 # ── Test 5: Anchor summary is the work product, not metadata ───────
@@ -99,7 +99,7 @@ use CLIO::Core::API::MessageValidator;
     # Verify a thread_summary system message is in the output
     my $found_summary = 0;
     for my $msg (@$result) {
-        if ($msg->{role} eq 'system' && $msg->{content} =~ /\A<thread_summary>/) {
+        if ($msg->{role} eq 'system' && $msg->{content} =~ /\A<threadSummary>/) {
             $found_summary++;
         }
     }
@@ -110,7 +110,7 @@ use CLIO::Core::API::MessageValidator;
 {
     require CLIO::Core::WorkflowOrchestrator;
     my $wo = CLIO::Core::WorkflowOrchestrator->new();
-    my $existing_summary = "<thread_summary>\n\nCurrent task: existing summary\n\n</thread_summary>\n";
+    my $existing_summary = "<threadSummary>\n\nCurrent task: existing summary\n\n</threadSummary>\n";
     my $messages = [
         { role => 'system', content => "# CLIO System Prompt" },
         { role => 'system', content => $existing_summary },

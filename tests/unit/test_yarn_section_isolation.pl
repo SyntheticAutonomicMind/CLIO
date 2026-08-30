@@ -14,7 +14,7 @@ use lib './lib';
 use CLIO::Memory::YaRN;
 
 my $summary = <<'END_SUMMARY';
-<thread_summary>
+<threadSummary>
 
 Current task: Fix the bug
 
@@ -32,11 +32,7 @@ Files:
 Decisions:
 - We chose approach A
 
-Tools:
-- file_operations: 10 calls
-- terminal_operations: 2 calls
-
-</thread_summary>
+</threadSummary>
 END_SUMMARY
 
 my %buckets = (
@@ -75,8 +71,10 @@ is(scalar(@tool_leaks_in_decisions), 0,
 is(scalar(@{$buckets{commits}}), 1,
    'commits has exactly 1 entry (no leakage)');
 
-# tool_counts must have correct counts from Tools section only
-is($buckets{tool_counts}{file_operations}, 10,
-   'file_operations count is correct (10, not leaked from other sections)');
+# tool_counts must be empty - tool counts are no longer parsed into buckets
+# (the "Tools:" section is not a rendering section; tool call IDs for
+# re-reading are tracked via persisted_chunks instead)
+is(scalar(keys %{$buckets{tool_counts} || {}}), 0,
+   'No tool_counts entries — counts are no longer parsed');
 
 done_testing();

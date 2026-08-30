@@ -8,7 +8,7 @@
 # the user typed "continue" between major phases caused the trim path to
 # preserve ONLY the "continue" message (8 chars) as the most recent user
 # input. The original task user message (the actual code review request,
-# ~300 chars) was buried in a <thread_summary> system message that the
+# ~300 chars) was buried in a <threadSummary> system message that the
 # model treated as archival metadata. After the third trim, LCP cache
 # similarity collapsed to 0.214, the next prompt was 60k tokens of
 # compressed context with no user anchor, and the model emitted

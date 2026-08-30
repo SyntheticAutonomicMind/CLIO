@@ -3,12 +3,12 @@
 # through load_conversation_history.
 #
 # Bug: In PhotonTERM session a6a0eb10, the agent lost context because the
-# [CONTEXT TRIM:...] system message containing <thread_summary> was filtered
+# [CONTEXT TRIM:...] system message containing <threadSummary> was filtered
 # out by load_conversation_history. The model then had no anchor to the
 # original task, and started reading files from scratch.
 #
 # Fix: load_conversation_history now preserves system messages containing
-# <thread_summary> or starting with "[CONTEXT TRIM:" so the proactive trim
+# <threadSummary> or starting with "[CONTEXT TRIM:" so the proactive trim
 # can position them at the END for CSSS cache stability.
 
 use strict;
@@ -27,7 +27,7 @@ my @history = (
 [CONTEXT TRIM: 36 messages compressed]
 Older messages summarized below. Recent 10 messages preserved in full.
 
-<thread_summary>
+<threadSummary>
 
 Current task: I would like you to do a full code review of PhotonTERM - I want to start using it soon but we need to make sure that it follows correct UI/UX patterns, and it is free of smells and inconsistencies.  Analyze and report first, we'll discuss the plan and then begin implementing any changes needed.
 
@@ -41,7 +41,7 @@ Tool usage:
 - file_operations: 24 calls
 - todo_operations: 1 calls
 
-</thread_summary>
+</threadSummary>
 
 DO NOT read handoff documents in ai-assisted/ - use the tools above instead.
 END_SUMMARY
@@ -60,7 +60,7 @@ ok(scalar(@$loaded) >= 2, "Loaded at least 2 messages (assistant + summary; tool
 # Find the preserved summary
 my $summary;
 for my $m (@$loaded) {
-    if ($m->{role} eq 'system' && $m->{content} =~ /<thread_summary>/) {
+    if ($m->{role} eq 'system' && $m->{content} =~ /<threadSummary>/) {
         $summary = $m;
         last;
     }
@@ -70,7 +70,7 @@ ok(defined $summary, "thread_summary system message preserved through load_conve
 SKIP: {
     skip "no summary preserved", 3 unless $summary;
 
-    like($summary->{content}, qr/<thread_summary>/, "summary contains <thread_summary> tag");
+    like($summary->{content}, qr/<threadSummary>/, "summary contains <threadSummary> tag");
     like($summary->{content}, qr/Current task:/, "summary contains 'Current task:' from the original user request");
     like($summary->{content}, qr/full code review of PhotonTERM/, "summary preserves the original task wording");
 }
@@ -91,7 +91,7 @@ SKIP: {
     ok($has_user, "User messages are still preserved");
 }
 
-# Edge case: a [CONTEXT TRIM: ...] system message without <thread_summary> tag
+# Edge case: a [CONTEXT TRIM: ...] system message without <threadSummary> tag
 # (an older format that some sessions have)
 {
     my @h3 = (
@@ -102,7 +102,7 @@ SKIP: {
     my $loaded3 = load_conversation_history($s3, debug => 0);
 
     my $has_trim = grep { $_->{role} eq 'system' && $_->{content} =~ /^\[CONTEXT TRIM:/ } @$loaded3;
-    ok($has_trim, "[CONTEXT TRIM: ...] system message without <thread_summary> is also preserved");
+    ok($has_trim, "[CONTEXT TRIM: ...] system message without <threadSummary> is also preserved");
 }
 
 done_testing();

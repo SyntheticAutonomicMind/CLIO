@@ -331,7 +331,7 @@ subtest 'arrayref content with multiple images' => sub {
 subtest 'enforce_message_alternation does NOT merge consecutive system messages' => sub {
     my $messages = [
         make_msg('system', 'SYSTEM PROMPT: you are CLIO'),
-        make_msg('system', '<thread_summary>...</thread_summary>'),
+        make_msg('system', '<threadSummary>...</threadSummary>'),
         make_msg('system', '[CONTEXT FILES] file contents...'),
         make_msg('user', 'question'),
         make_msg('assistant', 'answer'),
@@ -346,7 +346,7 @@ subtest 'enforce_message_alternation does NOT merge consecutive system messages'
 
     # Verify each system message survived separately
     is($result->[0]{content}, 'SYSTEM PROMPT: you are CLIO', 'system_prompt section preserved');
-    is($result->[1]{content}, '<thread_summary>...</thread_summary>', 'summary section preserved');
+    is($result->[1]{content}, '<threadSummary>...</threadSummary>', 'summary section preserved');
     is($result->[2]{content}, '[CONTEXT FILES] file contents...', 'context_files section preserved');
     is($result->[5]{content}, '<userContext>date: 2026-08-18</userContext>', 'user_context section preserved');
 

@@ -12,6 +12,7 @@ my $fail = 0;
 
 sub ok {
     my ($cond, $desc) = @_;
+    $desc //= '(no description)';
     if ($cond) {
         print "ok - $desc\n";
         $pass++;
@@ -61,7 +62,7 @@ sub ok {
     ok($result, 'Non-collab compress returns result');
     my $content = $result->{content};
     ok($content !~ /Active discussion/i && $content !~ /Discussion:/i, 'No discussion section for non-collaboration messages');
-    ok($content =~ /file_operations/i, 'Tools tracked');
+    ok(!($content =~ /file_operations/i), 'No tool counts rendered (removed)');
 }
 
 # Test 3: Multiple exchanges - only last 5 kept

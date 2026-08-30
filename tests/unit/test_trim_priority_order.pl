@@ -245,7 +245,7 @@ subtest 'Tier 1 (thread_summary) preserved at END of conversation' => sub {
         { role => 'user', content => 'initial task' },
         { role => 'assistant', content => 'Reasoning 1 ' . ('a' x 3000) },
         # Trailing thread_summary
-        { role => 'system', content => "<thread_summary>\nCurrent task: foo\n\nDecisions:\n- bar\n</thread_summary>" },
+        { role => 'system', content => "<threadSummary>\nCurrent task: foo\n\nDecisions:\n- bar\n</threadSummary>" },
         { role => 'user', content => 'final task' },
     );
 
@@ -259,7 +259,7 @@ subtest 'Tier 1 (thread_summary) preserved at END of conversation' => sub {
     );
 
     # The summary should be present in the output
-    ok(_has_unit_with($result, 'system', '<thread_summary>'),
+    ok(_has_unit_with($result, 'system', '<threadSummary>'),
         'Tier 1 thread_summary preserved in trimmed output');
 };
 

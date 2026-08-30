@@ -115,7 +115,7 @@ sub make_messages_with_tasks {
     # Build a 3-task summary manually so we don't depend on per-task
     # content volume to be enough to overflow the target.
     my $large_summary = <<'EOF';
-<thread_summary>
+<threadSummary>
 
 Current task: gamma
 
@@ -150,7 +150,7 @@ Task: gamma
 Tools: file_operations: 1
 </task>
 
-</thread_summary>
+</threadSummary>
 EOF
 
     # Force a small target so oldest task gets dropped
@@ -167,7 +167,7 @@ EOF
     my $yarn = CLIO::Memory::YaRN->new();
 
     my $two_task_summary = <<'EOF';
-<thread_summary>
+<threadSummary>
 
 Current task: second
 
@@ -181,7 +181,7 @@ Task: second
 Active task content.
 </task>
 
-</thread_summary>
+</threadSummary>
 EOF
 
     # A target small enough to force dropping 'first' but not 'second'.

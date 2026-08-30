@@ -739,7 +739,7 @@ subtest 'section_signatures populated for all 7 sections (pipeline protocol phas
 
     my $messages = [
         { role => 'system',    content => 'SYSTEM PROMPT' },
-        { role => 'system',    content => '<thread_summary>summary here</thread_summary>' },
+        { role => 'system',    content => '<threadSummary>summary here</threadSummary>' },
         { role => 'system',    content => '[CONTEXT FILES] file contents' },
         { role => 'user',      content => 'q1' },
         { role => 'assistant', content => 'a1', tool_calls => [

@@ -136,9 +136,9 @@ subtest 'pre-trim: stable prefix covers system_prompt + context_files' => sub {
 # =================================================================
 subtest 'post-trim: stable prefix covers system_prompt + thread_summary' => sub {
     my $system_prompt = "You are CLIO. " . ("Stable system context. " x 200);
-    my $summary = "<thread_summary>\nCurrent task: Build a thing.\n" .
+    my $summary = "<threadSummary>\nCurrent task: Build a thing.\n" .
                   ("Summarized context. " x 500) .
-                  "\n</thread_summary>";
+                  "\n</threadSummary>";
 
     my $messages = [
         { role => 'system', content => $system_prompt },
@@ -233,7 +233,7 @@ subtest 'cache_control anchored on system prompt (first leading system)' => sub 
 subtest 'cache_control stays on system prompt after trim (not on summary)' => sub {
     my $messages = [
         { role => 'system', content => 'STABLE SYSTEM PROMPT' },
-        { role => 'system', content => '<thread_summary>regenerated</thread_summary>' },
+        { role => 'system', content => '<threadSummary>regenerated</threadSummary>' },
         { role => 'user',      content => 'q' },
     ];
     my $config = { supports_cache_control => 1 };
@@ -356,7 +356,7 @@ subtest 'CRITICAL: user_context at leading position excluded from stable prefix'
 subtest 'user_context at leading position after trim is excluded' => sub {
     my $system_prompt = "System prompt. " x 100;
     my $user_context = "<dynamicContext>\nDate: 2026-08-20 14:36:23 GMT\nWorking dir: /home/deck/repositories/CLIO\n</dynamicContext>";
-    my $summary = "<thread_summary>\nCurrent task: Build.\n(" . ("Summarized. " x 200) . ")\n</thread_summary>";
+    my $summary = "<threadSummary>\nCurrent task: Build.\n(" . ("Summarized. " x 200) . ")\n</threadSummary>";
 
     my $messages = [
         { role => 'system', content => $system_prompt },

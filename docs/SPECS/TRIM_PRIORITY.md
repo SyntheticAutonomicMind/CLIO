@@ -76,7 +76,7 @@ fixed MIN_CSSS_SLOT_TOKENS floor; this was removed in 2026-08-27
 because the padding was visible to the model as a massive artifact.
 
 **Detection:** `_extract_preserved_units` performs a second-pass
-reverse walk looking for the trailing `<thread_summary>` system
+reverse walk looking for the trailing `<threadSummary>` system
 message. When found, marks the unit with `is_trailing_summary` so the
 budget walk skips it (it's emitted at the END separately).
 
