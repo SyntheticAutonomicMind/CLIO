@@ -359,8 +359,9 @@ if ($route_name && length($route_name)) {
             $config->set('route_name', $route_name, 0);
             $config->set('model_candidates', $models, 0);
             $config->set('model_routing_index', 0, 0);
-            $config->set('model', $models->[0], 0);
-            # Resolve provider from first model
+            # Resolve provider from first model BEFORE setting the model,
+            # because set_provider() overwrites model with the provider's
+            # default model (e.g. OpenRouter defaults to meta-llama/...).
             if ($models->[0] =~ m{^([a-z][a-z0-9_.-]*)/(.+)$}i && CLIO::Providers::provider_exists($1)) {
                 my $rp = $1;
                 my $rpkey = $config->get_provider_key($rp);
@@ -370,6 +371,9 @@ if ($route_name && length($route_name)) {
                     log_info('Main', "Activated route '$route_name' with provider '$rp'");
                 }
             }
+            # Set model AFTER provider so set_provider's default model
+            # doesn't clobber the route's first model
+            $config->set('model', $models->[0], 0);
             log_debug('Main', "Route '$route_name' loaded with " . scalar(@$models) . " models");
         }
     } else {
