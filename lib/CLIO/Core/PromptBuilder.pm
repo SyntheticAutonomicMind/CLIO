@@ -582,7 +582,7 @@ sub get_user_context {
     if ($session) {
         my $dynamic = $self->_get_dynamic_context($session);
         if ($dynamic) {
-            $context .= "<dynamicContext>\n" . "- This is informational context only - do not reference or repeat in your responses\n" . $dynamic . "\n</dynamicContext>\n\n";
+            $context .= "<dynamicContext>\n" . $dynamic . "\n</dynamicContext>\n\n";
             log_debug('PromptBuilder', "Prepended dynamic context (" . length($dynamic) . " chars)");
         }
     }
@@ -608,7 +608,6 @@ sub get_user_context {
            $task_display = substr($task_display, 0, 497) . '...';
        }
        $context .= "<activeTask>\n";
-       $context .= "- This is informational context only - do not reference or repeat in your responses\n";
        $context .= $task_display . "\n";
        $context .= "</activeTask>\n\n";
    }
@@ -739,7 +738,6 @@ sub _generate_user_context_section {
     $section .= "**Current Date/Time:** $datetime_iso ($day_name, $month_name $mday, $year)\n";
     $section .= "**Working Directory:** `$cwd`\n";
     $section .= "**Language:** $lang->{name} ($lang->{locale}) - Always respond in $lang->{name} unless the user specifies otherwise\n";
-    $section .= "- This is informational context only - do not reference or repeat in your responses\n";
     $section .= "</userContext>\n\n";
 
     return $section;
@@ -811,7 +809,6 @@ sub _read_session_goals {
         return '' unless @active;
 
        $goals_text = "<sessionGoals>\n";
-       $goals_text .= "- This is informational context only - do not reference or repeat in your responses\n";
        for my $goal (@active) {
             my $title = $goal->{title} || 'Untitled';
             my $desc  = $goal->{description} || '';
@@ -913,7 +910,6 @@ sub _read_active_todos {
         return '' unless @in_progress || @not_started || @blocked;
 
         $todos_text = "<activeTodos>\n";
-        $todos_text .= "- This is informational context only - do not reference or repeat in your responses\n";
         $todos_text .= "Current todo state: "
                      . scalar(@completed) . " of " . scalar(@$todos) . " complete";
         $todos_text .= " (" . scalar(@in_progress) . " in progress, "

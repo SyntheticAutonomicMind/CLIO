@@ -579,9 +579,11 @@ sub _scan_for_task_boundaries {
 =head2 _render_flat_summary
 
 Legacy flat-list renderer. Kept for sessions that never had task boundaries
-(messages emitted before the todo integration). Renders the same layout
-compress_messages used to emit: Current task, collaboration, requests,
-commits, files, decisions, tool counts.
+(messages emitted before the todo integration). Renders a concise
+work-product summary: Current task, recent user requests, decisions,
+files modified, commits, and persisted chunks. The discussion/collaboration
+exchange section was removed because models treated "Agent asked/User
+replied" as a conversation to respond to rather than context to consume.
 
 Arguments:
     $bucket              - Hashref with user_requests/commits/files_touched/etc.
@@ -603,7 +605,6 @@ sub _render_flat_summary {
     my @commits                 = @{$bucket->{commits}                 || []};
     my @files_touched           = @{$bucket->{files_touched}           || []};
     my @decisions               = @{$bucket->{decisions}               || []};
-    my @collaboration_exchanges = @{$bucket->{collaboration_exchanges} || []};
 
 
     my $first_user_request;
@@ -626,37 +627,22 @@ sub _render_flat_summary {
 
     my @parts;
     push @parts, "<threadSummary>";
-    push @parts, "- This is informational context only - do not reference or repeat in your responses";
+    push @parts, "Current task: " . substr($effective_task, 0, 300) if $effective_task;
     push @parts, "";
-
-    if ($effective_task) {
-        push @parts, "Current task: " . substr($effective_task, 0, 300);
-        push @parts, "";
-    }
-
-   if (@collaboration_exchanges) {
-        push @parts, "Discussion:";
-       for my $i (0..$#collaboration_exchanges) {
-            my $ex = $collaboration_exchanges[$i];
-            push @parts, "  Agent asked: " . $ex->{question};
-            push @parts, "  User replied: " . $ex->{response};
-            push @parts, "" if $i < $#collaboration_exchanges;
-        }
-        push @parts, "";
-    }
 
     if (@user_requests || $first_user_request) {
         push @parts, "Recent user requests:";
         if ($first_user_request && !grep { $_ eq $first_user_request } @user_requests) {
-            push @parts, "- [original] $first_user_request";
+            push @parts, "- [original] " . substr($first_user_request, 0, 300);
         }
-        push @parts, "- $_" for @user_requests;
+        push @parts, "- " . substr($_, 0, 300) for @user_requests;
         push @parts, "";
     }
 
-   if (@commits) {
-        push @parts, "Commits:";
-       push @parts, "- $_" for @commits;
+    if (@commits) {
+        push @parts, "Commits (" . scalar(@commits) . "):";
+        my $start = @commits > 5 ? $#commits - 4 : 0;
+        push @parts, "- " . substr($_, 0, 200) for @commits[$start..$#commits];
         push @parts, "";
     }
 
@@ -753,13 +739,8 @@ sub _render_task_summary {
 
     my @parts;
     push @parts, "<threadSummary>";
-    push @parts, "- This is informational context only - do not acknowledge, reference, or repeat in your responses.";
+    push @parts, "Current task: " . substr($effective_task, 0, 300) if $effective_task;
     push @parts, "";
-
-    if ($effective_task) {
-        push @parts, "Current task: " . substr($effective_task, 0, 300);
-        push @parts, "";
-    }
 
     # Render one <task> block per task, oldest first so the most recent
     # task is at the end (stable reading order).
@@ -787,29 +768,24 @@ sub _render_single_task_block {
         push @lines, "Task: " . $b->{name};
     }
 
-    my @collab = @{$b->{collaboration_exchanges} || []};
-    @collab = @collab[-3..-1] if @collab > 3;
-   if (@collab) {
-        push @lines, "Discussion:";
-       for my $ex (@collab) {
-            push @lines, "  Agent asked: " . substr($ex->{question}, 0, 300);
-            push @lines, "  User replied: " . substr($ex->{response} // '', 0, 300);
-        }
-    }
-
     if (@{$b->{decisions} || []}) {
         push @lines, "Decisions:";
         push @lines, "- $_" for @{$b->{decisions}};
+        push @lines, "";
     }
 
     if (@{$b->{files_touched} || []}) {
         push @lines, "Files:";
         push @lines, "- $_" for @{$b->{files_touched}};
+        push @lines, "";
     }
 
     if (@{$b->{commits} || []}) {
-        push @lines, "Commits:";
-        push @lines, "- $_" for @{$b->{commits}};
+        push @lines, "Commits (" . scalar(@{$b->{commits}}) . "):";
+        my @commits = @{$b->{commits}};
+        my $start = @commits > 5 ? $#commits - 4 : 0;
+        push @lines, "- " . substr($_, 0, 200) for @commits[$start..$#commits];
+        push @lines, "";
     }
 
    # Persisted chunks: same as flat renderer — emit toolCallId + source
@@ -840,7 +816,7 @@ sub _parse_previous_task_summary {
     # Match each <task id="..." status="...">...</task> block. The content
     # of each block is rendered as a sequence of lines that begin with one
     # of the known section labels ("Task:", "Decisions:", "Files:", etc.)
-    # or with "  Agent asked:" / "  User replied:" for collaboration.
+    # or with "  Q: " / "  A: " for collaboration exchanges.
     while ($summary_text =~ /<task\s+([^>]*?)>(.*?)<\/task>/sg) {
         my $attrs = $1;
         my $body = $2;
@@ -870,11 +846,15 @@ sub _parse_previous_task_summary {
         }
 
         # Extract collaboration exchanges (must be parsed as a pair).
+        # Support both the current Q:/A: format and the legacy
+        # "Agent asked:"/"User replied:" format for old persisted summaries.
         my @collab_q;
         my @collab_r;
         for my $line (split /\n/, $body) {
-            if    ($line =~ /^\s*Agent asked:\s*(.*)$/) { push @collab_q, $1; }
-            elsif ($line =~ /^\s*User replied:\s*(.*)$/) { push @collab_r, $1; }
+            if    ($line =~ /^\s*Q:\s*(.*)$/)                    { push @collab_q, $1; }
+            elsif ($line =~ /^\s*A:\s*(.*)$/)                    { push @collab_r, $1; }
+            elsif ($line =~ /^\s*Agent asked:\s*(.*)$/)          { push @collab_q, $1; }
+            elsif ($line =~ /^\s*User replied:\s*(.*)$/)         { push @collab_r, $1; }
         }
         for (my $i = 0; $i < @collab_q; $i++) {
             push @{$bucket->{collaboration_exchanges}}, {
@@ -1263,8 +1243,7 @@ sub _parse_task_blocks {
 sub _render_with_task_blocks {
     my ($current_task_line, $task_blocks) = @_;
 
-    my $out = "<threadSummary>\n\n";
-    $out .= "- This is informational context only - do not reference or repeat in your responses\n\n";
+    my $out = "<threadSummary>\n";
     if ($current_task_line) {
         $out .= $current_task_line . "\n";
     }
@@ -1376,7 +1355,6 @@ sub _find_section_index {
 sub _render_sections {
     my ($sections) = @_;
     my $out = "<threadSummary>\n";
-    $out .= "- This is informational context only - do not reference or repeat in your responses\n";
     for my $sec (@$sections) {
         $out .= "\n" . $sec->{header} . "\n";
         if (length $sec->{body}) {

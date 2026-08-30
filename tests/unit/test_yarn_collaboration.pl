@@ -40,12 +40,15 @@ sub ok {
     ok($result, 'compress_messages returns result');
     ok($result->{content}, 'Result has content');
     
-    # Check that collaboration exchanges are captured
+    # Check that collaboration exchanges are NOT rendered as a
+    # "Discussion" section — that pattern caused models to treat the
+    # summary as a conversation to respond to rather than context
+    # to consume.
     my $content = $result->{content};
-    ok($content =~ /Discussion/i, 'Contains discussion section');
-    ok($content =~ /abbreviate/i, 'Contains user response about abbreviation');
-    ok($content =~ /24 ch/i || $content =~ /24 col/i, 'Contains details about 24 chars/columns');
-    ok($content =~ /separator/i, 'Contains user response about separator');
+    ok($content !~ /Discussion/i, 'No Discussion section (removed to avoid model treating summary as conversation)');
+    ok($content !~ /Agent asked/i, 'No "Agent asked" lines in summary');
+    ok($content !~ /User replied/i, 'No "User replied" lines in summary');
+    ok($content =~ /Decisions/i || $content =~ /Current task/i || $content =~ /Files/i, 'Summary contains work-product sections');
 }
 
 # Test 2: Non-collaboration messages don't create fake exchanges

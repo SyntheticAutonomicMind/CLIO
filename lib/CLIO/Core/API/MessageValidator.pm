@@ -1388,7 +1388,7 @@ sub _make_anchor_summary {
     $trimmed =~ s/\s+/ /g;
     return {
         role    => 'system',
-        content => "<threadSummary>\n\n- This is informational context only - do not reference or repeat in your responses\n\nCurrent task: $trimmed\n\n</threadSummary>\n",
+        content => "<threadSummary>\nCurrent task: $trimmed\n</threadSummary>\n",
         _metadata => {
             compressed_tokens => int(length($trimmed) / 3.5) + 6,  # rough estimate
             compressed_count  => 0,  # no dialog was compressed

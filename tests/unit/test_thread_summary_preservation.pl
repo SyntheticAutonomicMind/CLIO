@@ -17,6 +17,7 @@ my $failed = 0;
 
 sub ok_test {
     my ($cond, $desc) = @_;
+    $desc //= '(no description)';
     if ($cond) {
         $passed++;
         print "ok - $desc\n";
@@ -33,12 +34,9 @@ sub ok_test {
     # Simulate a previous summary with accumulated history
     my $old_summary = <<'END';
 <threadSummary>
-
-- This is informational context only - do not reference or repeat in your responses
-
 Current task: Build a widget system
 
-Commits:
+Commits (2):
 - abc1234: feat: add widget base class
 - def5678: feat: add widget rendering
 

@@ -4156,7 +4156,6 @@ sub _compress_dropped_for_recovery {
     my $topic = _extract_conversation_topic($all_messages || $dropped_messages);
     if ($topic) {
         push @recovery_parts, "<currentTopic>";
-        push @recovery_parts, "- This is informational context only - do not reference or repeat in your responses";
         push @recovery_parts, $topic;
         push @recovery_parts, "</currentTopic>";
         push @recovery_parts, "";
@@ -4172,7 +4171,6 @@ sub _compress_dropped_for_recovery {
         if ($todo_context) {
             push @recovery_parts, "";
             push @recovery_parts, "<taskRecovery>";
-            push @recovery_parts, "- This is informational context only - do not reference or repeat in your responses";
             push @recovery_parts, $todo_context;
             push @recovery_parts, "</taskRecovery>";
         }
@@ -4192,7 +4190,6 @@ sub _compress_dropped_for_recovery {
     if (@recent_user_msgs) {
         push @recovery_parts, "";
         push @recovery_parts, "<recentContext>";
-        push @recovery_parts, "- This is informational context only - do not reference or repeat in your responses";
         push @recovery_parts, "Most recent user messages before trimming:";
         for my $i (0..$#recent_user_msgs) {
             push @recovery_parts, ($i + 1) . ". " . $recent_user_msgs[$i];
@@ -4206,7 +4203,6 @@ sub _compress_dropped_for_recovery {
     if ($git_context) {
         push @recovery_parts, "";
         push @recovery_parts, "<gitRecovery>";
-        push @recovery_parts, "- This is informational context only - do not reference or repeat in your responses";
         push @recovery_parts, $git_context;
         push @recovery_parts, "</gitRecovery>";
     }
@@ -4216,7 +4212,6 @@ sub _compress_dropped_for_recovery {
     if ($progress_context) {
         push @recovery_parts, "";
         push @recovery_parts, "<sessionProgress>";
-        push @recovery_parts, "- This is informational context only - do not reference or repeat in your responses";
         push @recovery_parts, $progress_context;
         push @recovery_parts, "</sessionProgress>";
     }
@@ -4360,14 +4355,14 @@ sub _extract_conversation_topic {
 
     # Collaboration is highest priority - it represents active discussion
     if (@collab_questions || @collab_responses) {
-        push @topic_parts, "Active discussion:";
+        push @topic_parts, "Active discussion (last 5 exchanges):";
         # Show last 5 exchanges to capture full design discussions
         my $q_start = @collab_questions > 5 ? @collab_questions - 5 : 0;
 
         for my $i ($q_start .. $#collab_questions) {
-            push @topic_parts, "Agent asked: " . $collab_questions[$i];
+            push @topic_parts, "  Q: " . substr($collab_questions[$i], 0, 200);
             if ($collab_responses[$i]) {
-                push @topic_parts, "User replied: " . $collab_responses[$i];
+                push @topic_parts, "  A: " . substr($collab_responses[$i], 0, 200);
             }
         }
     }
