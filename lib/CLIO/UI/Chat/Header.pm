@@ -219,6 +219,8 @@ sub display_header {
                 session_name => $session_name,
                 session_name_line => $session_name_line,
                 model => $model_with_provider,
+                routing_verb => 'connected',
+                route_suffix => '',
             });
             my $stripped = $rendered;
             $stripped =~ s/\e\[[0-9;]*m//g;
@@ -235,6 +237,8 @@ sub display_header {
                 session_name => $session_name,
                 session_name_line => $session_name_line,
                 model => $model_with_provider,
+                routing_verb => 'connected',
+                route_suffix => '',
             });
             print $rendered, "\n";
         }
@@ -250,6 +254,19 @@ sub display_header {
                 $model_with_provider .= " (session)";
             }
         }
+    }
+
+    # Determine routing status for banner display
+    my $candidates = $chat->{config} ? $chat->{config}->get('model_candidates') : [];
+    my $routing_active = ref($candidates) eq 'ARRAY' && @$candidates > 1;
+    my $route_name = $chat->{config} ? $chat->{config}->get('route_name') : undef;
+    my $routing_verb = $routing_active ? 'routing' : 'connected';
+    my $route_suffix = '';
+    if ($routing_active && $route_name && length($route_name)) {
+        $route_suffix = " via $route_name";
+    } elsif ($routing_active) {
+        # Multiple --model candidates without a named route
+        $route_suffix = " (" . scalar(@$candidates) . " models)";
     }
 
     print "\n";
@@ -274,6 +291,8 @@ sub display_header {
             session_name => $session_name,
             session_name_line => $session_name_line,
             model => $model_with_provider,
+            routing_verb => $routing_verb,
+            route_suffix => $route_suffix,
         });
 
         $line_num++;
