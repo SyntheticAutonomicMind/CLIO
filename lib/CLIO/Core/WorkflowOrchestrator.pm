@@ -3818,14 +3818,35 @@ Protocol and then systematically examine the codebase" 8+ turns in,
 with no thread_summary ever present, because the budget walk never
 dropped anything).
 
+The anchor is generated from REAL work product via
+CLIO::Memory::YaRN::compress_messages() — commits, files, decisions,
+started todos — not just a 300-char truncate of the original prompt.
+On a 1M-token context model (where trimming never fires), this is the
+ONLY way the model sees a summary of its own progress.
+
+Change detection: the summary is regenerated only when the "work
+product signature" changes (new commits, new files, new decisions,
+todo transitions). Between changes, the existing summary is reused
+verbatim so the LCP cache prefix stays stable. On the very first turn
+(turn 1, no history yet), the summary is the minimal
+"<threadSummary>Current task: X</threadSummary>" anchor from
+MessageValidator::_make_anchor_summary, upgraded to a rich summary on
+subsequent turns as work product accumulates.
+
 Behavior:
   - If @messages already contains a role=system message whose content
-    starts with <threadSummary>, return @messages unchanged (legitimate
-    summary from a prior trim or anchor).
-  - If @messages has no <threadSummary> AND we have a substantive
-    user task, build a minimal "<threadSummary>Current task: X</threadSummary>"
-    anchor from the substantive task and inject it at the CSSS slot
-    position (between the dialog and the current-turn user_context/user_input).
+    starts with <threadSummary>:
+      * Compute the work-product signature of current @messages.
+      * If it matches the signature stored in the existing summary's
+        metadata, keep the existing summary (cache stable, no rebuild).
+      * If it differs, regenerate via YaRN::compress_messages and replace
+        the old summary in-place.
+  - If no <threadSummary> exists:
+      * Try YaRN::compress_messages on the full @messages. If the result
+        contains substantive work product (commits, files, decisions,
+        or started todos), inject it as the anchor.
+      * Otherwise fall back to _make_anchor_summary (minimal, turn-1
+        style) from the substantive user task.
   - If no substantive user task is available, return @messages unchanged.
 
 Arguments:
@@ -3840,52 +3861,139 @@ sub _inject_thread_summary {
     my ($self, $messages_ref, $user_input) = @_;
     return $messages_ref unless $messages_ref && ref($messages_ref) eq 'ARRAY';
 
-    # Already have a thread_summary in @messages? Leave it alone — it's
-    # either a legitimate summary from a prior trim or a previously-injected
-    # anchor. Don't disturb the cache-stable position.
-    for my $msg (@$messages_ref) {
-        next unless ref($msg) eq 'HASH';
-        next unless ($msg->{role} // '') eq 'system';
-        my $content = $msg->{content} // '';
-        # Match ONLY messages that ARE a thread_summary, not messages
-        # that merely mention the literal text (anchored).
-        if ($content =~ /\A<threadSummary>/) {
-            return $messages_ref;
-        }
-    }
-
-    # Find the substantive task. The current user input is preferred; if it's
-    # too short or absent, walk the messages for the most recent substantive
-    # user task. This matches _find_substantive_user_task's policy.
+    # Find the substantive task. Used both for the fallback anchor and as
+    # the original_task seed for YaRN compression.
     my $task = $self->_find_substantive_user_task($messages_ref, $user_input, undef);
-    return $messages_ref unless defined $task && length($task) >= 50;
 
-    # Build the anchor summary. Use the MessageValidator helper since it
-    # already produces the canonical "<threadSummary>Current task: X</threadSummary>"
-    # block with the same token accounting the budget walk uses.
-    require CLIO::Core::API::MessageValidator;
-    my $anchor = CLIO::Core::API::MessageValidator::_make_anchor_summary($task);
-    return $messages_ref unless $anchor;
+    # Locate an existing <threadSummary> system message and the CSSS slot
+    # position (index just before the last user_context, or end of array).
+    my $summary_idx = undef;
+    my $inject_idx  = scalar(@$messages_ref);  # default: end
 
-    # Inject at the CSSS slot. Per the pipeline protocol, the canonical
-    # order is [sys][context_files][dialog][summary][user_context][user_input].
-    # The summary sits at the END of the dialog (just before user_context).
-    # Find the last user_context system message; if present, inject
-    # immediately before it. Otherwise inject at the very end.
-    my $inject_idx = scalar(@$messages_ref);  # default: end
     for my $i (reverse 0 .. $#{$messages_ref}) {
         my $m = $messages_ref->[$i];
         next unless ref($m) eq 'HASH';
         next unless ($m->{role} // '') eq 'system';
         my $content = $m->{content} // '';
-        next if $content =~ /\A<threadSummary>/;  # already handled above
+        if ($content =~ /\A<threadSummary>/) {
+            $summary_idx = $i;  # may get overwritten by an earlier one, but
+                                # there should be only one
+        }
+        # Find the last user_context/system-goals marker for the CSSS slot.
         if ($content =~ /^\s*<(?:userContext|dynamicContext|sessionGoals)[\s>]/) {
             $inject_idx = $i;
+        }
+    }
+    # Walk forward so summary_idx is the FIRST thread_summary if there
+    # happened to be more than one (shouldn't happen, but be safe).
+    for my $i (0 .. $#{$messages_ref}) {
+        my $m = $messages_ref->[$i];
+        next unless ref($m) eq 'HASH';
+        next unless ($m->{role} // '') eq 'system';
+        my $content = $m->{content} // '';
+        if ($content =~ /\A<threadSummary>/) {
+            $summary_idx = $i;
             last;
         }
     }
+
+    # --- Case 1: existing thread_summary present ---
+    if (defined $summary_idx) {
+        my $existing = $messages_ref->[$summary_idx];
+        my $existing_sig = $existing->{_metadata}{work_product_signature} // '';
+        my $current_sig  = CLIO::Memory::YaRN::_extract_work_product_signature($messages_ref);
+
+        if ($existing_sig eq $current_sig) {
+            # Work product hasn't changed since the last summary was
+            # generated. Keep it verbatim — this is the cache-stable path.
+            # No regeneration, no token churn, LCP prefix stays locked.
+            return $messages_ref;
+        }
+
+        # Work product has changed since the last summary. Regenerate a
+        # rich summary via YaRN and replace the old one in-place.
+        if (length($task) >= 10) {
+            my $yarn = CLIO::Memory::YaRN->new();
+            my $new_summary;
+            eval {
+                $new_summary = $yarn->compress_messages($messages_ref,
+                    original_task => $task,
+                );
+            };
+            if ($@) {
+                log_warning('WorkflowOrchestrator', "YaRN re-summary failed: $@, keeping existing anchor");
+                return $messages_ref;
+            }
+            if ($new_summary && $new_summary->{content}) {
+                # Preserve the anchor_summary flag so downstream code can
+                # distinguish anchor summaries from trim summaries.
+                $new_summary->{_metadata}{anchor_summary}    = 1;
+                $new_summary->{_metadata}{work_product_signature} = $current_sig;
+                $messages_ref->[$summary_idx] = $new_summary;
+                # Remove any duplicate <threadSummary> messages after the
+                # canonical one (shouldn't happen in normal flow, but
+                # guards against corrupted state from session edits).
+                for my $i (reverse 0 .. $#{$messages_ref}) {
+                    next if $i == $summary_idx;
+                    my $m = $messages_ref->[$i];
+                    if (ref($m) eq 'HASH' && ($m->{role} // '') eq 'system'
+                        && ($m->{content} // '') =~ /\A<threadSummary>/) {
+                        splice @$messages_ref, $i, 1;
+                    }
+                }
+                log_debug('WorkflowOrchestrator', "Regenerated thread_summary (work product changed, sig: $existing_sig -> $current_sig)");
+                return $messages_ref;
+            }
+        }
+        # YaRN produced nothing useful; keep the existing anchor.
+        return $messages_ref;
+    }
+
+    # --- Case 2: no existing thread_summary — first injection ---
+    return $messages_ref unless defined $task && length($task) >= 50;
+
+    # Try a rich YaRN summary first. On turn 1 (no tool results yet) this
+    # will produce just the task — same as the anchor, but structured.
+    # On later turns (resume or first-injection on a large-context model),
+    # it will include commits, files, decisions, and running todos.
+    my $new_summary;
+    eval {
+        my $yarn = CLIO::Memory::YaRN->new();
+        $new_summary = $yarn->compress_messages($messages_ref,
+            original_task => $task,
+        );
+    };
+    if ($@) {
+        log_warning('WorkflowOrchestrator', "YaRN anchor generation failed: $@, falling back to minimal anchor");
+    }
+
+    # Use the YaRN summary if it produced more than just "Current task: ..."
+    # (i.e., it captured real work product). Otherwise use the minimal anchor.
+    my $anchor;
+    if ($new_summary && $new_summary->{content}) {
+        my $content = $new_summary->{content};
+        # A minimal summary is just "<threadSummary>\nCurrent task: X\n</threadSummary>"
+        # — no Commits/Files/Decisions/Started todos sections.
+        if ($content =~ /(?:Commits|Files|Decisions|Started todos|Persisted chunks|Task:)/) {
+            $anchor = $new_summary;
+        }
+    }
+    unless ($anchor) {
+        require CLIO::Core::API::MessageValidator;
+        $anchor = CLIO::Core::API::MessageValidator::_make_anchor_summary($task);
+    }
+    return $messages_ref unless $anchor;
+
+    # Tag the anchor with the current work product signature so that on
+    # the next turn we can skip regeneration if nothing changed.
+    if (!$anchor->{_metadata}) { $anchor->{_metadata} = {}; }
+    $anchor->{_metadata}{anchor_summary}              = 1;
+    $anchor->{_metadata}{work_product_signature}      = CLIO::Memory::YaRN::_extract_work_product_signature($messages_ref);
+
+    # Inject at the CSSS slot. Per the pipeline protocol, the canonical
+    # order is [sys][context_files][dialog][summary][user_context][user_input].
     splice @$messages_ref, $inject_idx, 0, $anchor;
-    log_debug('WorkflowOrchestrator', "Injected thread_summary anchor (" . ($anchor->{_metadata}{compressed_tokens} // '?') . " tokens) at index $inject_idx");
+    log_debug('WorkflowOrchestrator', "Injected thread_summary anchor (" . ($anchor->{_metadata}{compressed_tokens} // '?') . " tokens, sig: " . ($anchor->{_metadata}{work_product_signature} // '?') . ") at index $inject_idx");
     return $messages_ref;
 }
 

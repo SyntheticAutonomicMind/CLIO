@@ -324,6 +324,7 @@ sub compress_messages {
                 collaboration_exchanges => [],
                 tool_counts             => {},
                 persisted_chunks        => [],
+                running_todos           => [],
                 name                    => '',
                 todo_id                 => undef,
                 status                  => 'unknown',
@@ -345,6 +346,7 @@ sub compress_messages {
             collaboration_exchanges => [],
             tool_counts             => {},
             persisted_chunks        => [],
+            running_todos           => [],
             name                    => '',
             todo_id                 => undef,
             status                  => 'unknown',
@@ -419,6 +421,19 @@ sub compress_messages {
                     if ($name =~ /^(file_operations|apply_patch)$/) {
                         while ($args_str =~ /"(?:path|new_path|old_path)"\s*:\s*"([^"]+)"/g) {
                             push @{$bucket->{files_touched}}, $1 unless $1 =~ /^\./;
+                        }
+                    }
+
+                    # Capture todo_operations calls for running todo state.
+                    # We parse the write/update arguments to extract the
+                    # current todo list and store it in running_todos so
+                    # the summary renderers can surface "Started todos".
+                    if ($name eq 'todo_operations') {
+                        my $todos_ref = _extract_running_todos($args_str);
+                        if ($todos_ref && @$todos_ref) {
+                            # Replace the bucket's running_todos with the
+                            # latest snapshot from the most recent call.
+                            $bucket->{running_todos} = $todos_ref;
                         }
                     }
                 }
@@ -561,8 +576,136 @@ sub compress_messages {
             compressed_tokens  => $compressed_tokens,
             compression_ratio  => $original_tokens > 0
                 ? $compressed_tokens / $original_tokens : 0,
+            work_product_signature => _extract_work_product_signature($messages),
         },
     };
+}
+
+# Compute a signature of the "work product" in @messages — the subset of
+# state that changes only when real work happens (new commits, new
+# decisions, todo transitions). File operations are NOT included because
+# they are investigation and happen on every turn — including them caused
+# compress_messages() to be called on every tool-loop iteration (sustained
+# 100% CPU on large sessions). If this signature hasn't changed since the
+# last thread_summary was generated, the existing summary is still accurate
+# and can be reused without regeneration (cache-stable).
+#
+# Returns: a hex digest string, or '' for an empty message set.
+sub _extract_work_product_signature {
+    my ($messages) = @_;
+    return '' unless $messages && ref($messages) eq 'ARRAY' && @$messages;
+
+    my $commit_count   = 0;
+    my $decision_count = 0;
+    my $todo_sig       = '';
+
+    for my $msg (@$messages) {
+        my $role = $msg->{role} || '';
+        my $content = $msg->{content} || '';
+
+        if ($role eq 'tool') {
+            # Git commit results: [abc1234] Short description
+            $commit_count += 1 while $content =~ /^\[([a-f0-9]{7,12})\]\s+/mg;
+        }
+        elsif ($role eq 'assistant') {
+            if ($msg->{tool_calls} && ref($msg->{tool_calls}) eq 'ARRAY') {
+                for my $tc (@{$msg->{tool_calls}}) {
+                    my $name = $tc->{function}{name} || 'unknown';
+                    # Capture todo_operations calls for running todo state.
+                    # We parse the write/update arguments to extract the
+                    # current todo list and store it in running_todos so
+                    # the summary renderers can surface "Started todos".
+                    # Note: file_operations and apply_patch tool calls are
+                    # intentionally NOT counted in the work-product signature —
+                    # they are investigation that happens on every turn and
+                    # including them caused compress_messages() to be called
+                    # on every tool-loop iteration (sustained 100% CPU on
+                    # large sessions). Only commits, decisions, and todo
+                    # transitions should trigger a summary regeneration.
+                    if ($name eq 'todo_operations') {
+                        my $tc_args = $tc->{function}{arguments} || '';
+                        my $s = _extract_running_todos($tc_args);
+                        $todo_sig = join(',', map { $_->{id}.':'.($_->{status}//'').':'.substr(($_->{title}//''),0,30) } @$s) if $s;
+                    }
+                }
+            }
+            # Decision markers (progress phrases in assistant text)
+            if ($content =~ /(?:^|[.;]\s+|\n)\s*(?:(?:I\s+have|I've|I|We\s+have|We've|We)\s+(?:completed?|finished|done|found|identified|discovered|located)\s+|Found\s+|Done\s+with\s+|Finished\s+|Moving\s+to\s+|Now\s+(?:proceeding|starting|implementing|working)\s+|The\s+(?:fix|root\s+cause|bug|problem|solution|approach|plan)\s+(?:is|was)\s+|Next\s+(?:step|phase|item)\s+(?:is|will\s+be)\s+|Proceeding\s+with\s+|The\s+plan\s+is\s+(?:to\s+)?)/i) {
+                $decision_count++;
+            }
+        }
+    }
+
+    # Signature captures only substantive work product: commits, decisions,
+    # and todo state. Does NOT include file_operations counts (those are
+    # investigation/tool-calls that happen on every turn — including them
+    # caused the signature to change every turn, triggering compress_messages
+    # on the full message array every turn, producing sustained 100% CPU).
+    # Also does NOT include empty-assistant counts (Tier 4 noise).
+    my $sig = join('|', $commit_count, $decision_count, $todo_sig);
+    require Digest::MD5;
+    return Digest::MD5::md5_hex($sig);
+}
+
+# Parse the arguments string of a todo_operations tool call and extract
+# the current todo list state. Handles both "write" (full todoList) and
+# "update" (todoUpdates) operation formats.
+#
+# Returns: arrayref of {id, title, status, priority} hashrefs, or [] if
+# no todos could be parsed. Only returns todos that have a title and id.
+sub _extract_running_todos {
+    my ($args_str) = @_;
+    return [] unless defined $args_str && length($args_str);
+
+    # Try to decode the full arguments JSON first. If that fails, fall
+    # back to regex extraction.
+    my @todos;
+    eval {
+        require CLIO::Util::JSON;
+        my $args = CLIO::Util::JSON::decode_json($args_str);
+        my $todo_list;
+        if (ref($args) eq 'HASH' && exists $args->{todoList}) {
+            $todo_list = $args->{todoList};
+        }
+        elsif (ref($args) eq 'HASH' && exists $args->{newTodos}) {
+            $todo_list = $args->{newTodos};
+        }
+        if ($todo_list && ref($todo_list) eq 'ARRAY') {
+            for my $t (@$todo_list) {
+                next unless ref($t) eq 'HASH';
+                my $title = $t->{title};
+                my $id = $t->{id};
+                my $status = $t->{status} // '';
+                my $priority = $t->{priority} // '';
+                if (defined $title && defined $id) {
+                    push @todos, { id => $id, title => $title, status => $status, priority => $priority };
+                }
+            }
+        }
+    };
+    if ($@ || !@todos) {
+        # Fallback: regex extract title + status from the raw arguments.
+        # This handles partial/corrupt JSON or non-standard call formats.
+        # NOTE: the inner "id" and "status" regexes must NOT use /g — a
+        # failed /g match resets pos() to undef on the string, which
+        # would restart the outer while loop's /g iterator from position
+        # 0 and cause an infinite loop. The inner regexes only need to
+        # find the nearest id/status, so a plain match suffices.
+        my $pos = 0;
+        while ($args_str =~ /"title"\s*:\s*"((?:[^"\\]|\\.)*)"/g) {
+            my $title = $1;
+            $title =~ s/\\n/\n/g; $title =~ s/\\"/\"/g; $title =~ s/\\\\/\\/g;
+            # Look for the nearest id and status near this title
+            my $id = '';
+            if ($args_str =~ /"id"\s*:\s*(\d+)/) { $id = $1; }
+            my $status = '';
+            if ($args_str =~ /"status"\s*:\s*"(\w+)"/) { $status = $1; }
+            push @todos, { id => $id, title => $title, status => $status, priority => '' };
+            $pos = pos($args_str) // 0;
+        }
+    }
+
+    return \@todos;
 }
 
 # Returns 1 if @messages contains any <task_boundary ...> markers.
@@ -605,6 +748,7 @@ sub _render_flat_summary {
     my @commits                 = @{$bucket->{commits}                 || []};
     my @files_touched           = @{$bucket->{files_touched}           || []};
     my @decisions               = @{$bucket->{decisions}               || []};
+    my @running_todos           = @{$bucket->{running_todos}           || []};
 
 
     my $first_user_request;
@@ -655,6 +799,17 @@ sub _render_flat_summary {
    if (@decisions) {
         push @parts, "Decisions:";
        push @parts, "- $_" for @decisions;
+        push @parts, "";
+    }
+
+   if (@running_todos) {
+        push @parts, "Started todos:";
+        for my $t (@running_todos) {
+            my $id = $t->{id} // '?';
+            my $title = substr($t->{title} || '', 0, 120);
+            my $status = $t->{status} || 'unknown';
+            push @parts, "- #$id [$status] $title";
+        }
         push @parts, "";
     }
 
@@ -799,6 +954,16 @@ sub _render_single_task_block {
             $line .= " ($chunk->{total_length} bytes, $chunk->{remaining} remaining)" if $chunk->{total_length};
             $line .= " [legacy: detected from content marker]" if $chunk->{legacy};
             push @lines, $line;
+        }
+    }
+
+    if (@{$b->{running_todos} || []}) {
+        push @lines, "Started todos:";
+        for my $t (@{$b->{running_todos}}) {
+            my $id = $t->{id} // '?';
+            my $title = substr($t->{title} || '', 0, 120);
+            my $status = $t->{status} || 'unknown';
+            push @lines, "- #$id [$status] $title";
         }
     }
 
