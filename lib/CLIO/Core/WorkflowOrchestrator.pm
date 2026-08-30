@@ -606,8 +606,7 @@ sub process_input {
             # -> last_api_metadata.estimate_drift_ratio), tighten the
             # threshold proportionally so we hit the model budget on
             # the first try instead of round-tripping a 400.
-            my $ctx_window = $caps->{max_context_window_tokens} // 128000;
-            my $trim_threshold = $self->_compute_drift_aware_threshold($ctx_window, $session);
+            my $trim_threshold = $self->_compute_drift_aware_threshold($caps, $session);
             my $trimmed = validate_and_truncate(
                 messages           => \@messages,
                 model_capabilities => $caps,
@@ -1324,14 +1323,14 @@ sub _build_turn_context {
         # Pass the same drift-aware threshold that the proactive trim in
         # process_input uses. Without this, trim_conversation_for_api uses
         # its own 90% of (prompt_budget - system_tokens) threshold, which
-        # disagrees with the proactive trim's int(ctx * 0.90 / drift),
-        # causing a double-trim: pre-flight trims to ~85K, then proactive
-        # trim trims again to ~77K, deinterleaving tool_results twice
-        # and permanently breaking LCP cache stability. Both trims must
-        # agree on the same threshold so the proactive trim is a no-op
-        # when the pre-flight already handled it.
+        # disagrees with the proactive trim's compute_prompt_budget(ctx) /
+        # drift threshold, causing a double-trim: pre-flight trims to ~85K,
+        # then proactive trim trims again to ~77K, deinterleaving
+        # tool_results twice and permanently breaking LCP cache stability.
+        # Both trims must agree on the same threshold so the proactive trim
+        # is a no-op when the pre-flight already handled it.
         my $pre_trim_threshold = $self->_compute_drift_aware_threshold(
-            $model_caps->{max_context_window_tokens} // CLIO::Core::Defaults::DEFAULT_CONTEXT_WINDOW,
+            $model_caps,
             $session,
         );
         $history = trim_conversation_for_api(
@@ -1606,48 +1605,68 @@ sub _sync_state_max_tokens {
             "Updated session max_tokens from $state->{max_tokens} to $ctx_window (model context window)");
         $state->{max_tokens} = $ctx_window;
     }
+
+    # Also sync max_output_tokens so State::add_message uses the correct
+    # output reserve in its compute_prompt_budget call. Without this,
+    # state falls back to DEFAULT_MAX_OUTPUT_TOKENS (16K) regardless of
+    # the model's actual output cap — critically wrong for models with
+    # large output windows (e.g., MiniMax-M3 1M ctx / 128K output) where
+    # the 16K default would over-trim dialog, or for models with small
+    # output caps where 16K would under-reserve.
+    my $max_output = $model_caps->{max_output_tokens};
+    if ($max_output && ($state->{max_output_tokens} // 0) != $max_output) {
+        log_debug('WorkflowOrchestrator',
+            "Updated session max_output_tokens from $state->{max_output_tokens} to $max_output");
+        $state->{max_output_tokens} = $max_output;
+    }
 }
 
-=head2 _compute_drift_aware_threshold($ctx_window, $session)
+=head2 _compute_drift_aware_threshold($caps, $session)
 
 Compute a trim threshold in ESTIMATED tokens that accounts for the local
-estimator's known drift relative to the model's actual tokenizer.
+estimator's known drift relative to the model's actual tokenizer AND
+the model's actual output reserve (max_output_tokens).
 
-Every successful API response saves a ratio (last_api_metadata.estimate_drift_ratio)
-of actual_tokens / estimated_tokens. When that ratio exceeds 1.2 (estimate
-undercounts actual by 20% or more), the trim threshold has to be tightened
-to avoid sending oversized payloads that the provider will reject.
+The base threshold is NOT 90% of the raw context window — that ignores the
+model's output reserve and leaves no room for the model to generate its
+response, causing it to run out of tokens mid-output and hallucinate (the
+"context window too full" failure mode). Instead, the base is
+CLIO::Memory::TokenEstimator::compute_prompt_budget($caps), which computes
+  ctx_window - output_reserve - est_buffer
+where output_reserve is the model's actual max_output_tokens (capped at
+DEFAULT_TOOL_OUTPUT_RESERVE when tools are active). This leaves headroom
+for the model's output, preventing overflow.
+
+Drift ratio then tightens this base proportionally for models whose local
+char/token estimate undercounts.
 
 Formula:
-  adjusted_threshold = int(ctx_window * 0.90 / max(1.0, drift_ratio))
+  raw_threshold = compute_prompt_budget($caps)
+  adjusted_threshold = int(raw_threshold / max(1.0, drift_ratio))
 
-Example (CachyLLama, 2026-08-20):
-  ctx_window = 131072
-  drift_ratio = 1.56 (164K actual / 104K estimated)
-  raw_threshold = 131072 * 0.90 = 117964 estimated
-  adjusted_threshold = 117964 / 1.56 = 75618 estimated
+Example (CachyLLama, ctx=131072, output=16K, drift=1.56):
+  raw_threshold = compute_prompt_budget = 131072 - 16384 - ~9000 = ~105728
+  adjusted_threshold = 105728 / 1.56 = 67774 estimated
+  (fits ~105728 ACTUAL tokens, leaving 16K+9K for output/buffer)
 
-The adjusted_threshold corresponds to ~117964 ACTUAL tokens (at the
-observed drift), which fits 90% of ctx on the server.
-
-Without this adjustment the proactive trim at 90% of ctx would ship a
-payload that the server sees as ~131072 * 0.90 * 1.56 = ~184K tokens,
-oversized by ~53K and rejected with HTTP 400.
-
-The drift ratio is saved only when we have a successful API response with
-usage.prompt_tokens. Until then, we use the raw 0.90 ratio (safe default
-for models whose tokenizer matches the chars/4.0 heuristic). After the
-first successful response, the ratio is applied on every subsequent
-trim.
+Without drift: raw_threshold already accounts for output reserve, so no
+400 overflow.
+With drift (1.56): the tightened threshold prevents oversized payloads.
 
 Returns: integer trim threshold in ESTIMATED tokens.
 
 =cut
 
 sub _compute_drift_aware_threshold {
-    my ($self, $ctx_window, $session) = @_;
+    my ($self, $caps, $session) = @_;
 
-    my $raw_threshold = int($ctx_window * 0.90);
+    my $ctx_window = $caps->{max_context_window_tokens}
+                    || $caps->{context_window}
+                    || $caps->{max_prompt_tokens}
+                    || CLIO::Core::Defaults::DEFAULT_CONTEXT_WINDOW();
+
+    require CLIO::Memory::TokenEstimator;
+    my $raw_threshold = CLIO::Memory::TokenEstimator::compute_prompt_budget($caps);
 
     # Read drift ratio from session state. Default to 1.0 (no drift) if
     # we have no successful-response data yet — this matches the legacy
@@ -1689,7 +1708,7 @@ sub _compute_drift_aware_threshold {
 
     if ($self->{debug} && $drift_ratio != 1.0) {
         log_debug('WorkflowOrchestrator', sprintf(
-            "Drift-aware threshold: ctx=%d, raw=%d (90%%), drift=%.3f (%s) -> adjusted=%d (%.0f%% of ctx)",
+            "Drift-aware threshold: ctx=%d, raw=%d (prompt_budget), drift=%.3f (%s) -> adjusted=%d (%.0f%% of ctx)",
             $ctx_window, $raw_threshold, $drift_ratio, $ratio_source,
             $adjusted_threshold, ($adjusted_threshold / $ctx_window) * 100));
     }
@@ -2465,7 +2484,7 @@ sub _try_resume_from_payload {
     # Always trim against the CURRENT model's prompt budget. Use the
     # SAME drift-aware threshold as the proactive trim in process_input
     # so the fast path produces prompts consistent with the rebuild path.
-    my $trim_threshold = $self->_compute_drift_aware_threshold($current_ctx, $session);
+    my $trim_threshold = $self->_compute_drift_aware_threshold($model_caps, $session);
     my $trimmed = validate_and_truncate(
         messages           => $messages,
         model_capabilities => $model_caps,

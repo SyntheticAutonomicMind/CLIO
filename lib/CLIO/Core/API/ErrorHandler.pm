@@ -919,12 +919,24 @@ sub trim_for_token_limit {
         # char/token estimates to actual server-side tokens.
 
         my $keep_budget;
+        my $_caps = $wo->{api_manager}
+            ? ($wo->{api_manager}->get_model_capabilities() || {}) : {};
         if (defined $srv_ctx && $srv_ctx > 0) {
-            $keep_budget = int($srv_ctx * $cut_pct);
+            # Use server-reported context window with output-aware budget.
+            # The old int($srv_ctx * $cut_pct) formula ignored the model's
+            # max_output_tokens, leaving only (1 - cut_pct) of context for
+            # output — too small for models with large output caps, causing
+            # the model to run out of tokens mid-output and hallucinate.
+            require CLIO::Core::Defaults;
+            my $_budget_caps = {
+                max_context_window_tokens => $srv_ctx,
+                max_output_tokens         => $_caps->{max_output_tokens}
+                                           || CLIO::Core::Defaults::DEFAULT_MAX_OUTPUT_TOKENS(),
+            };
+            $keep_budget = CLIO::Memory::TokenEstimator::compute_prompt_budget($_budget_caps);
+            $keep_budget = int($keep_budget * $cut_pct);
         } else {
-            my $_retry_caps = $wo->{api_manager}
-                ? ($wo->{api_manager}->get_model_capabilities() || {}) : {};
-            $keep_budget = CLIO::Memory::TokenEstimator::compute_prompt_budget($_retry_caps);
+            $keep_budget = CLIO::Memory::TokenEstimator::compute_prompt_budget($_caps);
             $keep_budget = int($keep_budget * $cut_pct);
             $keep_budget = 40000 if $keep_budget < 40000;
         }

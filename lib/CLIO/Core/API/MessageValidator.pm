@@ -134,9 +134,16 @@ sub validate_and_truncate {
 
     # Allow caller to override the trim threshold (e.g., to trim earlier at a
     # lower percentage of context window). If provided, use it as the limit.
+    # Subtract tool_tokens so tool definitions don't overflow the budget:
+    # trim_threshold is the TOTAL budget for all messages (system + dialog
+    # + tools), matching the prompt_budget - tool_tokens computation above.
+    # Without this subtraction the tool definitions (~20-40K tokens for
+    # CLIO's 16+ tools) eat into the model's output headroom, pushing the
+    # total payload past the context window.
     if (defined $trim_threshold && $trim_threshold > 0) {
-        $effective_limit = $trim_threshold;
-        log_debug('MessageValidator', "Using caller-provided trim threshold: $trim_threshold tokens");
+        $effective_limit = $trim_threshold - $tool_tokens;
+        $effective_limit = 1000 if $effective_limit < 1000;
+        log_debug('MessageValidator', "Using caller-provided trim threshold: $trim_threshold tokens (minus $tool_tokens tool tokens = $effective_limit)");
     }
 
     log_debug('MessageValidator', "Token budget: max=$max_prompt, tools=$tool_tokens, budget=$prompt_budget, effective=$effective_limit");

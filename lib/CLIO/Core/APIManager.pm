@@ -2171,10 +2171,10 @@ sub validate_and_truncate_messages {
     # trim still wastes computation and reduces context.
     # Fix: always pass the same drift-aware threshold so both trims agree.
     my $ctx_window = $caps->{max_context_window_tokens} // DEFAULT_CONTEXT_WINDOW;
-    my $trim_threshold = $self->_compute_drift_aware_threshold($ctx_window, $self->{session});
+    my $trim_threshold = $self->_compute_drift_aware_threshold($caps, $self->{session});
 
     log_debug('APIManager', sprintf(
-        "Reactive trim threshold: ctx=%d, drift-aware=%d (matches proactive trim in process_input)",
+        "Reactive trim threshold: ctx=%d, drift-aware=%d (uses compute_prompt_budget to account for output reserve)",
         $ctx_window, $trim_threshold));
 
     return validate_and_truncate(
@@ -2190,21 +2190,34 @@ sub validate_and_truncate_messages {
     );
 }
 
-=head2 _compute_drift_aware_threshold($ctx_window, $session)
+=head2 _compute_drift_aware_threshold($caps, $session)
 
 Compute a drift-aware trim threshold (mirrors WorkflowOrchestrator's
 version, needed here so validate_and_truncate_messages uses the SAME
-threshold as the proactive trim). For well-calibrated models (drift <= 1.0),
-returns int(ctx * 0.90). For high-drift models (drift >= 1.2, saved
-within the last hour), tightens proportionally to avoid sending oversized
-payloads that the server rejects with HTTP 400.
+threshold as the proactive trim).
+
+The base is compute_prompt_budget($caps) = ctx_window - output_reserve -
+buffer, which properly accounts for the model's max_output_tokens. This
+replaces the old int(ctx * 0.90) formula that ignored the output reserve
+and could allow the total payload (prompt + output) to exceed the context
+window, causing the model to run out of tokens mid-output and hallucinate.
+
+For high-drift models (drift >= 1.2, saved within the last hour),
+tightens proportionally to avoid sending oversized payloads that the
+server rejects with HTTP 400.
 
 =cut
 
 sub _compute_drift_aware_threshold {
-    my ($self, $ctx_window, $session) = @_;
+    my ($self, $caps, $session) = @_;
 
-    my $raw_threshold = int($ctx_window * 0.90);
+    my $ctx_window = $caps->{max_context_window_tokens}
+                    || $caps->{context_window}
+                    || $caps->{max_prompt_tokens}
+                    || DEFAULT_CONTEXT_WINDOW;
+
+    require CLIO::Memory::TokenEstimator;
+    my $raw_threshold = CLIO::Memory::TokenEstimator::compute_prompt_budget($caps);
 
     my $drift_ratio = 1.0;
     if ($session && $session->can('state')) {
