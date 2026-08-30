@@ -1273,7 +1273,7 @@ sub _fit_summary_to_target {
 
                 $summary_content = $current_task . $summary_content . "\n\n[Summary truncated to fit cache-stable slot of $target_tokens tokens]";
                 $current = CLIO::Memory::TokenEstimator::estimate_tokens($summary_content);
-                log_warning('YaRN', "CSSS: hard-truncated summary to $current tokens (target: $target_tokens, preserved Current task)");
+                log_debug('YaRN', "CSSS: hard-truncated summary to $current tokens (target: $target_tokens, preserved Current task)");
             }
         }
     }

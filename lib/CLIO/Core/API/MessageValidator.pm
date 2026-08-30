@@ -405,6 +405,22 @@ sub validate_and_truncate {
         # summary slot grows with content but never shrinks (we
         # don't try to compact it back down).
         $summary_slot_target = $current_slot;
+
+        # Enforce a minimum slot size. The slot target derives from
+        # the previous summary's content size, which can be artificially
+        # small after a hard-truncate on a small-context model. Without
+        # a floor, a 200-token summary gets locked in even on a 1M
+        # context model (observed 2026-08-29: target=199, every turn
+        # hard-truncated to 199). 4096 tokens is the minimum ceiling
+        # the slot lock will ever impose - summaries can and should
+        # scale up with the model's context window when needed.
+        my $slot_floor = 4096;
+        if ($summary_slot_target < $slot_floor) {
+            log_debug('MessageValidator',
+                "CSSS: slot floor applied $summary_slot_target -> $slot_floor (minimum summary slot)");
+            $summary_slot_target = $slot_floor;
+        }
+
         log_debug('MessageValidator', "CSSS: slot target $summary_slot_target (current summary size)");
 
         # Detect a prior hard-truncate: if the previous summary's

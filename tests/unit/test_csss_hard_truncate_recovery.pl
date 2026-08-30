@@ -162,11 +162,13 @@ subtest 'without _metadata: slot stays at 199, summary hard-truncated (the bug)'
     );
 
     my $tokens = summary_tokens($result);
-    # Without _metadata, recovery doesn't fire; the summary may be
-    # hard-truncated to whatever the slot inherits. This is the
-    # documented limitation - the fix requires _metadata.
+    # The slot floor raises the *ceiling* to 4096, but the summary only
+    # grows to what the dropped content needs. The point is that the
+    # floor lets the 247-token natural compression succeed without
+    # hard-truncate (no "summary truncated to fit" marker).
+    ok($tokens > 0, "no-metadata path produces a summary (got $tokens)");
     ok($tokens <= MAX_CSSS_SLOT_TOKENS + 1000,
-        "no-metadata path stays bounded (got $tokens, max=${\ MAX_CSSS_SLOT_TOKENS })");
+        "no-metadata path bounded by MAX (got $tokens, max=${\ MAX_CSSS_SLOT_TOKENS })");
 };
 
 # Test 2: when the previous summary is NOT hard-truncated (content
