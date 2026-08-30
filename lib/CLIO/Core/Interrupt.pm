@@ -199,7 +199,7 @@ sub pending {
         # fall back to the global flag.
         return $GLOBAL_INTERRUPT_FLAG ? 1 : 0;
     }
-    return 0 unless $state && is_hashref($state);
+    return 0 unless $state && ref($state) eq 'HASH';
     # Check both the session-state flag and the global flag. The ALRM
     # handler sets both, but legacy code paths may clear only the session
     # flag directly (e.g. WorkflowOrchestrator's loop-start stale-flag
