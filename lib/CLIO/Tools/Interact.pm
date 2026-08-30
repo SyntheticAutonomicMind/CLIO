@@ -320,7 +320,8 @@ sub request_input {
         $user_response = $result;
     } else {
         # Standard mode: just wait for user
-        $user_response = $ui->request_collaboration($message, $user_context);
+        $user_response = $ui->request_collaboration($message, $user_context,
+            { no_prefix => $params->{no_prefix} ? 1 : 0 });
     }
     
     unless (defined $user_response) {

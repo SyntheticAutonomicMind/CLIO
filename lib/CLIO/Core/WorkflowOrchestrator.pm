@@ -684,6 +684,46 @@ sub process_input {
             $self->_inject_thread_summary(\@messages, $user_input);
         }
 
+        # On iterations after the first, if a thread_summary anchor has been
+        # injected (preserving the original task), strip the user_input message
+        # from @messages. The user_input is included in every API call within
+        # the turn because it sits in @messages — but this causes some models
+        # (notably Laguna S / Qwen3) to re-interpret it as a fresh request on
+        # each iteration, leading to repeated work. The thread_summary already
+        # contains the task, so the model doesn't need the user_input again.
+        # Only strip when a thread_summary exists (substantive task >= 50
+        # chars); short user inputs like "continue" are kept as-is.
+        if ($iteration > 1) {
+            my $has_summary = 0;
+            for my $msg (@messages) {
+                if (ref($msg) eq 'HASH'
+                    && ($msg->{role} // '') eq 'system'
+                    && ($msg->{content} // '') =~ /\A<threadSummary>/) {
+                    $has_summary = 1;
+                    last;
+                }
+            }
+            if ($has_summary) {
+                # Find the turn's user_input: scan backwards for the last
+                # user message that is immediately followed by an assistant
+                # message. This is the user_input from this turn, not a
+                # historical user message.
+                for (my $i = $#messages; $i >= 0; $i--) {
+                    next unless ref($messages[$i]) eq 'HASH';
+                    next unless ($messages[$i]{role} // '') eq 'user';
+                    my $next_role = ($i + 1 <= $#messages)
+                        ? ($messages[$i + 1]{role} // '') : '';
+                    if ($next_role eq 'assistant') {
+                        splice @messages, $i, 1;
+                        log_debug('WorkflowOrchestrator',
+                            "Stripped user_input from messages on iteration $iteration " .
+                            "(task preserved in thread_summary)");
+                        last;
+                    }
+                }
+            }
+        }
+
         # Enforce message alternation
         # Must be done before EVERY API call, as messages array is modified during tool calling
         my $provider = $self->{api_manager}->get_current_provider() || 'github_copilot';
@@ -793,7 +833,26 @@ sub process_input {
             $iteration--;  # Don't count this iteration
             next;
         }
-        
+
+        # Catch user_interrupt error from API response that wasn't caught by
+        # the interrupt flag checks above. This can happen when the streaming
+        # abort (die "__CLIO_INTERRUPT_ABORT__") was thrown BEFORE the on_chunk
+        # callback fired (i.e., detected in the SSE processing loop before
+        # _process_sse_data was called), so _interrupt_pending was never set,
+        # AND the interrupt flag was consumed/cleared by the HTTP::Tiny or
+        # curl streaming layer before _check_and_handle_interrupt could see it.
+        # Without this guard, a user_interrupt with routing active (e.g. --route)
+        # falls through to _handle_api_error which cycles to the next model
+        # instead of prompting the user — the user's message is lost.
+        if ($api_response && ref($api_response) eq 'HASH'
+            && ($api_response->{interrupted} || ($api_response->{error_type} // '') eq 'user_interrupt')) {
+            log_info('WorkflowOrchestrator', "user_interrupt in API response, calling _handle_interrupt");
+            $self->_handle_interrupt($session, \@messages);
+            CLIO::Core::Interrupt::clear(session => $session);
+            $iteration--;
+            next;
+        }
+
         if ($@) {
             my $error_class = classify_error($@);
             log_debug('WorkflowOrchestrator', "API error ($error_class): $@");
@@ -3112,7 +3171,7 @@ sub _prepare_tool_round {
         # that corrupt the conversation. A valid tool name is alphanumeric
         # plus underscore/hyphen only.
         unless ($tool_name =~ /^[a-zA-Z_][a-zA-Z0-9_-]*$/) {
-           log_warning('WorkflowOrchestrator',
+            log_debug('WorkflowOrchestrator',
                "Rejecting tool call with suspicious name: '$tool_name' " .
                "(contains markup/regex/non-identifier chars - likely " .
                "model degradation near context limit)");
@@ -3447,7 +3506,7 @@ sub _prepare_tool_round {
             }
         } else {
             push @parallel_tools, $tool_call;
-            log_warning('WorkflowOrchestrator', "Unknown tool $tool_name, treating as PARALLEL");
+            log_debug('WorkflowOrchestrator', "Unknown tool $tool_name, treating as PARALLEL (will return error to model)");
         }
     }
 
@@ -3967,7 +4026,7 @@ sub _handle_interrupt {
         if ($interact_tool) {
             # Call interact directly - this is a forced call, not from AI
             my $result = $interact_tool->execute(
-                { operation => 'request_input', message => $interrupt_text },
+                { operation => 'request_input', message => $interrupt_text, no_prefix => 1 },
                 {
                     session => $session,
                     config => $self->{config},

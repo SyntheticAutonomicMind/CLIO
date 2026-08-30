@@ -127,7 +127,7 @@ sub get_tool {
     my $tool = $self->{tools}{$name};
     
     unless ($tool) {
-        log_warning('Registry', "Tool not found: $name");
+        log_debug('Registry', "Tool not found: $name");
     }
     
     return $tool;

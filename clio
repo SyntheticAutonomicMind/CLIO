@@ -66,6 +66,7 @@ USAGE:
 OPTIONS:
     --new              Start a new session
     --resume [ID]      Resume a session (most recent if no ID provided)
+                     Also accepts: --continue [ID]
     --sessions         List all sessions with friendly names
     --list-models      Output available models as JSON (for integrations)
     --list-styles      List all available terminal styles with descriptions
@@ -95,6 +96,7 @@ OPTIONS:
 EXAMPLES:
     clio --new                    # Start new session
     clio --resume                 # Resume most recent session
+    clio --continue               # Alias for --resume
     clio --resume <session_id>    # Resume specific session
     clio --resume "my session"    # Resume by friendly name
     clio --sessions               # List all sessions
@@ -166,6 +168,28 @@ if ($no_banner) {
 # --reduced-motion overrides the style key for this session
 if ($reduced_motion) {
     $config->set('reduced_motion', 1, 0);
+}
+
+# Clear any persisted routing state (model_candidates, route_name) from a
+# previous session. Routing must be explicitly enabled per-session via --route,
+# --model "m1 m2 m3", or /api route use. Named routing profiles (model_routes)
+# are still persisted and loaded via --route.
+# Without this, a saved route's model_candidates leak into the next launch and
+# cause false "Routing" display, unwanted error rerouting, and stale state.
+{
+    my $persisted_candidates = $config->get('model_candidates');
+    if ($persisted_candidates && ref($persisted_candidates) eq 'ARRAY' && @$persisted_candidates) {
+        delete $config->{user_set}->{model_candidates};
+        delete $config->{user_set}->{model_routing_index};
+        $config->set('model_candidates', [], 0);
+        $config->set('model_routing_index', 0, 0);
+        log_debug('Main', "Cleared persisted model_candidates from config (routing is opt-in per session)");
+    }
+    if ($config->get('route_name')) {
+        delete $config->{user_set}->{route_name} if exists $config->{user_set}->{route_name};
+        $config->set('route_name', undef, 0);
+        log_debug('Main', "Cleared persisted route_name from config");
+    }
 }
 
 # Pre-parse --model so we can auto-derive provider from "provider/model" prefix
@@ -276,7 +300,7 @@ for (my $i = 0; $i < @ARGV; $i++) {
     if ($ARGV[$i] eq '--new') {
         $mode = 'new';
     }
-    if ($ARGV[$i] eq '--resume') {
+    if ($ARGV[$i] eq '--resume' || $ARGV[$i] eq '--continue') {
         $mode = 'resume';
         # If next arg is not another flag, treat as session id
         if (defined $ARGV[$i+1] && $ARGV[$i+1] !~ /^--/) {
@@ -1051,6 +1075,14 @@ if ($model_override) {
     # Clear route_name since --model overrides any --route activation
     if (!$route_name) {
         $config->set('route_name', undef, 0);
+    }
+    # When using a single explicit model, clear any model_candidates so
+    # the banner shows "Connected" (not "Routing") and errors are not
+    # silently rerouted to other models. Routing with multiple --model
+    # args is handled above (line ~348) which sets model_candidates.
+    if (!$cli_model_candidates || @$cli_model_candidates <= 1) {
+        $config->set('model_candidates', [], 0);
+        $config->set('model_routing_index', 0, 0);
     }
     log_info('Main', "Using temporary model: $model_override");
 }

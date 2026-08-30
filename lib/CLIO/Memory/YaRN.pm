@@ -753,7 +753,7 @@ sub _render_task_summary {
 
     my @parts;
     push @parts, "<threadSummary>";
-    push @parts, "- This is informational context only - do not reference or repeat in your responses";
+    push @parts, "- This is informational context only - do not acknowledge, reference, or repeat in your responses.";
     push @parts, "";
 
     if ($effective_task) {

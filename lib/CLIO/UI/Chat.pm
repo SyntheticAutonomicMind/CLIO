@@ -1875,7 +1875,13 @@ sub request_collaboration {
     
     # Display with pagination support
     my @lines = split /\n/, $rendered_message;
-    print $self->colorize($self->agent_name() . ": ", 'ASSISTANT');
+    
+    # Suppress the "CLIO:" agent-name prefix for system/internally-generated
+    # collaboration prompts (e.g. interrupt messages) so they are not
+    # mistaken for an AI response.
+    unless ($options->{no_prefix}) {
+        print $self->colorize($self->agent_name() . ": ", 'ASSISTANT');
+    }
     
     # Print first line inline with prefix
     if (@lines) {

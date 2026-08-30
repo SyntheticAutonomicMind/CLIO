@@ -196,6 +196,12 @@ sub _categorize_error {
     # either disable sandbox or pick a different operation.
     return 'sandbox_blocked' if $error =~ /sandbox mode|sandbox.*disabled|sandbox.*blocked/i;
     return 'insufficient_params' if $error =~ /insufficient|need/i;
+    # Unknown tool — the model called a tool name that doesn't exist in any
+    # registered tool (e.g. "read" instead of "read_file"). This is common
+    # with models trained on OpenAI/aider tool schemas. Surface a clear
+    # "use the correct tool" message before file_not_found, which would
+    # otherwise match "not found" in the error string and give path guidance.
+    return 'unknown_tool' if $error =~ /^Unknown tool:/i;
     # file_not_found is intentionally AFTER the more-specific skill_not_found
     # and directory_not_found rules so the agent gets targeted guidance
     # instead of the generic "check the path" advice.
@@ -365,6 +371,21 @@ sub _get_category_guidance {
 
             return "WHAT WENT WRONG: You used an invalid 'operation' value.\n" .
                    "HOW TO FIX: Set 'operation' to one of the valid values.$valid";
+        },
+
+        unknown_tool => sub {
+            return "WHAT WENT WRONG: The tool name '$tool_name' does not match any tool " .
+                   "CLIO has registered. This happens when the model uses a tool name from a " .
+                   "different framework (e.g. 'read', 'write', 'list_directory' from the " .
+                   "OpenAI/aider schema) instead of CLIO's own tool names.\n" .
+                   "HOW TO FIX: Use the correct CLIO tool name. The valid tools are: " .
+                   "file_operations, terminal_operations, version_control, memory_operations, " .
+                   "web_operations, todo_operations, code_intelligence, interact, " .
+                   "apply_patch, remote_execution, agent_operations, skill_operations. " .
+                   "Each takes an 'operation' parameter (e.g. file_operations with " .
+                   "operation='read_file').\n" .
+                   "TIP: Read the tool schema in the system prompt — the JSON schema " .
+                   "lists each tool's exact name and valid operations.";
         },
 
         todo_validation_failed => sub {
