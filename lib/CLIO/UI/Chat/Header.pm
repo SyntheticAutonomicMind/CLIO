@@ -219,7 +219,7 @@ sub display_header {
                 session_name => $session_name,
                 session_name_line => $session_name_line,
                 model => $model_with_provider,
-                routing_verb => 'connected',
+                routing_verb => 'Connected',
                 route_suffix => '',
             });
             my $stripped = $rendered;
@@ -237,7 +237,7 @@ sub display_header {
                 session_name => $session_name,
                 session_name_line => $session_name_line,
                 model => $model_with_provider,
-                routing_verb => 'connected',
+                routing_verb => 'Connected',
                 route_suffix => '',
             });
             print $rendered, "\n";
@@ -260,7 +260,7 @@ sub display_header {
     my $candidates = $chat->{config} ? $chat->{config}->get('model_candidates') : [];
     my $routing_active = ref($candidates) eq 'ARRAY' && @$candidates > 1;
     my $route_name = $chat->{config} ? $chat->{config}->get('route_name') : undef;
-    my $routing_verb = $routing_active ? 'routing' : 'connected';
+    my $routing_verb = $routing_active ? 'Routing' : 'Connected';
     my $route_suffix = '';
     if ($routing_active && $route_name && length($route_name)) {
         $route_suffix = " via $route_name";
