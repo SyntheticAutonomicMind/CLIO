@@ -355,7 +355,8 @@ if ($route_name && length($route_name)) {
     my $routes = { $config->list_model_routes() };
     if (exists $routes->{$route_name}) {
         my $models = $routes->{$route_name};
-        if (@$models > 1) {
+        if (@$models >= 1) {
+            $config->set('route_name', $route_name, 0);
             $config->set('model_candidates', $models, 0);
             $config->set('model_routing_index', 0, 0);
             $config->set('model', $models->[0], 0);
@@ -1042,6 +1043,11 @@ if ($model_override) {
     # Apply model override with provider prefix
     $model_override = "$target_provider/$model_override";
     $config->set('model', $model_override, 0);  # 0 = don't persist
+
+    # Clear route_name since --model overrides any --route activation
+    if (!$route_name) {
+        $config->set('route_name', undef, 0);
+    }
     log_info('Main', "Using temporary model: $model_override");
 }
 

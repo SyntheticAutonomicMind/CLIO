@@ -417,6 +417,7 @@ sub _route_use {
     my $models = $self->{config}->get_model_route($name);
     $self->{config}->set_model_candidates($models);
     $self->{config}->set_model_routing_index(0);
+    $self->{config}->set('route_name', $name, 0);
 
     # Set the first model as active
     my ($full_model, $display_model, $target_provider, $api_model) =
@@ -454,6 +455,12 @@ sub _route_remove {
     unless ($deleted) {
         $self->display_error_message("Route '$name' not found");
         return;
+    }
+
+    # Clear active route_name if it matches
+    my $current_route = $self->{config}->get('route_name');
+    if (defined $current_route && lc($current_route // '') eq lc($name)) {
+        $self->{config}->set('route_name', undef, 0);
     }
 
     $self->{config}->save();
@@ -761,6 +768,11 @@ sub _set_model_candidates {
 sub _set_model {
     my ($self, $value, $session_only) = @_;
 
+    # Clear any active route_name since user is switching models manually
+    if ($self->{config}->get('route_name')) {
+        $self->{config}->set('route_name', undef, 0);
+    }
+
     # Handle multiple space-separated models for routing:
     #   /api set model "openrouter/foo kilo/bar vercel/baz"
     my @model_list = split(/\s+/, $value);
@@ -776,7 +788,7 @@ sub _set_model {
         $value = $resolved;
     }
 
-    my ($full_model, $display_model, $target_provider, $api_model) = 
+    my ($full_model, $display_model, $target_provider, $api_model) =
         $self->_resolve_model_details($value);
 
     # Validate that the target provider has credentials configured.
