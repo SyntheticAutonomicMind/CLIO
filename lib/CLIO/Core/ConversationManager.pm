@@ -446,34 +446,13 @@ sub trim_conversation_for_api {
                 }
             }
         }
-    }
-
-    # Second pass: add tool_results from NEWEST to OLDEST until budget is reached.
-    # Oldest tool_results are dropped first - they're the most expendable.
-    # CRITICAL: drop tool_results whose tool_call was dropped by the first-pass
-    # budget walk. The dialog walk uses `last` when budget exhausts, so older
-    # dialog (including assistant-with-tool_calls) is dropped. Without this
-    # guard, those tool_calls would be missing while their tool_results
-    # survived - orphan tool_results for the next call, which Anthropic
-    # rejects ("tool_use block must have a corresponding tool_result in
-    # the next message" requires the tool_use block to be in an earlier
-    # assistant message, not vice versa). Same fix as MessageValidator.pm.
-    my %kept_tool_call_ids;
-    for my $msg (@dialog) {
-        next unless ($msg->{role} // '') eq 'assistant';
-        next unless $msg->{tool_calls} && ref($msg->{tool_calls}) eq 'ARRAY';
-        for my $tc (@{$msg->{tool_calls}}) {
-            $kept_tool_call_ids{$tc->{id}} = 1 if $tc->{id};
-        }
-    }
-    my @kept_tool_results;
-    for my $i (reverse 0 .. $#deferred_tool_results) {
-        my $tr = $deferred_tool_results[$i];
-        next unless $tr->{tool_call_id} && $kept_tool_call_ids{$tr->{tool_call_id}};
-        my $tr_tokens = CLIO::Memory::TokenEstimator::estimate_tokens($tr->{content} // '');
-        if ($kept_tokens + $tr_tokens <= $target_tokens) {
-            unshift @kept_tool_results, $tr;
-            $kept_tokens += $tr_tokens;
+        
+        if ($kept_tokens + $msg_tokens <= $target_tokens) {
+            unshift @kept, $msg;
+            $kept_tokens += $msg_tokens;
+        } else {
+            # Budget exhausted - stop adding older messages
+            last;
         }
     }
 
@@ -483,25 +462,7 @@ sub trim_conversation_for_api {
         log_debug('ConversationManager', "Final total with system: " . ($system_tokens + $kept_tokens) . " of $safe_threshold prompt budget");
     }
 
-    # Cache-stable ordering: summary at position 1 (right after the system
-    # prompt) so the LCP match extends through sys + summary on every turn.
-    # Order: [system][summary][dialog][tool_results]
-    # The system prompt is pushed by _build_turn_context separately (before
-    # this trim_result lands), so the FINAL @messages layout is:
-    #   [system_prompt][...this @result...]
-    # For summary to be at @messages[1] (immediately after system_prompt),
-    # it must be at @result[0]. Splice at position 0 (the old code spliced
-    # at position 1, which placed summary AFTER the first dialog message -
-    # wrong, summary is supposed to lead the dynamic content).
-    if (@preserved_summaries) {
-        my @summaries = map { $_->{msg} } @preserved_summaries;
-        splice @result, 0, 0, @summaries;
-        if ($debug) {
-            log_debug('ConversationManager', "Pre-flight trim placed " . scalar(@preserved_summaries) . " thread_summary message(s) at position 1 for LCP");
-        }
-    }
-
-    return \@result if @result;
+    return \@kept if @kept;
 
     return $history;
 }
