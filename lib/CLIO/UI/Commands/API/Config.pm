@@ -187,6 +187,7 @@ Commands:
   /api route add <name> <model1> [model2 model3 ...]
   /api route list
   /api route use <name>
+  /api route replace <name> <model1> [model2 model3 ...]
   /api route remove <name>
 
 =cut
@@ -198,7 +199,7 @@ sub handle_route {
     $action = lc($action // '');
 
     unless ($action) {
-        $self->display_error_message("Usage: /api route <add|list|use|remove> [name] [models...]");
+        $self->display_error_message("Usage: /api route <add|list|use|replace|remove> [name] [models...]");
         return;
     }
 
@@ -210,6 +211,9 @@ sub handle_route {
     }
     elsif ($action eq 'use') {
         $self->_route_use(@args);
+    }
+    elsif ($action eq 'replace') {
+        $self->_route_replace(@args);
     }
     elsif ($action eq 'remove' || $action eq 'rm') {
         $self->_route_remove(@args);
@@ -266,6 +270,68 @@ sub _route_add {
         $self->display_system_message("Route '$name' saved with " . scalar(@models) . " models");
     } else {
         $self->display_system_message("Route '$name' saved (warning: failed to save)");
+    }
+    $self->_get_auth_helper()->reinit_api_manager();
+}
+
+=head2 _route_replace($name, @models)
+
+Replace an existing named routing profile's model list. Unlike
+C<_route_add>, which silently creates/overwrites, C<_route_replace>
+requires the route to already exist - it refuses to silently create
+a new profile with the wrong command.
+
+  /api route replace <name> <model1> [model2 model3 ...]
+
+Example:
+  /api route replace laguna-free openrouter/foo:free kilo/bar:free
+
+=cut
+
+sub _route_replace {
+    my ($self, $name, @models) = @_;
+
+    unless ($name && length($name)) {
+        $self->display_error_message("Usage: /api route replace <name> <model1> [model2 ...]");
+        return;
+    }
+
+    # Refuse to silently create a new route with the replace syntax.
+    my $existing = $self->{config}->get_model_route($name);
+    unless ($existing) {
+        $self->display_error_message("Route '$name' not found");
+        $self->display_system_message("Create it with: /api route add $name <model1> [model2 ...]");
+        return;
+    }
+
+    @models = grep { defined && length } @models;
+    unless (@models >= 1) {
+        $self->display_error_message("Must specify at least one model");
+        $self->writeline("Example: /api route replace $name openrouter/foo:free kilo/bar:free", markdown => 0);
+        return;
+    }
+
+    # Validate each model has a valid provider prefix (same as _route_add).
+    for my $m (@models) {
+        my ($full_model, $display_model, $target_provider, $api_model) =
+            $self->_resolve_model_details($m);
+        if ($target_provider eq ($self->{config}->get('provider') || '')) {
+            # Same provider - fine
+        } else {
+            my ($has_auth, $auth_error) = $self->_check_provider_auth($target_provider);
+            unless ($has_auth) {
+                $self->display_error_message($auth_error);
+                $self->display_system_message("Set it with: /api set provider $target_provider && /api set key <your-key>");
+                return;
+            }
+        }
+    }
+
+    $self->{config}->set_model_route($name, \@models);
+    if ($self->{config}->save()) {
+        $self->display_system_message("Route '$name' replaced with " . scalar(@models) . " models");
+    } else {
+        $self->display_system_message("Route '$name' replaced (warning: failed to save)");
     }
     $self->_get_auth_helper()->reinit_api_manager();
 }

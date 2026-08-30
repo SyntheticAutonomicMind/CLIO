@@ -419,6 +419,54 @@ Each provider offers multiple models. CLIO automatically queries available model
 /api set model <model-name>   # Switch to a specific model
 ```
 
+### Model Routing
+
+When a provider returns an API error (rate limit, billing error, server error, etc.), CLIO can automatically retry against a different model. A pool of models from different vendors acts as a resilient fallback chain.
+
+There are two flavors: ad-hoc lists passed on the command line, and persistent named profiles saved in config.
+
+**Ad-hoc multi-model (temporary)**
+
+Pass several space-separated models to `--model` (or `/api set model`). On any API error, CLIO cycles to the next model. The first model's provider is used for initial provider selection, and the full candidate list is stored for the retry logic to cycle through.
+
+```bash
+clio --model "openrouter/minimax/minimax-m3:free kilo/poolside/laguna-s-2.1:free vercel/poolside/laguna-s-2.1-free" --new
+```
+
+Within a session:
+```text
+/api set model "openrouter/foo:free kilo/bar:free"
+```
+
+Total attempts before giving up = `len(models) x max_retries` (for example, 3 models x 3 retries = 9 attempts). After the list is exhausted CLIO reports the last error. Each model's provider, API base, and API key are resolved from its `provider/model` prefix on every request, so candidates can belong to different providers.
+
+**Named routing profiles (persistent)**
+
+Save a model list as a named, reusable profile. Profiles are stored in config under `model_routes` (a hash of name -> [models]) and persist across sessions.
+
+```text
+/api route add <name> <model1> [model2 model3 ...]   # Save a profile
+/api route list                                      # List saved profiles
+/api route use <name>                                # Activate a profile
+/api route replace <name> <model1> [model2 ...]      # Replace a profile's models
+/api route remove <name>                             # Delete a profile
+```
+
+Start a session using a saved profile:
+
+```bash
+clio --route <name> --new
+```
+
+Example workflow:
+
+```text
+/api route add laguna openrouter/poolside/laguna-s-2.1 kilo/poolside/laguna-s-2.1 vercel/poolside/laguna-s-2.1
+clio --route laguna --new
+```
+
+When a profile is activated (via `/api route use` or `--route`), the first model's provider is used for provider selection and the full candidate list is stored for automatic fallback on API errors. Profile names are matched case-insensitively.
+
 ### Model Aliases and Quick Switch
 
 Create short aliases for frequently-used models:

@@ -162,6 +162,7 @@ sub _display_api_help {
             ['/api route add <name> m1 m2...',   'Save a named model routing profile', 40],
             ['/api route list',                  'List saved routing profiles', 40],
             ['/api route use <name>',            'Activate a named routing profile', 40],
+            ['/api route replace <name> m1 m2...', 'Replace a routing profile\'s models', 40],
             ['/api route remove <name>',         'Delete a routing profile', 40],
             ['/api set provider <name>',          'Set provider (google, minimax, etc.)', 40],
             ['/api set base <url>',               'Set API base URL', 40],
