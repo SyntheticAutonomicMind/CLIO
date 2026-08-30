@@ -205,6 +205,259 @@ sub handle_set {
         $self->writeline("Valid settings: model, provider, base, key, thinking, thinking_effort, thinking_mode, temperature, top_p, top_k, github_pat, serpapi_key, search_engine, search_provider, context_window, max_output, max_prompt, tools, vision, reasoning", markdown => 0);
     }
 }
+=head2 handle_route
+
+Handle /api route commands for named model routing profiles.
+
+Commands:
+  /api route add <name> <model1> [model2 model3 ...]
+  /api route list
+  /api route use <name>
+  /api route remove <name>
+
+=cut
+
+sub handle_route {
+    my ($self, @args) = @_;
+
+    my $action = shift @args || '';
+    $action = lc($action // '');
+
+    unless ($action) {
+        $self->display_error_message("Usage: /api route <add|list|use|replace|remove> [name] [models...]");
+        return;
+    }
+
+    if ($action eq 'add') {
+        $self->_route_add(@args);
+    }
+    elsif ($action eq 'list') {
+        $self->_route_list();
+    }
+    elsif ($action eq 'use') {
+        $self->_route_use(@args);
+    }
+    elsif ($action eq 'replace') {
+        $self->_route_replace(@args);
+    }
+    elsif ($action eq 'remove' || $action eq 'rm') {
+        $self->_route_remove(@args);
+    }
+    else {
+        $self->display_error_message("Unknown route action: $action");
+        $self->writeline("Valid actions: add, list, use, replace, remove", markdown => 0);
+    }
+}
+
+=head2 _route_add($name, @models)
+
+Save a named model routing profile.
+
+  /api route add <name> <model1> [model2 model3 ...]
+
+Example:
+  /api route add laguna-free openrouter/poolside/laguna-s-2.1:free kilo/poolside/laguna-s-2.1:free vercel/poolside/laguna-s-2.1-free
+
+=cut
+
+sub _route_add {
+    my ($self, $name, @models) = @_;
+
+    unless ($name && length($name)) {
+        $self->display_error_message("Usage: /api route add <name> <model1> [model2 ...]");
+        return;
+    }
+
+    @models = grep { defined && length } @models;
+    unless (@models >= 1) {
+        $self->display_error_message("Must specify at least one model");
+        $self->writeline("Example: /api route add laguna-free openrouter/foo:free kilo/bar:free", markdown => 0);
+        return;
+    }
+
+    # Validate each model has a valid provider prefix
+    for my $m (@models) {
+        my ($provider, $api_model) = $self->_resolve_model_details($m);
+        if ($provider eq ($self->{config}->get('provider') || '')) {
+            # Same provider - fine
+        } else {
+            my ($has_auth, $auth_error) = $self->_check_provider_auth($provider);
+            unless ($has_auth) {
+                $self->display_error_message($auth_error);
+                $self->display_system_message("Set it with: /api set provider $provider && /api set key <your-key>");
+                return;
+            }
+        }
+    }
+
+    $self->{config}->set_model_route($name, \@models);
+    if ($self->{config}->save()) {
+        $self->display_system_message("Route '$name' saved with " . scalar(@models) . " models");
+    } else {
+        $self->display_system_message("Route '$name' saved (warning: failed to save)");
+    }
+    $self->_get_auth_helper()->reinit_api_manager();
+}
+
+=head2 _route_list
+
+List all saved routing profiles.
+
+=cut
+
+sub _route_list {
+    my ($self) = @_;
+    my %routes = $self->{config}->list_model_routes();
+
+    unless (%routes) {
+        $self->display_system_message("No routing profiles saved. Create one with:");
+        $self->writeline("  /api route add <name> <model1> [model2 model3 ...]", markdown => 0);
+        return;
+    }
+
+    $self->display_command_header("ROUTING PROFILES");
+    for my $name (sort keys %routes) {
+        my $models = $routes{$name};
+        my $display = join(", ", @$models);
+        $self->display_key_value($name, $display);
+    }
+}
+
+=head2 _route_use($name)
+
+Activate a named routing profile.
+
+  /api route use <name>
+
+=cut
+
+sub _route_use {
+    my ($self, $name) = @_;
+
+    unless ($name && length($name)) {
+        $self->display_error_message("Usage: /api route use <name>");
+        return;
+    }
+
+    my $routes = { $self->{config}->list_model_routes() };
+    unless (exists $routes->{lc($name)}) {
+        $self->display_error_message("Route '$name' not found. Create one with /api route add");
+        # Try to list available routes
+        if (%$routes) {
+            $self->writeline("Available routes: " . join(", ", sort keys %$routes), markdown => 0);
+        }
+        return;
+    }
+
+    my $models = $self->{config}->get_model_route($name);
+    $self->{config}->set_model_candidates($models);
+    $self->{config}->set_model_routing_index(0);
+
+    # Set the first model as active
+    my ($full_model, $display_model, $target_provider, $api_model) =
+        $self->_resolve_model_details($models->[0]);
+
+    $self->_set_api_setting('model', $full_model, 0);
+    $self->{config}->save();
+
+    $self->display_system_message("Route '$name' activated (" . scalar(@$models) . " models)");
+    $self->display_system_message("Active model: $display_model");
+    $self->display_system_message("On API errors, CLIO will automatically try the next model");
+
+    $self->_get_auth_helper()->reinit_api_manager();
+    $self->_update_billing_state($full_model, $target_provider);
+    $self->_post_set_model_validation($full_model, $api_model);
+}
+
+=head2 _route_remove($name)
+
+Remove a named routing profile.
+
+  /api route remove <name>
+
+=cut
+
+sub _route_remove {
+    my ($self, $name) = @_;
+
+    unless ($name && length($name)) {
+        $self->display_error_message("Usage: /api route remove <name>");
+        return;
+    }
+
+    my $deleted = $self->{config}->delete_model_route($name);
+    unless ($deleted) {
+        $self->display_error_message("Route '$name' not found");
+        return;
+    }
+
+    $self->{config}->save();
+    $self->display_system_message("Route '$name' removed");
+    $self->_get_auth_helper()->reinit_api_manager();
+}
+
+=head2 _route_replace($name, @models)
+
+Replace an existing named routing profile's model list. Unlike
+C<_route_add>, which silently creates/overwrites, C<_route_replace>
+requires the route to already exist - it refuses to silently create
+a new profile with the wrong command.
+
+  /api route replace <name> <model1> [model2 model3 ...]
+
+Example:
+  /api route replace laguna-free openrouter/foo:free kilo/bar:free
+
+=cut
+
+sub _route_replace {
+    my ($self, $name, @models) = @_;
+
+    unless ($name && length($name)) {
+        $self->display_error_message("Usage: /api route replace <name> <model1> [model2 ...]");
+        return;
+    }
+
+    # Refuse to silently create a new route with the replace syntax.
+    my $existing = $self->{config}->get_model_route($name);
+    unless ($existing) {
+        $self->display_error_message("Route '$name' not found");
+        $self->display_system_message("Create it with: /api route add $name <model1> [model2 ...]");
+        return;
+    }
+
+    @models = grep { defined && length } @models;
+    unless (@models >= 1) {
+        $self->display_error_message("Must specify at least one model");
+        $self->writeline("Example: /api route replace $name openrouter/foo:free kilo/bar:free", markdown => 0);
+        return;
+    }
+
+    # Validate each model has a valid provider prefix (same as _route_add).
+    for my $m (@models) {
+        my ($full_model, $display_model, $target_provider, $api_model) =
+            $self->_resolve_model_details($m);
+        if ($target_provider eq ($self->{config}->get('provider') || '')) {
+            # Same provider - fine
+        } else {
+            my ($has_auth, $auth_error) = $self->_check_provider_auth($target_provider);
+            unless ($has_auth) {
+                $self->display_error_message($auth_error);
+                $self->display_system_message("Set it with: /api set provider $target_provider && /api set key <your-key>");
+                return;
+            }
+        }
+    }
+
+    $self->{config}->set_model_route($name, \@models);
+    if ($self->{config}->save()) {
+        $self->display_system_message("Route '$name' replaced with " . scalar(@models) . " models");
+    } else {
+        $self->display_system_message("Route '$name' replaced (warning: failed to save)");
+    }
+    $self->_get_auth_helper()->reinit_api_manager();
+}
+
 
 =head2 _get_current_provider_schema
 
