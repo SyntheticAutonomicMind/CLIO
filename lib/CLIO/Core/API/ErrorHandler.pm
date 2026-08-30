@@ -73,6 +73,85 @@ Returns:
 
 =cut
 
+# Map error_type to (human-readable label, approximate HTTP status code).
+# The HTTP status is a best-effort inference from error_type when the raw
+# status code isn't present in $api_response (see _routing_error_label).
+my %ROUTING_ERROR_LABELS = (
+    'rate_limit'              => ['Rate Limit',               429],
+    'concurrency_limit'       => ['Rate Limit',               429],
+    'server_error'            => ['Server Error',             500],
+    'connection_error'        => ['Connection Error',          599],
+    'timeout'                 => ['Timeout',                  504],
+    'overloaded'              => ['Overloaded',               503],
+    'truncated'               => ['Stream Truncated',         502],
+    'provider_unavailable'    => ['Provider Unavailable',     503],
+    'token_limit_exceeded'    => ['Token Limit',              400],
+    'bad_request'             => ['Bad Request',              400],
+    'malformed_tool_json'     => ['Malformed Tool JSON',      400],
+    'unsupported_param'       => ['Unsupported Parameter',     400],
+    'message_structure_error' => ['Message Structure Error', 500],
+    'auth_failed'             => ['Auth Failed',               401],
+    'auth_recovered'          => ['Auth Recovery',             401],
+    'billing_error'           => ['Billing Error',             402],
+    'account_disabled'        => ['Account Disabled',          403],
+    'model_not_found'         => ['Model Not Found',           404],
+    'region_unavailable'      => ['Region Unavailable',        403],
+    'user_interrupt'          => ['User Interrupt',            undef],
+);
+
+=head2 _routing_error_label($api_response)
+
+Build a human-readable error label for the model-routing system message.
+
+Tries to include the HTTP status code when available:
+  1. Extract from error_obj->{code} (if it's a 3-digit number)
+  2. Extract from the error message text (e.g. "HTTP 429", "429 ...")
+  3. Fall back to the status mapped from error_type
+
+Returns a label like "Rate Limit (429)" or "error (429)" or "error".
+
+=cut
+
+sub _routing_error_label {
+    my ($api_response) = @_;
+
+    my $error_type = $api_response->{error_type} || '';
+    my $error      = $api_response->{error} || '';
+
+    # Try to extract an HTTP status code from the provider's error object.
+    # Some providers embed the numeric status in error_obj.code (e.g. OpenAI,
+    # llama.cpp).  Only accept 3-digit numbers that look like HTTP statuses.
+    my $extracted_status;
+    if (my $obj = $api_response->{error_obj}) {
+        if (ref($obj) eq 'HASH') {
+            my $code = $obj->{code} // $obj->{status_code};
+            if (defined($code) && $code =~ /^(\d{3})$/) {
+                $extracted_status = int($1);
+            }
+        }
+    }
+
+    # Also try to extract from the error message string (e.g. "HTTP 429",
+    # "429 Too Many Requests", "Request failed: 599 ...").
+    if (!$extracted_status && $error =~ /\b(\d{3})\b/) {
+        $extracted_status = int($1);
+    }
+
+    # Look up the error type in our mapping for a friendly label
+    my $entry = $ROUTING_ERROR_LABELS{$error_type};
+    if ($entry) {
+        my ($label, $status) = @$entry;
+        my $code = $extracted_status // $status;
+        return $code ? "$label ($code)" : $label;
+    }
+
+    # Unknown error type - still try to surface the extracted status
+    if ($extracted_status) {
+        return "error ($extracted_status)";
+    }
+    return "error";
+}
+
 sub handle_api_error {
     my ($wo, $api_response, $ctx) = @_;
 
@@ -139,7 +218,7 @@ sub handle_api_error {
             # Cycle to the next model (wraps around at the end)
             my ($new_model, $old_model) = $wo->{api_manager}->cycle_model();
             if ($new_model && $on_system_message) {
-                $on_system_message->("API error, rerouting to $new_model");
+                $on_system_message->("API " . _routing_error_label($api_response) . ", rerouting to $new_model");
             }
             # Reset retry count so the new model gets a fresh retry budget
             $$retry_count_ref = 0;

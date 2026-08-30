@@ -196,7 +196,7 @@ subtest 'error handler model routing' => sub {
     is($result, 'retry', 'returns retry on 429 with routing active');
     is($api->get_current_model(), 'kilo/bar:free', 'model switched to kilo');
     is($session->{routing_attempts}, 1, 'routing attempts incremented');
-    ok(grep(/rerouting to kilo/, @sys_msgs), 'system message mentions rerouting');
+    is($sys_msgs[0], 'API Rate Limit (429), rerouting to kilo/bar:free', 'system message includes error type and status code');
     is($retry_count, 0, 'retry count reset after routing');
 
     `rm -rf $dir`;
@@ -295,6 +295,144 @@ subtest 'no routing with single model' => sub {
     $config->set("model_routing_index", 0, 0);
 
     is($api->model_routing_active(), 0, 'no routing with 1 candidate');
+
+    `rm -rf $dir`;
+};
+
+# =============================================================================
+# ErrorHandler: _routing_error_label helper
+# =============================================================================
+
+subtest '_routing_error_label' => sub {
+    # Rate limit error -> "Rate Limit (429)"
+    is(CLIO::Core::API::ErrorHandler::_routing_error_label({
+        error => "Rate limit exceeded",
+        error_type => "rate_limit",
+    }), "Rate Limit (429)", 'rate_limit maps to Rate Limit (429)');
+
+    # Concurrency limit -> also "Rate Limit (429)"
+    is(CLIO::Core::API::ErrorHandler::_routing_error_label({
+        error => "Concurrency limit reached",
+        error_type => "concurrency_limit",
+    }), "Rate Limit (429)", 'concurrency_limit maps to Rate Limit (429)');
+
+    # Server error -> "Server Error (500)"
+    is(CLIO::Core::API::ErrorHandler::_routing_error_label({
+        error => "Internal server error",
+        error_type => "server_error",
+    }), "Server Error (500)", 'server_error maps to Server Error (500)');
+
+    # Billing error -> "Billing Error (402)"
+    is(CLIO::Core::API::ErrorHandler::_routing_error_label({
+        error => "insufficient_quota",
+        error_type => "billing_error",
+    }), "Billing Error (402)", 'billing_error maps to Billing Error (402)');
+
+    # Model not found -> "Model Not Found (404)"
+    is(CLIO::Core::API::ErrorHandler::_routing_error_label({
+        error => "model not found",
+        error_type => "model_not_found",
+    }), "Model Not Found (404)", 'model_not_found maps to Model Not Found (404)');
+
+    # Token limit -> "Token Limit (400)"
+    is(CLIO::Core::API::ErrorHandler::_routing_error_label({
+        error => "Prompt token count exceeds...",
+        error_type => "token_limit_exceeded",
+    }), "Token Limit (400)", 'token_limit_exceeded maps to Token Limit (400)');
+
+    # Extracted status from error_obj overrides mapped status
+    is(CLIO::Core::API::ErrorHandler::_routing_error_label({
+        error => "Some error",
+        error_type => "server_error",
+        error_obj => { code => 503 },
+    }), "Server Error (503)", 'extracted status from error_obj overrides mapped status');
+
+    # Extracted status from error message text (no error_obj)
+    is(CLIO::Core::API::ErrorHandler::_routing_error_label({
+        error => "HTTP 429 Too Many Requests",
+        error_type => "server_error",
+    }), "Server Error (429)", 'extracted status from error message overrides mapped status');
+
+    # Unknown error type with no extractable status -> "error"
+    is(CLIO::Core::API::ErrorHandler::_routing_error_label({
+        error => "Some unknown error",
+        error_type => "totally_unknown_type",
+    }), "error", 'unknown error_type with no extractable status returns "error"');
+
+    # Unknown error type with status in message -> "error (NNN)"
+    is(CLIO::Core::API::ErrorHandler::_routing_error_label({
+        error => "HTTP 500 Internal Server Error",
+        error_type => "totally_unknown_type",
+    }), "error (500)", 'unknown error_type with extractable status returns "error (500)"');
+
+    # No error_type, no extractable status -> "error"
+    is(CLIO::Core::API::ErrorHandler::_routing_error_label({
+        error => "Unknown error",
+    }), "error", 'no error_type returns "error"');
+
+    # user_interrupt has undef status -> "User Interrupt" (no code)
+    is(CLIO::Core::API::ErrorHandler::_routing_error_label({
+        error => "Interrupted",
+        error_type => "user_interrupt",
+    }), "User Interrupt", 'user_interrupt has no status code (undef)');
+};
+
+# =============================================================================
+# ErrorHandler: routing message includes error type for server errors
+# =============================================================================
+
+subtest 'routing message includes error type for server error' => sub {
+    my $dir = "/tmp/clio-test-model-routing-7";
+    `rm -rf $dir`;
+
+    my $config = CLIO::Core::Config->new(config_dir => $dir);
+    $config->set("provider", "openrouter", 0);
+    $config->set("api_base", "https://openrouter.ai/api/v1/chat/completions", 0);
+    $config->set("api_key", "orca-key", 0);
+    my $keys = $config->{config}->{api_keys};
+    $keys->{openrouter} = "orca-key";
+    $keys->{kilo} = "kilo-key";
+    $config->{user_set}->{api_keys} = 1;
+
+    my $api = CLIO::Core::APIManager->new(debug => 0, config => $config);
+    my @models = ('openrouter/foo:free', 'kilo/bar:free');
+    $config->set("model_candidates", \@models, 0);
+    $config->set("model_routing_index", 0, 0);
+    $config->set("model", 'openrouter/foo:free', 0);
+
+    my $wo = bless { api_manager => $api }, "CLIO::Core::WorkflowOrchestrator";
+    my $session = { routing_attempts => 0 };
+    my @sys_msgs;
+    my $on_system_message = sub { push @sys_msgs, $_[0]; };
+
+    # Simulate a server error (500) - should show "Server Error (500)"
+    my $retry_count = 0;
+    my $api_response = {
+        success => 0,
+        error => "Internal server error",
+        retryable => 1,
+        error_type => "server_error",
+        retry_after => 2,
+    };
+
+    my $ctx = {
+        messages => [],
+        retry_count => \$retry_count,
+        session_error_count => \my $sec,
+        iteration => 1,
+        tool_calls_made => [],
+        session => $session,
+        on_system_message => $on_system_message,
+        max_retries => 3,
+        max_server_retries => 3,
+        max_session_errors => 10,
+        max_rate_limit_retries => 3,
+    };
+
+    my $result = CLIO::Core::API::ErrorHandler::handle_api_error($wo, $api_response, $ctx);
+
+    is($result, 'retry', 'returns retry on 500 with routing active');
+    is($sys_msgs[0], 'API Server Error (500), rerouting to kilo/bar:free', 'server error message includes type and status');
 
     `rm -rf $dir`;
 };
