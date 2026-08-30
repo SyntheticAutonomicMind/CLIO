@@ -116,10 +116,10 @@ sub assert_no_quote_dir {
     return 1;
 }
 
-# Test 1: create_file with quoted path
+# Test 1: create_file with quoted path (using write_file since create_file is aliased)
 print "\n--- Test: create_file with quoted path ---\n";
 my $result = $fo->execute(
-    { operation => 'create_file', path => $DQ . "test-create.txt" . $DQ, content => "test\n" },
+    { operation => 'write_file', path => $DQ . "test-create.txt" . $DQ, content => "test\n" },
     $ctx
 );
 $passed++ if test_case("create_file returned success", $result->{success}, $result->{error});
@@ -146,7 +146,7 @@ $passed++ if test_case("create_directory: mydir created",
 print "\n--- Test: write_file with quoted absolute path ---\n";
 my $write_target = File::Spec->catfile($test_dir, "test-write.txt");
 $result = $fo->execute(
-    { operation => 'create_file', path => $write_target, content => "initial\n" },
+    { operation => 'write_file', path => $write_target, content => "initial\n" },
     $ctx
 );
 $result = $fo->execute(
@@ -160,7 +160,7 @@ $passed++ if assert_no_quote_dir("write_file: no '$DQ' directory created");
 # Test 4: append_file with quoted path
 print "\n--- Test: append_file with quoted path ---\n";
 $result = $fo->execute(
-    { operation => 'append_file', path => $DQ . $write_target . $DQ, content => "appended\n" },
+    { operation => 'write_file', path => $DQ . $write_target . $DQ, content => "appended\n", append => 1 },
     $ctx
 );
 $passed++ if test_case("append_file returned success", $result->{success}, $result->{error});
@@ -222,8 +222,8 @@ $passed++ if test_case("rename_file: renamed file exists", -f $renamed_target);
 print "\n--- Test: multi_replace_string with quoted paths ---\n";
 my $multi1 = File::Spec->catfile($test_dir, "multi1.txt");
 my $multi2 = File::Spec->catfile($test_dir, "multi2.txt");
-$fo->execute({ operation => 'create_file', path => $multi1, content => "alpha\n" }, $ctx);
-$fo->execute({ operation => 'create_file', path => $multi2, content => "beta\n" }, $ctx);
+$fo->execute({ operation => 'write_file', path => $multi1, content => "alpha\n" }, $ctx);
+$fo->execute({ operation => 'write_file', path => $multi2, content => "beta\n" }, $ctx);
 $result = $fo->execute(
     { operation => 'multi_replace_string', replacements => [
         { path => $DQ . $multi1 . $DQ, old_string => "alpha", new_string => "ALPHA" },
@@ -269,7 +269,7 @@ my $patch_text = qq{*** Begin Patch
 *** End Patch
 };
 
-$result = $ap->execute({ patch => $patch_text }, $ctx);
+$result = $ap->execute({ operation => 'apply', patch => $patch_text }, $ctx);
 $passed++ if test_case("apply_patch with quoted Add File path", $result->{success}, $result->{error});
 $failed++ unless $result->{success};
 $passed++ if assert_no_quote_dir("apply_patch add: no '$DQ' directory created");
@@ -284,7 +284,7 @@ my $delete_patch = qq{*** Begin Patch
 *** End Patch
 };
 
-$result = $ap->execute({ patch => $delete_patch }, $ctx);
+$result = $ap->execute({ operation => 'apply', patch => $delete_patch }, $ctx);
 $passed++ if test_case("apply_patch with quoted Delete File path", $result->{success}, $result->{error});
 $failed++ unless $result->{success};
 $passed++ if test_case("apply_patch: file deleted", !-f $patched_file);
@@ -292,7 +292,7 @@ $passed++ if test_case("apply_patch: file deleted", !-f $patched_file);
 # apply_patch with quoted Update File path
 print "\n--- Test: apply_patch with quoted Update File path ---\n";
 my $update_target = File::Spec->catfile($test_dir, "update-test.txt");
-$fo->execute({ operation => 'create_file', path => $update_target, content => "line1\nline2\n" }, $ctx);
+$fo->execute({ operation => 'write_file', path => $update_target, content => "line1\nline2\n" }, $ctx);
 
 my $update_patch = qq{*** Begin Patch
 *** Update File: } . $DQ . $update_target . $DQ . qq{
@@ -302,7 +302,7 @@ my $update_patch = qq{*** Begin Patch
 *** End Patch
 };
 
-$result = $ap->execute({ patch => $update_patch }, $ctx);
+$result = $ap->execute({ operation => 'apply', patch => $update_patch }, $ctx);
 $passed++ if test_case("apply_patch with quoted Update File path", $result->{success}, $result->{error});
 $failed++ unless $result->{success};
 $passed++ if assert_no_quote_dir("apply_patch update: no '$DQ' directory created");
@@ -316,7 +316,7 @@ my $move_patch = qq{*** Begin Patch
 *** End Patch
 };
 
-$result = $ap->execute({ patch => $move_patch }, $ctx);
+$result = $ap->execute({ operation => 'apply', patch => $move_patch }, $ctx);
 $passed++ if test_case("apply_patch with quoted Move to path", $result->{success}, $result->{error});
 $failed++ unless $result->{success};
 $passed++ if assert_no_quote_dir("apply_patch move: no '$DQ' directory created");
