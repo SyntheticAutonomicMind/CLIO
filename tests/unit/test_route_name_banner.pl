@@ -139,4 +139,45 @@ subtest 'model_candidates in default config' => sub {
     remove_tree($dir);
 };
 
+# =============================================================================
+# Provider/model ordering: set_provider must not clobber route's first model
+# When --route activates, the route loading code sets the provider first
+# (which sets the provider's default model), THEN sets the route's first
+# model on top. The order matters: setting model first then provider
+# causes set_provider to overwrite with the provider default.
+# =============================================================================
+
+subtest 'route model not clobbered by provider default' => sub {
+    my ($config, $dir) = fresh_config();
+
+    # Set up an OpenRouter API key so set_provider actually switches providers
+    $config->{config}->{api_keys}{'openrouter'} = 'sk-test-key';
+
+    # Start with a config that has a different provider + model
+    $config->set_provider('github_copilot');
+    $config->set('model', 'gpt-4o', 1);  # user-set gpt-4o
+    is($config->get('model'), 'gpt-4o', 'initial model is gpt-4o');
+
+    my $route_models = ["openrouter/poolside/laguna-s-2.1:free", "kilo/x:free"];
+
+    # Simulate the FIXED route loading order: provider first, then model
+    # Resolve provider from first model
+    my $first_model = $route_models->[0];
+    if ($first_model =~ m{^([a-z][a-z0-9_.-]*)/(.+)$}i) {
+        my $rp = $1;
+        my $rpkey = $config->get_provider_key($rp);
+        if ($rpkey) {
+            $config->set_provider($rp);
+        }
+    }
+    # Then set the model (AFTER provider, so it's not clobbered)
+    $config->set('model', $first_model, 0);
+
+    is($config->get('model'), 'openrouter/poolside/laguna-s-2.1:free',
+       'route model preserved after set_provider');
+    is($config->get('provider'), 'openrouter', 'provider switched to openrouter');
+
+    remove_tree($dir);
+};
+
 done_testing();
