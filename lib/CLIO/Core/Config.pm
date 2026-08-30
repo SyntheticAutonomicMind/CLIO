@@ -68,6 +68,7 @@ use constant DEFAULT_CONFIG => {
     api_keys => {},  # Per-provider API keys: { google => 'AIza...', minimax => '...' }
     api_bases => {},  # Per-provider API base URLs: { 'llama.cpp' => 'http://localhost:9090/...' }
     provider => undef,  # No default - must be configured by user
+    route_name => undef,  # Active named routing profile (from --route or /api route use)
     editor => $ENV{EDITOR} || $ENV{VISUAL} || 'vim',  # Default editor
     log_level => 'WARNING',  # Default log level: ERROR, WARNING, INFO, DEBUG
     # Web search configuration (SerpAPI)

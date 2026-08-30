@@ -15,7 +15,7 @@ banner_line1=
 banner_line2={style.app_title}  {var.agent_name}@RESET@ {style.app_subtitle}- {var.agent_subtitle}@RESET@
 banner_line3=
 banner_line4={style.label}  Session:@RESET@ {style.value}{var.session_id}@RESET@
-banner_line5={style.label}  Model:@RESET@   {style.value}{var.model}@RESET@
+banner_line5={style.label}  Currently {var.routing_verb} to {style.value}{var.model}{style.label}{var.route_suffix}@RESET@
 banner_line6=
 banner_line7={style.dim}  Type "/help" for available commands@RESET@
 

@@ -12,7 +12,7 @@ error_prefix={style.error}ERR: @RESET@
 # Banner - condensed
 banner_line1={style.primary}{var.agent_name}@RESET@ {style.subtle}v1.0@RESET@
 banner_line2={style.subtle}Session: {style.value}{var.session_id}@RESET@
-banner_line3={style.subtle}Model: {style.value}{var.model}@RESET@
+banner_line3={style.subtle}Currently {var.routing_verb} to {style.value}{var.model}{style.subtle}{var.route_suffix}@RESET@
 banner_line4={style.subtle}Type "{style.value}/help{style.subtle}" for commands.@RESET@
 
 # Help system - minimal

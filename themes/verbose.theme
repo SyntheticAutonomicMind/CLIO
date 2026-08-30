@@ -14,7 +14,7 @@ banner_line1={style.primary}╔════════════════�
 banner_line2={style.primary}║  {style.primary}{var.agent_name}@RESET@{style.primary} {style.secondary}- {var.agent_subtitle}@RESET@{style.primary} ║@RESET@
 banner_line3={style.primary}╚════════════════════════════════════════════╝@RESET@
 banner_line4=Session ID: {style.value}{var.session_id}@RESET@
-banner_line5=Connected to: {style.value}{var.model}@RESET@
+banner_line5=Currently {var.routing_verb} to: {style.value}{var.model}{style.subtle}{var.route_suffix}@RESET@
 banner_line6={style.subtle}Type /help for available commands@RESET@
 banner_line7={style.subtle}Type /quit or /exit to end session@RESET@
 

@@ -1094,8 +1094,8 @@ sub get_builtin_theme {
         banner_line1 => '{style.app_title}{var.agent_name} {style.app_subtitle}- {var.agent_subtitle}@RESET@',
         banner_line2 => '{style.banner_label}Session ID: {style.data}{var.session_id}@RESET@',
         banner_line3 => '{var.session_name_line}',
-        banner_line4 => '{style.banner_label}You are connected to {style.data}{var.model}@RESET@',
-        
+        banner_line4 => '{style.banner_label}Currently {var.routing_verb} to {style.data}{var.model}{style.banner_label}{var.route_suffix}@RESET@',
+
         # Help system
         help_header => '{style.data}{var.title}@RESET@',
         help_section => '{style.data}{var.section}@RESET@',
