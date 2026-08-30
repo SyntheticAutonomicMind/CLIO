@@ -20,6 +20,7 @@ our @EXPORT_OK = qw(
 
 use CLIO::Core::Logger qw(log_debug log_info log_warning);
 use CLIO::Compat::Terminal qw(ReadKey);
+use CLIO::Util::JSON qw(is_hashref);
 
 =head1 NAME
 
@@ -199,7 +200,7 @@ sub pending {
         # fall back to the global flag.
         return $GLOBAL_INTERRUPT_FLAG ? 1 : 0;
     }
-    return 0 unless $state && ref($state) eq 'HASH';
+    return 0 unless $state && is_hashref($state);
     # Check both the session-state flag and the global flag. The ALRM
     # handler sets both, but legacy code paths may clear only the session
     # flag directly (e.g. WorkflowOrchestrator's loop-start stale-flag

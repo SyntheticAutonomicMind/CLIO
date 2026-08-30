@@ -263,7 +263,8 @@ sub display_header {
     my $routing_verb = $routing_active ? 'Routing' : 'Connected';
     my $route_suffix = '';
     if ($routing_active && $route_name && length($route_name)) {
-        $route_suffix = " via $route_name";
+        # Named route: show "via <name> (N models)"
+        $route_suffix = " via $route_name (" . scalar(@$candidates) . " models)";
     } elsif ($routing_active) {
         # Multiple --model candidates without a named route
         $route_suffix = " (" . scalar(@$candidates) . " models)";
