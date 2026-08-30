@@ -461,34 +461,9 @@ sub compress_messages {
     }
     my $compressed_tokens = int(length($summary_content) / 2.5);
 
-    # Most-recent task's name seeds the Current task line.
-    my $most_recent_task_id = $ordered_task_ids[-1];
-    my $most_recent_name = $most_recent_task_id
-        ? ($task_buckets->{$most_recent_task_id}{name} || '')
-        : '';
-
-    my @all_user_requests;
-    for my $tid (@ordered_task_ids) {
-        push @all_user_requests, @{$task_buckets->{$tid}{user_requests} || []};
-    }
-    # When called with task-aware extraction, prefer the most recent task's
-    # name as the Current task line. find_substantive_task can pull a very
-    # long user message (truncated for display via substr) but for the
-    # Current task line we want the concise task name, not a substring of
-    # the latest user prompt.
-    my $effective_task = $most_recent_name
-        || find_substantive_task(
-            $carried_task || $original_task,
-            \@all_user_requests
-        );
-
-    my @parts;
-    push @parts, "<thread_summary>";
-    push @parts, "";
-
-    if ($effective_task) {
-        push @parts, "Current task: " . substr($effective_task, 0, 300);
-        push @parts, "";
+    if ($original_tokens > 0) {
+        log_debug('YaRN', "Compression: $original_tokens -> $compressed_tokens tokens (" .
+            sprintf("%.1f", 100 * ($original_tokens - $compressed_tokens) / $original_tokens) . "% reduction)");
     }
 
     return {
