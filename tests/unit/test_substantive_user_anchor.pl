@@ -90,8 +90,8 @@ sub slurp { my ($f) = @_; local $/; open my $fh, '<', $f or die "open($f): $!"; 
          'get_user_context reads substantive_task from options');
     like($src, qr/<activeTask>/,
          'get_user_context emits <activeTask> block when substantive_task is provided');
-    like($src, qr/Continue this work\. Do not restart or re-evaluate the task/s,
-         '<activeTask> block tells the model to resume rather than restart');
+    unlike($src, qr/Continue this work\. Do not restart or re-evaluate the task/s,
+         '<activeTask> block does NOT contain framework narration (resume directive stripped)');
 }
 
 # ── Test 5: PromptBuilder::_read_active_todos exists and emits <activeTodos> block ─

@@ -41,7 +41,7 @@ sub ok {
     
     # Check that collaboration exchanges are captured
     my $content = $result->{content};
-    ok($content =~ /Active discussion/i, 'Contains active discussion section');
+    ok($content =~ /Discussion/i, 'Contains discussion section');
     ok($content =~ /abbreviate/i, 'Contains user response about abbreviation');
     ok($content =~ /24 ch/i || $content =~ /24 col/i, 'Contains details about 24 chars/columns');
     ok($content =~ /separator/i, 'Contains user response about separator');
@@ -60,8 +60,8 @@ sub ok {
     my $result = $yarn->compress_messages(\@messages, original_task => 'Read config');
     ok($result, 'Non-collab compress returns result');
     my $content = $result->{content};
-    ok($content !~ /Active discussion/i, 'No active discussion for non-collaboration messages');
-    ok($content =~ /file_operations/i, 'Tool usage tracked');
+    ok($content !~ /Active discussion/i && $content !~ /Discussion:/i, 'No discussion section for non-collaboration messages');
+    ok($content =~ /file_operations/i, 'Tools tracked');
 }
 
 # Test 3: Multiple exchanges - only last 5 kept
@@ -77,7 +77,7 @@ sub ok {
     my $result = $yarn->compress_messages(\@messages, original_task => 'Design session');
     my $content = $result->{content};
     # Should have exchanges but limited to 5
-    ok($content =~ /Active discussion/i, 'Multi-exchange has active discussion');
+    ok($content =~ /Discussion/i, 'Multi-exchange has discussion section');
     # First 3 should be dropped (8-5=3)
     ok($content !~ /Question 1 about/, 'Oldest exchanges trimmed');
     ok($content !~ /Question 2 about/, 'Second oldest trimmed');

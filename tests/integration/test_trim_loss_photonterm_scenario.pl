@@ -188,7 +188,7 @@ sub build_photonterm_session {
         'PhotonTERM scenario L2: progress marker captured in summary');
     ok_test($summary =~ /Moving to item 2/i,
         'PhotonTERM scenario L2: "moving to" marker captured');
-    ok_test($summary =~ /Key decisions/i,
+    ok_test($summary =~ /Decisions/i,
         'PhotonTERM scenario L2: Decisions section rendered');
 }
 

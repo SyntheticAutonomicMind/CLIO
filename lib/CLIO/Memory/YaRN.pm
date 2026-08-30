@@ -633,9 +633,9 @@ sub _render_flat_summary {
         push @parts, "";
     }
 
-    if (@collaboration_exchanges) {
-        push @parts, "Active discussion (agent-user collaboration exchanges):";
-        for my $i (0..$#collaboration_exchanges) {
+   if (@collaboration_exchanges) {
+        push @parts, "Discussion:";
+       for my $i (0..$#collaboration_exchanges) {
             my $ex = $collaboration_exchanges[$i];
             push @parts, "  Agent asked: " . $ex->{question};
             push @parts, "  User replied: " . $ex->{response};
@@ -653,27 +653,27 @@ sub _render_flat_summary {
         push @parts, "";
     }
 
-    if (@commits) {
-        push @parts, "Git commits made during compressed period:";
-        push @parts, "- $_" for @commits;
+   if (@commits) {
+        push @parts, "Commits:";
+       push @parts, "- $_" for @commits;
         push @parts, "";
     }
 
-    if (@files_touched) {
-        push @parts, "Files created/modified:";
-        push @parts, "- $_" for @files_touched;
+   if (@files_touched) {
+        push @parts, "Files:";
+       push @parts, "- $_" for @files_touched;
         push @parts, "";
     }
 
-    if (@decisions) {
-        push @parts, "Key decisions:";
-        push @parts, "- $_" for @decisions;
+   if (@decisions) {
+        push @parts, "Decisions:";
+       push @parts, "- $_" for @decisions;
         push @parts, "";
     }
 
-    if (%tool_counts) {
-        push @parts, "Tool usage:";
-        for my $t (sort { $tool_counts{$b} <=> $tool_counts{$a} } keys %tool_counts) {
+   if (%tool_counts) {
+        push @parts, "Tools:";
+       for my $t (sort { $tool_counts{$b} <=> $tool_counts{$a} } keys %tool_counts) {
             push @parts, "- $t: $tool_counts{$t} calls";
         }
         push @parts, "";
@@ -686,9 +686,9 @@ sub _render_flat_summary {
     # black-holed by trim — the preview survives but the model has no
     # way to know which persisted file to fetch.
     my @persisted_chunks = @{$bucket->{persisted_chunks} || []};
-    if (@persisted_chunks) {
-        push @parts, "Persisted chunks (re-read with file_operations read_tool_result, toolCallId=<id>, offset=<bytes>):";
-        for my $chunk (@persisted_chunks) {
+   if (@persisted_chunks) {
+        push @parts, "Persisted chunks:";
+       for my $chunk (@persisted_chunks) {
             my $line = "- $chunk->{tool_call_id}";
             $line .= " ($chunk->{source_tool}: $chunk->{source_path})" if $chunk->{source_path};
             $line .= " ($chunk->{total_length} bytes, $chunk->{remaining} remaining)" if $chunk->{total_length};
@@ -795,9 +795,9 @@ sub _render_single_task_block {
 
     my @collab = @{$b->{collaboration_exchanges} || []};
     @collab = @collab[-3..-1] if @collab > 3;
-    if (@collab) {
-        push @lines, "Active discussion:";
-        for my $ex (@collab) {
+   if (@collab) {
+        push @lines, "Discussion:";
+       for my $ex (@collab) {
             push @lines, "  Agent asked: " . substr($ex->{question}, 0, 300);
             push @lines, "  User replied: " . substr($ex->{response} // '', 0, 300);
         }
@@ -1035,10 +1035,10 @@ sub _parse_previous_summary {
     my $collaboration_exchanges = $buckets->{collaboration_exchanges} || [];
     my $persisted_chunks        = $buckets->{persisted_chunks}        || [];
 
-    # Parse persisted chunks: lines under "Persisted chunks:" section.
-    # Each line is "- <toolCallId> (<source_tool>: <source_path>) (<bytes>, <remaining>)"
-    # or "- <toolCallId> [legacy: detected from content marker]".
-    if ($summary_text =~ /Persisted chunks \(re-read with [^)]+\):\n((?:- [^\n]+\n)+)/s) {
+  # Parse persisted chunks: lines under "Persisted chunks:" section.
+  # Each line is "- <toolCallId> (<source_tool>: <source_path>) (<bytes>, <remaining>)"
+  # or "- <toolCallId> [legacy: detected from content marker]".
+    if ($summary_text =~ /Persisted chunks[^\n]*:\n((?:- [^\n]+\n)+)/) {
         my $block = $1;
         while ($block =~ /^- ([^\n]+)$/mg) {
             my $line = $1;
@@ -1066,40 +1066,40 @@ sub _parse_previous_summary {
         }
     }
 
-    # Parse git commits: lines starting with "- " under "Git commits" section
-    if ($summary_text =~ /Git commits.*?:\n((?:- .+\n)+)/s) {
+  # Parse git commits: lines starting with "- " under "Git commits" section
+    if ($summary_text =~ /(?:Git commits[^\n]*|Commits):\n((?:- [^\n]+\n)+)/) {
         my $block = $1;
         while ($block =~ /^- (.+)$/mg) {
             push @$commits, $1;
         }
     }
     
-    # Parse files: lines starting with "- " under "Files created/modified" section
-    if ($summary_text =~ /Files created\/modified:\n((?:- .+\n)+)/s) {
+  # Parse files: lines starting with "- " under "Files created/modified" section
+    if ($summary_text =~ /(?:Files created\/modified|Files):\n((?:- [^\n]+\n)+)/) {
         my $block = $1;
         while ($block =~ /^- (.+)$/mg) {
             push @$files_touched, $1;
         }
     }
     
-    # Parse decisions: lines starting with "- " under "Key decisions" section
-    if ($summary_text =~ /Key decisions:\n((?:- .+\n)+)/s) {
+  # Parse decisions: lines starting with "- " under "Key decisions" section
+    if ($summary_text =~ /(?:Key decisions|Decisions):\n((?:- [^\n]+\n)+)/) {
         my $block = $1;
         while ($block =~ /^- (.+)$/mg) {
             push @$decisions, $1;
         }
     }
     
-    # Parse tool usage: lines like "- tool_name: N calls"
-    if ($summary_text =~ /Tool usage:\n((?:- .+\n)+)/s) {
+  # Parse tool usage: lines like "- tool_name: N calls"
+    if ($summary_text =~ /(?:Tool usage|Tools):\n((?:- [^\n]+\n)+)/) {
         my $block = $1;
         while ($block =~ /^- ([^:]+):\s*(\d+)\s*calls?$/mg) {
             $tool_counts->{$1} = ($tool_counts->{$1} || 0) + $2;
         }
     }
     
-    # Parse user requests: lines under "Recent user requests:" (preserving [original] marker)
-    if ($summary_text =~ /Recent user requests:\n((?:- .+\n)+)/s) {
+  # Parse user requests: lines under "Recent user requests:" (preserving [original] marker)
+    if ($summary_text =~ /Recent user requests:\n((?:- [^\n]+\n)+)/) {
         my $block = $1;
         while ($block =~ /^- (?:\[original\]\s*)?(.+)$/mg) {
             my $req = $1;
@@ -1108,8 +1108,8 @@ sub _parse_previous_summary {
         }
     }
     
-    # Parse active discussion: agent-user exchange pairs
-    if ($summary_text =~ /Active discussion.*?:\n((?:  Agent asked:.+\n(?:  User replied:.+\n)?)+)/s) {
+ # Parse active discussion: agent-user exchange pairs
+    if ($summary_text =~ /(?:Active discussion[^\n]*|Discussion):\n((?:  Agent asked:[^\n]+\n(?:  User replied:[^\n]+\n)?)+)/) {
         my $block = $1;
         while ($block =~ /  Agent asked:\s*(.{1,1000})\n(?:  User replied:\s*(.{1,1000})\n)?/g) {
             push @$collaboration_exchanges, {
@@ -1228,14 +1228,14 @@ sub _fit_summary_to_target {
         # Legacy fall-through: section-level drops for non-task summaries.
         if ($current > $target_tokens + $tolerance) {
             my @sections = _parse_summary_sections($summary_content);
-            my %key_to_prefix = (
-                tool_counts    => 'Tool usage',
-                decisions      => 'Key decisions',
-                files          => 'Files created/modified',
-                commits        => 'Git commits',
-                collab         => 'Active discussion',
-                user_requests  => 'Recent user requests',
-            );
+           my %key_to_prefix = (
+                tool_counts    => 'Tools',
+                decisions      => 'Decisions',
+                files          => 'Files',
+                commits        => 'Commits',
+                collab         => 'Discussion',
+               user_requests  => 'Recent user requests',
+           );
             my @drop_order = qw(tool_counts decisions files commits collab user_requests);
             for my $key (@drop_order) {
                 my $prefix = $key_to_prefix{$key};
@@ -1354,18 +1354,27 @@ sub _parse_summary_sections {
     my @lines = split /\n/, $body;
     my $current;
 
-    # Sorted by length descending - longer (more specific) prefixes match first
-    # to avoid ambiguity (e.g. "Files created/modified:" beats "Files:" if a
-    # body line happens to start with "Files").
-    my @section_prefixes = sort { length($b) <=> length($a) } (
+   # Sorted by length descending - longer (more specific) prefixes match first
+   # to avoid ambiguity (e.g. "Files created/modified:" beats "Files:" if a
+   # body line happens to start with "Files").
+   my @section_prefixes = sort { length($b) <=> length($a) } (
         'Current task',
+        'Active discussion (agent-user collaboration exchanges)',
         'Active discussion',
+        'Discussion',
         'Recent user requests',
+        'Git commits made during compressed period',
         'Git commits',
+        'Commits',
         'Files created/modified',
+        'Files',
         'Key decisions',
+        'Decisions',
         'Tool usage',
-    );
+        'Tools',
+        'Persisted chunks (re-read with file_operations read_tool_result, toolCallId=<id>, offset=<bytes>)',
+        'Persisted chunks',
+   );
 
     for my $line (@lines) {
         my $matched;

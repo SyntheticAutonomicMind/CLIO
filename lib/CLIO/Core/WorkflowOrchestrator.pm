@@ -1602,7 +1602,7 @@ sub _sync_state_max_tokens {
 
     if (($state->{max_tokens} // 0) != $ctx_window) {
         log_debug('WorkflowOrchestrator',
-            "Updated session max_tokens from $state->{max_tokens} to $ctx_window (model context window)");
+            "Updated session max_tokens from " . ($state->{max_tokens} // 0) . " to $ctx_window (model context window)");
         $state->{max_tokens} = $ctx_window;
     }
 
@@ -1616,7 +1616,7 @@ sub _sync_state_max_tokens {
     my $max_output = $model_caps->{max_output_tokens};
     if ($max_output && ($state->{max_output_tokens} // 0) != $max_output) {
         log_debug('WorkflowOrchestrator',
-            "Updated session max_output_tokens from $state->{max_output_tokens} to $max_output");
+            "Updated session max_output_tokens from " . ($state->{max_output_tokens} // 0) . " to $max_output");
         $state->{max_output_tokens} = $max_output;
     }
 }

@@ -65,7 +65,7 @@ sub ok_test {
         );
         my $r = $yarn->compress_messages(\@msgs, original_task => 'Test');
         my $content = $r->{content} || '';
-        ok_test($content =~ /Key decisions:/, "positive: '$content' -> captured");
+        ok_test($content =~ /Decisions:/, "positive: '$content' -> captured");
         ok_test($content =~ /\Q$expected_in_decision\E/i, "positive: '$content' -> keyword '$expected_in_decision' present");
     }
 }
@@ -90,7 +90,7 @@ sub ok_test {
         );
         my $r = $yarn->compress_messages(\@msgs, original_task => 'Test');
         my $c = $r->{content} || '';
-        ok_test($c !~ /Key decisions:/, "negative: '$content' -> not captured");
+        ok_test($c !~ /Decisions:/, "negative: '$content' -> not captured");
     }
 }
 
@@ -103,7 +103,7 @@ sub ok_test {
     );
     my $r = $yarn->compress_messages(\@msgs, original_task => 'What did you find?');
     my $content = $r->{content} || '';
-    ok_test($content =~ /Key decisions:/, 'metadata.collaboration captured');
+    ok_test($content =~ /Decisions:/, 'metadata.collaboration captured');
     ok_test($content =~ /The bug is in the regex pattern/, 'collaboration content present');
 }
 
@@ -116,7 +116,7 @@ sub ok_test {
     );
     my $r = $yarn->compress_messages(\@msgs, original_task => 'Investigate');
     my $content = $r->{content} || '';
-    ok_test($content =~ /Key decisions:/, 'mid-sentence "Found" captured');
+    ok_test($content =~ /Decisions:/, 'mid-sentence "Found" captured');
     ok_test($content =~ /insert_mode is not implemented/, 'mid-sentence "Found" content present');
 }
 
@@ -162,10 +162,10 @@ sub ok_test {
     );
     my $r = $yarn->compress_messages(\@msgs, original_task => 'Investigate');
     my $content = $r->{content} || '';
-    ok_test($content !~ /Key decisions:/, 'short capture rejected');
+    ok_test($content !~ /Decisions:/, 'short capture rejected');
 }
 
-# Test 8: render position is after Files/Commits, before Tool usage
+# Test 8: render position is after Files/Commits, before Tools
 {
     my $yarn = CLIO::Memory::YaRN->new();
     my @msgs = (
@@ -179,10 +179,10 @@ sub ok_test {
     my $r = $yarn->compress_messages(\@msgs, original_task => 'Review code');
     my $content = $r->{content} || '';
     my $files_idx = index($content, 'Files');
-    my $decisions_idx = index($content, 'Key decisions');
-    my $tool_idx = index($content, 'Tool usage');
+    my $decisions_idx = index($content, 'Decisions:');
+    my $tool_idx = index($content, 'Tools:');
     ok_test($files_idx > 0 && $decisions_idx > $files_idx && $tool_idx > $decisions_idx,
-        'render order: Files < Key decisions < Tool usage');
+        'render order: Files < Decisions < Tools');
 }
 
 print "\n$passed passed, $failed failed\n";

@@ -602,17 +602,15 @@ sub get_user_context {
     # Placed in <activeTask>...</activeTask> so it's clearly the
     # current goal, not archival metadata. Truncated to 500 chars to
     # keep the user_context cache footprint small.
-    if ($substantive_task && length($substantive_task) > 0) {
-        my $task_display = $substantive_task;
-        if (length($task_display) > 500) {
-            $task_display = substr($task_display, 0, 497) . '...';
-        }
-        $context .= "<activeTask>\n";
-        $context .= "You are working on the following task (this is the ORIGINAL user request, not a follow-up directive):\n\n";
-        $context .= $task_display . "\n";
-        $context .= "\nContinue this work. Do not restart or re-evaluate the task - resume from where the recent tool activity left off.\n";
-        $context .= "</activeTask>\n\n";
-    }
+   if ($substantive_task && length($substantive_task) > 0) {
+       my $task_display = $substantive_task;
+       if (length($task_display) > 500) {
+           $task_display = substr($task_display, 0, 497) . '...';
+       }
+       $context .= "<activeTask>\n";
+       $context .= $task_display . "\n";
+       $context .= "</activeTask>\n\n";
+   }
 
     # Session goals - read fresh each call
     if ($session) {
@@ -811,12 +809,8 @@ sub _read_session_goals {
         my @active = grep { ($_->{status} || '') eq 'active' } @$goals;
         return '' unless @active;
 
-        $goals_text = "<sessionGoals>\n";
-        $goals_text .= "You are working toward the following session goals. ";
-        $goals_text .= "Track progress using memory_operations:\n";
-        $goals_text .= "  memory_operations(operation: 'retrieve', key: 'session_goals')\n";
-        $goals_text .= "  memory_operations(operation: 'store', key: 'session_goals', content: '<json>')\n\n";
-        for my $goal (@active) {
+       $goals_text = "<sessionGoals>\n";
+       for my $goal (@active) {
             my $title = $goal->{title} || 'Untitled';
             my $desc  = $goal->{description} || '';
             $goals_text .= "- [#$goal->{id}] $title";
@@ -934,9 +928,9 @@ sub _read_active_todos {
             $todos_text .= "  [QUEUED]     " . ($todo->{content} || 'Untitled') . "\n";
             $queued_count++;
         }
-        if (scalar(@not_started) > $queued_count) {
-            $todos_text .= "  ...and " . (scalar(@not_started) - $queued_count) . " more queued (use todo_operations to read full list)\n";
-        }
+       if (scalar(@not_started) > $queued_count) {
+            $todos_text .= "  ...and " . (scalar(@not_started) - $queued_count) . " more queued\n";
+       }
         for my $todo (@blocked) {
             $todos_text .= "  [BLOCKED]    " . ($todo->{content} || 'Untitled') . "\n";
         }
