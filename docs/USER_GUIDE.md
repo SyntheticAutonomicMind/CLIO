@@ -222,7 +222,7 @@ You'll see the welcome banner:
 ------------------------------------------
 CLIO - Command Line Intelligence Orchestrator
 Session ID: sess_20260118_143052
-Currently connected to claude-sonnet-4
+Connected to claude-sonnet-4
 Press "?" for a list of commands.
 ------------------------------------------
 

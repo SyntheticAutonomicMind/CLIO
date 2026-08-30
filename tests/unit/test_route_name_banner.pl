@@ -90,12 +90,12 @@ subtest 'banner routing variables' => sub {
     # Simulate the banner variable computation from Chat/Header.pm
     my @cases = (
         # { candidates, route_name, expected_verb, expected_suffix }
-        { cands => [],          route => undef,         verb => 'connected', suffix => '' },
-        { cands => [],          route => 'myroute',     verb => 'connected', suffix => '' },
-        { cands => ['a'],       route => undef,         verb => 'connected', suffix => '' },
-        { cands => ['a', 'b'],  route => undef,         verb => 'routing',   suffix => ' (2 models)' },
-        { cands => ['a', 'b'],  route => 'myroute',     verb => 'routing',   suffix => ' via myroute' },
-        { cands => ['a', 'b', 'c'], route => 'r1',      verb => 'routing',   suffix => ' via r1' },
+        { cands => [],          route => undef,         verb => 'Connected', suffix => '' },
+        { cands => [],          route => 'myroute',     verb => 'Connected', suffix => '' },
+        { cands => ['a'],       route => undef,         verb => 'Connected', suffix => '' },
+        { cands => ['a', 'b'],  route => undef,         verb => 'Routing',   suffix => ' (2 models)' },
+        { cands => ['a', 'b'],  route => 'myroute',     verb => 'Routing',   suffix => ' via myroute' },
+        { cands => ['a', 'b', 'c'], route => 'r1',      verb => 'Routing',   suffix => ' via r1' },
     );
 
     for my $i (0 .. $#cases) {
@@ -108,7 +108,7 @@ subtest 'banner routing variables' => sub {
         $candidates = [] unless ref($candidates) eq 'ARRAY';
         my $routing_active = ref($candidates) eq 'ARRAY' && @$candidates > 1;
         my $route_name = $config->get('route_name');
-        my $routing_verb = $routing_active ? 'routing' : 'connected';
+        my $routing_verb = $routing_active ? 'Routing' : 'Connected';
         my $route_suffix = '';
         if ($routing_active && $route_name && length($route_name)) {
             $route_suffix = " via $route_name";
