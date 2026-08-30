@@ -275,14 +275,15 @@ sub _route_add {
 
     # Validate each model has a valid provider prefix
     for my $m (@models) {
-        my ($provider, $api_model) = $self->_resolve_model_details($m);
-        if ($provider eq ($self->{config}->get('provider') || '')) {
+        my ($full_model, $display_model, $target_provider, $api_model) =
+            $self->_resolve_model_details($m);
+        if ($target_provider eq ($self->{config}->get('provider') || '')) {
             # Same provider - fine
         } else {
-            my ($has_auth, $auth_error) = $self->_check_provider_auth($provider);
+            my ($has_auth, $auth_error) = $self->_check_provider_auth($target_provider);
             unless ($has_auth) {
                 $self->display_error_message($auth_error);
-                $self->display_system_message("Set it with: /api set provider $provider && /api set key <your-key>");
+                $self->display_system_message("Set it with: /api set provider $target_provider && /api set key <your-key>");
                 return;
             }
         }
@@ -685,9 +686,10 @@ sub _set_model_candidates {
     $self->_set_api_setting('model', $validated[0], $session_only);
     $self->_get_auth_helper()->reinit_api_manager();
 
-    my ($first_provider, $first_model) = $self->_resolve_model_details($validated[0]);
+    my ($first_full, $first_display, $first_provider, $first_api_model) =
+        $self->_resolve_model_details($validated[0]);
     $self->_update_billing_state($validated[0], $first_provider);
-    $self->_post_set_model_validation($validated[0], $first_model);
+    $self->_post_set_model_validation($validated[0], $first_api_model);
 }
 
 sub _set_model {

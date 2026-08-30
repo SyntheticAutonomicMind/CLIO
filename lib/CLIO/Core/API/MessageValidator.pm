@@ -407,6 +407,33 @@ sub validate_and_truncate {
         $summary_slot_target = $current_slot;
         log_debug('MessageValidator', "CSSS: slot target $summary_slot_target (current summary size)");
 
+        # Detect a prior hard-truncate: if the previous summary's
+        # _metadata.compressed_tokens (the size compress_messages wanted
+        # to produce) is larger than the actual content size
+        # ($current_slot), the previous turn was forcibly truncated to
+        # fit the slot. Without this check, the slot stays locked at
+        # the truncated size forever: every turn, compress_messages
+        # produces a summary larger than the slot, _fit_summary_to_target
+        # hard-truncates it, and the slot never grows. This is the
+        # observed thrash on session resume with a larger-context model
+        # (target=199, produced=539, every turn 2026-08-29).
+        #
+        # Recovery: use the recorded compressed_tokens as the new
+        # target, so the next trim can absorb the content the prior
+        # turn wanted. Capped at MAX_CSSS_SLOT_TOKENS.
+        if ($summary_unit->{messages} && @{$summary_unit->{messages}}) {
+            my $prev_meta = $summary_unit->{messages}[0]{_metadata} || {};
+            my $recorded = $prev_meta->{compressed_tokens} || 0;
+            if ($recorded > $summary_slot_target + 10) {
+                my $max_slot = CLIO::Core::Defaults::MAX_CSSS_SLOT_TOKENS();
+                my $recovered = $recorded > $max_slot ? $max_slot : $recorded;
+                log_info('MessageValidator',
+                    "CSSS: recovering from prior hard-truncate - slot $summary_slot_target -> $recovered " .
+                    "(previous turn wanted $recorded tokens, was clipped to $summary_slot_target)");
+                $summary_slot_target = $recovered;
+            }
+        }
+
         # Proactive growth: if dropped content is > 1.5x slot, grow the
         # slot ceiling before compression. This prevents the summary
         # from being hard-truncated and silently dropping the "Current
