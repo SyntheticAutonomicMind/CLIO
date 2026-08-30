@@ -92,6 +92,8 @@ CLIO ships with **18 provider configurations**. All API providers are OpenAI-com
 
 See [docs/PROVIDERS.md](docs/PROVIDERS.md) for setup instructions for each provider.
 
+**Model routing (fallback chains):** Pass multiple space-separated models to `--model`, or save a named profile with `/api route add` and activate it via `--route <name>`. On any API error, CLIO automatically cycles to the next model. See [Model Routing](docs/FEATURES.md#model-routing).
+
 ---
 
 ## Screenshots

@@ -751,8 +751,8 @@ Key parameters:
 The CSSS bounds the summary size across trim cycles to minimize LCP cache invalidation with local inference providers (llama.cpp).
 
 How it works:
-1. **First trim:** Summary grows organically with dropped content, up to `MAX_CSSR_SLOT_TOKENS` (12K)
-2. **Subsequent trims:** `YaRN::compress_messages` enforces the MAX_CSSR_SLOT_TOKENS ceiling (not a fixed lock)
+1. **First trim:** Summary grows organically with dropped content, up to `MAX_CSSS_SLOT_TOKENS` (12K)
+2. **Subsequent trims:** `YaRN::compress_messages` enforces the MAX_CSSS_SLOT_TOKENS ceiling (not a fixed lock)
 3. **Proactive growth:** If a single trim drops >1.5x the current slot, the slot grows to absorb more tokens (capped at MAX)
 4. **No padding:** Summaries below the ceiling are left at their natural size. Earlier versions padded with HTML comments filled with x's, but this was removed (2026-08-27) — the padding was visible to the model as a massive artifact inside `<thread_summary>`
 

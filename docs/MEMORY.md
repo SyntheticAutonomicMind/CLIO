@@ -338,8 +338,8 @@ Key parameters:
 The CSSS bounds the summary size across trim cycles to minimize LCP cache invalidation with local inference providers (llama.cpp).
 
 How it works:
-1. **First trim:** Summary grows organically with dropped content, up to `MAX_CSSR_SLOT_TOKENS` (12K)
-2. **Subsequent trims:** `YaRN::compress_messages` enforces the MAX_CSSR_SLOT_TOKENS ceiling
+1. **First trim:** Summary grows organically with dropped content, up to `MAX_CSSS_SLOT_TOKENS` (12K)
+2. **Subsequent trims:** `YaRN::compress_messages` enforces the MAX_CSSS_SLOT_TOKENS ceiling
 3. **Proactive growth:** If a single trim drops >1.5x the current slot, the slot grows to absorb more tokens (capped at MAX)
 4. **No padding:** Summaries below the ceiling stay at their natural size. Padding was removed in 2026-08-27.
 
@@ -494,7 +494,7 @@ The memory system isn't just infrastructure - it's actively used by agents throu
 ### When Context Gets Full
 
 1. **Unified trim** fires when approaching 68% of the model's context window
-2. Oldest messages are compressed via YaRN into the CSSS summary slot (bounded by MAX_CSSR_SLOT_TOKENS)
+2. Oldest messages are compressed via YaRN into the CSSS summary slot (bounded by MAX_CSSS_SLOT_TOKENS)
 3. The summary is injected as a system message so the AI knows what was dropped
 4. A progress checkpoint is written to `.clio/memory/session_progress.md`
 

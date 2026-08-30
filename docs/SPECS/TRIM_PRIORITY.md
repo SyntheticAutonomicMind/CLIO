@@ -68,11 +68,11 @@ captures the state of dropped Tier 3/4 units. Dropping the summary
 itself is not "preservation" - it's catastrophic context loss.
 
 **Lifecycle:** The summary grows organically (the slot is a ceiling,
-not a lock) up to `MAX_CSSR_SLOT_TOKENS` (12K). When dropped content
+not a lock) up to `MAX_CSSS_SLOT_TOKENS` (12K). When dropped content
 exceeds 1.5x the current slot, it grows by 1.5x (capped at MAX)
 before compression to absorb dropped tokens without hard-truncating
 captured state. Earlier versions locked the slot with padding to a
-fixed MIN_CSSR_SLOT_TOKENS floor; this was removed in 2026-08-27
+fixed MIN_CSSS_SLOT_TOKENS floor; this was removed in 2026-08-27
 because the padding was visible to the model as a massive artifact.
 
 **Detection:** `_extract_preserved_units` performs a second-pass
@@ -205,8 +205,8 @@ slot.
 
 | Name | Value | Purpose |
 |------|-------|---------|
-| `MAX_CSSR_SLOT_TOKENS` | 12000 | CSSS slot size ceiling (hard cap). |
-| `MIN_CSSR_SLOT_TOKENS` | 8192 | Resume fast-path gate (payload size check). |
+| `MAX_CSSS_SLOT_TOKENS` | 12000 | CSSS slot size ceiling (hard cap). |
+| `MIN_CSSS_SLOT_TOKENS` | 8192 | Resume fast-path gate (payload size check). |
 | `DEFAULT_POST_TRIM_FLOOR` | 24000 | Minimum tokens retained verbatim. |
 | `MAX_PRESERVED_HIGH_VALUE` | 5 | Tier 2 units always preserved. |
 | `ACK_THRESHOLD_CHARS` | 50 | Tier 4 acknowledgement length cap. |

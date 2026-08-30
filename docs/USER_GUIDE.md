@@ -159,6 +159,26 @@ Use `/api show` to see your current configuration and whether any values are ses
 
 See [PROVIDERS.md](PROVIDERS.md) for setup instructions for all 18 providers.
 
+**Model Routing (Fallback Chains)**
+
+CLIO can automatically cycle through a list of models when an API error occurs (rate limit, billing, server error, etc.). Each model can be from a different provider — the `provider/model` prefix is resolved per-request.
+
+```bash
+# Ad-hoc: temporary routing for one session
+clio --model "openrouter/foo:free kilo/bar:free" --new
+
+# Named: save reusable profiles
+/api route add <name> <model1> [model2 ...]    # Save a profile
+/api route list                                 # List saved profiles
+/api route use <name>                           # Activate
+/api route remove <name>                        # Delete
+
+# Or activate from the command line
+clio --route <name> --new
+```
+
+On error, CLIO cycles to the next model. Total attempts before giving up = `len(models) x max_retries`. See [Model Routing](FEATURES.md#model-routing).
+
 **Optional Environment Variables**
 
 ```bash

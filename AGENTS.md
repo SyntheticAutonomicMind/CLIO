@@ -1070,7 +1070,7 @@ Every API request CLIO sends follows a fixed message layout. The goal is LCP (Lo
 [0] system_prompt      Static (built once per session; includes tools schema)
 [1] context_files      User-added files (stable until /context add|remove)
 [2] dialog             user / assistant alternating, tool_results interleaved
-[3] summary            CSSS slot; grows organically up to MAX_CSSR_SLOT_TOKENS, at END
+[3] summary            CSSS slot; grows organically up to MAX_CSSS_SLOT_TOKENS, at END
 [4] user_context       Dynamic (date/time, working dir, LTM, session goals)
 [5] user_input         Current turn's raw user input (no prefix)
 ```
@@ -1078,7 +1078,7 @@ Every API request CLIO sends follows a fixed message layout. The goal is LCP (Lo
 **Key invariants:**
 
 - Sections [0..1] are the **stable anchor** — only invalidate when tools change or context files are added/removed.
-- Section [3] is the **CSSS slot** — grows organically with dropped content up to `MAX_CSSR_SLOT_TOKENS`, placed at the END so the LCP prefix extends through all dialog before breaking. Cache invalidation from a size change only hits the summary position onward.
+- Section [3] is the **CSSS slot** — grows organically with dropped content up to `MAX_CSSS_SLOT_TOKENS`, placed at the END so the LCP prefix extends through all dialog before breaking. Cache invalidation from a size change only hits the summary position onward.
 - Section [4] is the **dynamic anchor** — changes every minute (date/time cache). When it changes, only [4] onwards is reprocessed. The dialog and tool_results at [2] stay cached.
 - Section [5] is always fresh.
 

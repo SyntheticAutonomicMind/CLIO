@@ -23,7 +23,7 @@ lifetimes.
 [0] system_prompt      Static (built once per session; includes tools schema)
 [1] context_files      User-added files (stable until /context add|remove)
 [2] dialog             user / assistant alternating, tool_results interleaved
-[3] summary            CSSS slot; grows organically up to MAX_CSSR_SLOT_TOKENS, at END
+[3] summary            CSSS slot; grows organically up to MAX_CSSS_SLOT_TOKENS, at END
 [4] user_context       Dynamic (date/time, working dir, LTM, session goals)
 [5] user_input         Current turn's raw user input (no prefix)
 ```
@@ -48,7 +48,7 @@ interleaved order throughout the pipeline. This means:
   not when they are shuffled.
 - The summary at END (position [3]) means the LCP break is at a
   well-defined boundary — after all live context, before the static
-  summary. The summary grows organically up to a MAX_CSSR_SLOT_TOKENS
+  summary. The summary grows organically up to a MAX_CSSS_SLOT_TOKENS
   ceiling; when it grows, only the summary position onward is
   invalidated.
 
@@ -111,7 +111,7 @@ context budget. Each section has a fixed trim priority:
   kept together (never split) — each assistant+tool_call_result unit is
   either fully retained or fully dropped. This preserves the natural
   interleaved ordering so the LCP cache stays stable.
-- **[3] summary** — NEVER trimmed. CSSS slot, bounded by MAX_CSSR_SLOT_TOKENS ceiling (grows organically, no padding).
+- **[3] summary** — NEVER trimmed. CSSS slot, bounded by MAX_CSSS_SLOT_TOKENS ceiling (grows organically, no padding).
 - **[4] user_context** — NEVER trimmed. It's small and dynamic; not
   a budget concern. The validator preserves user_context system messages
   at any position (msg[1], msg[N-2], etc.) so the chat template's
@@ -134,7 +134,7 @@ that LCP cache invalidation from a size change only hits the summary
 position onward - the preserved dialog prefix stays cached.
 
 The summary grows organically with dropped content up to
-`MAX_CSSR_SLOT_TOKENS` (12000). When dropped content exceeds 1.5x
+`MAX_CSSS_SLOT_TOKENS` (12000). When dropped content exceeds 1.5x
 the current slot, the slot grows before compression to absorb the
 dropped tokens without hard-truncating captured state. Earlier
 versions padded undersized summaries with an
@@ -144,8 +144,8 @@ model as a massive artifact.
 
 Slot bounds:
 
-- `MAX_CSSR_SLOT_TOKENS` (12000) - hard ceiling on summary size
-- `MIN_CSSR_SLOT_TOKENS` (8192) - resume fast-path gate
+- `MAX_CSSS_SLOT_TOKENS` (12000) - hard ceiling on summary size
+- `MIN_CSSS_SLOT_TOKENS` (8192) - resume fast-path gate
 - `DEFAULT_POST_TRIM_FLOOR` (24000) - minimum tokens kept verbatim
 
 Proactive growth: if a single trim drops more than 1.5x the current

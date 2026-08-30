@@ -83,7 +83,7 @@ Key parameters:
 
 ### CSSS (Cache-Stable Summary Slot)
 
-The CSSS bounds the summary size across trim cycles to minimize LCP (Longest Common Prefix) cache invalidation with local inference providers (llama.cpp). Summaries grow organically up to `MAX_CSSR_SLOT_TOKENS` (12K) and are placed at the end of the prompt so only the summary position onward risks cache invalidation on growth.
+The CSSS bounds the summary size across trim cycles to minimize LCP (Longest Common Prefix) cache invalidation with local inference providers (llama.cpp). Summaries grow organically up to `MAX_CSSS_SLOT_TOKENS` (12K) and are placed at the end of the prompt so only the summary position onward risks cache invalidation on growth.
 
 ### Prompt Budget Calculation
 
