@@ -75,6 +75,7 @@ sub new {
     
     return bless {
         debug => $opts{debug} || 0,
+        known_tools => $opts{known_tools} || [],
     }, $class;
 }
 
@@ -179,18 +180,59 @@ sub _extract_xml_format {
     while ($content =~ /<tool_call>\s*(.+?)\s*<\/tool_call>/gs) {
         my $json_str = $1;
         
+        # Pre-validation: skip if the content doesn't look like a tool call
+        # JSON object. Real tool calls always start with '{' and contain
+        # a "name" key. This filters out code fragments that happen to
+        # be between backtick tags but aren't valid tool calls.
+        if ($json_str !~ /^\s*\{.*\}\s*$/s) {
+            log_debug('ToolCallExtractor', "Skipping non-JSON content in tool_call block");
+            next;
+        }
+        if ($json_str !~ /\b"name"\s*:/) {
+            log_debug('ToolCallExtractor', "Skipping content without name key in tool_call block");
+            next;
+        }
+
         log_debug('ToolCallExtractor', "Found XML tool_call block");
-        
+
         # Parse JSON
         my $data = safe_decode_json($json_str);
         if ($@) {
             log_warning('ToolCallExtractor', "Failed to parse XML tool_call JSON: $@");
             next;
         }
-        
-        # Convert to OpenAI format
-        if ($data->{name}) {
-            my $arguments = $data->{arguments};
+       
+       # Convert to OpenAI format
+       if ($data->{name}) {
+            # Guard: reject extracted tool calls with suspicious names.
+            # The regex above can match backtick-quoted code fragments when
+            # the model discusses tool call syntax (e.g. quoting Perl
+            # source that contains the literal tag delimiters). These
+            # "tool calls" have valid JSON (like {"key":"value"}) but
+            # garbage names that are not real tool identifiers.
+            unless ($data->{name} =~ /^[a-zA-Z_][a-zA-Z0-9_-]*$/) {
+                log_warning('ToolCallExtractor',
+                    "Rejecting extracted tool call with invalid name: " .
+                    substr($data->{name}, 0, 80));
+                next;
+            }
+            # If we have a list of known tools, verify the extracted name
+            # is actually a registered tool. This prevents false positives
+            # when the model discusses tool call syntax in code blocks.
+            if (@{$self->{known_tools}}) {
+                my $name = $data->{name};
+                my $is_known = 0;
+                for my $kt (@{$self->{known_tools}}) {
+                    if ($kt->{name} eq $name) { $is_known = 1; last; }
+                    if ($kt->{function}{name} eq $name) { $is_known = 1; last; }
+                }
+                unless ($is_known) {
+                    log_warning('ToolCallExtractor',
+                        "Rejecting extracted tool call with unknown tool: " . $name);
+                    next;
+                }
+            }
+           my $arguments = $data->{arguments};
             if (ref($arguments) eq 'HASH' || ref($arguments) eq 'ARRAY') {
                 $arguments = encode_json($arguments);
             }

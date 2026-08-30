@@ -882,7 +882,10 @@ sub process_input {
         # This supports models that output tool calls as text instead of using OpenAI format
         if (!$api_response->{tool_calls} || !@{$api_response->{tool_calls}}) {
             require CLIO::Core::ToolCallExtractor;
-            my $extractor = CLIO::Core::ToolCallExtractor->new(debug => $self->{debug});
+            my $extractor = CLIO::Core::ToolCallExtractor->new(
+                debug => $self->{debug},
+                known_tools => $self->{tools} || [],
+            );
             
             my $result = $extractor->extract($api_response->{content});
             
@@ -3079,9 +3082,31 @@ sub _prepare_tool_round {
     my @validated_tool_calls = ();
     my $had_validation_errors = 0;
 
-    for my $tool_call (@{$api_response->{tool_calls}}) {
-       my $tool_name = $tool_call->{function}->{name} || 'unknown';
-        my $arguments_raw = $tool_call->{function}->{arguments};
+   for my $tool_call (@{$api_response->{tool_calls}}) {
+      my $tool_name = $tool_call->{function}->{name} || 'unknown';
+
+        # Guard: reject tool calls with suspicious names. When the model
+        # is near the context window limit it can emit malformed output —
+        # code fragments, regex patterns, or XML markup leak through as
+        # the tool name. These pass JSON-argument validation (args like
+        # {"key":"value"}) but produce a cascade of "Unknown tool" errors
+        # that corrupt the conversation. A valid tool name is alphanumeric
+        # plus underscore/hyphen only.
+        unless ($tool_name =~ /^[a-zA-Z_][a-zA-Z0-9_-]*$/) {
+           log_warning('WorkflowOrchestrator',
+               "Rejecting tool call with suspicious name: '$tool_name' " .
+               "(contains markup/regex/non-identifier chars - likely " .
+               "model degradation near context limit)");
+           $had_validation_errors = 1;
+            push @{$self->{_deferred_invalid_tool_results}}, {
+                role => 'tool',
+                tool_call_id => $tool_call->{id},
+                name => $tool_name,
+                content => "ERROR: Tool call rejected — the tool name '$tool_name' is not a valid identifier. The model likely emitted malformed output. Retrying with a corrected request."
+            };
+            next;
+        }
+       my $arguments_raw = $tool_call->{function}->{arguments};
 
         # Defensive: some servers (e.g., llama.cpp) send arguments as a parsed
         # JSON object instead of a string.  Re-encode to a string if needed.
