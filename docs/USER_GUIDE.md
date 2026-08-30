@@ -449,6 +449,7 @@ CLIO provides 35+ slash commands. Type `/help` in any session to see the full li
 | `/api route add <name> <model>...` | Save a named model routing profile |
 | `/api route list` | List saved routing profiles |
 | `/api route use <name>` | Activate a named routing profile |
+| `/api route replace <name> <model>...` | Replace a routing profile's models |
 | `/api route remove <name>` | Delete a routing profile |
 | `/model <name>` | Quick model switch (saved globally) |
 | `/model` | Show current model and aliases |

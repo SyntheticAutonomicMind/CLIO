@@ -445,6 +445,7 @@ Save a model list as a named, reusable profile. Profiles are stored in config un
 /api route add <name> <model1> [model2 model3 ...]   # Save a profile
 /api route list                                      # List saved profiles
 /api route use <name>                                # Activate a profile
+/api route replace <name> <model1> [model2 ...]      # Replace a profile's models
 /api route remove <name>                             # Delete a profile
 ```
 
