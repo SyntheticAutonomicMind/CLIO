@@ -32,7 +32,7 @@ call, covering all points where text enters the AI pipeline.
 =cut
 
 use Exporter 'import';
-our @EXPORT_OK = qw(sanitize_text set_sanitize_mode get_sanitize_mode strip_conversation_tags);
+our @EXPORT_OK = qw(sanitize_text set_sanitize_mode get_sanitize_mode strip_conversation_tags strip_prompt_block_tags);
 
 # Sanitize mode: 'strict' (default) warns on HIGH-severity invisible chars.
 # 'relaxed' still filters them but suppresses the warning - useful when working
@@ -190,6 +190,39 @@ sub strip_conversation_tags {
     my ($text) = @_;
     return $text unless defined $text;
     $text =~ s/\[conversation\](.*?)\[\/conversation\]/$1/gs;
+    return $text;
+}
+
+=head2 strip_prompt_block_tags
+
+Strip block-level prompt tags from text. These tags are model-facing
+context that shouldn't be reflected in user-visible content. The
+block content is preserved (just the tags are removed) since some
+context blocks may legitimately contain text we want to pass through.
+
+This is centralized here so the regex stays consistent across
+PromptBuilder, WorkflowOrchestrator, and TextSanitizer consumers.
+
+Arguments:
+    $text - Input string
+
+Returns: String with block tags removed.
+
+=cut
+
+sub strip_prompt_block_tags {
+    my ($text) = @_;
+    return $text unless defined $text;
+    # Block tags used by CLIO's prompt pipeline. The list mirrors the
+    # camelCase convention documented in PROMPT_PIPELINE.md.
+    $text =~ s/<threadSummary>.*?<\/threadSummary>//gs;
+    $text =~ s/<activeTask>.*?<\/activeTask>//gs;
+    $text =~ s/<activeTodos>.*?<\/activeTodos>//gs;
+    $text =~ s/<currentTopic>.*?<\/currentTopic>//gs;
+    $text =~ s/<taskRecovery>.*?<\/taskRecovery>//gs;
+    $text =~ s/<recentContext>.*?<\/recentContext>//gs;
+    $text =~ s/<gitRecovery>.*?<\/gitRecovery>//gs;
+    $text =~ s/<sessionProgress>.*?<\/sessionProgress>//gs;
     return $text;
 }
 
