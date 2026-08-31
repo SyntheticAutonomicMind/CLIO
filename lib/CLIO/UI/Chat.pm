@@ -606,16 +606,10 @@ sub _make_thinking_callback {
     # next to a CLIO: prompt.
     $think_stream->reset();
 
-    my $strip_session_markers = sub {
-        my ($text) = @_;
-        return '' unless defined $text;
-        # Strip BOTH structured and simple forms. The structured form
-        # uses {...} for the JSON payload; the simple form is just an
-        # identifier. Either kind must be removed from visible output.
-        $text =~ s/\s*<!--session:\{[^}]*\}-->\s*//sg;
-        $text =~ s/\s*<!--session:[a-z][a-z0-9_-]{2,50}-->\s*//sgi;
-        return $text;
-    };
+    # Use the class method so any caller (thinking callback,
+    # _handle_ai_response, etc.) can strip markers without needing
+    # the lexical closure defined in _make_thinking_callback.
+    my $strip_session_markers = \&_strip_session_markers;
 
     my $flush_thinking = sub {
         # Route accumulated buffer through the StreamingController so it
@@ -821,6 +815,42 @@ Build the on_system_message callback for rate limits, server errors, etc.
 
 =cut
 
+=head2 _strip_session_markers($text)
+
+Strip <!--session:...--> markers from text. Used as both a class method
+(CLIO::UI::Chat->_strip_session_markers($text)) and an instance method
+($self->_strip_session_markers($text)) so callers anywhere in the
+package can drop the markers without depending on the lexical closure
+defined in L</_make_thinking_callback>.
+
+=cut
+
+sub _strip_session_markers {
+    my ($class_or_self, $text) = @_;
+    # Three call shapes are supported:
+    #   1. Class method:      CLIO::UI::Chat->_strip_session_markers($text)
+    #      $class_or_self = "CLIO::UI::Chat", $text = payload
+    #   2. Instance method:   $self->_strip_session_markers($text)
+    #      $class_or_self = $self (blessed ref), $text = payload
+    #   3. Code-ref closure:  $strip->($payload)  where
+    #      $strip = \&CLIO::UI::Chat::_strip_session_markers
+    #      $class_or_self = payload (one arg), $text = undef
+    #
+    # Shape 1/2 always pass two arguments. Shape 3 passes one. The
+    # closure in _make_thinking_callback uses shape 3.
+    if (!defined $text && @_ == 1) {
+        # Shape 3: payload is in $class_or_self.
+        $text = $class_or_self;
+    }
+    return undef unless defined $text;
+    # Strip BOTH structured and simple forms. The structured form
+    # uses {...} for the JSON payload; the simple form is just an
+    # identifier. Either kind must be removed from visible output.
+    $text =~ s/\s*<!--session:\{[^}]*\}-->\s*//sg;
+    $text =~ s/\s*<!--session:[a-z][a-z0-9_-]{2,50}-->\s*//sgi;
+    return $text;
+}
+
 sub _make_system_message_callback {
     my ($self, $spinner) = @_;
     
@@ -909,7 +939,7 @@ sub _handle_ai_response {
         if ($result && $result->{messages_saved_during_workflow}) {
             log_debug('Chat', "Skipping session save - messages already saved during workflow");
             my $display_response = $result->{final_response} // '';
-            $display_response = strip_session_markers($display_response);
+            $display_response = $self->_strip_session_markers($display_response);
             $display_response = $self->_detect_system_warning_references($display_response);
             $display_response = $self->_detect_and_display_images($display_response);
             $self->add_to_buffer('assistant', $display_response) if $display_response;
@@ -917,7 +947,7 @@ sub _handle_ai_response {
             log_debug('Chat', "Storing final_response in session (length=" . length($result->{final_response}) . ")");
             my $sanitized = sanitize_text($result->{final_response});
             $self->{session}->add_message('assistant', $sanitized);
-            my $display_response = strip_session_markers($result->{final_response});
+            my $display_response = $self->_strip_session_markers($result->{final_response});
             $display_response = $self->_detect_system_warning_references($display_response);
             $display_response = $self->_detect_and_display_images($display_response);
             $self->add_to_buffer('assistant', $display_response);
