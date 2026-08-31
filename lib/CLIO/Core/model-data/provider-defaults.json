@@ -2,7 +2,7 @@
   "providers": {
     "anthropic": {
       "default_model": "claude-sonnet-4-20250514",
-      "max_context_tokens": 128000,
+      "max_context_tokens": 200000,
       "max_output_tokens": 64000,
       "supports_reasoning": 1,
       "supports_streaming": 1,
@@ -86,7 +86,7 @@
     },
     "minimax": {
       "default_model": "MiniMax-M3",
-      "max_context_tokens": 128000,
+      "max_context_tokens": 1000000,
       "max_output_tokens": 131072,
       "supports_reasoning": 1,
       "supports_streaming": 1,
@@ -277,6 +277,65 @@
         "default_effort": "high",
         "delete_stream_options": true,
         "coding_plan_peak": true
+      }
+    },
+    "kilo": {
+      "default_model": "kilo-auto/free",
+      "max_context_tokens": 128000,
+      "max_output_tokens": 16384,
+      "supports_reasoning": 1,
+      "supports_streaming": 1,
+      "supports_tools": 1,
+      "reasoning_schema": {
+        "mode": "effort",
+        "param": "reasoning_effort",
+        "values": [
+          "low",
+          "medium",
+          "high"
+        ],
+        "default_effort": "medium"
+      }
+    },
+    "orca": {
+      "default_model": "orcarouter/free",
+      "max_context_tokens": 128000,
+      "max_output_tokens": 16384,
+      "supports_reasoning": 1,
+      "supports_streaming": 1,
+      "supports_tools": 1,
+      "reasoning_schema": {
+        "mode": "effort",
+        "param": "reasoning_effort",
+        "values": [
+          "low",
+          "medium",
+          "high"
+        ],
+        "default_effort": "medium"
+      }
+    },
+    "vercel": {
+      "default_model": "poolside/laguna-s-2.1-free",
+      "max_context_tokens": 256000,
+      "max_output_tokens": 32768,
+      "supports_reasoning": 1,
+      "supports_streaming": 1,
+      "supports_tools": 1,
+      "supports_vision": 1,
+      "reasoning_schema": {
+        "mode": "nested",
+        "param": "reasoning",
+        "effort_field": "effort",
+        "enabled_field": "enabled",
+        "values": [
+          "low",
+          "medium",
+          "high",
+          "xhigh"
+        ],
+        "default_effort": "high",
+        "invalid_effort_default": "high"
       }
     }
   },
