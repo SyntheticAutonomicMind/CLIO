@@ -2953,16 +2953,23 @@ sub _compress_dropped_for_recovery {
         }
     }
     
-    # Extract recent user messages and collaboration responses from dropped messages
-    # These provide additional context beyond what YaRN compression captures
+    # Extract recent user messages from dropped messages. These provide
+    # additional context beyond what YaRN compression captures. We filter
+    # out ultra-short messages (length < 20) such as "yes", "go ahead",
+    # "continue" that carry no task context, and we mark truncated bodies
+    # with an explicit ellipsis so the model knows the original was longer.
+    # We also limit each entry to 600 chars to bound the recovery block
+    # size and prevent a single long paste from crowding out other signals.
     my @recent_user_msgs = ();
     for my $msg (reverse @$dropped_messages) {
         last if @recent_user_msgs >= 5;
-        if ($msg->{role} && $msg->{role} eq 'user' && $msg->{content}) {
-            my $summary = substr($msg->{content}, 0, 1000);
-            $summary .= '...' if length($msg->{content}) > 1000;
-            unshift @recent_user_msgs, $summary;
-        }
+        next unless ref($msg) eq 'HASH';
+        next unless ($msg->{role} // '') eq 'user';
+        my $content = $msg->{content} // '';
+        next unless length($content) >= 20;
+        my $summary = substr($content, 0, 600);
+        $summary .= '...[truncated]' if length($content) > 600;
+        unshift @recent_user_msgs, $summary;
     }
     if (@recent_user_msgs) {
         push @recovery_parts, "";
