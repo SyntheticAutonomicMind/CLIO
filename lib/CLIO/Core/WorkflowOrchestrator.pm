@@ -1162,6 +1162,23 @@ sub _build_turn_context {
             log_debug('WorkflowOrchestrator', "Updated session max_tokens to $ctx_window (model context window)");
         }
     }
+
+    # Also sync max_output_tokens so SessionState::add_message's internal
+    # trim uses the correct output reserve. Without this, State falls
+    # back to DEFAULT_MAX_OUTPUT_TOKENS (16K) regardless of the model's
+    # actual output cap - critically wrong for models with large output
+    # windows (e.g. MiniMax-M3 1M ctx / 128K output) where the 16K default
+    # would over-trim dialog, or for models with small output caps where
+    # 16K would under-reserve.
+    if ($session && $session->can('state')) {
+        my $state = $session->state();
+        my $max_output = $model_caps->{max_output_tokens};
+        if ($max_output && $state && ($state->{max_output_tokens} // 0) != $max_output) {
+            log_debug('WorkflowOrchestrator',
+                "Updated session max_output_tokens from " . ($state->{max_output_tokens} // 0) . " to $max_output");
+            $state->{max_output_tokens} = $max_output;
+        }
+    }
     
     my $history = load_conversation_history($session, debug => $self->{debug});
 
