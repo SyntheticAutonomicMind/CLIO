@@ -731,9 +731,14 @@ sub _set_model_candidates {
             $state->{api_config} ||= {};
             $state->{api_config}{model_candidates} = \@validated;
             $state->{api_config}{model_routing_index} = 0;
+            $state->{api_config}{route_name} = undef;  # Inline multi-model set is not a named route
             $self->{session}->save();
         }
     } else {
+        # Clear any previously-active named route since the user is defining
+        # an ad-hoc list (not using /api route use). Without this, a stale
+        # route_name would still show "via <oldname>" in the banner.
+        $self->{config}->set('route_name', undef, 0) if $self->{config}->get('route_name');
         $self->{config}->set_model_candidates(\@validated);
         $self->{config}->set_model_routing_index(0);
         $self->{config}->save();
@@ -758,9 +763,17 @@ sub _set_model_candidates {
 sub _set_model {
     my ($self, $value, $session_only) = @_;
 
-    # Clear any active route_name since user is switching models manually
+    # Clear any active route_name AND model_candidates since user is
+    # switching to a single explicit model. Without clearing model_candidates,
+    # a previous /api route use would leave stale entries that ErrorHandler
+    # treats as active routing and silently cycles through on API errors,
+    # contradicting the user's explicit single-model choice.
     if ($self->{config}->get('route_name')) {
         $self->{config}->set('route_name', undef, 0);
+    }
+    if (@{($self->{config}->get_model_candidates() || [])} > 0) {
+        $self->{config}->set_model_candidates([]);
+        $self->{config}->set_model_routing_index(0);
     }
 
     # Handle multiple space-separated models for routing:
