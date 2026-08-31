@@ -213,7 +213,11 @@ Commands:
   /api route add <name> <model1> [model2 model3 ...]
   /api route list
   /api route use <name>
+  /api route replace <name> <model1> [model2 ...]
   /api route remove <name>
+  /api route verbose [on|off]
+  /api route set delay <seconds>
+  /api route set max_attempts <N>
 
 =cut
 
@@ -224,7 +228,7 @@ sub handle_route {
     $action = lc($action // '');
 
     unless ($action) {
-        $self->display_error_message("Usage: /api route <add|list|use|replace|remove> [name] [models...]");
+        $self->display_error_message("Usage: /api route <add|list|use|replace|remove|verbose|set> [args...]");
         return;
     }
 
@@ -243,9 +247,15 @@ sub handle_route {
     elsif ($action eq 'remove' || $action eq 'rm') {
         $self->_route_remove(@args);
     }
+    elsif ($action eq 'verbose' || $action eq 'quiet') {
+        $self->_route_verbose(@args);
+    }
+    elsif ($action eq 'set') {
+        $self->_route_set(@args);
+    }
     else {
         $self->display_error_message("Unknown route action: $action");
-        $self->writeline("Valid actions: add, list, use, replace, remove", markdown => 0);
+        $self->writeline("Valid actions: add, list, use, replace, remove, verbose, set", markdown => 0);
     }
 }
 
@@ -313,6 +323,7 @@ sub _route_list {
     unless (%routes) {
         $self->display_system_message("No routing profiles saved. Create one with:");
         $self->writeline("  /api route add <name> <model1> [model2 model3 ...]", markdown => 0);
+        $self->_route_show_settings();
         return;
     }
 
@@ -322,6 +333,32 @@ sub _route_list {
         my $display = join(", ", @$models);
         $self->display_key_value($name, $display);
     }
+    $self->_route_show_settings();
+}
+
+=head2 _route_show_settings
+
+Display the current global routing parameters (verbose, delay, max_attempts).
+Shared by /api route list and /api route add (when no profiles yet exist).
+
+=cut
+
+sub _route_show_settings {
+    my ($self) = @_;
+    my $cfg = $self->{config};
+    return unless $cfg->can('get_route_verbose');
+
+    my $delay = $cfg->get_route_retry_delay();
+    my $delay_str = ($delay == int($delay)) ? sprintf('%d', $delay) : sprintf('%.2f', $delay);
+    # Trim trailing zeros from a formatted float (e.g. "1.50" -> "1.5")
+    $delay_str =~ s/0+$//;
+    $delay_str =~ s/\.$//;
+
+    $self->writeline("", markdown => 0);
+    $self->display_command_header("ROUTING SETTINGS");
+    $self->display_key_value('verbose',      $cfg->get_route_verbose() ? 'on' : 'off');
+    $self->display_key_value('delay',        "${delay_str}s");
+    $self->display_key_value('max_attempts', $cfg->get_route_max_attempts());
 }
 
 =head2 _route_use($name)
@@ -402,6 +439,90 @@ sub _route_remove {
     $self->{config}->save();
     $self->display_system_message("Route '$name' removed");
     $self->_get_auth_helper()->reinit_api_manager();
+}
+
+=head2 _route_verbose($value)
+
+Toggle the rerouting system message visibility for the active route.
+
+  /api route verbose on    - show "API X, rerouting to Y" on each switch
+  /api route verbose off   - silent routing (no per-cycle message)
+  /api route verbose       - show current state
+
+=cut
+
+sub _route_verbose {
+    my ($self, $value) = @_;
+
+    my $cfg = $self->{config};
+
+    if (!defined $value || $value eq '') {
+        my $current = $cfg->can('get_route_verbose') ? $cfg->get_route_verbose() : 1;
+        $self->display_key_value('Route verbose', $current ? 'on' : 'off');
+        return;
+    }
+
+    my $v = lc($value);
+    my $on;
+    if ($v eq 'on' || $v eq '1' || $v eq 'true' || $v eq 'yes') {
+        $on = 1;
+    }
+    elsif ($v eq 'off' || $v eq '0' || $v eq 'false' || $v eq 'no' || $v eq 'quiet') {
+        $on = 0;
+    }
+    else {
+        $self->display_error_message("Usage: /api route verbose <on|off>");
+        return;
+    }
+
+    $cfg->set_route_verbose($on);
+    $cfg->save();
+    $self->display_system_message("Route verbose " . ($on ? 'on (rerouting messages shown)' : 'off (silent routing)'));
+}
+
+=head2 _route_set($key, $value)
+
+Set a routing parameter. Currently supports:
+
+  /api route set delay <seconds>      - inter-cycle delay (default 1.0)
+  /api route set max_attempts <N>     - max total attempts (default 15)
+
+=cut
+
+sub _route_set {
+    my ($self, $key, $value) = @_;
+
+    unless ($key && length($key)) {
+        $self->display_error_message("Usage: /api route set <delay|max_attempts> <value>");
+        $self->writeline("  /api route set delay 1.5", markdown => 0);
+        $self->writeline("  /api route set max_attempts 20", markdown => 0);
+        return;
+    }
+
+    my $cfg = $self->{config};
+
+    if ($key eq 'delay') {
+        unless (defined $value && $value =~ /^\d+(\.\d+)?$/) {
+            $self->display_error_message("Usage: /api route set delay <seconds>  (e.g. 0.5, 1.0, 2)");
+            return;
+        }
+        $cfg->set_route_retry_delay($value + 0);
+        $cfg->save();
+        $self->display_system_message("Route retry delay set to ${value}s");
+    }
+    elsif ($key eq 'max_attempts' || $key eq 'attempts') {
+        unless (defined $value && $value =~ /^\d+$/ && $value >= 1) {
+            $self->display_error_message("Usage: /api route set max_attempts <N>  (e.g. 9, 15, 30)");
+            return;
+        }
+        $cfg->set_route_max_attempts($value + 0);
+        $cfg->save();
+        $self->display_system_message("Route max attempts set to $value");
+    }
+    else {
+        $self->display_error_message("Unknown route setting: $key");
+        $self->writeline("Valid settings: delay, max_attempts", markdown => 0);
+    }
 }
 
 =head2 _route_replace($name, @models)
