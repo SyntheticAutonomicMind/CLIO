@@ -7,6 +7,7 @@ use strict;
 use warnings;
 use utf8;
 use Exporter 'import';
+use File::Basename qw(dirname);
 
 our @EXPORT_OK = qw(
     get_provider list_providers provider_exists
@@ -569,28 +570,58 @@ sub get_provider {
 
 Load provider defaults from JSON file (cached).
 
+Reads provider-defaults.json (which contains reasoning_schema and other
+defaults for each provider) without requiring ModelDataLoader. This
+is a lightweight loader for the specific file we need.
+
+Arguments:
+  $name - Provider key
+
+Returns: Hashref of provider defaults, or undef if not found.
+
 =cut
 
 my $_json_provider_defaults_cache;
 sub _get_json_provider_defaults {
     my ($name) = @_;
     return unless $name;
-    
+
     unless ($_json_provider_defaults_cache) {
         eval {
-            require CLIO::Core::ModelDataLoader;
-            my $loader = CLIO::Core::ModelDataLoader->new();
-            # Call a method to trigger lazy loading
-            $_json_provider_defaults_cache = $loader->get_provider_defaults('openai') ? $loader->{_cache}{provider_defaults} || {} : {};
+            require File::Spec;
+
+            # The model-data directory sits next to Providers.pm in lib/CLIO/Core/.
+            # $INC{'CLIO/Providers.pm'} may be relative (in dev) or absolute
+            # (in production). Use Cwd::abs_path to canonicalize.
+            require Cwd;
+            my $this_file = $INC{'CLIO/Providers.pm'};
+            $this_file = Cwd::abs_path($this_file) if $this_file && !File::Spec->file_name_is_absolute($this_file);
+            $this_file //= 'CLIO/Providers.pm';
+            # After s{...$}{}, $module_dir is the directory containing
+            # Providers.pm - i.e. lib/CLIO/. Append Core/model-data directly.
+            my $module_dir = $this_file;
+            $module_dir =~ s{/Providers\.pm$}{};
+            my $json_file = File::Spec->catfile($module_dir, 'Core', 'model-data', 'provider-defaults.json');
+            return unless -f $json_file;
+
+            require CLIO::Util::JSON;
+            open my $jf, '<:encoding(UTF-8)', $json_file or return;
+            local $/;
+            my $raw = <$jf>;
+            close $jf;
+
+            my $data = CLIO::Util::JSON::decode_json($raw);
+            $_json_provider_defaults_cache = $data->{providers} || {};
         };
         if ($@) {
-            # Silently ignore if ModelDataLoader not available
             $_json_provider_defaults_cache = {};
         }
     }
-    
+
     return $_json_provider_defaults_cache->{$name};
 }
+
+=head2 list_providers
 
 =head2 list_providers
 
