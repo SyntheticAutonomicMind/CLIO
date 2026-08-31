@@ -271,4 +271,88 @@ subtest 'set_model with no provider prefix keeps current provider' => sub {
     remove_tree($dir);
 };
 
+# =============================================================================
+# Switching TO github_copilot must NOT trigger OAuth flow
+# (the auth helper is stubbed to a no-op, but if the helper were called it
+# would explode in this test - the test itself proves the path is bypassed
+# by _activate_model_with_provider).
+# =============================================================================
+
+# The github_copilot branch in _set_model runs _validate_github_copilot_model
+# FIRST, which fetches the live GitHub Copilot model registry. We can't
+# easily stub that without rewriting _set_model. Instead, exercise the
+# helper directly: invoke _activate_model_with_provider with github_copilot
+# as the target to confirm it doesn't call check_github_auth (the Auth
+# helper is stubbed; if check_github_auth were called the stub would not
+# be reached and any real implementation would prompt for OAuth).
+
+subtest 'switching to github_copilot via the helper does not invoke check_github_auth' => sub {
+    my ($config, $dir) = fresh_config();
+
+    $config->set('provider', 'openrouter', 1);
+    $config->{config}->{api_base} = 'https://openrouter.ai/api/v1/chat/completions';
+    $config->{config}->{api_key}  = 'sk-or-v1-test';
+    $config->{config}->{api_keys}{'github_copilot'} = 'ghp_pat_token';
+
+    my $cmd = make_cmd($config);
+
+    # Direct call to the helper - bypasses _set_model's pre-validation
+    # (which would fetch the live Copilot registry and is not the focus here).
+    my $ok = $cmd->_activate_model_with_provider('github_copilot/gpt-4.1', 'github_copilot', 0);
+
+    ok($ok, 'helper returned success for github_copilot switch');
+    is($config->get('provider'), 'github_copilot',
+        'switched to github_copilot via the helper');
+    is($config->get('model'), 'github_copilot/gpt-4.1',
+        'model set on top of provider default');
+    is($config->get('api_key'), 'ghp_pat_token',
+        'api_key loaded from per-provider store');
+    like($config->get('api_base'), qr{githubcopilot\.com}i,
+        'api_base matches github_copilot default');
+
+    remove_tree($dir);
+};
+
+# =============================================================================
+# session_only path: provider override should land in session state, not
+# mutate the global config. /api show should display "(session)" next to it.
+# =============================================================================
+
+subtest 'session_only: provider override stored in session state, not global' => sub {
+    my ($config, $dir) = fresh_config();
+
+    $config->set('provider', 'github_copilot', 1);
+    $config->{config}->{api_base} = 'http://192.0.2.1:9090/v1/chat/completions';
+    $config->{config}->{api_key}  = '1234';
+    $config->{config}->{api_keys}{'openrouter'} = 'sk-or-v1-test';
+
+    # Capture the stub session so we can inspect its state
+    my $session = CLIO::Test::Session->new('CLIO::Test::Session');
+    my $cmd = CLIO::Test::RouteUseCmd->new(
+        config   => $config,
+        session  => $session,
+        ai_agent => CLIO::Test::Agent->new('CLIO::Test::Agent'),
+        chat     => undef,
+    );
+
+    $cmd->_set_model('openrouter/foo:free', 1);  # 1 = session_only
+
+    is($config->get('provider'), 'github_copilot',
+        'global provider UNCHANGED on session_only');
+    like($config->get('api_base'), qr{192\.0\.2\.1},
+        'global api_base UNCHANGED on session_only');
+
+    my $state = $session->state();
+    is($state->{api_config}{provider}, 'openrouter',
+        'session api_config.provider = openrouter');
+    like($state->{api_config}{api_base}, qr{openrouter\.ai}i,
+        'session api_config.api_base = openrouter default');
+    is($state->{api_config}{api_key}, 'sk-or-v1-test',
+        'session api_config.api_key = openrouter stored key');
+    is($state->{api_config}{model}, 'openrouter/foo:free',
+        'session api_config.model set');
+
+    remove_tree($dir);
+};
+
 done_testing();
