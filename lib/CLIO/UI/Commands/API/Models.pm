@@ -342,6 +342,9 @@ sub _fetch_provider_models {
         my $models_url;
         if ($api_base =~ m{openrouter\.ai}i) {
             $models_url = 'https://openrouter.ai/api/v1/models';
+        } elsif ($provider_name eq 'kilo') {
+            # Kilo uses /api/gateway/ path prefix, not the OAI-standard /v1/
+            $models_url = 'https://api.kilo.ai/api/gateway/models';
         } elsif ($api_base =~ m{^(https?://[^/]+)}) {
             $models_url = "$1/v1/models";
         }
@@ -357,8 +360,16 @@ sub _fetch_provider_models {
             if ($resp->is_success) {
                 my $data = decode_json($resp->decoded_content);
                 for my $m (@{$data->{data} || []}) {
-                    my $ctx = $m->{context_length} || ($m->{top_provider} && $m->{top_provider}{context_length});
-                    my $out = $m->{top_provider} && $m->{top_provider}{max_completion_tokens};
+                    # Support both OpenRouter-style (top_provider sub-object)
+                    # and standard OpenAI-compatible direct fields (context_length,
+                    # max_completion_tokens) -- Kilo and other OAI-compatible APIs
+                    # return tokens as direct model fields, not under top_provider.
+                    my $ctx = $m->{context_length}
+                        || ($m->{top_provider} && $m->{top_provider}{context_length})
+                        || ($m->{top_provider} && $m->{top_provider}{context_window});
+                    my $out = $m->{max_completion_tokens}
+                        || $m->{max_output_tokens}
+                        || ($m->{top_provider} && $m->{top_provider}{max_completion_tokens});
                     my $arch = $m->{architecture} || {};
                     my $modalities = $arch->{input_modalities} || [];
                     push @$models, {
