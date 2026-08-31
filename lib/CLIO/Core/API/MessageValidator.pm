@@ -614,7 +614,7 @@ sub _extract_preserved_units {
         
         my $first_msg = $unit->{messages}[0];
         my $content = $first_msg->{content} || '';
-        if ($content =~ /<thread_summary>/) {
+        if ($content =~ /\A<thread_summary>/) {
             $summary_unit = $unit;
             $summary_tokens = $unit->{tokens};
             $start_unit = $i + 1;
