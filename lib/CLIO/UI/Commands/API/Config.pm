@@ -359,7 +359,13 @@ sub _route_use {
     my ($full_model, $display_model, $target_provider, $api_model) =
         $self->_resolve_model_details($models->[0]);
 
-    $self->_set_api_setting('model', $full_model, 0);
+    # Switch the global provider to match the route's first model BEFORE
+    # setting the model. Without this, /api show displays the stale
+    # provider (e.g. github_copilot) even though APIManager routes via the
+    # model prefix. The --route CLI flag already does this at clio:355-380;
+    # this brings /api route use in line.
+    my $ok = $self->_activate_model_with_provider($full_model, $target_provider, 0);
+    return unless $ok;
     $self->{config}->save();
 
     $self->display_system_message("Route '$name' activated (" . scalar(@$models) . " models)");
@@ -754,11 +760,18 @@ sub _set_model_candidates {
     $self->display_system_message("Active model: $validated[0]" . ($session_only ? " (session only)" : " (saved)"));
     $self->display_system_message("On API errors, CLIO will automatically try the next model in the list");
 
-    $self->_set_api_setting('model', $validated[0], $session_only);
-    $self->_get_auth_helper()->reinit_api_manager();
-
+    # Switch the global/session provider to match the first candidate's
+    # provider BEFORE setting the model. /api show would otherwise keep
+    # displaying the previous provider even though APIManager routes via
+    # the model prefix at request time. All candidates were already
+    # validated for auth above, so no auth re-check is needed here.
     my ($first_full, $first_display, $first_provider, $first_api_model) =
         $self->_resolve_model_details($validated[0]);
+    my $ok = $self->_activate_model_with_provider($validated[0], $first_provider, $session_only);
+    return unless $ok;
+
+    $self->_get_auth_helper()->reinit_api_manager();
+
     $self->_update_billing_state($validated[0], $first_provider);
     $self->_post_set_model_validation($validated[0], $first_api_model);
 }
@@ -817,7 +830,11 @@ sub _set_model {
         }
     }
 
-    $self->_set_api_setting('model', $full_model, $session_only);
+    # Switch the global/session provider if needed and set the model.
+    # Without the provider switch, /api show would keep displaying the
+    # previous provider even though APIManager routes via the model prefix.
+    my $ok = $self->_activate_model_with_provider($full_model, $target_provider, $session_only);
+    return unless $ok;
 
     $self->display_system_message("Model set to: $display_model" . ($session_only ? " (session only)" : " (saved)"));
     $self->_get_auth_helper()->reinit_api_manager();
@@ -865,6 +882,87 @@ sub _resolve_model_details {
     }
 
     return ($full_model, $display_model, $target_provider, $api_model);
+}
+
+=head2 _activate_model_with_provider($full_model, $target_provider, $session_only)
+
+Switch the active provider (if needed) and set the model in a single
+operation. Centralises the model-prefix-to-provider-switch logic so
+C</_route_use>, C</_set_model>, and C</_set_model_candidates> all behave
+the same way.
+
+Why this exists: previously, /api route use (and /api set model with a
+provider-prefixed model) updated C<$config->{model}> but left
+C<$config->{provider}> and C<$config->{api_base}> pointing at whatever
+was active before. /api show then displayed a stale provider even
+though APIManager routed correctly via the model prefix at request time.
+The --route CLI startup flag already had the correct ordering (clio:355-380);
+this helper brings the /api path into line.
+
+The order is important: C<set_provider> is called FIRST (which loads the
+new provider's per-provider stored or default api_base and api_key, and
+sets the provider's default model). Only THEN do we set the model on top
+so set_provider's default model doesn't clobber the intended model.
+
+Returns 1 on success, 0 when the target provider lacks credentials (in
+which case an error is displayed and the caller should abort). When
+C<$target_provider> equals the current provider (or is undef), no switch
+is performed - this prevents unnecessary per-provider base clobbering
+and avoids triggering the github_copilot OAuth flow on /api set model
+when the user already has github_copilot active.
+
+Arguments:
+  $full_model      - Fully-prefixed model name (e.g. "openrouter/foo:free")
+  $target_provider - Provider prefix from the model (e.g. "openrouter") or
+                      undef if the model has no prefix
+  $session_only    - If true, store the provider/model override in session
+                      state instead of mutating the global config
+
+=cut
+
+sub _activate_model_with_provider {
+    my ($self, $full_model, $target_provider, $session_only) = @_;
+
+    my $current_provider = $self->{config}->get('provider') || '';
+    my $needs_switch = $target_provider && length($target_provider)
+                       && $target_provider ne $current_provider;
+
+    if ($needs_switch) {
+        # Verify auth before switching so we don't leave the config in a
+        # broken state (provider switched, api_key loaded as empty).
+        my ($has_auth, $auth_error) = $self->_check_provider_auth($target_provider);
+        unless ($has_auth) {
+            $self->display_error_message($auth_error);
+            $self->display_system_message("Set it with: /api set provider $target_provider && /api set key <your-key>");
+            return 0;
+        }
+
+        if ($session_only) {
+            # Session override: stash in state so display_config shows
+            # "(session)" and the global config stays clean.
+            if ($self->{session} && $self->{session}->can('state')) {
+                my $state = $self->{session}->state();
+                $state->{api_config} ||= {};
+                $state->{api_config}{provider} = $target_provider;
+                my $stored_base = $self->{config}->get_provider_base($target_provider);
+                my $provider_config = CLIO::Providers::get_provider($target_provider);
+                if ($provider_config) {
+                    $state->{api_config}{api_base} = $stored_base || $provider_config->{api_base};
+                    my $provider_key = $self->{config}->get_provider_key($target_provider);
+                    $state->{api_config}{api_key} = $provider_key if $provider_key;
+                }
+                $self->{session}->save();
+            }
+        } else {
+            # Global: set_provider configures api_base + api_key from the
+            # per-provider store (or provider default) and sets the provider
+            # default model. We override the model on top in the next step.
+            $self->{config}->set_provider($target_provider);
+        }
+    }
+
+    $self->_set_api_setting('model', $full_model, $session_only);
+    return 1;
 }
 
 =head2 _check_provider_auth

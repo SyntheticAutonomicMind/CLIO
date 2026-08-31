@@ -400,6 +400,19 @@ if (!$input && !-t STDIN) {
     log_debug('Main', 'Read ' . length($input) . ' bytes from piped STDIN');
 }
 
+# Auto-detect non-interactive mode: when --input or piped stdin is used
+# and stdout is not a TTY, disable color output automatically.
+# This is the output-method change for batch/pipe usage: colors and box-
+# drawing are meaningless when output is piped to another command or
+# captured to a file. The Chat UI constructor checks NO_COLOR (either
+# via the env var or the no_color arg), so setting $ENV{NO_COLOR} here
+# propagates to every UI component created after this point.
+if ($input && !-t STDOUT && !$no_color) {
+    $no_color = 1;
+    $ENV{NO_COLOR} = 1;
+    log_debug('Main', 'Auto-disabled color: non-interactive output (STDOUT is not a TTY)');
+}
+
 # Default to 'new' mode if not specified
 if (!$mode) {
     log_debug('Main', "No mode specified, defaulting to 'new'");
@@ -1252,15 +1265,14 @@ if ($input) {
                 $session->add_message('assistant', $response);
             }
             
-            # Render markdown for --input mode
-            use CLIO::UI::Markdown;
-            use CLIO::UI::ANSI;
-            my $md = CLIO::UI::Markdown->new(debug => $debug);
-            my $ansi = CLIO::UI::ANSI->new(enabled => !$no_color, debug => $debug);
-            
-            my $rendered_response = $md->render($response);
-            $rendered_response = $ansi->parse($rendered_response);
-            
+            # Render response through the Chat UI's renderers so that
+            # no_color, enable_markdown, theme manager, and terminal width
+            # are all respected. Previously this created separate Markdown
+            # and ANSI objects, which bypassed the Chat UI's configuration
+            # and caused a regression where the output method didn't change
+            # for --input / piped-stdin mode.
+            my $rendered_response = $cli_ui->render_markdown($response);
+
             print "[RESPONSE] $rendered_response\n";
             
             # Emit token usage via host protocol (OSC) for embedding/monitoring
