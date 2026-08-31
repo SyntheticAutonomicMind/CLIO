@@ -8,7 +8,7 @@ use warnings;
 use utf8;
 use Carp qw(croak);
 use CLIO::Core::Logger qw(log_debug log_warning);
-use CLIO::Util::JSON qw(decode_json);
+use CLIO::Util::JSON qw(decode_json encode_json safe_encode_json safe_decode_json);
 
 =head1 NAME
 
@@ -24,6 +24,11 @@ This enables:
 - Full conversation history retention
 - Thread-based recall (searchable via LTM/grep)
 - Context preservation across session resumption
+
+C<save()> writes the C<threads> hash to a file as JSON. C<load()> reads it back.
+Both are exercised by tests/unit/test_yarn_save_carryover.pl. In production,
+YaRN state piggybacks on C<Session::State>'s atomic save rather than being
+written independently.
 
 =head1 SYNOPSIS
 
@@ -176,7 +181,9 @@ Arguments:
 sub save {
     my ($self, $file) = @_;
     open my $fh, '>', $file or croak "Cannot save YaRN: $!";
-    print $fh encode_json($self->{threads});
+    my $json = safe_encode_json($self->{threads});
+    croak "Cannot serialize YaRN threads" unless defined $json;
+    print $fh $json;
     close $fh;
 }
 
@@ -257,20 +264,31 @@ sub compress_messages {
             user_requests           => \@user_requests,
             collaboration_exchanges => \@collaboration_exchanges,
         });
-        # If previous summary had a preserved original request, carry it forward
-        if ($previous_summary =~ /\[original\]\s*(.{1,500})/s) {
-            my $orig = $1;
-            $orig =~ s/\s+$//;
-            $opts{_carried_original} = substr($orig, 0, 300);
-        }
-        # If previous summary had a Current task, carry it forward
-        if ($previous_summary =~ /Current task:\s*(.{1,500})/s) {
-            my $prev_task = $1;
-            $prev_task =~ s/\s+$//;
-            $prev_task =~ s/[\r\n].*//s;
-            if (!$original_task || length($original_task) < 50) {
-                $opts{_carried_task} = $prev_task;
-            }
+    }
+
+    # If previous summary had a preserved original request, carry it forward.
+    # The carryover is intentionally bounded and anchored to the literal
+    # "- [original] " marker so a body line that happens to mention
+    # "[original]" elsewhere in the conversation does not get adopted as
+    # the original task. The capture stops at the next newline to avoid
+    # swallowing subsequent bullets/sections across section boundaries.
+    if ($previous_summary =~ /^- \[original\] ([^\n]{1,300})$/m) {
+        $opts{_carried_original} = $1;
+    } elsif ($previous_summary =~ /^- \[original\] ([^\n]{1,300})/) {
+        # Fall back to first-line match if the marker is not at column 0
+        # (legacy summaries may have leading whitespace).
+        $opts{_carried_original} = $1;
+    }
+    # If previous summary had a Current task, carry it forward. Anchored
+    # to the line so a stray "Current task:" string elsewhere (e.g. in a
+    # file path or commit message body) does not get adopted. Newlines
+    # are not matched (. in default mode), so the capture is bounded to
+    # a single line.
+    if ($previous_summary =~ /^Current task: (.{1,300})$/m) {
+        my $prev_task = $1;
+        $prev_task =~ s/\s+$//;
+        if (!$original_task || length($original_task) < 50) {
+            $opts{_carried_task} = $prev_task;
         }
     }
 
@@ -353,14 +371,15 @@ sub compress_messages {
         }
     }
 
-    # Deduplicate and limit
+    # Deduplicate and limit. Files are deduped as encountered and capped at
+    # 30. Commits are deduped keeping the most recent occurrence (the body
+    # order is preserved so reverse() ensures last-wins, then we cap at 15).
     my %seen;
     @files_touched = grep { !$seen{$_}++ } @files_touched;
     @files_touched = @files_touched[0..29] if @files_touched > 30;
     @commits       = do { my %s; grep { !$s{$_}++ } reverse @commits };
     @commits       = @commits[0..14] if @commits > 15;
     @decisions     = @decisions[-3..-1]     if @decisions > 3;
-    # Keep last 5 collaboration exchanges (most recent are most relevant)
     @collaboration_exchanges = @collaboration_exchanges[-5..-1]
         if @collaboration_exchanges > 5;
 
@@ -402,9 +421,11 @@ sub compress_messages {
         push @parts, "";
     }
 
-    # Collaboration exchanges go FIRST - they represent active design discussions
+    # Collaboration exchanges go FIRST - they represent active design discussions.
+    # Section header is "Discussion:" (matching the parser's accepted
+    # headers) so cross-cycle summaries stay format-consistent.
     if (@collaboration_exchanges) {
-        push @parts, "Active discussion (agent-user collaboration exchanges):";
+        push @parts, "Discussion:";
         for my $i (0..$#collaboration_exchanges) {
             my $ex = $collaboration_exchanges[$i];
             push @parts, "  Agent asked: " . $ex->{question};
@@ -425,25 +446,25 @@ sub compress_messages {
     }
 
     if (@commits) {
-        push @parts, "Git commits made during compressed period:";
+        push @parts, "Commits:";
         push @parts, "- $_" for @commits;
         push @parts, "";
     }
 
     if (@files_touched) {
-        push @parts, "Files created/modified:";
+        push @parts, "Files:";
         push @parts, "- $_" for @files_touched;
         push @parts, "";
     }
 
     if (@decisions) {
-        push @parts, "Key decisions:";
+        push @parts, "Decisions:";
         push @parts, "- $_" for @decisions;
         push @parts, "";
     }
 
     if (%tool_counts) {
-        push @parts, "Tool usage:";
+        push @parts, "Tools:";
         for my $t (sort { $tool_counts{$b} <=> $tool_counts{$a} } keys %tool_counts) {
             push @parts, "- $t: $tool_counts{$t} calls";
         }
@@ -534,55 +555,53 @@ sub _parse_previous_summary {
     my $user_requests           = $buckets->{user_requests}           || [];
     my $collaboration_exchanges = $buckets->{collaboration_exchanges} || [];
     
-    # Parse git commits: lines starting with "- " under "Git commits" section
-    if ($summary_text =~ /Git commits.*?:\n((?:- .+\n)+)/s) {
+    # Parse git commits: lines starting with "- " under "Commits" section.
+    # Headers accept either the new short label ("Commits:") or the legacy
+    # "Git commits made during compressed period:" so cross-cycle summaries
+    # produced by either render path parse back. The bullet bodies are
+    # intentionally one-line ([^\n]+ with no /s flag) so a stray "- "
+    # in a commit message body cannot bleed into the next section.
+    if ($summary_text =~ /(?:^|\n)(?:Git commits made during compressed period|Commits):\n((?:- [^\n]+\n)+)/) {
         my $block = $1;
-        while ($block =~ /^- (.+)$/mg) {
+        while ($block =~ /^- ([^\n]+)$/mg) {
             push @$commits, $1;
         }
     }
     
-    # Parse files: lines starting with "- " under "Files created/modified" section
-    if ($summary_text =~ /Files created\/modified:\n((?:- .+\n)+)/s) {
+    if ($summary_text =~ /(?:^|\n)(?:Files created\/modified|Files):\n((?:- [^\n]+\n)+)/) {
         my $block = $1;
-        while ($block =~ /^- (.+)$/mg) {
+        while ($block =~ /^- ([^\n]+)$/mg) {
             push @$files_touched, $1;
         }
     }
     
-    # Parse decisions: lines starting with "- " under "Key decisions" section
-    if ($summary_text =~ /Key decisions:\n((?:- .+\n)+)/s) {
+    if ($summary_text =~ /(?:^|\n)(?:Key decisions|Decisions):\n((?:- [^\n]+\n)+)/) {
         my $block = $1;
-        while ($block =~ /^- (.+)$/mg) {
+        while ($block =~ /^- ([^\n]+)$/mg) {
             push @$decisions, $1;
         }
     }
     
-    # Parse tool usage: lines like "- tool_name: N calls"
-    if ($summary_text =~ /Tool usage:\n((?:- .+\n)+)/s) {
+    if ($summary_text =~ /(?:^|\n)Tool usage:\n((?:- [^\n]+\n)+)/) {
         my $block = $1;
         while ($block =~ /^- ([^:]+):\s*(\d+)\s*calls?$/mg) {
             $tool_counts->{$1} = ($tool_counts->{$1} || 0) + $2;
         }
     }
     
-    # Parse user requests: lines under "Recent user requests:" (preserving [original] marker)
-    if ($summary_text =~ /Recent user requests:\n((?:- .+\n)+)/s) {
+    if ($summary_text =~ /(?:^|\n)Recent user requests:\n((?:- [^\n]+\n)+)/) {
         my $block = $1;
-        while ($block =~ /^- (?:\[original\]\s*)?(.+)$/mg) {
-            my $req = $1;
-            $req =~ s/\s+$//;
-            push @$user_requests, $req;
+        while ($block =~ /^- (?:\[original\] )?([^\n]+)$/mg) {
+            push @$user_requests, $1;
         }
     }
     
-    # Parse active discussion: agent-user exchange pairs
-    if ($summary_text =~ /Active discussion.*?:\n((?:  Agent asked:.+\n(?:  User replied:.+\n)?)+)/s) {
+    if ($summary_text =~ /(?:^|\n)(?:Active discussion[^\n]*|Discussion):\n((?:  Agent asked:[^\n]+\n(?:  User replied:[^\n]+\n)?)+)/) {
         my $block = $1;
-        while ($block =~ /  Agent asked:\s*(.{1,1000})\n(?:  User replied:\s*(.{1,1000})\n)?/g) {
+        while ($block =~ /  Agent asked:\s*([^\n]{1,1000})\n(?:  User replied:\s*([^\n]{1,1000})\n)?/g) {
             push @$collaboration_exchanges, {
                 question => $1,
-                response => $2 || '',
+                response => $2 // '',
             };
         }
     }
