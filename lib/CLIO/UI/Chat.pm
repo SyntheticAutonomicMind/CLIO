@@ -64,6 +64,7 @@ sub new {
         terminal_width => 80,  # Default, will be updated
         terminal_height => 24, # Default rows for pagination
         use_color => $use_color_default,  # Enable colors by default, disable with NO_COLOR or --no-color
+        non_interactive => $args{non_interactive} || 0,  # --input mode: machine-readable output
         ansi => CLIO::UI::ANSI->new(enabled => $use_color_default, debug => $args{debug}),
         enable_markdown => 1,  # Enable markdown rendering by default
         readline => undef,  # CLIO::Core::ReadLine instance
@@ -339,6 +340,7 @@ sub show_busy_indicator {
     
     # Skip spinner in non-interactive mode (--input, sub-agents)
     # No human is watching, and the forked spinner child can orphan
+    return 0 if $self->{non_interactive};
     return 0 unless -t STDOUT;
     
     # In host mode, skip ASCII spinner - host renders its own

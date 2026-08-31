@@ -80,6 +80,40 @@ sub get_tool_format {
     return $tool_format;
 }
 
+=head2 _is_non_interactive
+
+Check whether we're in non-interactive (machine-readable) mode.
+
+=cut
+
+sub _is_non_interactive {
+    my ($self) = @_;
+    return ($self->{ui} && $self->{ui}{non_interactive}) ? 1 : 0;
+}
+
+=head2 _emit_noninteractive($tag, $content)
+
+Emit a machine-readable tagged line. In non-interactive mode,
+tool tracking output uses [TAG] prefixed lines so downstream
+consumers (pipes, host apps, embedding) can parse tool activity.
+
+Format: [TAG] content\n  (or just [TAG] if content is empty)
+
+=cut
+
+sub _emit_noninteractive {
+    my ($self, $tag, $content) = @_;
+    $tag = uc($tag);
+    $tag =~ s/[^A-Z0-9_]/_/g;
+    if (defined $content && length($content)) {
+        print "[$tag] $content\n";
+    } else {
+        print "[$tag]\n";
+    }
+    STDOUT->flush() if STDOUT->can('flush');
+    $self->{_last_noninteractive_tool} = $tag;
+}
+
 =head2 _ui_char($name)
 
 Get a UI symbol from theme, falling back to Terminal.pm defaults.
@@ -114,6 +148,15 @@ Arguments:
 
 sub display_tool_header {
     my ($self, $tool_name, $tool_display_name, $is_first_tool, $is_continuation) = @_;
+    
+    # Non-interactive mode: emit machine-readable [TOOL_NAME] header
+    if ($self->_is_non_interactive()) {
+        my $tag = $tool_name;
+        $tag =~ s/^(?:CLIO::Tools::|CLIO::UI::Commands::)//;
+        $tag =~ s/::/_/g;
+        $self->_emit_noninteractive($tag, '');
+        return;
+    }
     
     my $tool_format = $self->get_tool_format();
     
@@ -190,6 +233,24 @@ sub display_action_detail {
     my ($self, $action_detail, $is_error, $remaining_same_tool, $expanded_content) = @_;
     
     return unless $action_detail;
+    
+    # Non-interactive mode: emit [DETAILS] line
+    if ($self->_is_non_interactive()) {
+        if ($is_error) {
+            $self->_emit_noninteractive('ERROR', $action_detail);
+        } else {
+            $self->_emit_noninteractive('DETAILS', $action_detail);
+        }
+        # Also emit expanded content
+        if ($expanded_content && ref($expanded_content) eq 'ARRAY' && @$expanded_content) {
+            for my $line (@$expanded_content) {
+                $self->_emit_noninteractive('OUTPUT', $line);
+            }
+        }
+        STDOUT->flush() if STDOUT->can('flush');
+        $self->{_inline_prefix_width} = 0;
+        return;
+    }
     
     my $tool_format = $self->get_tool_format();
     
@@ -326,6 +387,15 @@ sub display_expanded_content {
     my ($self, $expanded_content) = @_;
     return unless $expanded_content && ref($expanded_content) eq 'ARRAY' && @$expanded_content;
     
+    # Non-interactive mode: emit [OUTPUT] lines
+    if ($self->_is_non_interactive()) {
+        for my $line (@$expanded_content) {
+            $self->_emit_noninteractive('OUTPUT', $line);
+        }
+        STDOUT->flush() if STDOUT->can('flush');
+        return;
+    }
+    
     my $tool_format = $self->get_tool_format();
     
     if ($tool_format eq 'inline') {
@@ -371,6 +441,13 @@ Only applies in inline tool format.
 
 sub display_hrule {
     my ($self) = @_;
+
+    # Non-interactive mode: emit a simple separator
+    if ($self->_is_non_interactive()) {
+        print "\n";
+        STDOUT->flush() if STDOUT->can('flush');
+        return;
+    }
 
     my $tool_format = $self->get_tool_format();
     return unless $tool_format eq 'inline';
@@ -535,7 +612,25 @@ Display a colorized unified diff for a file change using DiffRenderer.
 
 sub display_diff {
     my ($self, $old, $new, $filename) = @_;
-    
+
+    # Non-interactive mode: emit plain unified diff without colors
+    if ($self->_is_non_interactive()) {
+        eval { require CLIO::UI::DiffRenderer; };
+        if ($@) {
+            # Fallback: simple diff output
+            $self->_emit_noninteractive('DIFF', $filename);
+            return;
+        }
+        my $renderer = CLIO::UI::DiffRenderer->new(
+            theme_mgr => ($self->{ui} && $self->{ui}->{theme_mgr}) ? $self->{ui}->{theme_mgr} : undef,
+            ansi      => undef,  # Disable colors
+            max_lines => 20,
+            context   => 3,
+        );
+        $renderer->display_diff($old, $new, $filename);
+        return;
+    }
+
     eval { require CLIO::UI::DiffRenderer; };
     return if $@;
     
