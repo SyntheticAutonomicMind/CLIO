@@ -1044,9 +1044,21 @@ if ($model_override) {
     $model_override = "$target_provider/$model_override";
     $config->set('model', $model_override, 0);  # 0 = don't persist
 
-    # Clear route_name since --model overrides any --route activation
-    if (!$route_name) {
+    # --model is an explicit single-model choice, so any previously-saved
+    # route state must not leak through. Clear route_name (so the banner
+    # doesn't say "via foo") AND model_candidates (so ErrorHandler doesn't
+    # trigger route cycling on API errors).
+    #
+    # Skip when --model was passed with multiple space-separated models
+    # (e.g. `clio --model "m1 m2 m3"`), because that case is itself an
+    # explicit routing request — model_candidates was set above in the
+    # @cli_model_candidates > 1 block and must survive into the session.
+    # Note: --route sets candidates above and bypasses this whole block,
+    # so the two flags remain mutually exclusive at startup.
+    if (!$route_name && !($cli_model_candidates && @$cli_model_candidates > 1)) {
         $config->set('route_name', undef, 0);
+        $config->set('model_candidates', [], 0);
+        $config->set('model_routing_index', 0, 0);
     }
     log_info('Main', "Using temporary model: $model_override");
 }
