@@ -37,6 +37,12 @@ like($clio_source, qr/NO_COLOR\s+.*color/i, "--help documents NO_COLOR env var")
 # Test 4: --help exits early
 like($clio_source, qr/--help.*\n.*exit\s+0/s, "--help block exits cleanly");
 
+# Test 4b: clio auto-detects non-interactive mode for --input / piped stdin
+like($clio_source, qr/Auto-detect non-interactive/, "clio has non-interactive auto-detection");
+like($clio_source, qr/!-t STDOUT/, "clio checks STDOUT is not a TTY for auto no_color");
+like($clio_source, qr/\$ENV\{NO_COLOR\} = 1/, "clio sets NO_COLOR env var in auto-detection");
+like($clio_source, qr/render_markdown.*\$response/, "clio uses Chat UI render_markdown for --input output");
+
 # Test 5: PathResolver respects config override
 {
     require CLIO::Util::PathResolver;
