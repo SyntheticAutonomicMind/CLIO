@@ -1126,7 +1126,8 @@ if ($input) {
         ai_agent => $ai_agent,
         config => $config,
         debug => $debug,
-        no_color => $no_color
+        no_color => $no_color,
+        non_interactive => $input ? 1 : 0,
     );
     $ai_agent->set_ui($cli_ui) if $ai_agent;
     

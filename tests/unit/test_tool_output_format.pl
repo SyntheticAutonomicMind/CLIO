@@ -283,6 +283,114 @@ print "\n--- Tool output survives interleaved logs ---\n";
 }
 
 # ---------------------------------------------------------------------------
+# 7. Non-interactive mode emits machine-readable tagged output
+# ---------------------------------------------------------------------------
+print "\n--- Non-interactive mode tagged output ---\n";
+
+{
+    require CLIO::UI::Theme;
+    require CLIO::UI::ToolOutputFormatter;
+
+    # Mock Chat with non_interactive flag
+    package TaggedChat;
+    sub new { bless { theme_mgr => $_[1], non_interactive => 1, use_color => 0 }, $_[0] }
+    sub colorize { my ($self, $text, $color) = @_; return $text; }
+    sub can { 1; }
+
+    package main;
+
+    my $theme = CLIO::UI::Theme->new();
+    my $chat = TaggedChat->new($theme);
+    my $fmt = CLIO::UI::ToolOutputFormatter->new(ui => $chat);
+
+    # Capture stdout
+    pipe(my $read_fd, my $write_fd) or die "pipe: $!";
+    my $pid = fork();
+    if (!defined $pid) { die "fork: $!"; }
+    if ($pid == 0) {
+        close $read_fd;
+        open(STDOUT, '>&', $write_fd) or die "dup: $!";
+        close $write_fd;
+
+        $fmt->display_tool_header("version_control", "VERSION CONTROL", 1, 0);
+        $fmt->display_action_detail("checking status of . (main: 4 changes)", 0, 0, undef);
+        $fmt->display_expanded_content(["main a1b2c3d..e5f6g7h", " 1 file changed, 3 insertions(+)"]);
+        $fmt->display_hrule();
+        $fmt->display_action_detail("some error occurred", 1, 0, undef);
+
+        STDOUT->flush();
+        close STDOUT;
+        exit(0);
+    }
+    close $write_fd;
+    waitpid($pid, 0);
+    my $captured = do { local $/; <$read_fd> };
+    close $read_fd;
+
+    # Verify tagged output format
+    ok($captured =~ /^\[VERSION_CONTROL\]/m,
+       'Non-interactive tool header emits [TOOL_NAME] tag');
+    ok($captured =~ /^\[DETAILS\] checking status/m,
+       'Non-interactive action detail emits [DETAILS] tag');
+    ok($captured =~ /^\[OUTPUT\] main a1b2c3d/,
+       'Non-interactive expanded content emits [OUTPUT] tags');
+    ok($captured =~ /^\[ERROR\] some error occurred/m,
+       'Non-interactive error emits [ERROR] tag');
+    ok($captured !~ /\xe2\x97\x8f/,
+       'Non-interactive mode does not emit bullet characters');
+    ok($captured !~ /\xe2\x94\x9c/,
+       'Non-interactive mode does not emit box-drawing characters');
+}
+
+# ---------------------------------------------------------------------------
+# 8. Interactive mode still emits human-readable output
+# ---------------------------------------------------------------------------
+print "\n--- Interactive mode human-readable output ---\n";
+
+{
+    require CLIO::UI::Theme;
+    require CLIO::UI::ToolOutputFormatter;
+
+    # Mock Chat WITHOUT non_interactive flag (interactive mode)
+    package InterChat;
+    sub new { bless { theme_mgr => $_[1], non_interactive => 0, use_color => 0 }, $_[0] }
+    sub colorize { my ($self, $text, $color) = @_; return $text; }
+    sub can { 1; }
+
+    package main;
+
+    my $theme = CLIO::UI::Theme->new();
+    my $chat = InterChat->new($theme);
+    my $fmt = CLIO::UI::ToolOutputFormatter->new(ui => $chat);
+
+    pipe(my $read_fd, my $write_fd) or die "pipe: $!";
+    my $pid = fork();
+    if (!defined $pid) { die "fork: $!"; }
+    if ($pid == 0) {
+        close $read_fd;
+        open(STDOUT, '>&', $write_fd) or die "dup: $!";
+        close $write_fd;
+
+        $fmt->display_tool_header("version_control", "VERSION CONTROL", 1, 0);
+        $fmt->display_action_detail("checking status", 0, 0, undef);
+
+        STDOUT->flush();
+        close STDOUT;
+        exit(0);
+    }
+    close $write_fd;
+    waitpid($pid, 0);
+    my $captured = do { local $/; <$read_fd> };
+    close $read_fd;
+
+    # In interactive mode, output should NOT use [TAG] format
+    ok($captured !~ /^\[VERSION_CONTROL\]/m,
+       'Interactive mode does NOT use [TOOL_NAME] tag format');
+    ok($captured =~ /VERSION CONTROL|checking status/m,
+       'Interactive mode still shows human-readable content');
+}
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 print "\n";
