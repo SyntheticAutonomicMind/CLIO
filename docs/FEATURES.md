@@ -439,7 +439,7 @@ Within a session:
 /api set model "openrouter/foo:free kilo/bar:free"
 ```
 
-Total attempts before giving up = `len(models) x max_retries` (for example, 3 models x 3 retries = 9 attempts). After the list is exhausted CLIO reports the last error. Each model's provider, API base, and API key are resolved from its `provider/model` prefix on every request, so candidates can belong to different providers.
+Total attempts before giving up is controlled by `route_max_attempts` (default 15), and the router waits `route_retry_delay` seconds (default 1.0) between switches so the upstream provider has time to recover. After the budget is exhausted CLIO reports the last model tried and the last error, e.g. "Model routing exhausted: tried 3 models over 15 attempts (last: vercel/foo). Last error: ...". Each model's provider, API base, and API key are resolved from its `provider/model` prefix on every request, so candidates can belong to different providers. Set `/api route verbose off` to suppress the per-cycle "API X, rerouting to Y" message while routing is active.
 
 **Named routing profiles (persistent)**
 
@@ -447,10 +447,21 @@ Save a model list as a named, reusable profile. Profiles are stored in config un
 
 ```text
 /api route add <name> <model1> [model2 model3 ...]   # Save a profile
-/api route list                                      # List saved profiles
+/api route list                                      # List saved profiles (also shows current settings)
 /api route use <name>                                # Activate a profile
+/api route replace <name> <models...>                # Replace an existing profile's models
 /api route remove <name>                             # Delete a profile
 ```
+
+**Tune the router while a profile is active:**
+
+```text
+/api route verbose on|off          # Show or hide "rerouting to X" system messages (default: on)
+/api route set delay 0.5          # Seconds to wait between model switches (default: 1.0)
+/api route set max_attempts 30     # Max total routing attempts before giving up (default: 15)
+```
+
+The current settings are shown at the bottom of `/api route list` and persist across sessions. Set `delay 0` to cycle as fast as possible (useful for testing); raise `max_attempts` to ride out longer provider outages. Non-actionable errors (model not found, billing error, auth failure, weekly/monthly usage caps) skip routing entirely and surface the error directly - no point burning attempts on a problem the next model in the route can't fix.
 
 Start a session using a saved profile:
 

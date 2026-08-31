@@ -64,6 +64,9 @@ use constant DEFAULT_CONFIG => {
     model_candidates => [],  # List of models for routing (e.g. ["openrouter/foo", "kilo/bar"])
     model_routing_index => 0,  # Current index into model_candidates
     model_routes => {},  # Named routing profiles: { "route-name" => ["model1", "model2"] }
+    route_verbose => 1,  # Show rerouting system messages (1=on, 0=quiet)
+    route_retry_delay => 1.0,  # Seconds to wait between model switches when routing
+    route_max_attempts => 15,  # Max total routing attempts before giving up
     api_key => '',
     api_keys => {},  # Per-provider API keys: { google => 'AIza...', minimax => '...' }
     api_bases => {},  # Per-provider API base URLs: { 'llama.cpp' => 'http://localhost:9090/...' }
@@ -901,6 +904,112 @@ sub set_model_routing_index {
     my ($self, $idx) = @_;
     $self->{config}->{model_routing_index} = $idx // 0;
     $self->{user_set}->{model_routing_index} = 1;
+    return 1;
+}
+
+=head2 get_route_verbose()
+
+Whether to show rerouting system messages when the model router switches
+models on an API error. 1 = on (default, current behavior), 0 = quiet
+(suppress the per-cycle "API X, rerouting to Y" line).
+
+Returns: 0 or 1.
+
+=cut
+
+sub get_route_verbose {
+    my ($self) = @_;
+    return $self->{config}->{route_verbose} // 1 ? 1 : 0;
+}
+
+=head2 set_route_verbose($on)
+
+Toggle the rerouting system message visibility.
+
+Arguments:
+  $on - Truthy to enable, falsy to disable.
+
+Returns: 1 on success.
+
+=cut
+
+sub set_route_verbose {
+    my ($self, $on) = @_;
+    $self->{config}->{route_verbose} = $on ? 1 : 0;
+    $self->{user_set}->{route_verbose} = 1;
+    return 1;
+}
+
+=head2 get_route_retry_delay()
+
+Seconds to wait between model switches when the model router cycles
+to a new candidate on an API error. Defaults to 1.0. The actual wait
+is interruptible (user pressing ESC cancels the wait) and is clamped
+to a minimum of 0 (use 0 to disable the delay entirely).
+
+Returns: Non-negative number of seconds.
+
+=cut
+
+sub get_route_retry_delay {
+    my ($self) = @_;
+    my $d = $self->{config}->{route_retry_delay};
+    return 1.0 unless defined $d;
+    return $d >= 0 ? $d : 1.0;
+}
+
+=head2 set_route_retry_delay($seconds)
+
+Set the inter-cycle delay used by the model router.
+
+Arguments:
+  $seconds - Non-negative number of seconds (0 disables the delay).
+
+Returns: 1 on success.
+
+=cut
+
+sub set_route_retry_delay {
+    my ($self, $seconds) = @_;
+    my $v = defined $seconds ? $seconds : 0;
+    $self->{config}->{route_retry_delay} = $v >= 0 ? $v : 1.0;
+    $self->{user_set}->{route_retry_delay} = 1;
+    return 1;
+}
+
+=head2 get_route_max_attempts()
+
+Maximum total number of model-routing attempts before the router gives
+up and surfaces the last error. Defaults to 15. Counts every model
+switch plus every retry within a model. Independent of
+C<max_retries>, C<max_rate_limit_retries>, and C<max_server_retries>.
+
+Returns: Positive integer (1 or more).
+
+=cut
+
+sub get_route_max_attempts {
+    my ($self) = @_;
+    my $n = $self->{config}->{route_max_attempts};
+    return 15 unless defined $n && $n =~ /^\d+$/ && $n >= 1;
+    return $n;
+}
+
+=head2 set_route_max_attempts($n)
+
+Set the maximum total number of model-routing attempts.
+
+Arguments:
+  $n - Positive integer (1 or more).
+
+Returns: 1 on success.
+
+=cut
+
+sub set_route_max_attempts {
+    my ($self, $n) = @_;
+    $self->{config}->{route_max_attempts} = ($n && $n =~ /^\d+$/ && $n >= 1) ? $n : 15;
+    $self->{user_set}->{route_max_attempts} = 1;
     return 1;
 }
 

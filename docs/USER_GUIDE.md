@@ -453,9 +453,13 @@ CLIO provides 35+ slash commands. Type `/help` in any session to see the full li
 | `/api alias` | List all model aliases |
 | `/api alias <name> --delete` | Remove a model alias |
 | `/api route add <name> <model>...` | Save a named model routing profile |
-| `/api route list` | List saved routing profiles |
+| `/api route list` | List saved routing profiles and current settings |
 | `/api route use <name>` | Activate a named routing profile |
+| `/api route replace <name> <model>...` | Replace a routing profile's models |
 | `/api route remove <name>` | Delete a routing profile |
+| `/api route verbose [on\|off]` | Show or hide rerouting system messages (default: on) |
+| `/api route set delay <seconds>` | Wait between model switches (default: 1.0) |
+| `/api route set max_attempts <N>` | Max routing attempts before giving up (default: 15) |
 | `/model <name>` | Quick model switch (saved globally) |
 | `/model` | Show current model and aliases |
 | `/api login` | Authenticate with GitHub Copilot |

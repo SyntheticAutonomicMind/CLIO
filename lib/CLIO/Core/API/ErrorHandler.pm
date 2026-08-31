@@ -152,6 +152,84 @@ sub _routing_error_label {
     return "error";
 }
 
+=head2 _routing_should_skip($api_response)
+
+Decide whether the model router should skip routing for this error
+entirely and let the normal (non-routing) error path take over.
+
+Some error types are non-actionable from a routing perspective: cycling
+to a different model on a `model_not_found` will hit model_not_found on
+the new model too, and `billing_error` / `auth_failed` are account-level
+conditions that no model in the route can satisfy. Routing through those
+just wastes attempts before falling through to the same fatal result.
+
+Returns: 1 if routing should be skipped, 0 otherwise.
+
+=cut
+
+sub _routing_should_skip {
+    my ($api_response) = @_;
+
+    my $error_type = $api_response->{error_type} || '';
+    my $rl_code    = $api_response->{rate_limit_code} || '';
+
+    # Account/identity/availability issues that no other model in the
+    # route can fix.
+    return 1 if $error_type eq 'model_not_found';
+    return 1 if $error_type eq 'billing_error';
+    return 1 if $error_type eq 'auth_failed';
+    return 1 if $error_type eq 'account_disabled';
+    return 1 if $error_type eq 'region_unavailable';
+    return 1 if $error_type eq 'provider_unavailable';
+    return 1 if $error_type eq 'user_interrupt';
+
+    # Weekly/monthly usage caps - per-account, not per-model, and
+    # the wait would be hours/days, not seconds.
+    return 1 if $rl_code =~ /user_weekly_rate_limited|user_monthly_rate_limited/i;
+    return 1 if $rl_code =~ /copilot_session_limit/i;
+
+    return 0;
+}
+
+=head2 _interruptible_sleep($wo, $session, $seconds, $messages, $label)
+
+Sleep for up to C<$seconds>, checking for a user interrupt on every
+1-second chunk. If the user presses ESC during the wait, calls the
+workflow's interrupt handler and returns early so the rest of the
+recovery loop can act on the interrupt.
+
+Arguments:
+  $wo       - WorkflowOrchestrator instance (undef = no interrupt check)
+  $session  - Session object (passed to interrupt handler; undef = skip)
+  $seconds  - Total seconds to sleep (0 or negative = no-op)
+  $messages - Arrayref of messages (passed to interrupt handler)
+  $label    - Short string for log lines ("model switch", "retry", etc.)
+
+Returns: nothing.
+
+=cut
+
+sub _interruptible_sleep {
+    my ($wo, $session, $seconds, $messages, $label) = @_;
+
+    return unless $seconds && $seconds > 0;
+
+    log_debug('ErrorHandler', "Waiting ${seconds}s before $label...");
+    my $remaining = $seconds;
+    while ($remaining > 0) {
+        my $chunk = ($remaining > 1) ? 1 : $remaining;
+        sleep($chunk);
+        $remaining -= $chunk;
+
+        if ($wo && $wo->can('_check_for_user_interrupt') && $wo->_check_for_user_interrupt($session)) {
+            log_info('ErrorHandler', "$label wait interrupted by user");
+            $wo->_handle_interrupt($session, $messages) if $wo->can('_handle_interrupt');
+            last;
+        }
+    }
+    log_debug('ErrorHandler', "$label delay complete");
+}
+
 sub handle_api_error {
     my ($wo, $api_response, $ctx) = @_;
 
@@ -186,45 +264,80 @@ sub handle_api_error {
     }
 
     # ── Model Routing ────────────────────────────────────────────────
-    # When multiple models are configured (via --model or /api set model
-    # with multiple space-separated entries), switch to the next model on
-    # ANY API error (rate limit, server error, billing error, etc.).
-    # The _prepare_endpoint_config method resolves the provider/api_base/
+    # When multiple models are configured (via --model, /api set model
+    # with space-separated entries, or a named route), switch to the next
+    # model on API errors and ride out short provider outages by looping
+    # back to the first candidate when the last one fails. The
+    # _prepare_endpoint_config method resolves the provider/api_base/
     # api_key from the model's prefix on each request, so updating the
     # config model is sufficient for cross-provider routing.
-    # Total attempts = len(candidates) * max_retries (e.g. 3 * 3 = 9).
+    #
+    # Behavior is controlled by three config keys:
+    #   route_max_attempts  - total attempts before giving up (default 15)
+    #   route_retry_delay   - seconds to wait between cycles (default 1.0)
+    #   route_verbose       - show rerouting system messages (default 1)
+    #
+    # Non-actionable error types (model_not_found, billing_error,
+    # auth_failed, account_disabled, region_unavailable, provider_unavailable,
+    # user_interrupt, weekly/monthly rate caps) are passed through to the
+    # normal error path so we don't burn attempts on errors no other
+    # model in the route can satisfy.
     if ($wo->{api_manager} && $wo->{api_manager}->can('model_routing_active')) {
         my $num_candidates = $wo->{api_manager}->model_routing_active();
         if ($num_candidates > 1) {
-            my $routing_attempts = $session && $session->{routing_attempts} ? $session->{routing_attempts} : 0;
-            $routing_attempts++;
-            $session->{routing_attempts} = $routing_attempts if $session;
+            # Pass through non-actionable error types without burning routing attempts.
+            if (_routing_should_skip($api_response)) {
+                log_info('ErrorHandler', "Model routing skipped: error_type=" . ($api_response->{error_type} || 'unknown') . " is not actionable across models");
+                # Fall through to the normal error handling below.
+            }
+            else {
+                my $cfg = $wo->{api_manager}->{config};
+                my $max_total = $cfg && $cfg->can('get_route_max_attempts') ? $cfg->get_route_max_attempts() : 15;
+                my $delay     = $cfg && $cfg->can('get_route_retry_delay')  ? $cfg->get_route_retry_delay()  : 1.0;
+                my $verbose   = !$cfg || !$cfg->can('get_route_verbose')    ? 1                            : $cfg->get_route_verbose();
 
-            my $max_total = $num_candidates * $max_retries;
-            if ($routing_attempts >= $max_total) {
-                # All routing attempts exhausted across all models
-                if ($session) {
-                    delete $session->{routing_attempts};
+                my $routing_attempts = $session && $session->{routing_attempts} ? $session->{routing_attempts} : 0;
+                $routing_attempts++;
+                $session->{routing_attempts} = $routing_attempts if $session;
+
+                if ($routing_attempts >= $max_total) {
+                    # All routing attempts exhausted. Surface a summary that
+                    # tells the user how many models were tried and what
+                    # finally broke, so a misconfigured route is easy to
+                    # diagnose without reading the session log.
+                    if ($session) {
+                        delete $session->{routing_attempts};
+                    }
+                    my $active_model = $wo->{api_manager}->get_current_model() // 'unknown';
+                    log_error('ErrorHandler', "Model routing exhausted: $num_candidates models, $routing_attempts total attempts, last model=$active_model, last error: $error");
+                    return {
+                        success         => 0,
+                        error           => "Model routing exhausted: tried $num_candidates model" . ($num_candidates == 1 ? '' : 's')
+                                          . " over $routing_attempts attempts (last: $active_model). Last error: $error",
+                        iterations      => $iteration,
+                        tool_calls_made => $tool_calls_made,
+                    };
                 }
-                log_error('ErrorHandler', "Model routing exhausted: $num_candidates models, $max_total total attempts");
-                return {
-                    success         => 0,
-                    error           => "Model routing exhausted: all $num_candidates models failed after $max_total total attempts. Last error: $error",
-                    iterations      => $iteration,
-                    tool_calls_made => $tool_calls_made,
-                };
-            }
 
-            # Cycle to the next model (wraps around at the end)
-            my ($new_model, $old_model) = $wo->{api_manager}->cycle_model();
-            if ($new_model && $on_system_message) {
-                $on_system_message->("API " . _routing_error_label($api_response) . ", rerouting to $new_model");
+                # Cycle to the next model (wraps around at the end)
+                my ($new_model, $old_model) = $wo->{api_manager}->cycle_model();
+                if ($new_model) {
+                    if ($verbose && $on_system_message) {
+                        $on_system_message->("API " . _routing_error_label($api_response) . ", rerouting to $new_model");
+                    }
+                    # Reset retry count so the new model gets a fresh retry budget
+                    $$retry_count_ref = 0;
+                    $wo->{consecutive_errors} = 0 if $wo;
+                    log_info('ErrorHandler', "Model routing: switched from '$old_model' to '$new_model' (attempt $routing_attempts/$max_total total)");
+
+                    # Pause before sending the next request. Without this the
+                    # router cycles models as fast as the API rejects them,
+                    # which makes a rate-limited route look like a hang and
+                    # also doesn't give the upstream provider time to recover.
+                    _interruptible_sleep($wo, $session, $delay, $messages, 'model switch');
+                }
+                return 'retry';
             }
-            # Reset retry count so the new model gets a fresh retry budget
-            $$retry_count_ref = 0;
-            $wo->{consecutive_errors} = 0 if $wo;
-            log_info('ErrorHandler', "Model routing: switched to '$new_model' (attempt $routing_attempts/$max_total total)");
-            return 'retry';
         }
     }
 
@@ -521,23 +634,10 @@ sub handle_api_error {
             log_info('ErrorHandler', "Retryable $error_type detected, retrying in ${retry_delay}s on next iteration (attempt $$retry_count_ref/$max_retries)");
         }
 
-        # Wait before retrying (interruptible)
-        if ($retry_delay > 0) {
-            log_debug('ErrorHandler', "Waiting ${retry_delay}s before retry...");
-            my $remaining = $retry_delay;
-            while ($remaining > 0) {
-                my $chunk = ($remaining > 1) ? 1 : $remaining;
-                sleep($chunk);
-                $remaining -= $chunk;
-
-                if ($wo->_check_for_user_interrupt($session)) {
-                    log_info('ErrorHandler', "Retry wait interrupted by user");
-                    $wo->_handle_interrupt($session, $messages);
-                    last;
-                }
-            }
-            log_debug('ErrorHandler', "Retry delay complete, sending request...");
-        }
+        # Wait before retrying (interruptible). Uses the shared helper so the
+        # interrupt behavior and chunking stay consistent with the model
+        # routing sleep added below.
+        _interruptible_sleep($wo, $session, $retry_delay, $messages, 'retry');
 
         return 'retry';
     }
