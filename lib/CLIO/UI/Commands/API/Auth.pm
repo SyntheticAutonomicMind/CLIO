@@ -218,7 +218,7 @@ sub handle_quota {
         if ($self->can($method)) {
             return $self->$method($refresh);
         }
-        log_warning('API', "Provider $provider declared quota_handler '$quota_handler' but method $method is missing");
+        log_debug('API', "Provider $provider declared quota_handler '$quota_handler' but method $method is missing");
     }
 
     # Providers without quota APIs

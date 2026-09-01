@@ -1155,7 +1155,7 @@ sub _validate_execute_params {
     
     # Warn if api_key is empty (but don't fail - some providers don't need keys)
     unless ($params->{api_key}) {
-        log_warning('RemoteExecution', "No API key available for remote execution - remote CLIO may fail to authenticate");
+        log_debug('RemoteExecution', "No API key available for remote execution - remote CLIO may fail to authenticate");
     }
     
     return $self->success_result("Parameters valid");
@@ -1215,7 +1215,7 @@ sub _validate_ssh_setup {
         if ($agent_exit == 1) {
             # Agent is running but has no keys - this is OK, SSH will use keys from ~/.ssh/
             # Just warn the user, don't block
-            log_warning('RemoteExec', "SSH agent running but no keys loaded. SSH will use keys from ~/.ssh/");
+            log_debug('RemoteExec', "SSH agent running but no keys loaded. SSH will use keys from ~/.ssh/");
         }
     }
     

@@ -12,7 +12,7 @@ use File::Path qw(make_path);
 use File::Basename qw(dirname basename);
 use File::Find qw(find);
 use CLIO::Util::YAML qw(yaml_load yaml_load_file yaml_dump);
-use CLIO::Core::Logger qw(log_debug log_info log_warning);
+use CLIO::Core::Logger qw(log_debug log_warning);
 
 =head1 NAME
 
@@ -113,7 +113,7 @@ sub init {
     my $config_yaml = yaml_dump($config);
     _write_file("$dir/config.yaml", $config_yaml);
 
-    log_info('Spec', "Initialized openspec/ directory");
+    log_debug('Spec', "Initialized openspec/ directory");
     return { success => 1, message => "OpenSpec initialized at $dir" };
 }
 
@@ -259,7 +259,7 @@ sub create_change {
         created => $date,
     }));
 
-    log_info('Spec', "Created change: $name");
+    log_debug('Spec', "Created change: $name");
     return {
         success => 1,
         message => "Created change '$name' at $change_dir",
@@ -441,7 +441,7 @@ sub write_spec {
     my $path = "$dir/spec.md";
     _write_file($path, $content);
 
-    log_info('Spec', "Wrote spec: $domain");
+    log_debug('Spec', "Wrote spec: $domain");
     return { success => 1, path => $path };
 }
 
@@ -474,7 +474,7 @@ sub archive_change {
     rename($change_dir, $dest)
         or return { success => 0, message => "Failed to archive: $!" };
 
-    log_info('Spec', "Archived change: $name -> archive/$archive_name");
+    log_debug('Spec', "Archived change: $name -> archive/$archive_name");
     return {
         success      => 1,
         message      => "Archived '$name' to changes/archive/$archive_name",

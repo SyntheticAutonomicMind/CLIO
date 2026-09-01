@@ -6,7 +6,7 @@ package CLIO::Util::PathResolver;
 use strict;
 use warnings;
 use utf8;
-use CLIO::Core::Logger qw(log_info);
+use CLIO::Core::Logger qw(log_debug);
 use FindBin;
 use Carp qw(croak);
 use File::Spec;
@@ -96,7 +96,7 @@ sub init {
     # Create config directory if it doesn't exist with secure permissions
     if (!-d $CONFIG_DIR) {
         make_path($CONFIG_DIR, { mode => 0700 }) or croak "Cannot create config directory $CONFIG_DIR: $!";
-        log_info('PathResolver', "[INFO] Created config directory: $CONFIG_DIR");
+        log_debug('PathResolver', "[INFO] Created config directory: $CONFIG_DIR");
     }
     
     # In installed mode, BASE_DIR is still the script location (for lib/ access)

@@ -7,7 +7,7 @@ use strict;
 use warnings;
 use utf8;
 
-use CLIO::Core::Logger qw(should_log log_error log_warning log_info log_debug);
+use CLIO::Core::Logger qw(should_log log_debug log_warning);
 use CLIO::Util::JSON qw(decode_json encode_json safe_decode_json safe_encode_json);
 use CLIO::Util::RateLimit qw(format_reset_message parse_anthropic_reset_timestamp);
 use Scalar::Util qw(blessed);
@@ -360,7 +360,7 @@ sub _handle_error_response_impl {
             } else {
                 $header_debug .= "passed_headers is " . (defined($passed_headers) ? "'$passed_headers' (" . ref($passed_headers) . ")" : 'undef');
             }
-            log_info('ResponseHandler', $header_debug);
+            log_debug('ResponseHandler', $header_debug);
         }
 
         if ($error =~ /(?:retry\s+in|please\s+wait)\s+([\d.]+)\s*s(?:econds?)?/i) {
@@ -411,7 +411,7 @@ sub _handle_error_response_impl {
             if ($quota_msg =~ /you(?:'ve| have) used \d+%? of your? (session )?rate limit/i ||
                 $quota_msg =~ /percent_remaining/i) {
                 $user_message = $quota_msg;
-                log_info('ResponseHandler', "Captured Copilot quota message: $quota_msg");
+                log_debug('ResponseHandler', "Captured Copilot quota message: $quota_msg");
             }
         }
 
@@ -435,16 +435,16 @@ sub _handle_error_response_impl {
             if ($long_retry_header && $long_retry_header =~ /^\d+$/) {
                 # x-ratelimit-user-retry-after is already in seconds
                 $actual_retry_after = int($long_retry_header);
-                log_info('ResponseHandler', "Using x-ratelimit-user-retry-after: ${actual_retry_after}s");
+                log_debug('ResponseHandler', "Using x-ratelimit-user-retry-after: ${actual_retry_after}s");
             } elsif ($reset_timestamp && $reset_timestamp =~ /^\d+$/ && $reset_timestamp > time()) {
                 $actual_retry_after = int($reset_timestamp - time());
             } elsif (defined $self->{_rate_limit_reset_in} && $self->{_rate_limit_reset_in} > 0) {
                 # Use cached reset time from previous successful responses
                 $actual_retry_after = $self->{_rate_limit_reset_in};
-                log_info('ResponseHandler', "Using cached rate limit reset time: ${actual_retry_after}s");
+                log_debug('ResponseHandler', "Using cached rate limit reset time: ${actual_retry_after}s");
             } else {
                 # API didn't provide accurate reset time - don't show misleading value
-                log_info('ResponseHandler', "No reset time available: long_retry_header=" . 
+                log_debug('ResponseHandler', "No reset time available: long_retry_header=" . 
                     (defined $long_retry_header ? $long_retry_header : 'undef') . 
                     ", retry_after_header=" . (defined $retry_after_header ? $retry_after_header : 'undef') .
                     ", reset_timestamp=$reset_timestamp, _rate_limit_reset_in=" . 
@@ -500,7 +500,7 @@ sub _handle_error_response_impl {
                 $self->{session}{rate_limit_code} = $detected_rate_limit_code;
             }
             
-            log_info('ResponseHandler', "Weekly/monthly rate limit detected: $detected_rate_limit_code" . 
+            log_debug('ResponseHandler', "Weekly/monthly rate limit detected: $detected_rate_limit_code" . 
                 (defined($actual_retry_after) ? sprintf(", expires in %d seconds (~%.1f hours)", $actual_retry_after, $actual_retry_after / 3600) : " (reset time unknown)"));
             
             # Build result directly for weekly/monthly limits (skip else/elsif chains)
@@ -532,7 +532,7 @@ sub _handle_error_response_impl {
                     log_debug('ResponseHandler', "Parsed Z.AI reset time: $reset_str (CST) -> ${actual_retry_after}s until reset");
                 };
                 if ($@ || !defined($actual_retry_after)) {
-                    log_warning('ResponseHandler', "Failed to parse Z.AI reset time '$reset_str': $@");
+                    log_debug('ResponseHandler', "Failed to parse Z.AI reset time '$reset_str': $@");
                     $actual_retry_after = undef;
                 }
             } else {
@@ -607,7 +607,7 @@ sub _handle_error_response_impl {
                 }
             }
             
-            log_info('ResponseHandler', "Z.AI usage limit detected (code=$detected_rate_limit_code)" . 
+            log_debug('ResponseHandler', "Z.AI usage limit detected (code=$detected_rate_limit_code)" . 
                 (defined($actual_retry_after) ? sprintf(", expires in %d seconds (~%.1f hours)", $actual_retry_after, $actual_retry_after / 3600) : " (reset time unknown)"));
             
             my $zai_result = { success => 0, error => $error, _error => $error };
@@ -644,7 +644,7 @@ sub _handle_error_response_impl {
             $retry_info = sprintf("Z.AI %s limit (code %s). Retrying in %ds...",
                 $zai_rl_type, $detected_rate_limit_code, $retry_after);
             $error = $retry_info;
-            log_info('ResponseHandler', "Z.AI $zai_rl_type limit (code=$detected_rate_limit_code), retry_after=${retry_after}s");
+            log_debug('ResponseHandler', "Z.AI $zai_rl_type limit (code=$detected_rate_limit_code), retry_after=${retry_after}s");
         } elsif ($user_message) {
             $retry_info = sprintf("%s Retrying in %d seconds.", $user_message, $retry_after);
             $error = $retry_info;
@@ -661,7 +661,7 @@ sub _handle_error_response_impl {
             $retry_after = 0;
             $error_type = 'rate_limit';
             $error = $user_message;  # Return the message directly, no "Retrying in X seconds"
-            log_info('ResponseHandler', "Copilot session rate limit detected (non-retryable): $user_message");
+            log_debug('ResponseHandler', "Copilot session rate limit detected (non-retryable): $user_message");
 
             my $copilot_result = { success => 0, error => $error, _error => $error };
             $copilot_result->{retryable} = 0;
@@ -689,7 +689,7 @@ sub _handle_error_response_impl {
         my $copilot_plan = $self->{session}{copilot_plan} if $self->{session};
         my $user_message = _get_quota_exceeded_user_message($error_obj, $copilot_plan);
         $error = $user_message;
-        log_info('ResponseHandler', "Quota exceeded (code=$error_obj->{code}): $user_message");
+        log_debug('ResponseHandler', "Quota exceeded (code=$error_obj->{code}): $user_message");
     }
     # Handle authentication failures (401, 403)
     # RFC 9110: 401 = "I don't know you" (invalid credentials), 403 = "I know you but you're not allowed"
@@ -710,9 +710,9 @@ sub _handle_error_response_impl {
         $error = "The model is not available in your region or data-residency setting. "
                . "Switch to a model deployed in a region you can access.\n\n"
                . "Provider detail: $error";
-        # Demoted from log_warning -> log_info. Themed error display is the
+        # Demoted from log_warning -> log_debug. Themed error display is the
         # user-facing surface.
-        log_info('ResponseHandler', "Region unavailable (non-retryable): $error");
+        log_debug('ResponseHandler', "Region unavailable (non-retryable): $error");
     }
 
     # Handle account-level deactivation BEFORE auth (non-retryable - user must contact support or admin).
@@ -728,9 +728,9 @@ sub _handle_error_response_impl {
         $error = "Your account or organization has been deactivated/suspended by the provider. "
                . "Contact the provider's support or your account admin to restore access.\n\n"
                . "Provider detail: $error";
-        # Demoted from log_warning -> log_info. Themed error display is the
+        # Demoted from log_warning -> log_debug. Themed error display is the
         # user-facing surface.
-        log_info('ResponseHandler', "Account disabled (non-retryable): $error");
+        log_debug('ResponseHandler', "Account disabled (non-retryable): $error");
     }
 
     elsif ($status == 401 || $status == 403) {
@@ -752,7 +752,7 @@ sub _handle_error_response_impl {
 
             if ($err_msg =~ /subscription|upgrade|paid|requires? (a |the )?(subscription|model|plan)/i) {
                 $is_permanent_auth_failure = 1;
-                log_info('ResponseHandler', "403 permanent auth failure detected (subscription/upgrade required): $err_msg");
+                log_debug('ResponseHandler', "403 permanent auth failure detected (subscription/upgrade required): $err_msg");
             }
         }
 
@@ -763,11 +763,11 @@ sub _handle_error_response_impl {
             $error_type = 'auth_failed';
             # Preserve the actual provider error message
             $error = $original_error_msg;
-            log_info('ResponseHandler', "Returning permanent 403 error without recovery attempt");
+            log_debug('ResponseHandler', "Returning permanent 403 error without recovery attempt");
         }
         else {
             # Potentially transient auth failure (401, or 403 without subscription keywords)
-            log_info('ResponseHandler', "Authentication error ($status), attempting token recovery");
+            log_debug('ResponseHandler', "Authentication error ($status), attempting token recovery");
 
             my $recovered = 0;
             if ($attempt_token_recovery) {
@@ -812,9 +812,9 @@ sub _handle_error_response_impl {
         $error = "The AI provider reports this model is currently unavailable on their infrastructure. "
                . "Try a different model, or wait and retry later.\n\n"
                . "Provider detail: $detail";
-        # Demoted from log_warning -> log_info. Themed error display is the
+        # Demoted from log_warning -> log_debug. Themed error display is the
         # user-facing surface.
-        log_info('ResponseHandler', "Provider unavailable (non-retryable): $detail");
+        log_debug('ResponseHandler', "Provider unavailable (non-retryable): $detail");
     }
 
     # Handle upstream timeouts distinctly from generic server_error.
@@ -833,7 +833,7 @@ sub _handle_error_response_impl {
         $error = "The AI provider timed out responding to the request. "
                . "This is usually transient (the upstream was busy). Retrying after a longer wait.\n\n"
                . "Provider detail: $error";
-        log_info('ResponseHandler', "Timeout (retryable with long backoff): $error");
+        log_debug('ResponseHandler', "Timeout (retryable with long backoff): $error");
     }
 
     # Handle upstream/internal overload distinctly from generic 5xx server_error.
@@ -853,7 +853,7 @@ sub _handle_error_response_impl {
         $error = "The AI provider reports their upstream is overloaded. "
                . "This is usually transient - retrying after a short wait should resolve it.\n\n"
                . "Provider detail: $error";
-        log_info('ResponseHandler', "Overloaded (retryable with backoff): $error");
+        log_debug('ResponseHandler', "Overloaded (retryable with backoff): $error");
     }
     # Handle OpenAI's "Slow Down" 503 distinctly from generic overload.
     # Per OpenAI docs (https://platform.openai.com/docs/guides/error-codes/api-errors):
@@ -873,7 +873,7 @@ sub _handle_error_response_impl {
                . "stable for at least 15 minutes before gradually increasing again. "
                . "The throttle has been updated to reflect this limit.\n\n"
                . "Provider detail: $error";
-        log_warning('ResponseHandler', "OpenAI Slow Down detected - aggressive throttle learning triggered: $error");
+        log_debug('ResponseHandler', "OpenAI Slow Down detected - aggressive throttle learning triggered: $error");
 
         # Aggressive throttle learning - tell APIManager to learn this
         # model's limit immediately. APIManager exposes this through
@@ -911,7 +911,7 @@ sub _handle_error_response_impl {
         $error_type = 'token_limit_exceeded';
         $error = "Token limit exceeded: The conversation history is too long for the model's context window. "
                . "Will attempt to trim conversation history and retry.";
-        log_info('ResponseHandler', "Token limit exceeded - will retry after trimming");
+        log_debug('ResponseHandler', "Token limit exceeded - will retry after trimming");
     }
     # Handle malformed tool call JSON (400)
     elsif ($status == 400 && ($error =~ /invalid.*json.*tool.*call|tool.*call.*invalid.*json/i ||
@@ -947,7 +947,7 @@ sub _handle_error_response_impl {
 
         $retry_info = "AI generated malformed tool call JSON. Retrying request...";
         $error = $retry_info;
-        log_info('ResponseHandler', "Detected malformed tool JSON error - will retry");
+        log_debug('ResponseHandler', "Detected malformed tool JSON error - will retry");
         $self->{last_failed_tool} = $failed_tool;
     }
     # Handle previous_response_id not supported (400)
@@ -965,7 +965,7 @@ sub _handle_error_response_impl {
 
         $retry_info = "Model doesn't support previous_response_id. Retrying without it.";
         $error = $retry_info;
-        log_info('ResponseHandler', "Cleared stateful markers - model rejects previous_response_id");
+        log_debug('ResponseHandler', "Cleared stateful markers - model rejects previous_response_id");
     }
 
     # Handle reasoning/thinking not supported (400)
@@ -981,7 +981,7 @@ sub _handle_error_response_impl {
 
         $retry_info = "Model doesn't support reasoning/thinking. Retrying without it.";
         $error = $retry_info;
-        log_info('ResponseHandler', "Flagged model as not supporting reasoning - will strip from future requests");
+        log_debug('ResponseHandler', "Flagged model as not supporting reasoning - will strip from future requests");
     }
 
     # Handle Anthropic thinking-mode mismatch (self-describing error)
@@ -1016,11 +1016,11 @@ sub _handle_error_response_impl {
 
             $retry_info = "Anthropic rejected thinking.type=$rejected, retrying with $correct (self-correcting).";
             $error = $retry_info;
-            log_info('ResponseHandler', "Anthropic self-describing mode mismatch: rejected=$rejected correct=$correct - will retry and persist to MCM cache");
+            log_debug('ResponseHandler', "Anthropic self-describing mode mismatch: rejected=$rejected correct=$correct - will retry and persist to MCM cache");
         }
         else {
             # Pattern matched but mode is unknown - fall through to generic 400 handling
-            log_warning('ResponseHandler', "Anthropic mode-mismatch error matched pattern but extracted mode '$correct' is not adaptive/enabled - falling through");
+            log_debug('ResponseHandler', "Anthropic mode-mismatch error matched pattern but extracted mode '$correct' is not adaptive/enabled - falling through");
         }
     }
 
@@ -1036,7 +1036,7 @@ sub _handle_error_response_impl {
 
         $retry_info = "Temperature must be 1 when thinking is enabled. Retrying with corrected parameters.";
         $error = $retry_info;
-        log_info('ResponseHandler', "Anthropic requires temperature=1 with thinking - will correct on retry");
+        log_debug('ResponseHandler', "Anthropic requires temperature=1 with thinking - will correct on retry");
     }
 
     # Handle max_tokens must be greater than thinking.budget_tokens (Anthropic 400)
@@ -1054,7 +1054,7 @@ sub _handle_error_response_impl {
 
         $retry_info = "max_tokens must be greater than thinking budget_tokens. Retrying without extended thinking.";
         $error = $retry_info;
-        log_info('ResponseHandler', "Anthropic max_tokens/budget_tokens conflict - disabling thinking for retry");
+        log_debug('ResponseHandler', "Anthropic max_tokens/budget_tokens conflict - disabling thinking for retry");
     }
 
     # Handle content filter errors (non-retryable)
@@ -1067,7 +1067,7 @@ sub _handle_error_response_impl {
         $error_type = 'content_filter';
         $error = "Your request was flagged by the content safety system. "
                . "Please modify your request to comply with the API's usage policies.";
-        log_info('ResponseHandler', "Content filter triggered: $error");
+        log_debug('ResponseHandler', "Content filter triggered: $error");
     }
 
     # Handle 402 Payment Required before the generic billing block.
@@ -1110,7 +1110,7 @@ sub _handle_error_response_impl {
                    . "Your account is allowed N concurrent in-flight requests; "
                    . "wait for one to settle and try again "
                    . "(Retry-After: ${ra_value}s).";
-            log_info('ResponseHandler', "OpenRouter in-flight budget 402 (retryable in ${ra_value}s, source=$limit_source)");
+            log_debug('ResponseHandler', "OpenRouter in-flight budget 402 (retryable in ${ra_value}s, source=$limit_source)");
         }
         # Hard credit exhaustion: no usable Retry-After or real credit limit hit.
         # This includes OpenRouter's openrouter_credits source AND any other 402
@@ -1147,10 +1147,10 @@ sub _handle_error_response_impl {
                 $detail = "Add credits or upgrade your plan before retrying.";
             }
             $error = "Your API account has run out of credits or hit a billing limit. $detail";
-            # Demoted from log_warning -> log_info. The themed error
+            # Demoted from log_warning -> log_debug. The themed error
             # display path surfaces this to the user; the raw log line
             # was duplicating the message and clobbering the styled output.
-            log_info('ResponseHandler', "Billing error (non-retryable, reason=$reason, source=$limit_source): $error");
+            log_debug('ResponseHandler', "Billing error (non-retryable, reason=$reason, source=$limit_source): $error");
         }
     }
 
@@ -1173,9 +1173,9 @@ sub _handle_error_response_impl {
         $error_type = 'billing_error';
         $error = "Your API account has run out of credits or hit a billing limit. "
                . "Add credits or upgrade your plan before retrying.";
-        # Demoted from log_warning -> log_info. The themed error
+        # Demoted from log_warning -> log_debug. The themed error
         # display path surfaces this to the user.
-        log_info('ResponseHandler', "Billing error (non-retryable): $error");
+        log_debug('ResponseHandler', "Billing error (non-retryable): $error");
     }
 
     # Handle model-not-found errors (non-retryable - the model doesn't exist for this provider/account).
@@ -1194,9 +1194,9 @@ sub _handle_error_response_impl {
                . "The model name may be wrong, deprecated, or not enabled on your plan.\n\n"
                . "Try a different model with: /api model <provider>/<model>\n\n"
                . "Provider detail: $error";
-        # Demoted from log_warning -> log_info. Themed error display is the
+        # Demoted from log_warning -> log_debug. Themed error display is the
         # user-facing surface.
-        log_info('ResponseHandler', "Model not found (non-retryable): $error");
+        log_debug('ResponseHandler', "Model not found (non-retryable): $error");
     }
 
     # Handle generic 400 (transient backend error, content encoding issue, etc.)
@@ -1215,7 +1215,7 @@ sub _handle_error_response_impl {
             $body = $resp->{content} // '';
         }
         if ($body && $body =~ /\S/) {
-            log_info('ResponseHandler', "API 400 response body: " . substr($body, 0, 500));
+            log_debug('ResponseHandler', "API 400 response body: " . substr($body, 0, 500));
             if (open my $fh, '>>', '/tmp/clio_api_400.log') {
                 print $fh "\n" . "=" x 80 . "\n";
                 print $fh "[" . scalar(localtime) . "] API 400 Bad Request\n";
@@ -1224,7 +1224,7 @@ sub _handle_error_response_impl {
                 close $fh;
             }
         } else {
-            log_info('ResponseHandler', "API 400 Bad Request (empty response body)");
+            log_debug('ResponseHandler', "API 400 Bad Request (empty response body)");
         }
 
         $retry_info = "Unclassified API 400 - retrying. If this persists, the provider message has been logged to /tmp/clio_api_400.log.";
@@ -1262,7 +1262,7 @@ sub _handle_error_response_impl {
             log_debug('ResponseHandler', "Response body: $body");
             log_debug('ResponseHandler', "Request was: " . substr($json // '', 0, 500) . "...");
         } elsif ($self->{debug}) {
-            log_error('ResponseHandler', $error);
+            log_debug('ResponseHandler', $error);
         }
     }
 
@@ -1713,7 +1713,7 @@ sub process_rate_limit_headers {
         if ($new_delay != $old_delay) {
             my $limit = $rate_limit{limit_requests} || 'N/A';
             my $remaining = $rate_limit{remaining_requests} || 'N/A';
-            log_info('ResponseHandler', sprintf(
+            log_debug('ResponseHandler', sprintf(
                 "Quota: %.1f%% remaining. Adjusting delay: %.1fs -> %.1fs",
                 $percent_remaining, $old_delay, $new_delay
             ));
@@ -1859,14 +1859,14 @@ sub process_quota_headers {
                 $entitlement == -1 ? "unlimited" : $entitlement,
                 $percent_used);
             $state->{_premium_charge_message} = $charge_msg;
-            log_info('ResponseHandler', "$charge_msg");
+            log_debug('ResponseHandler', "$charge_msg");
         } elsif ($delta < 0) {
-            log_warning('ResponseHandler', "Quota decreased by $delta (unexpected)");
+            log_debug('ResponseHandler', "Quota decreased by $delta (unexpected)");
         } else {
-            log_info('ResponseHandler', "+0 AI Credits (session continuity working)");
+            log_debug('ResponseHandler', "+0 AI Credits (session continuity working)");
         }
     } else {
-        log_info('ResponseHandler', "Initial request - establishing baseline");
+        log_debug('ResponseHandler', "Initial request - establishing baseline");
     }
 
     return unless $state;
@@ -1880,11 +1880,11 @@ sub process_quota_headers {
                 # First non-zero delta: the upfront charge already covers this,
                 # so skip this delta to avoid double-counting.
                 # After this, all future deltas are tracked normally.
-                log_info('ResponseHandler', "Reconciled initial credit charge with first quota delta ($delta)");
+                log_debug('ResponseHandler', "Reconciled initial credit charge with first quota delta ($delta)");
             } else {
                 # Normal operation: increment by actual charge from quota headers
                 $state->{billing}{total_premium_requests} += $delta;
-                log_info('ResponseHandler', "+$delta AI Credit(s) charged from quota headers");
+                log_debug('ResponseHandler', "+$delta AI Credit(s) charged from quota headers");
             }
         }
     }
@@ -1895,15 +1895,15 @@ sub process_quota_headers {
     }
 
     my $req_id_short = $response_id ? substr($response_id, 0, 8) : 'unknown';
-    log_info('ResponseHandler', "GitHub Copilot AI Credits [req:$req_id_short]:");
-    log_info('ResponseHandler', "- Entitlement: " . ($entitlement == -1 ? "Unlimited" : $entitlement));
-    log_info('ResponseHandler', "- Used: $used");
-    log_info('ResponseHandler', "- Remaining: " . sprintf("%.1f%%", $percent_remaining) . " ($available available)");
-    log_info('ResponseHandler', "- Overage: " . sprintf("%.1f", $overage_used) . " (permitted: " . ($overage_permitted ? 'yes' : 'no') . ")");
-    log_info('ResponseHandler', "- Reset Date: $reset_date");
+    log_debug('ResponseHandler', "GitHub Copilot AI Credits [req:$req_id_short]:");
+    log_debug('ResponseHandler', "- Entitlement: " . ($entitlement == -1 ? "Unlimited" : $entitlement));
+    log_debug('ResponseHandler', "- Used: $used");
+    log_debug('ResponseHandler', "- Remaining: " . sprintf("%.1f%%", $percent_remaining) . " ($available available)");
+    log_debug('ResponseHandler', "- Overage: " . sprintf("%.1f", $overage_used) . " (permitted: " . ($overage_permitted ? 'yes' : 'no') . ")");
+    log_debug('ResponseHandler', "- Reset Date: $reset_date");
 
     if ($available < 10 && $available > 0) {
-        log_warning('ResponseHandler', "Only $available AI Credits remaining!");
+        log_debug('ResponseHandler', "Only $available AI Credits remaining!");
     } elsif ($available <= 0 && !$overage_permitted) {
         log_debug('ResponseHandler', "AI Credits exhausted! Requests may fail.");
     }
@@ -1963,7 +1963,7 @@ sub release_broker_slot {
         log_debug('ResponseHandler', "Released broker slot (request_id=$request_id, status=$status, model=" . ($model // '?') . ")");
     };
     if ($@) {
-        log_warning('ResponseHandler', "Failed to release broker slot: $@");
+        log_debug('ResponseHandler', "Failed to release broker slot: $@");
     }
 
     $self->{_current_broker_request_id} = undef;
@@ -2004,12 +2004,12 @@ sub store_stateful_marker {
 
     splice(@{$self->{session}{_stateful_markers}}, 10);
 
-    log_info('ResponseHandler', "Stored stateful_marker for model '$model': " . substr($marker, 0, 30) .
+    log_debug('ResponseHandler', "Stored stateful_marker for model '$model': " . substr($marker, 0, 30) .
         "... (total markers: " . scalar(@{$self->{session}{_stateful_markers}}) . ")");
 
     if (ref($self->{session}) && blessed($self->{session}) && $self->{session}->can('save')) {
         $self->{session}->save();
-        log_info('ResponseHandler', "Session saved with stateful_marker");
+        log_debug('ResponseHandler', "Session saved with stateful_marker");
     } else {
         log_debug('ResponseHandler', "Session object cannot save! stateful_marker will be lost!");
     }
@@ -2045,7 +2045,7 @@ sub get_stateful_marker_for_model {
 
     for my $marker_obj (@{$self->{session}{_stateful_markers}}) {
         if ($marker_obj->{model} eq $model) {
-            log_info('ResponseHandler', "Found stateful_marker for model '$model': " . substr($marker_obj->{marker}, 0, 30) . "...");
+            log_debug('ResponseHandler', "Found stateful_marker for model '$model': " . substr($marker_obj->{marker}, 0, 30) . "...");
             return $marker_obj->{marker};
         }
     }

@@ -1041,7 +1041,7 @@ sub history_prev {
     
     # Safety: bounds check before array access
     if ($self->{history_pos} < 0 || $self->{history_pos} >= scalar(@{$self->{history}})) {
-        log_warning('ReadLine', "History position out of bounds: $self->{history_pos}");
+        log_debug('ReadLine', "History position out of bounds: $self->{history_pos}");
         $self->{history_pos} = -1;
         return;
     }
@@ -1074,7 +1074,7 @@ sub history_next {
     } else {
         # Safety: bounds check before array access
         if ($self->{history_pos} < 0 || $self->{history_pos} >= scalar(@{$self->{history}})) {
-            log_warning('ReadLine', "History position out of bounds: $self->{history_pos}");
+            log_debug('ReadLine', "History position out of bounds: $self->{history_pos}");
             $$input_ref = $self->{current_input} // '';
             $self->{history_pos} = -1;
         } else {
@@ -1203,10 +1203,10 @@ sub redraw_line {
     # Safety: clamp cursor position to valid range (0 to length of input)
     my $input_len = length($$input_ref);
     if ($$cursor_pos_ref < 0) {
-        log_warning('ReadLine', "Cursor position was negative ($$cursor_pos_ref), clamping to 0");
+        log_debug('ReadLine', "Cursor position was negative ($$cursor_pos_ref), clamping to 0");
         $$cursor_pos_ref = 0;
     } elsif ($$cursor_pos_ref > $input_len) {
-        log_warning('ReadLine', "Cursor position exceeded input length ($$cursor_pos_ref > $input_len), clamping to $input_len");
+        log_debug('ReadLine', "Cursor position exceeded input length ($$cursor_pos_ref > $input_len), clamping to $input_len");
         $$cursor_pos_ref = $input_len;
     }
 

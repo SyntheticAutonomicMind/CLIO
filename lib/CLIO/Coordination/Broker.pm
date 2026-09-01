@@ -134,7 +134,7 @@ sub run {
     
     eval {
         $self->init();
-        $self->log_info("Broker initialized successfully");
+        $self->log_debug("Broker initialized successfully");
         $self->event_loop();
     };
     if ($@) {
@@ -146,8 +146,8 @@ sub run {
 sub init {
     my ($self) = @_;
     
-    $self->log_info("CLIO Coordination Broker starting...");
-    $self->log_info("Session: $self->{session_id}");
+    $self->log_debug("CLIO Coordination Broker starting...");
+    $self->log_debug("Session: $self->{session_id}");
     
     # Ensure socket directory exists
     unless (-d $self->{socket_dir}) {
@@ -170,7 +170,7 @@ sub init {
     $self->{server} = $server;
     $self->{select} = IO::Select->new($server);
     
-    $self->log_info("Broker listening on $self->{socket_path}");
+    $self->log_debug("Broker listening on $self->{socket_path}");
 }
 
 1;
@@ -292,11 +292,11 @@ sub handle_disconnect {
         for my $req_id (keys %{$self->{authorization_pending}}) {
             if ($self->{authorization_pending}{$req_id}{fd} == $fd) {
                 delete $self->{authorization_pending}{$req_id};
-                $self->log_info("Cleaned up pending auth request $req_id for disconnected agent $agent_id");
+                $self->log_debug("Cleaned up pending auth request $req_id for disconnected agent $agent_id");
             }
         }
         
-        $self->log_info("Agent disconnected: $agent_id");
+        $self->log_debug("Agent disconnected: $agent_id");
     }
     
     $self->{select}->remove($client_info->{socket});
@@ -421,7 +421,7 @@ sub handle_register {
         files => [],
     };
     
-    $self->log_info("Agent registered: $agent_id");
+    $self->log_debug("Agent registered: $agent_id");
     
     $self->send_message($fd, {
         type => 'ack',
@@ -593,7 +593,7 @@ sub handle_discovery {
     
     push @{$self->{discoveries}}, $discovery;
     
-    $self->log_info("Discovery from $agent_id [$discovery->{category}]: $msg->{content}");
+    $self->log_debug("Discovery from $agent_id [$discovery->{category}]: $msg->{content}");
     
     # Acknowledge
     $self->send_message($fd, {
@@ -855,13 +855,13 @@ sub do_maintenance {
         if ($self->{ever_connected}) {
             # Normal idle: all clients have disconnected after at least one connected
             if (($now - $self->{last_client_time}) > $self->{idle_timeout}) {
-                $self->log_info("Broker idle timeout - no clients for $self->{idle_timeout}s after last disconnect, exiting");
+                $self->log_debug("Broker idle timeout - no clients for $self->{idle_timeout}s after last disconnect, exiting");
                 exit 0;
             }
         } else {
             # Startup grace: no client has ever connected
             if (($now - $self->{startup_time}) > $self->{startup_grace}) {
-                $self->log_info("Broker startup grace expired - no clients connected within $self->{startup_grace}s, exiting");
+                $self->log_debug("Broker startup grace expired - no clients connected within $self->{startup_grace}s, exiting");
                 exit 0;
             }
         }
@@ -1029,7 +1029,7 @@ sub handle_release_api_slot {
         # Rate limited - set retry_until from retry-after or default 60s
         my $retry_delay = $msg->{retry_after} || 60;
         $rl->{retry_until} = time() + $retry_delay;
-        $self->log_info("Rate limit hit by $agent_id, blocking requests for ${retry_delay}s");
+        $self->log_debug("Rate limit hit by $agent_id, blocking requests for ${retry_delay}s");
     }
 
     $self->log_debug("API slot released by $agent_id (in_flight: $rl->{in_flight})");
@@ -1209,7 +1209,7 @@ sub handle_authorization_request {
     push @{$self->{user_inbox}}, $message;
     push @{$self->{user_inbox_history}}, $message;
     
-    $self->log_info("Authorization request $request_id from $sender queued for user");
+    $self->log_debug("Authorization request $request_id from $sender queued for user");
     
     # Don't ack yet - the child agent is blocking on send_and_wait
     # The response will come when the user responds via authorization_response
@@ -1235,7 +1235,7 @@ sub handle_authorization_response {
     my $approved = $msg->{approved} ? 1 : 0;
     my $grant_type = $msg->{grant_type} || ($approved ? 'once' : 'denied');
     
-    $self->log_info("Authorization $request_id: " . ($approved ? "APPROVED ($grant_type)" : "DENIED"));
+    $self->log_debug("Authorization $request_id: " . ($approved ? "APPROVED ($grant_type)" : "DENIED"));
     
     # Send response directly to the waiting child agent
     $self->send_message($agent_fd, {
@@ -1427,14 +1427,9 @@ sub _calculate_api_token_delay {
     return 0;
 }
 
-sub log_info {
-    my ($self, $msg) = @_;
-    CLIO::Core::Logger::log_info('Broker', $msg);
-}
-
 sub log_warn {
     my ($self, $msg) = @_;
-    CLIO::Core::Logger::log_warning('Broker', $msg);
+    CLIO::Core::Logger::log_debug('Broker', $msg);
 }
 
 sub log_debug {

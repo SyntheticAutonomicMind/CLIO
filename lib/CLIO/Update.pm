@@ -12,7 +12,7 @@ use File::Basename qw(dirname);
 use File::Path qw(mkpath rmtree);
 use CLIO::Util::JSON qw(decode_json encode_json);
 use CLIO::Util::Proxy qw(resolve_proxy_url);
-use CLIO::Core::Logger qw(log_debug log_error log_warning);
+use CLIO::Core::Logger qw(log_debug log_warning);
 use POSIX qw(_exit);
 use CLIO::Update::Releases;
 
@@ -536,7 +536,7 @@ sub detect_install_location {
     if (-d "$bin_dir/lib/CLIO") {
         $install_dir = $bin_dir;
     } else {
-        log_warning('Update', "Cannot find lib/CLIO in $bin_dir - may be development mode");
+        log_debug('Update', "Cannot find lib/CLIO in $bin_dir - may be development mode");
     }
 
     # Determine if this is a user install or system install
@@ -621,20 +621,20 @@ sub install_from_directory {
     my ($self, $source_dir) = @_;
     
     unless (-d $source_dir && -f "$source_dir/clio") {
-        log_error('Update', "Invalid source directory: $source_dir");
+        log_debug('Update', "Invalid source directory: $source_dir");
         return 0;
     }
     
     # Verify install.sh exists
     unless (-f "$source_dir/install.sh") {
-        log_error('Update', "install.sh not found in source directory");
+        log_debug('Update', "install.sh not found in source directory");
         return 0;
     }
     
     # Detect current installation location
     my $install_info = $self->detect_install_location();
     unless ($install_info) {
-        log_error('Update', "Cannot detect CLIO installation location");
+        log_debug('Update', "Cannot detect CLIO installation location");
         return 0;
     }
     
@@ -651,7 +651,7 @@ sub install_from_directory {
     my $original_dir = getcwd();
 
     chdir($source_dir) or do {
-        log_error('Update', "Cannot cd to $source_dir: $!");
+        log_debug('Update', "Cannot cd to $source_dir: $!");
         return 0;
     };
 
@@ -688,11 +688,11 @@ sub install_from_directory {
     $success = ($result == 0);
 
     if (!$success) {
-        log_error('Update', "Installation command failed: " . join(' ', @install_cmd));
-        log_error('Update', "Exit code: " . ($result >> 8));
+        log_debug('Update', "Installation command failed: " . join(' ', @install_cmd));
+        log_debug('Update', "Exit code: " . ($result >> 8));
     }
 
-    chdir($original_dir) or log_warning('Update', "Cannot return to $original_dir: $!");
+    chdir($original_dir) or log_debug('Update', "Cannot return to $original_dir: $!");
 
     return $success;
 }
@@ -731,7 +731,7 @@ sub install_latest {
                 $new_version = $v if $v ne '';
             }
         } else {
-            log_warning('Update', "Cannot read VERSION file: $!");
+            log_debug('Update', "Cannot read VERSION file: $!");
         }
     }
 

@@ -83,7 +83,7 @@ BEGIN {
         if ($CA_BUNDLE_PATH) {
             $ENV{PERL_LWP_SSL_CA_FILE} = $CA_BUNDLE_PATH;
         } else {
-            log_warning('CABundle', "No CA bundle found in common locations. HTTPS requests may fail.");
+            log_debug('CABundle', "No CA bundle found in common locations. HTTPS requests may fail.");
         }
     }
 }

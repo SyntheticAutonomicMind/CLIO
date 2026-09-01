@@ -95,8 +95,8 @@ my $trimmed = validate_and_truncate(
 my $trimmed_count = scalar(@$trimmed);
 diag("After proactive trim: $total_messages -> $trimmed_count messages");
 
-ok($trimmed_count < $total_messages, "Messages were trimmed ($trimmed_count < $total_messages)");
-ok($trimmed_count > 10, "Trim kept a reasonable number of messages ($trimmed_count > 10)");
+ok($trimmed_count == $total_messages, "validate_and_truncate is now a legacy no-op (no trimming, $trimmed_count == $total_messages)");
+ok($trimmed_count > 10, "All messages retained ($trimmed_count > 10)");
 
 # Test 3: First message should be system
 is($trimmed->[0]{role}, 'system', "System prompt preserved as first message");
@@ -122,13 +122,12 @@ for my $result_id (keys %tool_result_ids) {
 }
 is($orphaned_results, 0, "No orphaned tool results after trimming");
 
-# Test 5: Simulate what used to happen - the reactive trim path
-# With the old code, @messages would have ALL 200+ messages when token_limit_exceeded fires
-# With new code, @messages is already trimmed, so reactive trim drops very few
-my $reactive_would_drop = $total_messages - $trimmed_count;
-diag("Old reactive path would have dropped: $reactive_would_drop messages from $total_messages");
-diag("New proactive path: already trimmed to $trimmed_count messages");
-diag("If reactive still fires (estimation error), it only drops a handful");
+# Test 5: validate_and_truncate is now a legacy handler that does not trim.
+# Actual trimming is handled by the messageHistory/YaRN pipeline in
+# WorkflowOrchestrator. The legacy handler just validates tool pairs.
+my $reactive_would_drop = 0;
+diag("Legacy path: no trimming ($total_messages -> $trimmed_count messages)");
+diag("Actual trimming now handled by messageHistory/YaRN pipeline");
 
 # Test 6: Verify the trim didn't produce too few messages (sanity check)
 # With 128K context and ~50% post-trim target, we should keep quite a few
@@ -159,8 +158,8 @@ my $small_trimmed = validate_and_truncate(
     model              => 'local-model',
 );
 my $small_count = scalar(@$small_trimmed);
-diag("32K context trim: $total_messages -> $small_count messages");
-ok($small_count < $trimmed_count, "Smaller context = more aggressive trimming ($small_count < $trimmed_count)");
+diag("32K context: $total_messages -> $small_count messages (legacy no-op, same as 128K)");
+ok($small_count == $total_messages, "Legacy handler is context-agnostic (no trimming at any budget)");
 ok($small_count > 5, "Still keeps minimum messages ($small_count > 5)");
 
 done_testing();

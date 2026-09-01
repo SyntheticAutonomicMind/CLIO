@@ -131,7 +131,7 @@ END
     ok_test($result && $result->{content}, "undef previous_summary handled gracefully");
 }
 
-# Test 4: MessageValidator _extract_preserved_units returns gap_units
+# Test 4: validate_and_truncate preserves thread_summary (legacy no-op path)
 {
     # Simulate a message array with an old thread_summary
     my @messages = (

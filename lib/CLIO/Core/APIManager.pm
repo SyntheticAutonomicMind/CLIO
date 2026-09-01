@@ -25,7 +25,7 @@ backoff, and token usage tracking. Central hub for all AI API interactions.
 use strict;
 use warnings;
 use utf8;
-use CLIO::Core::Logger qw(should_log log_debug log_error log_info log_warning);
+use CLIO::Core::Logger qw(should_log log_debug log_warning);
 use CLIO::Core::ErrorContext qw(classify_error format_error);
 use CLIO::Util::ConfigPath qw(get_config_dir);
 use CLIO::Providers qw(get_provider list_providers provider_from_url);
@@ -289,7 +289,7 @@ sub new {
         CLIO::Providers::configure_rate_limiter($self->{rate_limiter});
     };
     if ($@) {
-        log_warning('APIManager', "configure_rate_limiter failed: $@");
+        log_debug('APIManager', "configure_rate_limiter failed: $@");
     }
 
     # Initialize response handler for rate limiting, error handling, quota tracking
@@ -365,14 +365,14 @@ sub refresh_api_key {
     my $old_key = $self->{api_key} || '';
     my $old_key_prefix = substr($old_key, 0, 10) . '...';
     
-    log_info('APIManager', "Refreshing API key (current: $old_key_prefix)");
+    log_debug('APIManager', "Refreshing API key (current: $old_key_prefix)");
     
     my $new_key = $self->_get_api_key();
     
     if ($new_key && $new_key ne $old_key) {
         $self->{api_key} = $new_key;
         my $new_key_prefix = substr($new_key, 0, 10) . '...';
-        log_info('APIManager', "API key refreshed successfully ($old_key_prefix -> $new_key_prefix)");
+        log_debug('APIManager', "API key refreshed successfully ($old_key_prefix -> $new_key_prefix)");
         return 1;
     }
     
@@ -383,7 +383,7 @@ sub refresh_api_key {
     }
     
     # No key available at all
-    log_warning('APIManager', "API key refresh failed - no key available");
+    log_debug('APIManager', "API key refresh failed - no key available");
     return 0;
 }
 
@@ -421,7 +421,7 @@ sub _attempt_token_recovery {
     return 0 if $self->{_recovering_token};
     $self->{_recovering_token} = 1;
     
-    log_info('APIManager', "Attempting token recovery after auth failure");
+    log_debug('APIManager', "Attempting token recovery after auth failure");
     
     # Determine if this is a GitHub Copilot provider (check both api_base URL and provider name)
     my $is_copilot_provider = 0;
@@ -447,7 +447,7 @@ sub _attempt_token_recovery {
             if ($fresh_token) {
                 $self->{api_key} = $fresh_token;
                 $self->{using_exchanged_token} = $auth->{using_exchanged_token} || 0;
-                log_info('APIManager', "Token recovery succeeded via Copilot refresh");
+                log_debug('APIManager', "Token recovery succeeded via Copilot refresh");
                 $step1_success = 1;
             }
         };
@@ -457,7 +457,7 @@ sub _attempt_token_recovery {
         }
         # If force refresh failed, the GitHub token itself may be invalid
         if ($@) {
-            log_warning('APIManager', "Copilot refresh failed: $@");
+            log_debug('APIManager', "Copilot refresh failed: $@");
         }
         
         # Step 2: Validate the underlying GitHub token and try re-auth
@@ -468,16 +468,16 @@ sub _attempt_token_recovery {
             my $validation = $auth->validate_github_token();
             
             if (!$validation->{valid}) {
-                log_warning('APIManager', "GitHub token invalid: $validation->{error}");
+                log_debug('APIManager', "GitHub token invalid: $validation->{error}");
                 
                 # GitHub token is bad - need full re-authentication
                 if ($self->{reauth_callback}) {
-                    log_info('APIManager', "Invoking re-authentication callback");
+                    log_debug('APIManager', "Invoking re-authentication callback");
                     my $result = eval { $self->{reauth_callback}->() };
                     if ($result) {
                         # Callback succeeded - refresh our key
                         $self->{api_key} = $self->_get_api_key();
-                        log_info('APIManager', "Token recovery succeeded via re-authentication");
+                        log_debug('APIManager', "Token recovery succeeded via re-authentication");
                         $step2_success = 1;
                     }
                 }
@@ -537,17 +537,17 @@ sub _get_api_key {
         };
         
         if ($@) {
-            log_warning('APIManager', "Failed to get GitHub token: $@");
+            log_debug('APIManager', "Failed to get GitHub token: $@");
             return '';
         }
         
         if ($github_token) {
-            log_info('APIManager', "Using GitHub Copilot/GitHub token");
+            log_debug('APIManager', "Using GitHub Copilot/GitHub token");
             return $github_token;
         }
         
         # GitHub Copilot not authenticated via GitHub - will fall through to check static key
-        log_info('APIManager', "GitHub Copilot not authenticated via GitHub, checking for static key");
+        log_debug('APIManager', "GitHub Copilot not authenticated via GitHub, checking for static key");
     }
     
     # Priority 2: Config api_key (fallback for GitHub Copilot or primary for other providers)
@@ -580,7 +580,7 @@ sub _get_api_key {
             return '';
         }
     }
-    log_warning('APIManager', "No API key available (not set in config)");
+    log_debug('APIManager', "No API key available (not set in config)");
     return '';
 }
 
@@ -605,7 +605,7 @@ sub get_current_model {
                     $model = $resolved;
                     $self->{config}->set('model', $model, 0);
                     eval { $self->{config}->save(); };
-                    log_warning('APIManager', "Failed to persist resolved model '$model' to config: $@") if $@;
+                    log_debug('APIManager', "Failed to persist resolved model '$model' to config: $@") if $@;
                 }
             }
            return $model;
@@ -613,7 +613,7 @@ sub get_current_model {
     }
     
     # Fallback (should never happen if config is properly initialized)
-   log_warning('APIManager', "No model in config, using default");
+   log_debug('APIManager', "No model in config, using default");
    require CLIO::Providers;
    return CLIO::Providers::DEFAULT_MODEL();
 }
@@ -655,7 +655,7 @@ sub cycle_model {
     # Reset learned state for the new model
     $self->{_model_capabilities_cache} = undef;
 
-    log_info('APIManager', "Model routing: switched from '$old_model' to '$new_model' (index $idx)");
+    log_debug('APIManager', "Model routing: switched from '$old_model' to '$new_model' (index $idx)");
 
     return ($new_model, $old_model);
 }
@@ -727,7 +727,7 @@ sub model_routing_active {
     for my $id (@model_ids) {
         next if $id =~ m{^/} || $id =~ m{\.gguf$}i;
         my $resolved = "$placeholder/$id";
-        log_info('APIManager', "Resolved model $placeholder -> $resolved");
+        log_debug('APIManager', "Resolved model $placeholder -> $resolved");
         return $self->{_model_placeholder_cache}{$placeholder} = $resolved;
     }
     
@@ -763,7 +763,7 @@ sub get_current_provider {
     }
     
     # Fallback
-    log_warning('APIManager', "No provider in config, using default");
+    log_debug('APIManager', "No provider in config, using default");
     return 'openai';
 }
 
@@ -811,7 +811,7 @@ sub _model_throttle_learn {
     my $new_limit = ($count > 1) ? $count - 1 : 1;
     if (!defined $learned || $new_limit < $learned) {
         $self->{_model_rate_limits}{$model} = $new_limit;
-        log_info('APIManager', "Learned rate limit for $model: $new_limit req/60s (was " . ($learned // 'unknown') . ")");
+        log_debug('APIManager', "Learned rate limit for $model: $new_limit req/60s (was " . ($learned // 'unknown') . ")");
     }
 }
 
@@ -1024,7 +1024,7 @@ sub _learn_input_token_limit {
     if (defined $explicit_limit && $explicit_limit > 0) {
         if (!defined $existing || $explicit_limit < $existing) {
             $self->{_model_input_token_limits}{$model} = int($explicit_limit);
-            log_info('APIManager', sprintf(
+            log_debug('APIManager', sprintf(
                 "Anthropic ITPM limit for %s seeded from headers: %d tokens/60s (was %s)",
                 $model, int($explicit_limit), $existing // 'unknown'));
         }
@@ -1035,7 +1035,7 @@ sub _learn_input_token_limit {
     my $new_limit = $observed_tokens > 1 ? int($observed_tokens - 1) : 1;
     if (!defined $existing || $new_limit < $existing) {
         $self->{_model_input_token_limits}{$model} = $new_limit;
-        log_info('APIManager', "Learned input token limit for $model: $new_limit tokens/60s (was " . ($existing // 'unknown') . ")");
+        log_debug('APIManager', "Learned input token limit for $model: $new_limit tokens/60s (was " . ($existing // 'unknown') . ")");
     }
 }
 
@@ -1082,7 +1082,7 @@ sub adapt_request_for_endpoint {
         # applies user overrides from /api set tools).
         if (!$self->model_supports_tools($model)) {
             delete $payload->{tools};
-            log_info('APIManager', "Removed tools: model '$model' does not support function calling");
+            log_debug('APIManager', "Removed tools: model '$model' does not support function calling");
         }
     }
     
@@ -1784,7 +1784,7 @@ sub get_model_capabilities {
             $models = $copilot_api->get_all_models() || [];
         };
         if ($@) {
-            log_warning('APIManager', "GitHubCopilotModelsAPI failed: $@");
+            log_debug('APIManager', "GitHubCopilotModelsAPI failed: $@");
             # Fall through to direct API fetch
             $models = [];
         }
@@ -1831,15 +1831,15 @@ sub get_model_capabilities {
                     return $self->_caps_with_overrides($capabilities);
                 }
             }
-            log_info('APIManager', "Models endpoint unavailable ($models_url), using fallback token limits");
+            log_debug('APIManager', "Models endpoint unavailable ($models_url), using fallback token limits");
             return undef;
         }
         
         my $data = safe_decode_json($resp->decoded_content);
         if ($@) {
             if (should_log('WARNING')) {
-                log_warning('APIManager', "Failed to parse models response from $models_url");
-                log_warning('APIManager', "JSON error: $@");
+                log_debug('APIManager', "Failed to parse models response from $models_url");
+                log_debug('APIManager', "JSON error: $@");
             }
             return undef;
         }
@@ -2472,7 +2472,7 @@ sub _model_uses_responses_api {
         $result = $self->{_copilot_models_api}->model_uses_responses_api($model) ? 1 : 0;
     };
     if ($@) {
-        log_warning('APIManager', "Failed to check Responses API support for $model: $@");
+        log_debug('APIManager', "Failed to check Responses API support for $model: $@");
         $result = 0;
     }
     
@@ -2878,7 +2878,7 @@ sub _build_payload {
             $payload->{copilot_thread_id} = $self->{session}{session_id};
             log_debug('APIManager', "Including copilot_thread_id: $payload->{copilot_thread_id}");
         } else {
-            log_warning('APIManager', "NO copilot_thread_id - session will be treated as NEW (charges AI Credits!)");
+            log_debug('APIManager', "NO copilot_thread_id - session will be treated as NEW (charges AI Credits!)");
             log_debug('APIManager', "session=" . (defined $self->{session} ? "defined" : "undef") .
                          ", session_id=" . (defined $self->{session}{session_id} ? $self->{session}{session_id} : "undef"));
         }
@@ -2918,7 +2918,7 @@ sub _build_payload {
                 # Only warn if this is NOT the first request AND we have no fallback
                 my $is_first_request = scalar(grep { $_->{role} ne 'system' } @$messages) <= 1;
                 if (!$is_first_request) {
-                    log_warning('APIManager', "NO previous_response_id on turn 2+ - this will be charged as NEW request");
+                    log_debug('APIManager', "NO previous_response_id on turn 2+ - this will be charged as NEW request");
                     log_debug('APIManager', "FALLBACK not available: session=" . (defined $self->{session} ? "defined" : "undef") .
                                  ", lastGitHubCopilotResponseId=" .
                                  (defined $self->{session}{lastGitHubCopilotResponseId} ? $self->{session}{lastGitHubCopilotResponseId} : "undef") . "\n");
@@ -3088,7 +3088,7 @@ sub _check_connectivity {
     for my $i (0 .. $#check_delays) {
         # Wait before this check (skip first one)
         if ($i > 0) {
-            log_info('APIManager', "Waiting ${check_delays[$i]}s before connectivity check...");
+            log_debug('APIManager', "Waiting ${check_delays[$i]}s before connectivity check...");
             sleep($check_delays[$i]);
         }
 
@@ -3114,7 +3114,7 @@ sub _check_connectivity {
         my $resp = eval { $ua->get($check_url, headers => \%headers) };
 
         if ($resp && $resp->is_success) {
-            log_info('APIManager', "Connectivity restored - API endpoint responding");
+            log_debug('APIManager', "Connectivity restored - API endpoint responding");
             return 1;
         }
 
@@ -3123,7 +3123,7 @@ sub _check_connectivity {
         log_debug('APIManager', "Connectivity check failed: $status ($err)");
     }
 
-    log_warning('APIManager', "Connectivity check failed after " . scalar(@check_delays) . " attempts");
+    log_debug('APIManager', "Connectivity check failed after " . scalar(@check_delays) . " attempts");
     return 0;
 }
 
@@ -3159,7 +3159,7 @@ sub _apply_rate_limiting {
         $broker_request_id = $slot_result->{request_id};
 
         if (!$slot_result->{success}) {
-            log_warning('APIManager', "Broker rate limit timeout after $slot_result->{waited}s, proceeding anyway");
+            log_debug('APIManager', "Broker rate limit timeout after $slot_result->{waited}s, proceeding anyway");
         } elsif ($slot_result->{waited} > 0) {
             log_debug('APIManager', "Broker granted API slot after waiting " . sprintf("%.2f", $slot_result->{waited}) . "s");
         }
@@ -3239,7 +3239,7 @@ sub _prepare_api_request {
 
     eval { $self->_apply_rate_limiting(); };
     if ($@) {
-        log_warning('APIManager', "_apply_rate_limiting failed: $@");
+        log_debug('APIManager', "_apply_rate_limiting failed: $@");
     }
     # Record the resolved model so release_broker_slot can forward
     # anthropic-ratelimit-* headers to the broker's per-model snapshot.
@@ -3247,7 +3247,7 @@ sub _prepare_api_request {
 
     # Proactive per-model throttle
     if (my $throttle_delay = $self->_model_throttle_check($model)) {
-        log_info('APIManager', sprintf("Proactive rate throttle for %s: %.1fs", $model, $throttle_delay));
+        log_debug('APIManager', sprintf("Proactive rate throttle for %s: %.1fs", $model, $throttle_delay));
         for (my $i = int($throttle_delay); $i > 0; $i--) { sleep(1); }
     }
     $self->_model_throttle_record($model);
@@ -3269,7 +3269,7 @@ sub _prepare_api_request {
             $pending_tokens = 0;
         }
         if (my $token_delay = $self->_model_input_token_throttle_check($model, $pending_tokens)) {
-            log_info('APIManager', sprintf("Proactive token throttle for %s: %.1fs (pending~%d tokens)",
+            log_debug('APIManager', sprintf("Proactive token throttle for %s: %.1fs (pending~%d tokens)",
                 $model, $token_delay, $pending_tokens));
             for (my $i = int($token_delay); $i > 0; $i--) { sleep(1); }
         }
@@ -3318,7 +3318,7 @@ sub _prepare_api_request {
     my $post_trim_count = scalar(@$messages);
     if ($post_trim_count < $pre_trim_count) {
         $self->{_last_trimmed_messages} = $messages;
-        log_info('APIManager', "Proactive trim: $pre_trim_count -> $post_trim_count messages");
+        log_debug('APIManager', "Proactive trim: $pre_trim_count -> $post_trim_count messages");
     } else {
         $self->{_last_trimmed_messages} = undef;
     }
@@ -3335,7 +3335,7 @@ sub _prepare_api_request {
     # Build request payload
     my $payload;
     if ($use_responses_api) {
-        log_info('APIManager', ($is_streaming ? "Streaming: " : "") . "Using Responses API for model: $model");
+        log_debug('APIManager', ($is_streaming ? "Streaming: " : "") . "Using Responses API for model: $model");
         $payload = $self->_build_responses_api_payload($messages, $model, $endpoint_config, %opts, stream => ($is_streaming ? 1 : 0));
     } else {
         $payload = $self->_build_payload($messages, $model, $endpoint_config, %opts, stream => ($is_streaming ? 1 : 0));
@@ -3369,7 +3369,7 @@ sub _prepare_api_request {
             my $error_summary = join('; ', @$preflight_errors);
             log_debug('APIManager', "Pre-flight validation failed: $error_summary");
 
-            log_info('APIManager', "Attempting auto-repair of message structure");
+            log_debug('APIManager', "Attempting auto-repair of message structure");
             $payload->{messages} = $self->_validate_tool_message_pairs($payload->{messages});
 
             my $post_repair_errors = $self->_preflight_validate_messages($payload->{messages});
@@ -3382,7 +3382,7 @@ sub _prepare_api_request {
                     error_type => 'message_structure_error'
                 }};
             }
-            log_info('APIManager', "Message structure repaired successfully");
+            log_debug('APIManager', "Message structure repaired successfully");
         }
     }
 
@@ -3674,7 +3674,7 @@ sub send_request {
     my $provider = lc($ctx->{provider_label} // 'unknown');
     my $wait = $self->{rate_limiter}->check_and_wait($provider);
     if ($wait > 0) {
-        log_info('APIManager', "Rate limited by $provider, waiting ${wait}s...");
+        log_debug('APIManager', "Rate limited by $provider, waiting ${wait}s...");
         sleep($wait);
     }
     
@@ -3766,7 +3766,7 @@ sub _process_non_streaming_response {
 
     my $data = safe_decode_json($resp->decoded_content);
     if ($@) {
-        log_error('APIManager', "[$provider_label] Invalid response: $@");
+        log_debug('APIManager', "[$provider_label] Invalid response: $@");
         return $self->_error("Invalid response format: $@");
     }
 
@@ -3833,7 +3833,7 @@ sub _process_non_streaming_response {
         return $tc_result;
     }
 
-    log_error('APIManager', "No message content in response") if $self->{debug};
+    log_debug('APIManager', "No message content in response") if $self->{debug};
     $self->{response_handler}->release_broker_slot($resp, 200);
     return $self->_error("No message content in response");
 }
@@ -3885,7 +3885,7 @@ sub send_request_streaming {
     my $provider = lc($ctx->{provider_label} // 'unknown');
     my $wait = $self->{rate_limiter}->check_and_wait($provider);
     if ($wait > 0) {
-        log_info('APIManager', "Rate limited by $provider, waiting ${wait}s...");
+        log_debug('APIManager', "Rate limited by $provider, waiting ${wait}s...");
         sleep($wait);
     }
     
@@ -3973,7 +3973,7 @@ sub send_request_streaming {
                 # chunks are large and infrequent.
                 if (eval { CLIO::Core::Interrupt::pending(session => $self->{session}) }
                     || eval { CLIO::Core::Interrupt::check(session => $self->{session}) }) {
-                    log_info('APIManager', "Interrupt detected in SSE stream, aborting");
+                    log_debug('APIManager', "Interrupt detected in SSE stream, aborting");
                     $ss->{_user_interrupted} = 1;
                     # Throw to break out of HTTP::Tiny/curl streaming loop.
                     # For HTTP::Tiny this propagates through data_callback;
@@ -3996,7 +3996,7 @@ sub send_request_streaming {
 
                     my $data = safe_decode_json($data_json);
                     if ($@) {
-                        log_warning('APIManager', "Failed to parse SSE chunk: $@");
+                        log_debug('APIManager', "Failed to parse SSE chunk: $@");
                         next;
                     }
                     # Skip null/non-object payloads (e.g. JSON `null`, scalar) - they
@@ -4024,7 +4024,7 @@ sub send_request_streaming {
     my $user_interrupted = ($http_error && $http_error =~ /__CLIO_INTERRUPT_ABORT__/)
         || (eval { CLIO::Core::Interrupt::pending(session => $self->{session}) });
     if ($user_interrupted) {
-        log_info('APIManager', "Streaming interrupted by user (ESC)");
+        log_debug('APIManager', "Streaming interrupted by user (ESC)");
         $self->{rate_limiter}->release($provider) if $provider && $provider ne 'unknown';
         if ($self->{response_handler}) {
             $self->{response_handler}->release_broker_slot($resp, 200);
@@ -4121,7 +4121,11 @@ sub _process_sse_data {
     if ($_err_hash) {
         my $msg = $_err_hash->{message} // $_err_hash->{msg} // 'unknown';
         my $code = $_err_hash->{code} // $_err_hash->{type} // '';
-        log_warning('APIManager', "SSE error chunk: code=$code message=$msg");
+        # Logged at debug: the error is stashed on $ss->{_sse_error} and
+        # surfaced as a retryable error by _finalize_streaming_response, which
+        # triggers model rerouting. Logging WARN here is a smell — the system
+        # handles this condition, so it should not produce console noise at INFO.
+        log_debug('APIManager', "SSE error chunk: code=$code message=$msg");
         $ss->{_sse_error} = { message => $msg, code => $code };
         return;  # No content/tool_calls to extract from this chunk
     }
@@ -4325,7 +4329,7 @@ sub _process_responses_api_event {
         log_debug('APIManager', "Responses API: stream completed, status=" . ($resp_data->{status} || '?'));
     }
     elsif ($event_type eq 'error') {
-        log_warning('APIManager', "Responses API error: [" . ($data->{code} || 'unknown') . "] " . ($data->{message} || 'Unknown'));
+        log_debug('APIManager', "Responses API error: [" . ($data->{code} || 'unknown') . "] " . ($data->{message} || 'Unknown'));
     }
 
     return ($content_delta, undef);
@@ -4761,7 +4765,7 @@ sub _finalize_streaming_response {
         && (length($s{accumulated_content}) || keys(%{$s{tool_calls_accumulator}}))) {
         my $content_len = length($s{accumulated_content} // '');
         my $tc_count    = scalar keys %{$s{tool_calls_accumulator}};
-        log_warning('APIManager',
+        log_debug('APIManager',
             "Truncated stream detected: no finish_reason, content=$content_len chars, "
             . "tool_calls=$tc_count - surfacing as retryable");
         $self->{response_handler}->release_broker_slot($resp, 200);
@@ -4942,12 +4946,12 @@ sub _handle_streaming_http_error {
             my $all_headers_str = join(", ", map { "$_=" . (defined($headers->header($_)) ? "'" . $headers->header($_) . "'" : 'undef') } @header_names);
             log_debug('APIManager', "All response headers (${\scalar(@header_names)}): $all_headers_str");
         } else {
-            log_info('APIManager', "Headers object exists but has NO fields - headers hash dump:");
+            log_debug('APIManager', "Headers object exists but has NO fields - headers hash dump:");
             # Dump the internal hash directly to see what it actually contains
             if (ref($headers) eq 'CLIO::Compat::HTTP::Headers') {
                 my %h = %{$headers->{headers}} if ref($headers->{headers}) eq 'HASH';
                 while (my ($k, $v) = each %h) {
-                    log_info('APIManager', "  header[$k] = $v");
+                    log_debug('APIManager', "  header[$k] = $v");
                 }
             }
         }
@@ -5037,7 +5041,7 @@ sub _check_200_body_error {
     $self->{response_handler}->release_broker_slot($resp, 200);
 
     if ($error_code && $error_code =~ /rate.lim/i) {
-        log_info('APIManager', "Rate limit in 200 body (code=$error_code), treating as 429");
+        log_debug('APIManager', "Rate limit in 200 body (code=$error_code), treating as 429");
         $self->{response_handler}{rate_limit_until} = time() + 60;
         return { success => 0, error => $error_msg, retryable => 1, retry_after => 60, error_type => 'rate_limit' };
     }
@@ -5124,7 +5128,7 @@ sub send_request_async {
     if ($@) {
         $self->{error} = $@;
         $self->{request_state} = REQUEST_ERROR;
-        log_error('APIManager', "Request failed: $@");
+        log_debug('APIManager', "Request failed: $@");
         return 0;
     }
     
@@ -5139,7 +5143,7 @@ sub send_request_async {
     # No valid response
     $self->{error} = "Invalid response format";
     $self->{request_state} = REQUEST_ERROR;
-    log_error('APIManager', "Invalid response format");
+    log_debug('APIManager', "Invalid response format");
     return 0;
 }
 
@@ -5510,7 +5514,7 @@ sub _process_copilot_usage {
     my $output_tokens = $token_info{output}{count} || 0;
     my $cached_tokens = $token_info{cache_read}{count} || 0;
 
-    log_info('APIManager', sprintf("Copilot AI Credits [%.6f credits, \$%.6f]: %d in, %d out, %d cached",
+    log_debug('APIManager', sprintf("Copilot AI Credits [%.6f credits, \$%.6f]: %d in, %d out, %d cached",
         $ai_credits, $cost_usd, $input_tokens, $output_tokens, $cached_tokens));
 
     # Persist session
@@ -5521,7 +5525,7 @@ sub _process_copilot_usage {
 
 sub _error {
     my ($self, $msg) = @_;
-    log_error('APIManager', $msg);
+    log_debug('APIManager', $msg);
     return { error => 1, message => $msg };
 }
 
@@ -5600,7 +5604,7 @@ sub _get_native_provider {
     # Load and instantiate the provider module
     eval { (my $f = "$module.pm") =~ s{::}{/}g; require $f };
     if ($@) {
-        log_error('APIManager', "Failed to load native provider $module: $@");
+        log_debug('APIManager', "Failed to load native provider $module: $@");
         return undef;
     }
     
@@ -5726,7 +5730,7 @@ sub _send_native_streaming {
         elsif ($thinking_mode eq 'disabled') {
             if ($requires_adaptive) {
                 # Override: this model rejects {type:"disabled"} with HTTP 400.
-                log_warning('APIManager', "thinking_mode=disabled ignored for $full_model_for_caps: model requires adaptive thinking (API rejects {type:disabled})");
+                log_debug('APIManager', "thinking_mode=disabled ignored for $full_model_for_caps: model requires adaptive thinking (API rejects {type:disabled})");
                 $thinking_opt = {
                     enabled => 1,
                     effort  => $effort,
@@ -5837,7 +5841,7 @@ sub _send_native_streaming {
                 # check() with a non-blocking ReadKey for active detection.
                 if (eval { CLIO::Core::Interrupt::pending(session => $self->{session}) }
                     || eval { CLIO::Core::Interrupt::check(session => $self->{session}) }) {
-                    log_info('APIManager', "Interrupt detected in native SSE stream, aborting");
+                    log_debug('APIManager', "Interrupt detected in native SSE stream, aborting");
                     last;
                 }
                 my $event = $provider->parse_stream_event($1);
@@ -5918,7 +5922,7 @@ sub _send_native_streaming {
     # here and return an interrupted result instead of treating the
     # killed-process response as an HTTP error.
     if (eval { CLIO::Core::Interrupt::pending(session => $self->{session}) }) {
-        log_info('APIManager', "Native streaming interrupted by user (ESC)");
+        log_debug('APIManager', "Native streaming interrupted by user (ESC)");
         my $native_provider_label = undef;
         if ($self->{_current_endpoint_config}) {
             $native_provider_label = $self->{_current_endpoint_config}{requires_copilot_headers} ? 'GitHub Copilot'
@@ -5946,7 +5950,7 @@ sub _send_native_streaming {
     }
     
     if ($@) {
-        log_error('APIManager', "Native streaming failed: $@");
+        log_debug('APIManager', "Native streaming failed: $@");
         return { success => 0, error => $@ };
     }
 
@@ -5975,7 +5979,7 @@ sub _send_native_streaming {
     if (!$response->is_success) {
         my $status = $response->code;
         my $error_body = $response->decoded_content // '';
-        log_error('APIManager', "Native API error $status: $error_body");
+        log_debug('APIManager', "Native API error $status: $error_body");
 
         # Parse the JSON error body to extract structured error info.
         # Without this, 429 responses from Anthropic proxies return a bare
@@ -6083,7 +6087,7 @@ sub _send_native_streaming {
                         $mcm->set_reasoning_mode($provider_name, $api_model, $correct_mode);
                     };
                     if ($@) {
-                        log_warning('APIManager', "Failed to persist learned reasoning_mode: $@");
+                        log_debug('APIManager', "Failed to persist learned reasoning_mode: $@");
                     }
                 }
 
@@ -6092,7 +6096,7 @@ sub _send_native_streaming {
                 # and gets the corrected mode immediately.
                 delete $self->{_model_capabilities_cache}{$full_model};
 
-                log_info('APIManager', "Self-correcting retry with reasoning_mode=$correct_mode for $full_model");
+                log_debug('APIManager', "Self-correcting retry with reasoning_mode=$correct_mode for $full_model");
 
                 # Rebuild the request with the corrected mode.
                 my $thinking_opt_corrected = {
@@ -6193,14 +6197,14 @@ sub _send_native_streaming {
                 };
 
                 if ($@) {
-                    log_error('APIManager', "Self-correcting retry failed: $@");
+                    log_debug('APIManager', "Self-correcting retry failed: $@");
                     return { success => 0, error => "Self-correcting retry failed: $@", retryable => 0 };
                 }
 
                 if (!$retry_response->is_success) {
                     my $retry_status = $retry_response->code;
                     my $retry_error_body = $retry_response->decoded_content // '';
-                    log_error('APIManager', "Self-correcting retry still failed: HTTP $retry_status: $retry_error_body");
+                    log_debug('APIManager', "Self-correcting retry still failed: HTTP $retry_status: $retry_error_body");
                     # Surface the original 400 error so the user knows
                     # what happened, plus a note about the retry.
                     return {

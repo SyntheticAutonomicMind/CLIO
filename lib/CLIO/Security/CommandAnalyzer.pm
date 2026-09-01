@@ -7,7 +7,7 @@ use strict;
 use warnings;
 use utf8;
 use Exporter 'import';
-use CLIO::Core::Logger qw(log_debug log_info log_warning);
+use CLIO::Core::Logger qw(log_debug log_warning);
 
 our @EXPORT_OK = qw(analyze_command);
 

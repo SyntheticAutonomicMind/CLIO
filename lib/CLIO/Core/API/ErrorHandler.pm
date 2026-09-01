@@ -7,8 +7,8 @@ use strict;
 use warnings;
 use utf8;
 use CLIO::UI::Terminal qw(ui_char);
-use CLIO::Core::Logger qw(log_error log_warning log_info log_debug should_log);
-use CLIO::Core::Logger qw(log_error log_warning log_info log_debug);
+use CLIO::Core::Logger qw(log_debug log_warning should_log);
+use CLIO::Core::Logger qw(log_debug log_warning);
 use CLIO::Memory::TokenEstimator qw(estimate_tokens compute_prompt_budget);
 use CLIO::Util::RateLimit qw(get_rate_limit_type_name);
 use CLIO::Core::Diagnostics qw(dump_diagnostic display_rate_limit_info get_tool_specific_guidance);
@@ -222,7 +222,7 @@ sub _interruptible_sleep {
         $remaining -= $chunk;
 
         if ($wo && $wo->can('_check_for_user_interrupt') && $wo->_check_for_user_interrupt($session)) {
-            log_info('ErrorHandler', "$label wait interrupted by user");
+            log_debug('ErrorHandler', "$label wait interrupted by user");
             $wo->_handle_interrupt($session, $messages) if $wo->can('_handle_interrupt');
             last;
         }
@@ -287,7 +287,7 @@ sub handle_api_error {
         if ($num_candidates > 1) {
             # Pass through non-actionable error types without burning routing attempts.
             if (_routing_should_skip($api_response)) {
-                log_info('ErrorHandler', "Model routing skipped: error_type=" . ($api_response->{error_type} || 'unknown') . " is not actionable across models");
+                log_debug('ErrorHandler', "Model routing skipped: error_type=" . ($api_response->{error_type} || 'unknown') . " is not actionable across models");
                 # Fall through to the normal error handling below.
             }
             else {
@@ -309,7 +309,7 @@ sub handle_api_error {
                         delete $session->{routing_attempts};
                     }
                     my $active_model = $wo->{api_manager}->get_current_model() // 'unknown';
-                    log_error('ErrorHandler', "Model routing exhausted: $num_candidates models, $routing_attempts total attempts, last model=$active_model, last error: $error");
+                    log_debug('ErrorHandler', "Model routing exhausted: $num_candidates models, $routing_attempts total attempts, last model=$active_model, last error: $error");
                     return {
                         success         => 0,
                         error           => "Model routing exhausted: tried $num_candidates model" . ($num_candidates == 1 ? '' : 's')
@@ -328,7 +328,7 @@ sub handle_api_error {
                     # Reset retry count so the new model gets a fresh retry budget
                     $$retry_count_ref = 0;
                     $wo->{consecutive_errors} = 0 if $wo;
-                    log_info('ErrorHandler', "Model routing: switched from '$old_model' to '$new_model' (attempt $routing_attempts/$max_total total)");
+                    log_debug('ErrorHandler', "Model routing: switched from '$old_model' to '$new_model' (attempt $routing_attempts/$max_total total)");
 
                     # Pause before sending the next request. Without this the
                     # router cycles models as fast as the API rejects them,
@@ -355,7 +355,7 @@ sub handle_api_error {
         # check /api logs).
         my $error_type_check = $api_response->{error_type} || '';
         if ($error_type_check eq 'bad_request' && $$retry_count_ref >= $max_retries) {
-            log_error('ErrorHandler', "Persistent 400 Bad Request after $$retry_count_ref retries - giving up without context trim.");
+            log_debug('ErrorHandler', "Persistent 400 Bad Request after $$retry_count_ref retries - giving up without context trim.");
 
             dump_diagnostic(
                 trigger      => 'persistent_400',
@@ -425,7 +425,7 @@ sub handle_api_error {
 
         # Skip retry limit check for rate limits when infinite retry is enabled
         if (!$allow_infinite_retry && $$retry_count_ref > $retry_limit) {
-            log_error('ErrorHandler', "Maximum retries ($retry_limit) exceeded for this iteration");
+            log_debug('ErrorHandler', "Maximum retries ($retry_limit) exceeded for this iteration");
             return {
                 success         => 0,
                 error           => "Maximum retries exceeded: $error",
@@ -480,18 +480,18 @@ sub handle_api_error {
             $error_type  = "unsupported parameter";
             $system_msg  = undef;
             $retry_delay = 0;
-            log_info('ErrorHandler', "Retrying without unsupported parameter");
+            log_debug('ErrorHandler', "Retrying without unsupported parameter");
         }
         elsif ($api_response->{error_type} && $api_response->{error_type} eq 'bad_request') {
             $system_msg = undef;
-            log_info('ErrorHandler', "API 400 Bad Request - retrying silently (attempt $$retry_count_ref)");
+            log_debug('ErrorHandler', "API 400 Bad Request - retrying silently (attempt $$retry_count_ref)");
         }
         elsif ($api_response->{error_type} && $api_response->{error_type} eq 'malformed_tool_json') {
             if ($$retry_count_ref == 1) {
                 # First attempt: remove bad message, provide schema guidance
                 if (@$messages && $messages->[-1]{role} eq 'assistant') {
                     pop @$messages;
-                    log_info('ErrorHandler', "Removed malformed assistant message from history");
+                    log_debug('ErrorHandler', "Removed malformed assistant message from history");
                 }
 
                 my $failed_tool_name = $api_response->{failed_tool} || 'unknown';
@@ -527,13 +527,13 @@ sub handle_api_error {
 
                 $error_type = "malformed tool JSON";
                 $system_msg = "AI generated invalid JSON parameters. Removed bad message, adding guidance and retrying... (attempt $$retry_count_ref/$max_retries)";
-                log_info('ErrorHandler', "Added JSON formatting guidance for tool: $failed_tool_name");
+                log_debug('ErrorHandler', "Added JSON formatting guidance for tool: $failed_tool_name");
             }
             else {
                 # Second attempt failed: let agent recover
                 if (@$messages && $messages->[-1]{role} eq 'assistant') {
                     pop @$messages;
-                    log_info('ErrorHandler', "Removed second malformed assistant message");
+                    log_debug('ErrorHandler', "Removed second malformed assistant message");
                 }
 
                 push @$messages, {
@@ -547,7 +547,7 @@ sub handle_api_error {
                 };
 
                 $$retry_count_ref = 0;
-                log_warning('ErrorHandler', "Malformed JSON persisted - agent informed, continuing workflow");
+                log_debug('ErrorHandler', "Malformed JSON persisted - agent informed, continuing workflow");
                 return 'retry';  # Don't decrement iteration, just continue
             }
         }
@@ -568,18 +568,18 @@ sub handle_api_error {
 
             # Before retrying after connection errors, verify connectivity is restored
             if ($api_response->{error_type} eq 'connection_error' && $$retry_count_ref == 1) {
-                log_info('ErrorHandler', "Connection error detected - verifying connectivity before retry...");
+                log_debug('ErrorHandler', "Connection error detected - verifying connectivity before retry...");
                 my $endpoint = $wo->{api_manager}{api_base} || '';
                 my $connected = $wo->{api_manager}->_check_connectivity($endpoint);
                 if (!$connected) {
-                    log_warning('ErrorHandler', "Connectivity check failed - continuing with retry path");
+                    log_debug('ErrorHandler', "Connectivity check failed - continuing with retry path");
                     $system_msg = "Network connectivity issue detected. Retrying anyway... (attempt $$retry_count_ref/$max_retries)";
                 }
             }
 
             $error_type = $api_response->{error_type} eq 'connection_error' ? "connection error" : "server error";
             $system_msg //= "Temporary $error_type. Retrying in ${retry_delay}s... (attempt $$retry_count_ref)";
-            log_info('ErrorHandler', "Applying exponential backoff for server error: ${retry_delay}s delay");
+            log_debug('ErrorHandler', "Applying exponential backoff for server error: ${retry_delay}s delay");
         }
         elsif ($api_response->{error_type} && ($api_response->{error_type} eq 'timeout' || $api_response->{error_type} eq 'overloaded')) {
             # Apply exponential backoff for upstream timeouts and overload conditions.
@@ -589,7 +589,7 @@ sub handle_api_error {
             $retry_delay = $retry_delay * $backoff_multiplier;
             $retry_delay = 300 if $retry_delay > 300;
             $system_msg //= "Upstream $error_type. Retrying in ${retry_delay}s... (attempt $$retry_count_ref)";
-            log_info('ErrorHandler', "Applying exponential backoff for $error_type: ${retry_delay}s delay");
+            log_debug('ErrorHandler', "Applying exponential backoff for $error_type: ${retry_delay}s delay");
         }
         # concurrency_limit hits this branch too - the rate_limit branch above
         # already set $error_type via get_rate_limit_type_name, but this
@@ -602,7 +602,7 @@ sub handle_api_error {
             $error_type  = "auth recovery";
             $system_msg  = undef;
             $retry_delay = 0;
-            log_info('ErrorHandler', "Auth token refreshed, retrying request silently");
+            log_debug('ErrorHandler', "Auth token refreshed, retrying request silently");
         }
         elsif ($api_response->{error_type} && $api_response->{error_type} eq 'message_structure_error') {
             $error_type = "message structure error";
@@ -620,7 +620,7 @@ sub handle_api_error {
                     if $current_user_msg &&
                        (!@$fresh_history || $fresh_history->[-1]{content} ne $current_user_msg->{content});
 
-                log_info('ErrorHandler', "Rebuilt messages from session history (" . scalar(@$messages) . " messages)");
+                log_debug('ErrorHandler', "Rebuilt messages from session history (" . scalar(@$messages) . " messages)");
             }
 
             $retry_delay = 0;
@@ -631,7 +631,7 @@ sub handle_api_error {
             eval { $on_system_message->($system_msg); };
             log_debug('ErrorHandler', "UI callback error: $@") if $@;
         } elsif ($system_msg) {
-            log_info('ErrorHandler', "Retryable $error_type detected, retrying in ${retry_delay}s on next iteration (attempt $$retry_count_ref/$max_retries)");
+            log_debug('ErrorHandler', "Retryable $error_type detected, retrying in ${retry_delay}s on next iteration (attempt $$retry_count_ref/$max_retries)");
         }
 
         # Wait before retrying (interruptible). Uses the shared helper so the
@@ -646,7 +646,7 @@ sub handle_api_error {
     if (defined($api_response->{error_type}) && $api_response->{error_type} eq 'rate_limit' && !$api_response->{retryable}) {
         my $rl_code = $api_response->{rate_limit_code} // '';
         if ($rl_code =~ /user_weekly_rate_limited|user_monthly_rate_limited|copilot_session_limit/i) {
-            log_info('ErrorHandler', "Non-retryable rate limit detected ($rl_code) - returning error without retry");
+            log_debug('ErrorHandler', "Non-retryable rate limit detected ($rl_code) - returning error without retry");
             return {
                 success         => 0,
                 error           => $api_response->{error},
@@ -659,7 +659,7 @@ sub handle_api_error {
 
     # ── Non-retryable auth failures (403 subscription errors) ──────────────────────────────────
     if (defined($api_response->{error_type}) && $api_response->{error_type} eq 'auth_failed') {
-        log_info('ErrorHandler', "Permanent auth failure detected - returning error immediately");
+        log_debug('ErrorHandler', "Permanent auth failure detected - returning error immediately");
         return {
             success         => 0,
             error           => $api_response->{error},
@@ -673,10 +673,10 @@ sub handle_api_error {
     # avoids the misleading "Token limit exceeded" fallback that the retry/escalate path would
     # produce for a problem that retrying or trimming context cannot fix.
     if (defined($api_response->{error_type}) && $api_response->{error_type} eq 'provider_unavailable') {
-        # Demoted from log_warning -> log_info. The themed error display path
+        # Demoted from log_warning -> log_debug. The themed error display path
         # surfaces the user-facing message; this log was duplicating it on
         # the user's terminal before the styled line.
-        log_info('ErrorHandler', "Provider backend unavailable - returning error immediately without retry/trim");
+        log_debug('ErrorHandler', "Provider backend unavailable - returning error immediately without retry/trim");
         return {
             success         => 0,
             error           => $api_response->{error},
@@ -687,9 +687,9 @@ sub handle_api_error {
 
     # Billing error - non-retryable. No amount of waiting fixes an empty balance.
     if (defined($api_response->{error_type}) && $api_response->{error_type} eq 'billing_error') {
-        # Demoted from log_warning -> log_info. The themed error display path
+        # Demoted from log_warning -> log_debug. The themed error display path
         # surfaces the user-facing message.
-        log_info('ErrorHandler', "Billing error (out of credits) - returning error immediately");
+        log_debug('ErrorHandler', "Billing error (out of credits) - returning error immediately");
         return {
             success         => 0,
             error           => $api_response->{error},
@@ -700,9 +700,9 @@ sub handle_api_error {
 
     # Model not found - non-retryable. The model literally doesn't exist for this provider/account.
     if (defined($api_response->{error_type}) && $api_response->{error_type} eq 'model_not_found') {
-        # Demoted from log_warning -> log_info. The themed error display path
+        # Demoted from log_warning -> log_debug. The themed error display path
         # surfaces the user-facing message.
-        log_info('ErrorHandler', "Model not found - returning error immediately");
+        log_debug('ErrorHandler', "Model not found - returning error immediately");
         return {
             success         => 0,
             error           => $api_response->{error},
@@ -713,9 +713,9 @@ sub handle_api_error {
 
     # Region unavailable - non-retryable. The model isn't accessible from the user's region.
     if (defined($api_response->{error_type}) && $api_response->{error_type} eq 'region_unavailable') {
-        # Demoted from log_warning -> log_info. The themed error display path
+        # Demoted from log_warning -> log_debug. The themed error display path
         # surfaces the user-facing message.
-        log_info('ErrorHandler', "Region unavailable - returning error immediately");
+        log_debug('ErrorHandler', "Region unavailable - returning error immediately");
         return {
             success         => 0,
             error           => $api_response->{error},
@@ -726,9 +726,9 @@ sub handle_api_error {
 
     # Account disabled - non-retryable. User must contact support/admin to restore access.
     if (defined($api_response->{error_type}) && $api_response->{error_type} eq 'account_disabled') {
-        # Demoted from log_warning -> log_info. The themed error display path
+        # Demoted from log_warning -> log_debug. The themed error display path
         # surfaces the user-facing message.
-        log_info('ErrorHandler', "Account disabled - returning error immediately");
+        log_debug('ErrorHandler', "Account disabled - returning error immediately");
         return {
             success         => 0,
             error           => $api_response->{error},
@@ -742,7 +742,7 @@ sub handle_api_error {
     $$session_error_ref++;
     $session->{_error_count} = $$session_error_ref if $session;
     if ($$session_error_ref > $max_session_errors) {
-        log_error('ErrorHandler', "Session error budget exhausted ($$session_error_ref errors). Stopping to prevent cascading failures.");
+        log_debug('ErrorHandler', "Session error budget exhausted ($$session_error_ref errors). Stopping to prevent cascading failures.");
         return {
             success         => 0,
             error           => "Session error limit reached ($max_session_errors errors). Please start a new request or session. Last error: $error",
@@ -788,7 +788,7 @@ sub handle_api_error {
     # Remove bad assistant message
     if (@$messages && $messages->[-1]{role} eq 'assistant') {
         my $removed_msg = pop @$messages;
-        log_warning('ErrorHandler', "Removed bad assistant message due to API error: $error");
+        log_debug('ErrorHandler', "Removed bad assistant message due to API error: $error");
 
         if ($wo->{debug}) {
             my $content_preview = substr($removed_msg->{content} // '', 0, 100);
@@ -817,10 +817,10 @@ sub handle_api_error {
                        "Error details: $error\n\n" .
                        "Please try a different approach. Avoid repeating the same action that caused this error.",
         };
-        log_info('ErrorHandler', "Added error message to conversation, continuing workflow");
+        log_debug('ErrorHandler', "Added error message to conversation, continuing workflow");
     } else {
         # Smart group-based trim for non-retryable token limit errors
-        log_warning('ErrorHandler', "Token limit error detected. Using smart context trimming...");
+        log_debug('ErrorHandler', "Token limit error detected. Using smart context trimming...");
 
         my $sys_msg    = undef;
         my @non_system = ();
@@ -868,7 +868,7 @@ sub handle_api_error {
         }
 
         my $removed_groups = scalar(@groups) - $keep_count;
-        log_info('ErrorHandler', "Smart trim: kept $keep_count of " . scalar(@groups) . " message groups (removed $removed_groups)");
+        log_debug('ErrorHandler', "Smart trim: kept $keep_count of " . scalar(@groups) . " message groups (removed $removed_groups)");
     }
 
     return 'continue';
@@ -1027,7 +1027,7 @@ sub trim_for_token_limit {
             );
             if ($compressed) {
                 push @non_system, $compressed;
-                log_info('ErrorHandler', "Injected compression summary for " . scalar(@dropped_messages) . " dropped messages");
+                log_debug('ErrorHandler', "Injected compression summary for " . scalar(@dropped_messages) . " dropped messages");
             }
         }
     }
@@ -1054,7 +1054,7 @@ sub trim_for_token_limit {
             );
             if ($compressed) {
                 push @non_system, $compressed;
-                log_info('ErrorHandler', "Injected compression summary for " . scalar(@dropped_messages) . " dropped messages (retry 2)");
+                log_debug('ErrorHandler', "Injected compression summary for " . scalar(@dropped_messages) . " dropped messages (retry 2)");
             }
         }
     }
@@ -1078,7 +1078,7 @@ sub trim_for_token_limit {
             );
             if ($compressed) {
                 push @non_system, $compressed;
-                log_info('ErrorHandler', "Injected compression summary for " . scalar(@dropped_messages) . " dropped messages (retry 3 - minimal)");
+                log_debug('ErrorHandler', "Injected compression summary for " . scalar(@dropped_messages) . " dropped messages (retry 3 - minimal)");
             }
         }
     }
@@ -1109,13 +1109,13 @@ sub trim_for_token_limit {
     my $recovery_info  = ($trimmed_count > 0) ? " Context summary injected." : "";
     my $system_msg = "Token limit exceeded. Trimmed $trimmed_count messages from conversation history and retrying$preserved_info...$recovery_info (attempt $retry_count/$max_retries)";
 
-    log_info('ErrorHandler', "Trimmed $trimmed_count messages due to token limit (kept " . scalar(@non_system) . " messages, last_user=" . ($last_user_msg ? 'YES' : 'NO') . ")");
+    log_debug('ErrorHandler', "Trimmed $trimmed_count messages due to token limit (kept " . scalar(@non_system) . " messages, last_user=" . ($last_user_msg ? 'YES' : 'NO') . ")");
 
     # Nothing trimmed means context isn't the problem
     if ($trimmed_count == 0) {
-        # Demoted from log_warning -> log_info. The themed error display
+        # Demoted from log_warning -> log_debug. The themed error display
         # below surfaces the user-facing message.
-        log_info('ErrorHandler', "Context trim removed 0 messages - problem is not context size. Escalating to non-retryable.");
+        log_debug('ErrorHandler', "Context trim removed 0 messages - problem is not context size. Escalating to non-retryable.");
 
         dump_diagnostic(
             trigger      => 'persistent_400',

@@ -79,7 +79,7 @@ sub new {
     unless (-d $self->{output_dir}) {
         eval { require File::Path; File::Path::make_path($self->{output_dir}); };
         if ($@) {
-            log_warning('ImageDisplay', "Cannot create output directory: $self->{output_dir}");
+            log_debug('ImageDisplay', "Cannot create output directory: $self->{output_dir}");
             $self->{output_dir} = '.';
         }
     }
@@ -374,7 +374,7 @@ sub _decode_base64 {
         return MIME::Base64::decode_base64($data);
     };
     if ($@) {
-        log_warning('ImageDisplay', "Base64 decode failed: $@");
+        log_debug('ImageDisplay', "Base64 decode failed: $@");
         return undef;
     }
     return $result;

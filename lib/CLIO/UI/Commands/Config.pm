@@ -206,6 +206,7 @@ sub _display_config_help {
     $self->display_key_value("enable_subagents", "Enable/disable sub-agent spawning (on/off)", 25);
     $self->display_key_value("enable_remote", "Enable/disable remote execution (on/off)", 25);
     $self->display_key_value("auto_discover_skills", "Inject installed skill catalog into system prompt (on/off)", 25);
+    $self->display_key_value("log_level", "Log level: ERROR, WARNING, INFO, DEBUG", 25);
     $self->writeline("", markdown => 0);
     
     $self->display_section_header("REDACTION LEVELS");
@@ -231,6 +232,7 @@ sub _display_config_help {
     $self->display_command_row("/config set sanitize_mode relaxed", "Quiet filtering for binary data work", 35);
     $self->display_command_row("/config set enable_subagents off", "Disable sub-agent tool", 35);
     $self->display_command_row("/config set enable_remote off", "Disable remote execution tool", 35);
+    $self->display_command_row("/config set log_level ERROR", "Set log level (ERROR/WARNING/INFO/DEBUG)", 35);
     $self->display_command_row("/config set auto_discover_skills off", "Hide skill catalog and disable skill_operations tool", 35);
     $self->display_command_row("/config set show_banner off", "Suppress the startup banner", 35);
     $self->writeline("", markdown => 0);
@@ -274,12 +276,12 @@ sub _handle_config_set {
         terminal_passthrough => 1,
         terminal_autodetect => 1,
         redact_level => 1,
-        redact_secrets => 1,  # Deprecated, for backward compat
         security_level => 1,
         sanitize_mode => 1,
         enable_subagents => 1,
         enable_remote => 1,
         auto_discover_skills => 1,
+        log_level => 1,
     );
     
     unless ($allowed{$key}) {
@@ -372,22 +374,19 @@ sub _handle_config_set {
         return;
     }
     
-    # Handle deprecated redact_secrets -> convert to redact_level
-    if ($key eq 'redact_secrets') {
-        $self->display_info_message("Note: redact_secrets is deprecated. Use redact_level instead.");
-        my $level;
-        if ($value =~ /^(true|1|yes|on)$/i) {
-            $level = 'standard';
-        } elsif ($value =~ /^(false|0|no|off)$/i) {
-            $level = 'off';
-        } else {
-            $self->display_error_message("Invalid boolean value for $key: $value");
-            $self->writeline("Use: true/false, 1/0, yes/no, on/off", markdown => 0);
+    # Handle log_level
+    if ($key eq 'log_level') {
+        my %valid_levels = map { $_ => 1 } qw(ERROR WARNING INFO DEBUG);
+        unless ($valid_levels{uc($value)}) {
+            $self->display_error_message("Invalid log_level: $value");
+            $self->writeline("Valid levels: ERROR, WARNING, INFO, DEBUG", markdown => 0);
             return;
         }
-        $self->{config}->set('redact_level', $level);
+        my $new_level = uc($value);
+        $ENV{CLIO_LOG_LEVEL} = $new_level;
+        $self->{config}->set('log_level', $new_level);
         $self->{config}->save();
-        $self->display_system_message("Converted to redact_level: $level");
+        $self->display_system_message("Log level set to: $new_level (saved)");
         return;
     }
     
@@ -572,7 +571,7 @@ sub show_global_config {
     $self->display_section_header("UI Settings");
     my $style = $self->{config}->get('style') || 'default';
     my $theme = $self->{config}->get('theme') || 'default';
-    my $loglevel = $ENV{CLIO_LOG_LEVEL} || $self->{config}->get('log_level') || 'WARNING';
+    my $loglevel = $ENV{CLIO_LOG_LEVEL} || $self->{config}->get('log_level') || 'ERROR';
     
     $self->display_key_value("Color Style", $style, 18);
     $self->display_key_value("Output Theme", $theme, 18);
@@ -582,16 +581,8 @@ sub show_global_config {
     $self->writeline("", markdown => 0);
     $self->display_section_header("Security");
     
-    # Get redact_level (new), fall back to redact_secrets (deprecated)
-    my $redact_level = $self->{config}->get('redact_level');
-    unless ($redact_level) {
-        my $redact_secrets = $self->{config}->get('redact_secrets');
-        if (defined $redact_secrets) {
-            $redact_level = $redact_secrets ? 'standard' : 'off';
-        } else {
-            $redact_level = 'pii';  # Default
-        }
-    }
+    # Get redact_level
+    my $redact_level = $self->{config}->get('redact_level') || 'pii';  # Default
     
     my %level_desc = (
         strict => '(all: PII + crypto + keys + tokens)',
@@ -705,7 +696,7 @@ sub handle_loglevel_command {
     my ($self, $level) = @_;
     
     unless ($level) {
-        my $current = $ENV{CLIO_LOG_LEVEL} || $self->{config}->get('log_level') || 'WARNING';
+        my $current = $ENV{CLIO_LOG_LEVEL} || $self->{config}->get('log_level') || 'ERROR';
         $self->writeline("", markdown => 0);
         $self->writeline($self->colorize("CURRENT LOG LEVEL", 'DATA'), markdown => 0);
         $self->writeline($self->colorize(box_char("hhorizontal") x 51, "DIM"), markdown => 0);

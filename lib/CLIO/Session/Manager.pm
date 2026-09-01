@@ -10,7 +10,7 @@ use strict;
 use warnings;
 use utf8;
 use Carp qw(croak);
-use CLIO::Core::Logger qw(log_warning log_debug log_info);
+use CLIO::Core::Logger qw(log_warning log_debug);
 use CLIO::Session::State;
 use CLIO::Session::Lock;
 use CLIO::Memory::ShortTerm;
@@ -292,12 +292,12 @@ sub load {
         
         if ($cleanup_result->{deleted_count} > 0) {
             my $mb_reclaimed = sprintf("%.2f", $cleanup_result->{reclaimed_bytes} / 1_048_576);
-            log_info('Manager', "Cleaned up $cleanup_result->{deleted_count} old tool results (${mb_reclaimed}MB reclaimed)");
+            log_debug('Manager', "Cleaned up $cleanup_result->{deleted_count} old tool results (${mb_reclaimed}MB reclaimed)");
         }
     };
     if ($@) {
         # Don't fail session load if cleanup fails - just log warning
-        log_warning('Manager', "Tool result cleanup failed: $@");
+        log_debug('Manager', "Tool result cleanup failed: $@");
     }
     
     return $self;

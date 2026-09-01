@@ -14,7 +14,7 @@ use File::Path qw(make_path);
 use File::Basename qw(dirname);
 use CLIO::Util::JSON qw(encode_json);
 use CLIO::Util::PathResolver qw(strip_path_quotes);
-use CLIO::Core::Logger qw(log_debug log_warning log_info);
+use CLIO::Core::Logger qw(log_debug log_warning);
 use parent 'CLIO::Tools::Tool';
 
 =head1 NAME
@@ -215,7 +215,7 @@ sub _do_apply {
         # with many files blocks until every hunk finishes - the user
         # cannot break out of a multi-file patch mid-flight.
         if ($self->check_interrupt($context)) {
-            log_info('ApplyPatch', "User interrupt detected after " . scalar(@results) . " hunk(s); aborting remaining " . (scalar(@$hunks) - scalar(@results)) . " hunk(s)");
+            log_debug('ApplyPatch', "User interrupt detected after " . scalar(@results) . " hunk(s); aborting remaining " . (scalar(@$hunks) - scalar(@results)) . " hunk(s)");
             return $self->success_result(
                 encode_json({
                     results => \@results,
@@ -443,8 +443,8 @@ sub _parse_patch {
                 
                 # Unrecognized line - this may indicate malformed patch
                 # Instead of silently treating as context, warn and skip
-                log_warning('ApplyPatch', "Unrecognized line in patch chunk (not +, -, space, or @@): '$cl'");
-                log_warning('ApplyPatch', "This line will be ignored. Check patch format for missing +/-/space prefixes.");
+                log_debug('ApplyPatch', "Unrecognized line in patch chunk (not +, -, space, or @@): '$cl'");
+                log_debug('ApplyPatch', "This line will be ignored. Check patch format for missing +/-/space prefixes.");
                 $i++;
             }
             

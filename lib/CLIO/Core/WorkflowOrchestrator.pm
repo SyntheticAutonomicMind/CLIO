@@ -8,7 +8,7 @@ use warnings;
 use utf8;
 use Carp qw(croak);
 use CLIO::UI::Terminal qw(box_char);
-use CLIO::Core::Logger qw(log_error log_warning log_info log_debug should_log);
+use CLIO::Core::Logger qw(log_debug log_warning should_log);
 use CLIO::Core::ErrorContext qw(classify_error format_error);
 use CLIO::Util::TextSanitizer qw(sanitize_text);
 use CLIO::Util::JSONRepair qw(repair_malformed_json);
@@ -155,7 +155,7 @@ sub new {
         }
     };
     if ($@) {
-        log_warning('WorkflowOrchestrator', "MCP initialization failed: $@");
+        log_debug('WorkflowOrchestrator', "MCP initialization failed: $@");
     }
     
     # Initialize Plugin Manager
@@ -172,7 +172,7 @@ sub new {
         }
     };
     if ($@) {
-        log_warning('WorkflowOrchestrator', "Plugin initialization failed: $@");
+        log_debug('WorkflowOrchestrator', "Plugin initialization failed: $@");
     }
     
     # Initialize prompt builder for system prompt construction
@@ -238,7 +238,7 @@ sub new {
     );
 
     if ($auto_discover_skills) {
-        log_info('WorkflowOrchestrator', 'Auto-discover skills enabled - skill catalog will be injected into system prompt');
+        log_debug('WorkflowOrchestrator', 'Auto-discover skills enabled - skill catalog will be injected into system prompt');
     }
     
     # Initialize FileVault for targeted file backup and undo support
@@ -427,7 +427,7 @@ sub _register_default_tools {
         }
         eval { (my $f = "$tool_def->{module}.pm") =~ s{::}{/}g; require $f };
         if ($@) {
-            log_warning('WorkflowOrchestrator', "Failed to load $tool_def->{module}: $@");
+            log_debug('WorkflowOrchestrator', "Failed to load $tool_def->{module}: $@");
             next;
         }
         $self->{tool_registry}->register_tool(
@@ -460,7 +460,7 @@ sub _register_default_tools {
         
         eval { (my $f = "$tool_def->{module}.pm") =~ s{::}{/}g; require $f };
         if ($@) {
-            log_warning('WorkflowOrchestrator', "Failed to load $tool_def->{module}: $@");
+            log_debug('WorkflowOrchestrator', "Failed to load $tool_def->{module}: $@");
             next;
         }
         $self->{tool_registry}->register_tool(
@@ -613,7 +613,7 @@ sub process_input {
                         trimmed_to     => scalar(@messages),
                     },
                 ) if $ENV{CLIO_TRIM_DIAG};
-                log_info('WorkflowOrchestrator', "Proactive trim (pre-API): $pre_count -> " . scalar(@messages) . " messages");
+                log_debug('WorkflowOrchestrator', "Proactive trim (pre-API): $pre_count -> " . scalar(@messages) . " messages");
             }
         }
 
@@ -653,7 +653,7 @@ sub process_input {
                 # Check for interrupt on each streaming chunk
                 if (!$self->{_interrupt_pending} && $self->_check_for_user_interrupt($session)) {
                     $self->{_interrupt_pending} = 1;
-                    log_info('WorkflowOrchestrator', "Interrupt detected during streaming");
+                    log_debug('WorkflowOrchestrator', "Interrupt detected during streaming");
                     # Still deliver this chunk, but the flag will be checked after streaming completes
                 }
                 
@@ -889,9 +889,9 @@ sub process_input {
 
             if ($looks_premature) {
                 if ($content_length == 0) {
-                    log_info('WorkflowOrchestrator', "Premature stop detected: empty response after $tool_calls_count tool calls");
+                    log_debug('WorkflowOrchestrator', "Premature stop detected: empty response after $tool_calls_count tool calls");
                 } else {
-                    log_info('WorkflowOrchestrator', "Premature stop detected: short mid-sentence response ($content_length chars) after $tool_calls_count tool calls");
+                    log_debug('WorkflowOrchestrator', "Premature stop detected: short mid-sentence response ($content_length chars) after $tool_calls_count tool calls");
                 }
                 $premature_stop_retries++;
                 log_debug('WorkflowOrchestrator', "Premature workflow stop detected (retry $premature_stop_retries/$max_premature_stop_retries). Nudging model to continue.");
@@ -979,7 +979,7 @@ sub process_input {
                 log_debug('WorkflowOrchestrator', "Saved final assistant response to session (" . length($sanitized) . " chars)");
             };
             if ($@) {
-                log_warning('WorkflowOrchestrator', "Failed to save final assistant response: $@");
+                log_debug('WorkflowOrchestrator', "Failed to save final assistant response: $@");
             }
         }
 
@@ -1134,7 +1134,7 @@ sub _build_turn_context {
             # process take the normal rebuild path.
             $self->{_tools_cache} = [@$cached_tools];
 
-            log_info('WorkflowOrchestrator',
+            log_debug('WorkflowOrchestrator',
                 "Resume fast path: " . scalar(@$cached_messages) . " messages from cached payload");
             return ($cached_messages, [@$cached_tools]);
         }
@@ -1274,7 +1274,7 @@ sub _build_turn_context {
                 $last_msg->{content} = \@content_parts;
             }
         } else {
-            log_warning('WorkflowOrchestrator', "Model does not support vision - image attachments will be sent as text descriptions");
+            log_debug('WorkflowOrchestrator', "Model does not support vision - image attachments will be sent as text descriptions");
             # Append text descriptions of images to the user message instead
             my $last_msg = $messages[-1];
             if ($last_msg && $last_msg->{role} eq 'user') {
@@ -1292,7 +1292,7 @@ sub _build_turn_context {
         # remains at least recoverable. The real fix is upstream (Chat.pm must not
         # leak ReadLine control signals), but this prevents silent corruption.
         if (ref $user_input) {
-            log_error('WorkflowOrchestrator', sprintf(
+            log_debug('WorkflowOrchestrator', sprintf(
                 "BUG: user_input is a %s ref (not a string) - this indicates a ReadLine "
                 . "control signal leaked into user input. Stringifying to preserve session.",
                 ref $user_input
@@ -1364,7 +1364,7 @@ sub _build_tools_for_api {
                 log_debug('WorkflowOrchestrator', "Added " . scalar(@$mcp_defs) . " MCP tool(s) to API definitions");
             }
         };
-        log_warning('WorkflowOrchestrator', "MCP tool definition error: $@") if $@;
+        log_debug('WorkflowOrchestrator', "MCP tool definition error: $@") if $@;
     }
 
     if ($self->{plugin_manager}) {
@@ -1385,7 +1385,7 @@ sub _build_tools_for_api {
                 log_debug('WorkflowOrchestrator', "Added " . scalar(@$plugin_defs) . " plugin tool(s) to API definitions");
             }
         };
-        log_warning('WorkflowOrchestrator', "Plugin tool definition error: $@") if $@;
+        log_debug('WorkflowOrchestrator', "Plugin tool definition error: $@") if $@;
     }
 
     return $tools;
@@ -1554,7 +1554,7 @@ sub _try_resume_from_payload {
 
     my $current_provider = $self->{api_manager} ? $self->{api_manager}->get_current_provider() : undef;
     if (($metadata->{provider} // '') ne ($current_provider // '')) {
-        log_info('WorkflowOrchestrator',
+        log_debug('WorkflowOrchestrator',
             "Resume payload skipped: provider changed ($metadata->{provider} -> $current_provider)");
         return;
     }
@@ -1566,7 +1566,7 @@ sub _try_resume_from_payload {
     $self->{_tools_cache} = [@$tools];
     my $current_sig = $self->_tools_signature($tools);
     if (($metadata->{tools_signature} // '') ne ($current_sig // '')) {
-        log_info('WorkflowOrchestrator',
+        log_debug('WorkflowOrchestrator',
             "Resume payload skipped: tools drifted (saved=$metadata->{tools_signature}, current=$current_sig)");
         return;
     }
@@ -1579,7 +1579,7 @@ sub _try_resume_from_payload {
     my $messages = [ @$payload ];
 
     if ($current_ctx >= $saved_ctx && $saved_ctx > 0) {
-        log_info('WorkflowOrchestrator',
+        log_debug('WorkflowOrchestrator',
             "Resume using cached payload verbatim: " . scalar(@$messages)
             . " messages, ctx=$current_ctx >= saved=$saved_ctx");
         return ($messages, $tools);
@@ -1599,7 +1599,7 @@ sub _try_resume_from_payload {
         debug => $self->{debug},
     );
 
-    log_info('WorkflowOrchestrator',
+    log_debug('WorkflowOrchestrator',
         "Resume using cached payload (trimmed): " . scalar(@$messages)
         . " messages, ctx=$current_ctx < saved=$saved_ctx");
 
@@ -1686,7 +1686,7 @@ sub _execute_tool_round {
             last;
         }
         if ($self->_check_and_handle_interrupt($session, $messages)) {
-            log_info('WorkflowOrchestrator', "Interrupt detected between tool executions, skipping remaining tools");
+            log_debug('WorkflowOrchestrator', "Interrupt detected between tool executions, skipping remaining tools");
             last;
         }
         
@@ -2004,7 +2004,7 @@ sub _execute_tool_round {
                     . substr($result_data->{error} // '', 0, 120)
                     . "\". Re-read the schema and call interact() if you need clarification.";
                 $ai_content = $stop_msg;
-                log_warning('WorkflowOrchestrator',
+                log_debug('WorkflowOrchestrator',
                     "Tool error loop detected: 3 consecutive identical-shape errors from $tool_name. "
                     . "Injected stop signal. sig=" . substr($err_sig, 0, 60));
             } elsif ($count > 3) {
@@ -2013,7 +2013,7 @@ sub _execute_tool_round {
                 $ai_content = "STOP: Same tool error pattern repeating (count=$count). "
                     . "Use interact(operation: \"request_input\", message: \"...\") to ask for help, "
                     . "or stop trying this approach.";
-                log_info('WorkflowOrchestrator', "Tool error loop continues: count=$count");
+                log_debug('WorkflowOrchestrator', "Tool error loop continues: count=$count");
             }
         } else {
             # Reset loop tracking on a successful tool call.
@@ -2064,7 +2064,7 @@ sub _execute_tool_round {
                 log_debug('WorkflowOrchestrator', "Saved tool result to session (tool_call_id=" . $tool_call->{id} . ")");
             };
             if ($@) {
-                log_warning('WorkflowOrchestrator', "Failed to save tool result: $@");
+                log_debug('WorkflowOrchestrator', "Failed to save tool result: $@");
             }
         }
 
@@ -2095,7 +2095,7 @@ sub _execute_tool_round {
             log_debug('WorkflowOrchestrator', "Session saved after iteration $iteration (preserving tool execution history)");
         };
         if ($@) {
-            log_warning('WorkflowOrchestrator', "Failed to save session after iteration: $@");
+            log_debug('WorkflowOrchestrator', "Failed to save session after iteration: $@");
         }
     }
 
@@ -2160,7 +2160,7 @@ sub _prepare_tool_round {
         # that corrupt the conversation. A valid tool name is alphanumeric
         # plus underscore/hyphen only.
         unless ($tool_name =~ /^[a-zA-Z_][a-zA-Z0-9_-]*$/) {
-           log_warning('WorkflowOrchestrator',
+           log_debug('WorkflowOrchestrator',
                "Rejecting tool call with suspicious name: '$tool_name' " .
                "(contains markup/regex/non-identifier chars - likely " .
                "model degradation near context limit)");
@@ -2398,7 +2398,7 @@ sub _prepare_tool_round {
                 }
 
                 if (is_anthropic_xml_format($json_str)) {
-                    log_info('WorkflowOrchestrator', "Detected Anthropic XML format, converting to JSON");
+                    log_debug('WorkflowOrchestrator', "Detected Anthropic XML format, converting to JSON");
                     $json_str = parse_anthropic_xml_to_json($json_str, $self->{debug});
                     log_debug('WorkflowOrchestrator', "Converted XML to JSON: " . substr($json_str, 0, 300));
                 } else {
@@ -2423,8 +2423,8 @@ sub _prepare_tool_round {
                 my $error = $@;
                 my $args_full = $tool_call->{function}->{arguments} || '';
 
-                log_error('WorkflowOrchestrator', "Failed to parse arguments for tool '$tool_name': $error");
-                log_error('WorkflowOrchestrator', "Full arguments:\n$args_full");
+                log_debug('WorkflowOrchestrator', "Failed to parse arguments for tool '$tool_name': $error");
+                log_debug('WorkflowOrchestrator', "Full arguments:\n$args_full");
 
                 my $error_message = "JSON parsing failed for tool '$tool_name': $error\nArguments received:\n$args_full";
 
@@ -2495,7 +2495,7 @@ sub _prepare_tool_round {
             }
         } else {
             push @parallel_tools, $tool_call;
-            log_warning('WorkflowOrchestrator', "Unknown tool $tool_name, treating as PARALLEL");
+            log_debug('WorkflowOrchestrator', "Unknown tool $tool_name, treating as PARALLEL");
         }
     }
 
@@ -2714,7 +2714,7 @@ sub _check_authorization_requests {
         $self->{ui}->check_agent_messages($self->{broker_client});
     };
     if ($@) {
-        log_warning('WorkflowOrchestrator', "Auth relay check failed: $@");
+        log_debug('WorkflowOrchestrator', "Auth relay check failed: $@");
     }
 }
 
@@ -2735,7 +2735,7 @@ sub _check_and_handle_interrupt {
         $self->_handle_interrupt($session, $messages_ref);
         $self->{_interrupt_pending} = 1;
         
-        log_info('WorkflowOrchestrator', "Interrupt detected mid-iteration, setting pending flag");
+        log_debug('WorkflowOrchestrator', "Interrupt detected mid-iteration, setting pending flag");
         
         return 1;
     }
@@ -2794,7 +2794,7 @@ Returns: Nothing (modifies messages array in place)
 sub _handle_interrupt {
     my ($self, $session, $messages_ref) = @_;
 
-    log_info('WorkflowOrchestrator', "Handling user interrupt via forced interact");
+    log_debug('WorkflowOrchestrator', "Handling user interrupt via forced interact");
 
     # Clear interrupt flag (it's been handled) via the shared helper. This
     # also logs the clear event so we have a single trail of interrupts.
@@ -2838,10 +2838,10 @@ sub _handle_interrupt {
                     content => $user_response,
                 };
                 
-                log_info('WorkflowOrchestrator', "User responded to interrupt, continuing workflow");
+                log_debug('WorkflowOrchestrator', "User responded to interrupt, continuing workflow");
                 return;
             } else {
-                log_warning('WorkflowOrchestrator', "Interact returned no output or was cancelled");
+                log_debug('WorkflowOrchestrator', "Interact returned no output or was cancelled");
                 # User cancelled or interact failed - add a placeholder message
                 push @$messages_ref, {
                     role => 'user',
@@ -2850,15 +2850,15 @@ sub _handle_interrupt {
                 return;
             }
         } else {
-            log_warning('WorkflowOrchestrator', "Interact tool not found in registry");
+            log_debug('WorkflowOrchestrator', "Interact tool not found in registry");
         }
     } else {
-        log_warning('WorkflowOrchestrator', "Tool registry not available for interrupt handling");
+        log_debug('WorkflowOrchestrator', "Tool registry not available for interrupt handling");
     }
     
     # Fallback: if tool registry is not available, inject message and let AI handle it
     # (This preserves the old behavior as a fallback)
-    log_warning('WorkflowOrchestrator', "Falling back to message injection for interrupt");
+    log_debug('WorkflowOrchestrator', "Falling back to message injection for interrupt");
     my $interrupt_message = {
         role => 'user',
         content =>
@@ -2934,7 +2934,7 @@ sub _compress_dropped_for_recovery {
         );
     };
     if ($@) {
-        log_warning('WorkflowOrchestrator', "YaRN compression failed: $@");
+        log_debug('WorkflowOrchestrator', "YaRN compression failed: $@");
     }
     
     # Build recovery context
@@ -3568,7 +3568,7 @@ sub _extract_session_marker {
         $title =~ s/^\s+|\s+$//g;
         if (length($title) >= 3) {
             $session->session_name($title);
-            log_info('WorkflowOrchestrator', "Session named by AI: $title");
+            log_debug('WorkflowOrchestrator', "Session named by AI: $title");
         }
         return ($content, 1);
     }
@@ -3579,7 +3579,7 @@ sub _extract_session_marker {
         $title =~ s/^\s+|\s+$//g;
         if (length($title) >= 3) {
             $session->session_name($title);
-            log_info('WorkflowOrchestrator', "Session named by AI: $title");
+            log_debug('WorkflowOrchestrator', "Session named by AI: $title");
         }
         return ($content, 1);
     }

@@ -274,8 +274,8 @@ sub build_payload {
         'APIManager: has thinking_mode=auto branch');
     like($src, qr/\$requires_adaptive/,
         'APIManager: respects requires_adaptive from capabilities');
-    like($src, qr/log_warning.*thinking_mode=disabled ignored/,
-        'APIManager: logs warning when disabled is overridden by requires_adaptive');
+    like($src, qr/log_debug.*thinking_mode=disabled ignored/,
+        'APIManager: logs debug when disabled is overridden by requires_adaptive');
 }
 
 # Verify the API Config handler accepts thinking_mode.

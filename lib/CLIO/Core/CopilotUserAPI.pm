@@ -206,7 +206,7 @@ sub _save_cache {
     };
     
     if ($@) {
-        log_warning('CopilotUserAPI', "Failed to save cache: $@");
+        log_debug('CopilotUserAPI', "Failed to save cache: $@");
     }
 }
 

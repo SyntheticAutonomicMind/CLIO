@@ -214,7 +214,7 @@ sub execute_tool {
     if ($tool_name =~ /^mcp_/ && $self->{mcp_manager}) {
         # Sandbox mode: Block all MCP tool calls
         if ($self->{config} && $self->{config}->get('sandbox')) {
-            log_info('ToolExecutor', "Sandbox: BLOCKED MCP tool '$tool_name'");
+            log_debug('ToolExecutor', "Sandbox: BLOCKED MCP tool '$tool_name'");
             return $self->_error_result(
                 "Sandbox mode: MCP tools are disabled.\n\n" .
                 "The --sandbox flag blocks all MCP operations. " .
@@ -262,7 +262,7 @@ sub execute_tool {
     if ($tool_name =~ /^plugin_/ && $self->{plugin_manager}) {
         # Sandbox mode: Block all plugin tool calls
         if ($self->{config} && $self->{config}->get('sandbox')) {
-            log_info('ToolExecutor', "Sandbox: BLOCKED plugin tool '$tool_name'");
+            log_debug('ToolExecutor', "Sandbox: BLOCKED plugin tool '$tool_name'");
             return $self->_error_result(
                 "Sandbox mode: Plugin tools are disabled.\n\n" .
                 "The --sandbox flag blocks all plugin operations. " .
@@ -387,7 +387,7 @@ sub execute_tool {
     my $valid = exists $result->{success}
         && ($result->{success} ? defined $result->{output} : exists $result->{error});
     unless ($valid) {
-        log_warning('ToolExecutor', "Tool '$tool_name' returned malformed result (missing success/output/error)");
+        log_debug('ToolExecutor', "Tool '$tool_name' returned malformed result (missing success/output/error)");
         $result = {
             success => 0,
             output => "Tool returned malformed result (missing required fields)",
@@ -409,7 +409,6 @@ sub execute_tool {
         # are never exposed to the LLM or stored in logs
         # Levels: strict, standard, api_permissive, pii, off
         # See: /config set redact_level <level>
-        # Backward compat: redact_secrets true -> standard, false -> off
         my $redact_level = $self->_get_redact_level();
         if ($redact_level ne 'off' && defined $output) {
             $output = redact($output, level => $redact_level);
@@ -804,11 +803,6 @@ Get the redaction level from config with backward compatibility.
 
 Returns: 'strict', 'standard', 'api_permissive', 'pii', or 'off'
 
-Backward compatibility:
-  - redact_secrets=true  -> 'standard'
-  - redact_secrets=false -> 'off'
-  - redact_level=<value> -> uses that value
-
 =cut
 
 sub _get_redact_level {
@@ -816,19 +810,12 @@ sub _get_redact_level {
     
     return 'pii' unless $self->{config};
     
-    # Check new redact_level first
+    # Check redact_level
     my $level = $self->{config}->get('redact_level');
     if (defined $level && $level =~ /^(strict|standard|api_permissive|pii|off)$/) {
         return $level;
     }
-    
-    # Backward compatibility: check old redact_secrets boolean
-    my $redact_secrets = $self->{config}->get('redact_secrets');
-    if (defined $redact_secrets) {
-        # If explicitly set, convert to level
-        return $redact_secrets ? 'standard' : 'off';
-    }
-    
+
     # Default
     return 'pii';
 }

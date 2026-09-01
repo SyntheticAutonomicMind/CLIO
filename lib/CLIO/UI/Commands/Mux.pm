@@ -7,7 +7,7 @@ use strict;
 use warnings;
 use utf8;
 use Carp qw(croak);
-use CLIO::Core::Logger qw(log_debug log_info log_warning);
+use CLIO::Core::Logger qw(log_debug log_warning);
 use parent 'CLIO::UI::Commands::Base';
 
 

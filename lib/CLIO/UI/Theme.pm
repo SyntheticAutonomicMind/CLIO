@@ -11,7 +11,7 @@ use File::Spec;
 use File::Basename;
 use CLIO::UI::ANSI;
 use CLIO::Util::ConfigPath qw(get_config_dir);
-use CLIO::Core::Logger qw(log_debug log_error log_warning);
+use CLIO::Core::Logger qw(log_debug log_warning);
 # box_char() and ui_char() are called from _resolve_char() and get_ui_char()
 # on every template render. Importing them at module load removes the
 # per-call `require CLIO::UI::Terminal` overhead.
@@ -303,16 +303,16 @@ sub _validate_hashref {
     $source //= '<unknown>';
 
     if (!defined $hash || ref($hash) ne 'HASH') {
-        log_error('Theme', "$kind file $source is not a hashref, skipping");
+        log_debug('Theme', "$kind file $source is not a hashref, skipping");
         return 0;
     }
     if (!keys %$hash) {
-        log_warning('Theme', "$kind file $source is empty, skipping");
+        log_debug('Theme', "$kind file $source is empty, skipping");
         return 0;
     }
     for my $key (@$required) {
         if (!defined $hash->{$key} || $hash->{$key} eq '') {
-            log_error('Theme', "$kind file $source missing required key '$key', skipping");
+            log_debug('Theme', "$kind file $source missing required key '$key', skipping");
             return 0;
         }
     }
@@ -331,7 +331,7 @@ sub load_style_file {
     return undef unless -f $path;
 
     open(my $fh, '<:encoding(UTF-8)', $path) or do {
-        log_error('Theme', "Cannot open style file $path: $!");
+        log_debug('Theme', "Cannot open style file $path: $!");
         return undef;
     };
 
@@ -422,7 +422,7 @@ sub load_theme_file {
     return undef unless -f $path;
 
     open(my $fh, '<:encoding(UTF-8)', $path) or do {
-        log_error('Theme', "Cannot open theme file $path: $!");
+        log_debug('Theme', "Cannot open theme file $path: $!");
         return undef;
     };
 
@@ -696,7 +696,7 @@ sub set_style {
     my ($self, $name) = @_;
     
     unless (exists $self->{styles}->{$name}) {
-        log_error('Theme', "Style '$name' not found");
+        log_debug('Theme', "Style '$name' not found");
         return 0;
     }
     
@@ -715,7 +715,7 @@ sub set_theme {
     my ($self, $name) = @_;
     
     unless (exists $self->{themes}->{$name}) {
-        log_error('Theme', "Theme '$name' not found");
+        log_debug('Theme', "Theme '$name' not found");
         return 0;
     }
     
@@ -921,7 +921,7 @@ sub save_style {
     unless (-d $dir) {
         require File::Path;
         File::Path::make_path($dir) or do {
-            log_error('Theme', "Cannot create style directory: $!");
+            log_debug('Theme', "Cannot create style directory: $!");
             return 0;
         };
     }
@@ -929,7 +929,7 @@ sub save_style {
     my $path = File::Spec->catfile($dir, "$name.style");
     
     open(my $fh, '>:encoding(UTF-8)', $path) or do {
-        log_error('Theme', "Cannot write style file: $!");
+        log_debug('Theme', "Cannot write style file: $!");
         return 0;
     };
     
@@ -961,7 +961,7 @@ sub save_theme {
     unless (-d $dir) {
         require File::Path;
         File::Path::make_path($dir) or do {
-            log_error('Theme', "Cannot create theme directory: $!");
+            log_debug('Theme', "Cannot create theme directory: $!");
             return 0;
         };
     }
@@ -969,7 +969,7 @@ sub save_theme {
     my $path = File::Spec->catfile($dir, "$name.theme");
     
     open(my $fh, '>:encoding(UTF-8)', $path) or do {
-        log_error('Theme', "Cannot write theme file: $!");
+        log_debug('Theme', "Cannot write theme file: $!");
         return 0;
     };
     

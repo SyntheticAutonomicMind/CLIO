@@ -6,7 +6,7 @@ package CLIO::Core::RepositoryLoader;
 use strict;
 use warnings;
 use utf8;
-use CLIO::Core::Logger qw(log_debug log_info log_error log_warning);
+use CLIO::Core::Logger qw(log_debug log_warning);
 use CLIO::Util::ConfigPath qw(get_config_dir);
 use File::Spec;
 use File::Path qw(make_path);
@@ -181,7 +181,7 @@ sub read_skill_content {
     return undef unless $skill_md_path && -f $skill_md_path;
     
     open my $fh, '<:encoding(UTF-8)', $skill_md_path or do {
-        log_error('RepositoryLoader', "Cannot read $skill_md_path: $!");
+        log_debug('RepositoryLoader', "Cannot read $skill_md_path: $!");
         return undef;
     };
     my $content = do { local $/; <$fh> };

@@ -16,7 +16,7 @@ use CLIO::UI::Terminal qw(detect_capabilities configure_io_encoding box_char);
 use CLIO::UI::ANSI;
 use CLIO::UI::Chat;
 use CLIO::Util::PathResolver;
-use CLIO::Core::Logger qw(should_log log_info log_debug);
+use CLIO::Core::Logger qw(should_log log_debug log_warning log_error);
 
 # Detect terminal capabilities and set IO encoding early
 # This must happen before any module sets binmode
@@ -206,7 +206,7 @@ if ((!$provider || $provider eq '') && $cli_model_override
         # and this --model provides the first usable provider. Save it
         # so it persists across sessions.
         $config->save();
-        log_info('Main', "Auto-selected provider '$provider' from --model prefix");
+        log_debug('Main', "Auto-selected provider '$provider' from --model prefix");
     }
 }
 
@@ -235,7 +235,7 @@ if (!$provider || $provider eq '') {
             $config->set_provider($auto);
             $config->save();
             $provider = $auto;
-            log_info('Main', "Auto-selected provider '$provider' from configured api_keys");
+            log_debug('Main', "Auto-selected provider '$provider' from configured api_keys");
 
             # Create minimal display object for themed output
             my $display = CLIO::UI::Chat->new(no_color => $no_color, debug => $debug);
@@ -368,7 +368,7 @@ if ($route_name && length($route_name)) {
                 if ($rpkey) {
                     $config->set_provider($rp);
                     $provider = $rp;
-                    log_info('Main', "Activated route '$route_name' with provider '$rp'");
+                    log_debug('Main', "Activated route '$route_name' with provider '$rp'");
                 }
             }
             # Set model AFTER provider so set_provider's default model
@@ -947,9 +947,9 @@ my $broker_agent_id = $ENV{CLIO_BROKER_AGENT_ID} || '';
 log_debug('Broker', "Checking env vars: SESSION=$broker_session, AGENT=$broker_agent_id");
 
 if ($broker_session && $broker_agent_id) {
-    log_info('Broker', 'Detected sub-agent mode (broker env vars present)');
-    log_info('Broker', "Broker session: $broker_session");
-    log_info('Broker', "Agent ID: $broker_agent_id");
+    log_debug('Broker', 'Detected sub-agent mode (broker env vars present)');
+    log_debug('Broker', "Broker session: $broker_session");
+    log_debug('Broker', "Agent ID: $broker_agent_id");
     
     eval {
         require CLIO::Coordination::Client;
@@ -959,11 +959,11 @@ if ($broker_session && $broker_agent_id) {
             task => $input || "Unnamed task",
             debug => $debug,
         );
-        log_info('Broker', 'Connected to broker successfully');
+        log_debug('Broker', 'Connected to broker successfully');
     };
     if ($@) {
-        log_warning('Broker', "Could not connect to broker: $@");
-        log_warning('Broker', 'Continuing without coordination');
+        log_debug('Broker', "Could not connect to broker: $@");
+        log_debug('Broker', 'Continuing without coordination');
     }
 } else {
     log_debug('Broker', 'No broker env vars, running standalone');
@@ -1073,7 +1073,7 @@ if ($model_override) {
         $config->set('model_candidates', [], 0);
         $config->set('model_routing_index', 0, 0);
     }
-    log_info('Main', "Using temporary model: $model_override");
+    log_debug('Main', "Using temporary model: $model_override");
 }
 
 # Initialize API manager and AI agent
@@ -1352,7 +1352,7 @@ $ai_agent->set_ui($ui) if $ai_agent;
 # reinit_api_manager() copies this callback to newly created APIManager instances
 if ($api && $api->can('set_reauth_callback')) {
     my $reauth_cb = sub {
-        log_info('Auth', 'Token expired/revoked, triggering re-authentication');
+        log_debug('Auth', 'Token expired/revoked, triggering re-authentication');
         
         # Display message to user
         if ($ui && $ui->can('display_system_message')) {
@@ -1412,7 +1412,7 @@ if ($api && $api->can('set_reauth_callback')) {
         };
         
         if ($@) {
-            log_error('Auth', "Re-authentication failed: $@");
+            log_debug('Auth', "Re-authentication failed: $@");
             if ($ui && $ui->can('display_error_message')) {
                 $ui->display_error_message("Re-authentication failed: $@");
             }
@@ -1489,10 +1489,10 @@ if ($session && $session->can('state') && $session->state()) {
                     print "SYSTEM: Session saved.\n";
                 };
                 if ($@) {
-                    log_error('Session', "Failed to save session: $@");
+                    print STDERR "ERROR: Failed to save session: $@";
                 }
             } else {
-                log_warning('Session', 'No session to save (session object is undefined)');
+                print STDERR "WARN: No session to save\n";
             }
         }
         

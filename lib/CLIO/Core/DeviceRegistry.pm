@@ -84,7 +84,7 @@ sub _load_registry {
         $self->{groups} = $data->{groups} || {};
     };
     if ($@) {
-        log_warning('DeviceRegistry', "Failed to load registry: $@");
+        log_debug('DeviceRegistry', "Failed to load registry: $@");
     }
 }
 
@@ -108,7 +108,7 @@ sub _save_registry {
         close $fh;
     };
     if ($@) {
-        log_warning('DeviceRegistry', "Failed to save registry: $@");
+        log_debug('DeviceRegistry', "Failed to save registry: $@");
         return 0;
     }
     return 1;

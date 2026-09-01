@@ -79,7 +79,7 @@ sub register_tool {
     
     # Check for duplicate
     if (exists $self->{tools}{$name}) {
-        log_warning('Registry', "Tool '$name' already registered, replacing");
+        log_debug('Registry', "Tool '$name' already registered, replacing");
     }
     
     $self->{tools}{$name} = $tool;
@@ -197,7 +197,7 @@ sub get_tool {
     my $tool = $self->{tools}{$name};
     
     unless ($tool) {
-        log_warning('Registry', "Tool not found: $name");
+        log_debug('Registry', "Tool not found: $name");
     }
     
     return $tool;
@@ -439,7 +439,7 @@ sub unregister_tool {
     my ($self, $name) = @_;
     
     unless (exists $self->{tools}{$name}) {
-        log_warning('Registry', "Cannot unregister unknown tool: $name");
+        log_debug('Registry', "Cannot unregister unknown tool: $name");
         return 0;
     }
     

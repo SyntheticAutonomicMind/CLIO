@@ -38,7 +38,7 @@ use MIME::Base64;
 use Digest::SHA qw(sha256);
 use File::Spec;
 use POSIX qw(_exit);
-use CLIO::Core::Logger qw(log_debug log_error);
+use CLIO::Core::Logger qw(log_debug);
 
 sub new {
     my ($class, %args) = @_;
@@ -177,7 +177,7 @@ sub _token_request {
         content => $body,
     });
     unless ($r->{success}) {
-        log_error('OAuth', 'Token request failed: ' . $r->{status} . ' ' . $r->{reason});
+        log_debug('OAuth', 'Token request failed: ' . $r->{status} . ' ' . $r->{reason});
         return undef;
     }
     my $d = safe_decode_json($r->{content});

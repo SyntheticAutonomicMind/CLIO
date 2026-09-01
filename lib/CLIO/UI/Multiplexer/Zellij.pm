@@ -7,7 +7,7 @@ use strict;
 use warnings;
 use utf8;
 use Carp qw(croak);
-use CLIO::Core::Logger qw(log_debug log_info log_warning);
+use CLIO::Core::Logger qw(log_debug log_warning);
 
 
 =head1 NAME
@@ -71,7 +71,7 @@ sub create_pane {
 
     eval { $self->_run_cmd(@cmd) };
     if ($@) {
-        log_warning('Zellij', "Failed to create pane '$name': $@");
+        log_debug('Zellij', "Failed to create pane '$name': $@");
         return undef;
     }
 
@@ -80,7 +80,7 @@ sub create_pane {
     my $pane_id = "zellij:$name:" . $self->{next_id}++;
     $self->{pane_map}{$name} = $pane_id;
 
-    log_info('Zellij', "Created pane '$name' ($pane_id)");
+    log_debug('Zellij', "Created pane '$name' ($pane_id)");
 
     # Move focus back to the original pane
     eval {

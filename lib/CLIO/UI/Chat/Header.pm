@@ -10,7 +10,7 @@ use utf8;
 
 use POSIX qw(_exit);
 use File::Spec;
-use CLIO::Core::Logger qw(log_debug log_info log_warning);
+use CLIO::Core::Logger qw(log_debug log_warning);
 use CLIO::UI::Terminal qw(box_char ui_char);
 use CLIO::Compat::Terminal qw(ReadMode);
 
@@ -82,7 +82,7 @@ sub check_for_updates_async {
 
     my $intermediate = fork();
     if (!defined $intermediate) {
-        log_warning('Chat', "Failed to fork update checker: $!");
+        log_debug('Chat', "Failed to fork update checker: $!");
         return;
     }
 
@@ -329,7 +329,7 @@ sub _check_auth_migration {
         $static_key ||= $api_keys->{$provider};
 
         if ($static_key) {
-            log_info('Chat', "Static API key configured for github_copilot, skipping GitHub auth");
+            log_debug('Chat', "Static API key configured for github_copilot, skipping GitHub auth");
             return;
         }
 
@@ -341,7 +341,7 @@ sub _check_auth_migration {
 
         my $tokens = $auth->load_tokens();
         if (!$tokens || !$tokens->{github_token}) {
-            log_info('Chat', "GitHub Copilot provider configured but no tokens found");
+            log_debug('Chat', "GitHub Copilot provider configured but no tokens found");
             eval {
                 if ($chat->{command_handler} && $chat->{command_handler}{api_cmd}) {
                     $chat->{command_handler}{api_cmd}->check_github_auth();
@@ -352,7 +352,7 @@ sub _check_auth_migration {
                 }
             };
             if ($@) {
-                log_warning('Chat', "Auth prompt failed: $@");
+                log_debug('Chat', "Auth prompt failed: $@");
             }
             return;
         }
@@ -376,7 +376,7 @@ sub _check_auth_migration {
                     }
                 };
                 if ($@) {
-                    log_warning('Chat', "Auto re-auth failed: $@");
+                    log_debug('Chat', "Auto re-auth failed: $@");
                     $chat->display_system_message(
                         "Automatic re-authentication failed. Please run /api login manually."
                     );

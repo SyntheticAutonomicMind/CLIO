@@ -6,7 +6,7 @@ package CLIO::Core::ModelCapabilitiesManager;
 use strict;
 use warnings;
 use utf8;
-use CLIO::Core::Logger qw(log_debug log_info log_warning log_error);
+use CLIO::Core::Logger qw(log_debug log_warning log_error);
 use CLIO::Util::ConfigPath qw(get_config_file);
 use CLIO::Util::JSON qw(encode_json decode_json safe_decode_json);
 use CLIO::Compat::HTTP;
@@ -119,7 +119,7 @@ sub _model_data_loader {
             $self->{model_data_loader} = CLIO::Core::ModelDataLoader->new(debug => $self->{debug});
         };
         if ($@) {
-            log_warning('ModelCapabilitiesManager', "Failed to create ModelDataLoader: $@");
+            log_debug('ModelCapabilitiesManager', "Failed to create ModelDataLoader: $@");
         }
     }
     return $self->{model_data_loader};
@@ -334,7 +334,7 @@ sub clear_cache {
     $self->{cache} = {};
     
     if (-f $self->{cache_file}) {
-        unlink $self->{cache_file} or log_warning('ModelCapabilitiesManager', "Failed to clear cache: $!");
+        unlink $self->{cache_file} or log_debug('ModelCapabilitiesManager', "Failed to clear cache: $!");
     }
     
     log_debug('ModelCapabilitiesManager', "Cache cleared");
@@ -379,7 +379,7 @@ sub _ensure_cache_loaded {
             }
         };
         if ($@) {
-            log_warning('ModelCapabilitiesManager', "Failed to load cache: $@");
+            log_debug('ModelCapabilitiesManager', "Failed to load cache: $@");
             $self->{cache} = {};
         }
     }
@@ -406,7 +406,7 @@ sub _save_cache {
     };
     
     if ($@) {
-        log_warning('ModelCapabilitiesManager', "Failed to save cache: $@");
+        log_debug('ModelCapabilitiesManager', "Failed to save cache: $@");
         unlink $temp;
     }
 }
@@ -531,7 +531,7 @@ sub set_reasoning_mode {
     $self->{cache}{$cache_key} = $entry;
     $self->_save_cache();
 
-    log_info('ModelCapabilitiesManager', "Learned reasoning_mode=$mode for $provider:$model (self-corrected from API error)");
+    log_debug('ModelCapabilitiesManager', "Learned reasoning_mode=$mode for $provider:$model (self-corrected from API error)");
     return 1;
 }
 
@@ -618,7 +618,7 @@ sub _fetch_provider_capabilities {
                 log_debug('ModelCapabilitiesManager', "Falling back to static map for ${provider}:${model}");
                 return $self->$method($model);
             }
-            log_warning('ModelCapabilitiesManager',
+            log_debug('ModelCapabilitiesManager',
                 "Provider $provider declared fetcher '$fetcher' but method $method is missing");
         }
     }
@@ -630,7 +630,7 @@ sub _fetch_provider_capabilities {
         return $self->_fetch_openai_compatible_capabilities($provider, $model);
     }
     
-    log_warning('ModelCapabilitiesManager', "No capability fetcher for provider: $provider");
+    log_debug('ModelCapabilitiesManager', "No capability fetcher for provider: $provider");
     return undef;
 }
 
@@ -700,7 +700,7 @@ sub _fetch_github_copilot_capabilities {
     };
 
     if ($@) {
-        log_warning('ModelCapabilitiesManager', "Failed to fetch GitHub Copilot capabilities: $@");
+        log_debug('ModelCapabilitiesManager', "Failed to fetch GitHub Copilot capabilities: $@");
         return undef;
     }
 
@@ -1156,7 +1156,7 @@ sub _fetch_google_capabilities {
     my $resp = $http->get($models_url, headers => { 'Accept' => 'application/json' });
     
     unless ($resp->{success}) {
-        log_warning('ModelCapabilitiesManager', "Google models API failed: HTTP " . $resp->{status});
+        log_debug('ModelCapabilitiesManager', "Google models API failed: HTTP " . $resp->{status});
         return undef;
     }
     
@@ -1165,7 +1165,7 @@ sub _fetch_google_capabilities {
         $data = decode_json($resp->{content});
     };
     if ($@) {
-        log_warning('ModelCapabilitiesManager', "Failed to parse Google response: $@");
+        log_debug('ModelCapabilitiesManager', "Failed to parse Google response: $@");
         return undef;
     }
     
@@ -3173,7 +3173,7 @@ sub _fetch_openai_compatible_capabilities {
     );
     
     unless ($resp->{success}) {
-        log_warning('ModelCapabilitiesManager', "${provider} models API failed: HTTP " . $resp->{status});
+        log_debug('ModelCapabilitiesManager', "${provider} models API failed: HTTP " . $resp->{status});
         return undef;
     }
     
@@ -3182,7 +3182,7 @@ sub _fetch_openai_compatible_capabilities {
         $data = decode_json($resp->{content});
     };
     if ($@) {
-        log_warning('ModelCapabilitiesManager', "Failed to parse ${provider} response: $@");
+        log_debug('ModelCapabilitiesManager', "Failed to parse ${provider} response: $@");
         return undef;
     }
     

@@ -567,7 +567,7 @@ sub display_image {
         require CLIO::Util::ImageDisplay;
     };
     if ($@) {
-        log_warning('Display', "ImageDisplay module not available: $@");
+        log_debug('Display', "ImageDisplay module not available: $@");
         return (0, { error => 'Image display not available' });
     }
     
@@ -584,13 +584,13 @@ sub display_image {
             print $chat->colorize($info->{path}, 'DATA');
             print $chat->colorize("]", 'DIM'), "\n";
         } else {
-            log_info('Display', "Image saved: $info->{path}");
+            log_debug('Display', "Image saved: $info->{path}");
         }
         return ($ok, $info);
     } else {
         # Failed
         my $error = $info->{error} || 'Unknown error';
-        log_warning('Display', "Failed to display image: $error");
+        log_debug('Display', "Failed to display image: $error");
         return (0, $info);
     }
 }

@@ -7,7 +7,7 @@ use strict;
 use warnings;
 use utf8;
 
-use CLIO::Core::Logger qw(log_error log_warning log_info log_debug);
+use CLIO::Core::Logger qw(log_error log_warning log_debug);
 use Cwd qw(getcwd);
 
 =head1 NAME
@@ -108,9 +108,9 @@ sub build_system_prompt {
         if (grep { $_ eq $self->{prompt_override} } @all_prompts) {
             # Set in-memory only (don't call set_active_prompt which persists)
             $pm->{metadata}->{active_prompt} = $self->{prompt_override};
-            log_info('PromptBuilder', "Using system prompt override: $self->{prompt_override}");
+            log_debug('PromptBuilder', "Using system prompt override: $self->{prompt_override}");
         } else {
-            log_warning('PromptBuilder', "Prompt '$self->{prompt_override}' not found, using default. Available: " . join(', ', @all_prompts));
+            log_debug('PromptBuilder', "Prompt '$self->{prompt_override}' not found, using default. Available: " . join(', ', @all_prompts));
         }
     }
 

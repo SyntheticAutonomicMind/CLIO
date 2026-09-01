@@ -7,7 +7,7 @@ use strict;
 use warnings;
 use utf8;
 use Carp qw(croak);
-use CLIO::Core::Logger qw(log_debug log_info log_warning log_error);
+use CLIO::Core::Logger qw(log_debug log_warning);
 use CLIO::Util::JSON qw(decode_json safe_decode_json);
 
 =head1 NAME
@@ -104,12 +104,12 @@ sub _load_file {
 
     my $path = "$self->{data_dir}/$filename";
     unless (-f $path) {
-        log_warning('ModelDataLoader', "JSON file not found: $path");
+        log_debug('ModelDataLoader', "JSON file not found: $path");
         return {};
     }
 
     open my $fh, '<:encoding(UTF-8)', $path or do {
-        log_error('ModelDataLoader', "Cannot read $path: $!");
+        log_debug('ModelDataLoader', "Cannot read $path: $!");
         return {};
     };
 
@@ -118,7 +118,7 @@ sub _load_file {
 
     my $data = safe_decode_json($content);
     if ($@ || !$data) {
-        log_error('ModelDataLoader', "Failed to parse $path: $@");
+        log_debug('ModelDataLoader', "Failed to parse $path: $@");
         return {};
     }
 

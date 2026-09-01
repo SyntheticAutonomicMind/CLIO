@@ -9,7 +9,7 @@ use utf8;
 use Carp qw(croak);
 use File::Spec;
 use File::Path qw(make_path);
-use CLIO::Core::Logger qw(log_debug log_info log_warning log_error);
+use CLIO::Core::Logger qw(log_debug log_warning log_error);
 use CLIO::Util::JSON qw(encode_json decode_json safe_decode_json);
 use CLIO::Util::AtomicWrite qw(atomic_write);
 
@@ -93,7 +93,7 @@ sub load_plugins {
         next unless -d $dir;
 
         opendir my $dh, $dir or do {
-            log_warning('PluginManager', "Cannot read plugin directory: $dir: $!");
+            log_debug('PluginManager', "Cannot read plugin directory: $dir: $!");
             next;
         };
 
@@ -114,13 +114,13 @@ sub load_plugins {
                 $loaded++;
             };
             if ($@) {
-                log_warning('PluginManager', "Failed to load plugin '$entry': $@");
+                log_debug('PluginManager', "Failed to load plugin '$entry': $@");
             }
         }
     }
 
     if ($loaded > 0) {
-        log_info('PluginManager', "Loaded $loaded plugin(s)");
+        log_debug('PluginManager', "Loaded $loaded plugin(s)");
     }
 
     return $loaded;
@@ -303,7 +303,7 @@ sub enable_plugin {
 
     $plugin->{enabled} = 1;
     $self->_save_plugin_state($name, 'enabled', 1);
-    log_info('PluginManager', "Enabled plugin: $name");
+    log_debug('PluginManager', "Enabled plugin: $name");
     return 1;
 }
 
@@ -321,7 +321,7 @@ sub disable_plugin {
 
     $plugin->{enabled} = 0;
     $self->_save_plugin_state($name, 'enabled', 0);
-    log_info('PluginManager', "Disabled plugin: $name");
+    log_debug('PluginManager', "Disabled plugin: $name");
     return 1;
 }
 
@@ -341,7 +341,7 @@ sub set_plugin_config {
     $plugin->{user_config}{$key} = $value;
 
     $self->_save_plugin_state($plugin_name, 'config', $plugin->{user_config});
-    log_info('PluginManager', "Set config $key for plugin $plugin_name");
+    log_debug('PluginManager', "Set config $key for plugin $plugin_name");
     return 1;
 }
 
@@ -440,7 +440,7 @@ sub _load_plugin {
     my $instructions_file = File::Spec->catfile($dir, 'instructions.md');
     if (-f $instructions_file) {
         open my $ifh, '<:encoding(UTF-8)', $instructions_file or do {
-            log_warning('PluginManager', "Cannot read instructions for $name: $!");
+            log_debug('PluginManager', "Cannot read instructions for $name: $!");
         };
         if ($ifh) {
             $instructions = do { local $/; <$ifh> };
@@ -477,7 +477,7 @@ sub _load_plugin {
 
     my $tools_count = scalar(@{$manifest->{tools} || []});
     my $status = $enabled ? 'enabled' : 'disabled';
-    log_info('PluginManager', "Loaded plugin '$plugin_name' ($tools_count tools, $status)");
+    log_debug('PluginManager', "Loaded plugin '$plugin_name' ($tools_count tools, $status)");
 }
 
 sub _build_tool_parameters {
@@ -775,7 +775,7 @@ sub _load_plugin_state {
     };
 
     if ($@) {
-        log_warning('PluginManager', "Cannot read plugin state for $name: $@");
+        log_debug('PluginManager', "Cannot read plugin state for $name: $@");
         return {};
     }
 
@@ -797,7 +797,7 @@ sub _save_plugin_state {
     };
 
     if ($@) {
-        log_warning('PluginManager', "Cannot save plugin state for $name: $@");
+        log_debug('PluginManager', "Cannot save plugin state for $name: $@");
     }
 }
 

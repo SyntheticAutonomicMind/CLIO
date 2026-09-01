@@ -5,7 +5,7 @@ package CLIO::UI::Chat;
 
 use strict;
 use warnings;
-use CLIO::Core::Logger qw(log_debug log_info log_warning);
+use CLIO::Core::Logger qw(log_debug log_warning);
 use CLIO::Security::InvisibleCharFilter qw(filter_invisible_chars has_invisible_chars);
 use CLIO::Util::TextSanitizer qw(sanitize_text set_sanitize_mode);
 use CLIO::UI::Markdown;
@@ -486,7 +486,7 @@ sub run {
                 }
             };
             if ($@) {
-                log_warning('Chat', "Image attachment parsing failed: $@");
+                log_debug('Chat', "Image attachment parsing failed: $@");
             }
         }
 
@@ -1119,11 +1119,11 @@ sub _detect_and_display_images {
                         }
                     }
                 } else {
-                    log_warning('Chat', "Failed to download image $url: $response->{status} $response->{reason}");
+                    log_debug('Chat', "Failed to download image $url: $response->{status} $response->{reason}");
                 }
             };
             if ($@) {
-                log_warning('Chat', "Error downloading image $url: $@");
+                log_debug('Chat', "Error downloading image $url: $@");
             }
         }
         
@@ -1476,7 +1476,7 @@ sub _sanitize_user_input {
         my $report = describe_invisible_chars($input);
         my @high = grep { $_->{severity} eq 'HIGH' } @{$report->{detections}};
         if (@high) {
-            log_warning('Chat', "Invisible character injection attempt detected in user input - stripping: $report->{summary}");
+            log_debug('Chat', "Invisible character injection attempt detected in user input - stripping: $report->{summary}");
         } else {
             log_debug('Chat', "Stripping invisible Unicode chars from user input: $report->{summary}");
         }
@@ -1554,7 +1554,7 @@ sub get_input {
             # leak it to the caller.
             if (ref $input eq 'HASH') {
                 my $sig_type = $input->{type} // '<unknown>';
-                log_warning('Chat', "ReadLine control signal '$sig_type' - re-prompting");
+                log_debug('Chat', "ReadLine control signal '$sig_type' - re-prompting");
                 next;
             }
             last;  # Real string input (or undef for EOF)
@@ -2298,7 +2298,7 @@ sub _poll_broker_events {
         }
     };
     if ($@) {
-        log_warning('Chat', "Error polling broker user inbox: $@");
+        log_debug('Chat', "Error polling broker user inbox: $@");
         $had_error = 1;
     }
     
@@ -2327,7 +2327,7 @@ sub _poll_broker_events {
         }
     };
     if ($@) {
-        log_warning('Chat', "Error polling broker status updates: $@");
+        log_debug('Chat', "Error polling broker status updates: $@");
         $had_error = 1;
     }
     
@@ -2347,7 +2347,7 @@ sub _poll_broker_events {
         }
     };
     if ($@) {
-        log_warning('Chat', "Error polling broker activity: $@");
+        log_debug('Chat', "Error polling broker activity: $@");
         $had_error = 1;
     }
     
@@ -2624,7 +2624,7 @@ sub setup_tab_completion {
     };
     
     if ($@) {
-        log_warning('CleanChat', "Tab completion setup failed: $@");
+        log_debug('CleanChat', "Tab completion setup failed: $@");
         $self->{readline} = undef;
         $self->{completer} = undef;
     }

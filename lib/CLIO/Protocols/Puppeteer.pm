@@ -10,7 +10,7 @@ use utf8;
 use Cwd qw(abs_path getcwd);
 use File::Spec;
 use CLIO::Util::JSON qw(encode_json decode_json safe_decode_json);
-use CLIO::Core::Logger qw(log_debug log_info log_warning);
+use CLIO::Core::Logger qw(log_debug log_warning);
 
 =head1 NAME
 
@@ -125,7 +125,7 @@ sub detect_topology {
         count      => scalar(keys %projects),
     };
     
-    log_info('Puppeteer', "Topology: %d projects detected", $topology->{count});
+    log_debug('Puppeteer', "Topology: %d projects detected", $topology->{count});
     
     return $topology;
 }

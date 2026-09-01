@@ -43,7 +43,7 @@ Supports:
 
 use CLIO::Util::JSON qw(encode_json decode_json safe_decode_json);
 use CLIO::Util::Curl qw(locate_curl);
-use CLIO::Core::Logger qw(log_debug log_error log_warning);
+use CLIO::Core::Logger qw(log_debug log_warning);
 
 sub new {
     my ($class, %args) = @_;
@@ -80,7 +80,7 @@ sub connect {
     }
     
     unless ($self->{curl_path}) {
-        log_error('MCP:HTTP', "curl not found in PATH");
+        log_debug('MCP:HTTP', "curl not found in PATH");
         return 0;
     }
     
@@ -160,13 +160,13 @@ sub send_request {
         # Direct JSON response
         my $response = safe_decode_json($result->{body});
         if ($@) {
-            log_error('MCP:HTTP', "JSON parse error: $@");
+            log_debug('MCP:HTTP', "JSON parse error: $@");
             return undef;
         }
         return $response;
     }
     else {
-        log_warning('MCP:HTTP', "Unexpected content-type: $content_type");
+        log_debug('MCP:HTTP', "Unexpected content-type: $content_type");
         # Try parsing as JSON anyway
         my $response = safe_decode_json($result->{body});
         return $response if $response;
@@ -249,7 +249,7 @@ sub _http_request {
     # Execute curl
     my $output = '';
     my $pid = open(my $pipe, '-|', @curl_args) or do {
-        log_error('MCP:HTTP', "Failed to run curl: $!");
+        log_debug('MCP:HTTP', "Failed to run curl: $!");
         return undef;
     };
     
@@ -261,7 +261,7 @@ sub _http_request {
     my $exit_code = $? >> 8;
     
     if ($exit_code != 0) {
-        log_error('MCP:HTTP', "curl exited with code $exit_code");
+        log_debug('MCP:HTTP', "curl exited with code $exit_code");
         $self->{connected} = 0 if $exit_code == 7;  # Connection refused
         return undef;
     }
@@ -318,7 +318,7 @@ sub _http_request {
             log_debug('MCP:HTTP', "Session terminated by server (404)");
             $self->{session_id} = undef;
         }
-        log_warning('MCP:HTTP', "HTTP $status_code from server");
+        log_debug('MCP:HTTP', "HTTP $status_code from server");
         return undef;
     }
     
@@ -383,7 +383,7 @@ sub _parse_sse_response {
         }
     }
     
-    log_warning('MCP:HTTP', "No matching response found in SSE stream for id=$expected_id");
+    log_debug('MCP:HTTP', "No matching response found in SSE stream for id=$expected_id");
     return undef;
 }
 

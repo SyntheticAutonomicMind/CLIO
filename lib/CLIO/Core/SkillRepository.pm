@@ -6,7 +6,7 @@ package CLIO::Core::SkillRepository;
 use strict;
 use warnings;
 use utf8;
-use CLIO::Core::Logger qw(log_debug log_info log_error log_warning);
+use CLIO::Core::Logger qw(log_debug log_warning);
 use CLIO::Util::ConfigPath qw(get_config_dir);
 use CLIO::Util::JSON qw(encode_json decode_json safe_decode_json);
 use File::Spec;
@@ -152,7 +152,7 @@ sub add_repo {
     $self->{repos}{$name} = $repo;
     $self->_save_config();
     
-    log_info('SkillRepository', "Added repository '$name' ($url)");
+    log_debug('SkillRepository', "Added repository '$name' ($url)");
     
     return { success => 1, repo => $repo };
 }
@@ -189,7 +189,7 @@ sub remove_repo {
     delete $self->{repos}{$name};
     $self->_save_config();
     
-    log_info('SkillRepository', "Removed repository '$name'");
+    log_debug('SkillRepository', "Removed repository '$name'");
     
     return { success => 1 };
 }
@@ -306,7 +306,7 @@ sub sync_repo {
         
         if ($exit_code != 0) {
             # Pull failed - try reset and pull
-            log_warning('SkillRepository', "Pull failed for '$name', attempting reset: $output");
+            log_debug('SkillRepository', "Pull failed for '$name', attempting reset: $output");
             $output = `cd "$cache_path" && git fetch origin && git reset --hard "origin/$repo->{branch}" 2>&1`;
             $exit_code = $? >> 8;
             
@@ -353,7 +353,7 @@ sub sync_repo {
     
     $self->_save_config();
     
-    log_info('SkillRepository', "Synced '$name': $skill_count skills found" .
+    log_debug('SkillRepository', "Synced '$name': $skill_count skills found" .
         ($updated ? " (updated)" : " (no changes)"));
     
     return {
@@ -441,7 +441,7 @@ sub _load_config {
     
     my $data = safe_decode_json($json);
     if ($@) {
-        log_error('SkillRepository', "Failed to parse config: $@");
+        log_debug('SkillRepository', "Failed to parse config: $@");
         return;
     }
     
@@ -476,14 +476,14 @@ sub _save_config {
     # Atomic write
     my $temp = $self->{repos_config_file} . '.tmp';
     open my $fh, '>:encoding(UTF-8)', $temp or do {
-        log_error('SkillRepository', "Cannot write config: $!");
+        log_debug('SkillRepository', "Cannot write config: $!");
         return;
     };
     print $fh encode_json($data);
     close $fh;
     
     rename($temp, $self->{repos_config_file}) or do {
-        log_error('SkillRepository', "Cannot rename config: $!");
+        log_debug('SkillRepository', "Cannot rename config: $!");
         unlink $temp;
         return;
     };

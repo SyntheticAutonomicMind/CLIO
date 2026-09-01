@@ -7,7 +7,7 @@ use strict;
 use warnings;
 use utf8;
 use Carp qw(croak);
-use CLIO::Core::Logger qw(log_debug log_warning log_error);
+use CLIO::Core::Logger qw(log_debug log_warning);
 use File::Spec;
 use File::Path qw(make_path);
 use CLIO::Util::AtomicWrite qw(atomic_write);
@@ -97,7 +97,7 @@ sub load_profile {
     };
 
     if ($@ || !$content) {
-        log_warning('ProfileManager', "Failed to read profile: $@");
+        log_debug('ProfileManager', "Failed to read profile: $@");
         return undef;
     }
 
@@ -135,7 +135,7 @@ sub save_profile {
     unless (-d $dir) {
         eval { make_path($dir) };
         if ($@) {
-            log_error('ProfileManager', "Cannot create directory $dir: $@");
+            log_debug('ProfileManager', "Cannot create directory $dir: $@");
             return 0;
         }
     }
@@ -145,7 +145,7 @@ sub save_profile {
     };
 
     if ($@) {
-        log_error('ProfileManager', "Failed to save profile: $@");
+        log_debug('ProfileManager', "Failed to save profile: $@");
         return 0;
     }
 
@@ -175,7 +175,7 @@ sub clear_profile {
         log_debug('ProfileManager', "Removed profile at $path");
         return 1;
     } else {
-        log_error('ProfileManager', "Failed to remove profile: $!");
+        log_debug('ProfileManager', "Failed to remove profile: $!");
         return 0;
     }
 }

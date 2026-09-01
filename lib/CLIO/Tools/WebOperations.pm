@@ -12,7 +12,7 @@ use Carp qw(croak confess);
 use parent 'CLIO::Tools::Tool';
 use CLIO::Compat::HTTP;
 use CLIO::Util::JSON qw(encode_json decode_json);
-use CLIO::Core::Logger qw(log_debug log_info log_warning);
+use CLIO::Core::Logger qw(log_debug log_warning);
 
 =head1 NAME
 
@@ -146,17 +146,17 @@ sub fetch_url {
     if ($security_check->{requires_confirmation}) {
         my $approved = $self->_prompt_url_confirmation($url, $security_check, $context);
         unless ($approved) {
-            log_info('WebOps', "User DENIED URL fetch: $url");
+            log_debug('WebOps', "User DENIED URL fetch: $url");
             return $self->error_result(
                 "URL fetch denied by user.\n\n" .
                 "Security concern: $security_check->{reason}\n" .
                 "The user chose not to allow this request."
             );
         }
-        log_info('WebOps', "User APPROVED URL fetch: $url");
+        log_debug('WebOps', "User APPROVED URL fetch: $url");
     }
     
-    log_info('WebOps', "Fetching URL: $url");
+    log_debug('WebOps', "Fetching URL: $url");
     
     my $result;
     eval {
@@ -1004,7 +1004,7 @@ sub _prompt_url_confirmation {
         # No TTY - try broker relay for headless sub-agents
         my $broker = ($context && $context->{broker_client}) ? $context->{broker_client} : undef;
         if ($broker) {
-            log_info('WebOps', "No TTY - relaying URL authorization through broker");
+            log_debug('WebOps', "No TTY - relaying URL authorization through broker");
             require CLIO::Security::AuthorizationRelay;
             my $relay = CLIO::Security::AuthorizationRelay->new(broker_client => $broker);
             if ($relay->available()) {
@@ -1012,14 +1012,14 @@ sub _prompt_url_confirmation {
                 if ($result->{approved}) {
                     if ($result->{grant_type} eq 'session') {
                         $_url_session_grants{fetch_url} = 1;
-                        log_info('WebOps', "Session grant (via relay) for web fetch");
+                        log_debug('WebOps', "Session grant (via relay) for web fetch");
                     }
                     return 1;
                 }
                 return 0;
             }
         }
-        log_warning('WebOps', "No UI and no broker relay - denying URL fetch");
+        log_debug('WebOps', "No UI and no broker relay - denying URL fetch");
         return 0;
     }
 
@@ -1059,7 +1059,7 @@ sub _prompt_url_confirmation {
         return 1;
     } elsif ($response eq 'a' || $response eq 'allow') {
         $_url_session_grants{fetch_url} = 1;
-        log_info('WebOps', "Session grant added for web operations");
+        log_debug('WebOps', "Session grant added for web operations");
         return 1;
     }
 

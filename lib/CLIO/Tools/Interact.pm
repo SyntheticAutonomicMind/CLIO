@@ -8,7 +8,7 @@ use warnings;
 use utf8;
 binmode(STDOUT, ':encoding(UTF-8)');
 binmode(STDERR, ':encoding(UTF-8)');
-use CLIO::Core::Logger qw(should_log log_debug log_error log_info log_warning);
+use CLIO::Core::Logger qw(should_log log_debug log_warning);
 use CLIO::UI::Terminal qw(box_char);
 use parent 'CLIO::Tools::Tool';
 
@@ -388,7 +388,7 @@ sub _request_via_broker {
     );
     
     unless ($msg_id) {
-        log_error('Interact', "Failed to send question to broker");
+        log_debug('Interact', "Failed to send question to broker");
         return $self->error_result("Failed to send question to broker");
     }
     
@@ -412,7 +412,7 @@ sub _request_via_broker {
             # Accept clarification or guidance as response
             if ($type eq 'clarification' || $type eq 'guidance' || $type eq 'response') {
                 $response = ref($msg->{content}) ? $msg->{content} : $msg->{content};
-                log_info('Interact', "Received response: $response");
+                log_debug('Interact', "Received response: $response");
                 last;
             }
             
@@ -429,7 +429,7 @@ sub _request_via_broker {
     }
     
     unless (defined $response) {
-        log_warning('Interact', "Timeout waiting for response from user");
+        log_debug('Interact', "Timeout waiting for response from user");
         return $self->error_result("Timeout waiting for user response via broker (waited ${timeout}s)");
     }
     

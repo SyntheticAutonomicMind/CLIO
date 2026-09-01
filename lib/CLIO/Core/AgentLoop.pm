@@ -64,7 +64,7 @@ sub new {
 sub run {
     my ($self) = @_;
     
-    $self->log_info("Agent loop starting");
+    $self->log_debug("Agent loop starting");
     
     # Process initial task if provided
     if ($self->{initial_task}) {
@@ -85,7 +85,7 @@ sub run {
         sleep($self->{poll_interval});
     }
     
-    $self->log_info("Agent loop exiting");
+    $self->log_debug("Agent loop exiting");
 }
 
 sub iteration {
@@ -97,7 +97,7 @@ sub iteration {
         $messages = $self->{client}->poll_my_inbox();
     };
     if ($@) {
-        $self->log_warn("Broker communication error: $@");
+        $self->log_debug("Broker communication error: $@");
         $messages = [];
         # Try to reconnect after a short delay
         sleep 1;
@@ -152,7 +152,7 @@ sub handle_task_message {
     
     my $task = $msg->{content};
     
-    $self->log_info("New task received: $task");
+    $self->log_debug("New task received: $task");
     
     # Queue the task
     $self->{current_task} = $task;
@@ -171,7 +171,7 @@ sub handle_clarification_message {
     
     my $answer = $msg->{content};
     
-    $self->log_info("Received clarification: $answer");
+    $self->log_debug("Received clarification: $answer");
     
     # Resume processing with the answer
     $self->{waiting_for_response} = 0;
@@ -187,7 +187,7 @@ sub handle_guidance_message {
     
     my $guidance = $msg->{content};
     
-    $self->log_info("Received guidance: $guidance");
+    $self->log_debug("Received guidance: $guidance");
     
     # Guidance can modify or redirect current work
     # Implementation depends on task processing logic
@@ -197,7 +197,7 @@ sub handle_guidance_message {
 sub handle_stop_message {
     my ($self, $msg) = @_;
     
-    $self->log_info("Stop signal received");
+    $self->log_debug("Stop signal received");
     
     # Graceful shutdown
     $self->{running} = 0;
@@ -224,7 +224,7 @@ sub process_current_task {
     };
     
     if ($@) {
-        $self->log_error("Task processing error: $@");
+        $self->log_debug("Task processing error: $@");
         
         # Report error to user
         $self->{client}->send_blocked("Task failed: $@");
@@ -236,7 +236,7 @@ sub process_current_task {
     
     # If task completed successfully
     if ($result && $result->{completed}) {
-        $self->log_info("Task completed");
+        $self->log_debug("Task completed");
         
         $self->{client}->send_complete($result->{message} || "Task completed successfully");
         
@@ -245,12 +245,12 @@ sub process_current_task {
         
         # Oneshot agents exit after first task completion
         if ($self->{oneshot}) {
-            $self->log_info("Oneshot mode: task delivered, exiting");
+            $self->log_debug("Oneshot mode: task delivered, exiting");
             $self->{running} = 0;
         }
     }
     elsif ($result && $result->{blocked}) {
-        $self->log_info("Task blocked: $result->{reason}");
+        $self->log_debug("Task blocked: $result->{reason}");
         
         # Set waiting flag
         $self->{waiting_for_response} = 1;
@@ -286,7 +286,7 @@ sub ask_question {
     
     $to ||= 'user';
     
-    $self->log_info("Asking question: $question");
+    $self->log_debug("Asking question: $question");
     
     $self->{waiting_for_response} = 1;
     
@@ -308,20 +308,10 @@ sub stop {
     $self->{running} = 0;
 }
 
-sub log_info {
-    my ($self, $msg) = @_;
-    CLIO::Core::Logger::log_info('AgentLoop', "$msg");
-}
-
 sub log_debug {
     my ($self, $msg) = @_;
     return unless $self->{debug};
     CLIO::Core::Logger::log_debug('AgentLoop', "$msg");
-}
-
-sub log_warn {
-    my ($self, $msg) = @_;
-    CLIO::Core::Logger::log_warning('AgentLoop', "$msg");
 }
 
 sub log_error {

@@ -20,7 +20,7 @@
 # Fix: SimpleAIAgent no longer wraps the error. Chat.pm does not write
 # final_response to the assistant buffer when result->{success} is 0. Chat.pm
 # also strips the legacy wrapper from the error string for backward
-# compatibility. Handled-error log_warning lines are demoted to log_info.
+# compatibility. Handled-error log_warning lines are demoted to log_debug.
 
 use strict;
 use warnings;
@@ -60,40 +60,40 @@ sub slurp { my ($f) = @_; local $/; open my $fh, '<', $f or die "open($f): $!"; 
          'Chat.pm strips the legacy "I\'m sorry, I encountered an error:" wrapper for backward compat');
 }
 
-# ── Test 4: Handled-error log lines are demoted to log_info ───────────
-# Verify the demotions exist by checking that the relevant log_info
+# ── Test 4: Handled-error log lines are demoted to log_debug ───────────
+# Verify the demotions exist by checking that the relevant log_debug
 # statements are present (in both ResponseHandler.pm and ErrorHandler.pm)
 # AND that the old log_warning statements are gone.
 {
     my $rh = slurp('lib/CLIO/Core/API/ResponseHandler.pm');
 
-    # Each demoted warning should now appear as a log_info() call with the
+    # Each demoted warning should now appear as a log_debug() call with the
     # same first ~40 chars of the message. The previous log_warning calls
     # have been replaced.
-    like($rh, qr/log_info\('ResponseHandler',\s*"Billing error \(non-retryable\):/,
-         'ResponseHandler billing 400 uses log_info');
-    like($rh, qr/log_info\('ResponseHandler',\s*"Region unavailable \(non-retryable\):/,
-         'ResponseHandler region_unavailable uses log_info');
-    like($rh, qr/log_info\('ResponseHandler',\s*"Account disabled \(non-retryable\):/,
-         'ResponseHandler account_disabled uses log_info');
-    like($rh, qr/log_info\('ResponseHandler',\s*"Model not found \(non-retryable\):/,
-         'ResponseHandler model_not_found uses log_info');
-    like($rh, qr/log_info\('ResponseHandler',\s*"Provider unavailable \(non-retryable\):/,
-         'ResponseHandler provider_unavailable uses log_info');
+    like($rh, qr/log_debug\('ResponseHandler',\s*"Billing error \(non-retryable\):/,
+         'ResponseHandler billing 400 uses log_debug');
+    like($rh, qr/log_debug\('ResponseHandler',\s*"Region unavailable \(non-retryable\):/,
+         'ResponseHandler region_unavailable uses log_debug');
+    like($rh, qr/log_debug\('ResponseHandler',\s*"Account disabled \(non-retryable\):/,
+         'ResponseHandler account_disabled uses log_debug');
+    like($rh, qr/log_debug\('ResponseHandler',\s*"Model not found \(non-retryable\):/,
+         'ResponseHandler model_not_found uses log_debug');
+    like($rh, qr/log_debug\('ResponseHandler',\s*"Provider unavailable \(non-retryable\):/,
+         'ResponseHandler provider_unavailable uses log_debug');
 
     my $eh = slurp('lib/CLIO/Core/API/ErrorHandler.pm');
-    like($eh, qr/log_info\('ErrorHandler',\s*"Provider backend unavailable/,
-         'ErrorHandler provider_unavailable uses log_info');
-    like($eh, qr/log_info\('ErrorHandler',\s*"Billing error \(out of credits\)/,
-         'ErrorHandler billing_error uses log_info');
-    like($eh, qr/log_info\('ErrorHandler',\s*"Model not found - returning/,
-         'ErrorHandler model_not_found uses log_info');
-    like($eh, qr/log_info\('ErrorHandler',\s*"Region unavailable - returning/,
-         'ErrorHandler region_unavailable uses log_info');
-    like($eh, qr/log_info\('ErrorHandler',\s*"Account disabled - returning/,
-         'ErrorHandler account_disabled uses log_info');
-    like($eh, qr/log_info\('ErrorHandler',\s*"Context trim removed 0 messages/,
-         'ErrorHandler trim_zero escalation uses log_info');
+    like($eh, qr/log_debug\('ErrorHandler',\s*"Provider backend unavailable/,
+         'ErrorHandler provider_unavailable uses log_debug');
+    like($eh, qr/log_debug\('ErrorHandler',\s*"Billing error \(out of credits\)/,
+         'ErrorHandler billing_error uses log_debug');
+    like($eh, qr/log_debug\('ErrorHandler',\s*"Model not found - returning/,
+         'ErrorHandler model_not_found uses log_debug');
+    like($eh, qr/log_debug\('ErrorHandler',\s*"Region unavailable - returning/,
+         'ErrorHandler region_unavailable uses log_debug');
+    like($eh, qr/log_debug\('ErrorHandler',\s*"Account disabled - returning/,
+         'ErrorHandler account_disabled uses log_debug');
+    like($eh, qr/log_debug\('ErrorHandler',\s*"Context trim removed 0 messages/,
+         'ErrorHandler trim_zero escalation uses log_debug');
 }
 
 # ── Test 5: Verify the strip regex actually strips the legacy wrapper ─

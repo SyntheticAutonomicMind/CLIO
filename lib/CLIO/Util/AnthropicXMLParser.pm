@@ -162,7 +162,7 @@ sub parse_anthropic_xml_to_json {
     }
     
     # Fallback: return empty JSON object
-    log_warning('AnthropicXMLParser', "No parameters extracted, returning empty object");
+    log_debug('AnthropicXMLParser', "No parameters extracted, returning empty object");
     return '{}';
 }
 
