@@ -75,24 +75,24 @@ sub new {
     my $resolved = File::Spec->rel2abs($file_path);
     
     unless (-e $resolved) {
-        log_warning('ImageAttachment', "File not found: $resolved");
+        log_debug('ImageAttachment', "File not found: $resolved");
         return undef;
     }
     
     unless (-f $resolved && -r $resolved) {
-        log_warning('ImageAttachment', "Not a readable file: $resolved");
+        log_debug('ImageAttachment', "Not a readable file: $resolved");
         return undef;
     }
     
     my $size = -s $resolved;
     if ($size > MAX_FILE_SIZE_BYTES) {
-        log_warning('ImageAttachment', "File too large: " . _format_bytes($size) . " (max " . _format_bytes(MAX_FILE_SIZE_BYTES) . ")");
+        log_debug('ImageAttachment', "File too large: " . _format_bytes($size) . " (max " . _format_bytes(MAX_FILE_SIZE_BYTES) . ")");
         return undef;
     }
     
     my $mime_type = _detect_mime_type($resolved);
     unless ($mime_type) {
-        log_warning('ImageAttachment', "Unsupported image format: $resolved");
+        log_debug('ImageAttachment', "Unsupported image format: $resolved");
         return undef;
     }
     
@@ -103,7 +103,7 @@ sub new {
     }, $class;
     
     if ($size > WARN_FILE_SIZE_BYTES) {
-        log_warning('ImageAttachment', "Large image: " . _format_bytes($size) . " (may slow API response)");
+        log_debug('ImageAttachment', "Large image: " . _format_bytes($size) . " (may slow API response)");
     }
     
     log_debug('ImageAttachment', "Loaded $mime_type image: $resolved (" . _format_bytes($size) . ")");
@@ -152,7 +152,7 @@ sub to_base64 {
     my $path = $self->{file_path};
     
     open my $fh, '<:raw', $path or do {
-        log_warning('ImageAttachment', "Cannot read $path: $!");
+        log_debug('ImageAttachment', "Cannot read $path: $!");
         return undef;
     };
     
@@ -161,7 +161,7 @@ sub to_base64 {
     close $fh;
     
     unless (defined $data && length($data) > 0) {
-        log_warning('ImageAttachment', "Empty file: $path");
+        log_debug('ImageAttachment', "Empty file: $path");
         return undef;
     }
     

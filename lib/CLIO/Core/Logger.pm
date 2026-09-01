@@ -28,7 +28,8 @@ CLIO::Core::Logger - Global logging utility
 =head1 DESCRIPTION
 
 Provides global should_log() function that checks CLIO_LOG_LEVEL environment
-variable (which is set automatically by the --debug flag) or falls back to WARNING default.
+variable (which is set automatically by the --debug flag) or falls back to ERROR
+default.
 
 This allows modules without config access to still respect log level settings.
 
@@ -72,10 +73,10 @@ sub should_log {
         $config_level = uc($ENV{CLIO_LOG_LEVEL});
     } elsif ($config && $config->can('get')) {
         # Fall back to config object if no env var
-        $config_level = uc($config->get('log_level') || 'WARNING');
+        $config_level = uc($config->get('log_level') || 'ERROR');
     } else {
-        # Default to WARNING (less verbose than INFO)
-        $config_level = 'WARNING';
+        # Default to ERROR
+        $config_level = 'ERROR';
     }
     
     # Validate levels

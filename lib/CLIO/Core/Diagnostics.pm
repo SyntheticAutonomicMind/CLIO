@@ -10,7 +10,7 @@ use Exporter 'import';
 use POSIX qw(strftime);
 use CLIO::Util::JSON qw(encode_json safe_encode_json);
 use CLIO::Memory::TokenEstimator qw(estimate_tokens get_effective_ratio);
-use CLIO::Core::Logger qw(log_warning log_info log_debug);
+use CLIO::Core::Logger qw(log_warning log_debug);
 use CLIO::Util::RateLimit qw(format_reset_message);
 
 our @EXPORT_OK = qw(
@@ -100,7 +100,7 @@ sub dump_diagnostic {
 
     my $open_mode = $append ? '>>:encoding(UTF-8)' : '>:encoding(UTF-8)';
     open my $fh, $open_mode, $file or do {
-        log_warning('Diagnostics', "Cannot write diagnostic to $file: $!");
+        log_debug('Diagnostics', "Cannot write diagnostic to $file: $!");
         return;
     };
 
@@ -293,7 +293,7 @@ sub dump_diagnostic {
     print $fh "=" x 80, "\n";
     close $fh;
 
-    log_info('Diagnostics', "Diagnostic ($trigger" . ($phase ? "/$phase" : "") . ") written to $file");
+    log_debug('Diagnostics', "Diagnostic ($trigger" . ($phase ? "/$phase" : "") . ") written to $file");
     return $file;
 }
 
@@ -351,7 +351,7 @@ sub display_rate_limit_info {
         $message = "Rate limit reached. Please wait before making more requests.";
     }
 
-    log_info('Diagnostics', "Rate limit info: $message");
+    log_debug('Diagnostics', "Rate limit info: $message");
     return $message;
 }
 

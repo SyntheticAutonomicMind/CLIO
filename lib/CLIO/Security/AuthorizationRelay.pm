@@ -7,7 +7,7 @@ use strict;
 use warnings;
 use utf8;
 
-use CLIO::Core::Logger qw(log_debug log_info log_warning log_error);
+use CLIO::Core::Logger qw(log_debug log_warning log_error);
 
 =head1 NAME
 
@@ -88,7 +88,7 @@ sub request_authorization {
     my ($self, %args) = @_;
     
     unless ($self->available()) {
-        log_warning('AuthRelay', "No broker connection - denying authorization request");
+        log_debug('AuthRelay', "No broker connection - denying authorization request");
         return { approved => 0, grant_type => 'denied', reason => 'no broker connection' };
     }
     
@@ -102,7 +102,7 @@ sub request_authorization {
     # Generate unique request ID for matching response
     my $request_id = "auth-" . time() . "-" . int(rand(10000));
     
-    log_info('AuthRelay', "Sending authorization request $request_id: $category - $description (risk: $risk_level)");
+    log_debug('AuthRelay', "Sending authorization request $request_id: $category - $description (risk: $risk_level)");
     
     # Send authorization request to broker
     my $response = $self->{broker_client}->send_and_wait({
@@ -117,7 +117,7 @@ sub request_authorization {
     }, $self->{timeout});
     
     unless ($response) {
-        log_warning('AuthRelay', "Timeout waiting for authorization response ($self->{timeout}s) - denying");
+        log_debug('AuthRelay', "Timeout waiting for authorization response ($self->{timeout}s) - denying");
         return { approved => 0, grant_type => 'denied', reason => 'timeout' };
     }
     
@@ -125,17 +125,17 @@ sub request_authorization {
         my $approved   = $response->{approved} ? 1 : 0;
         my $grant_type = $response->{grant_type} || ($approved ? 'once' : 'denied');
         
-        log_info('AuthRelay', "Authorization response for $request_id: approved=$approved grant=$grant_type");
+        log_debug('AuthRelay', "Authorization response for $request_id: approved=$approved grant=$grant_type");
         return { approved => $approved, grant_type => $grant_type };
     }
     
     if ($response->{type} eq 'error') {
-        log_warning('AuthRelay', "Broker error for authorization request: $response->{message}");
+        log_debug('AuthRelay', "Broker error for authorization request: $response->{message}");
         return { approved => 0, grant_type => 'denied', reason => $response->{message} };
     }
     
     # Unexpected response type
-    log_warning('AuthRelay', "Unexpected response type: $response->{type}");
+    log_debug('AuthRelay', "Unexpected response type: $response->{type}");
     return { approved => 0, grant_type => 'denied', reason => 'unexpected response' };
 }
 

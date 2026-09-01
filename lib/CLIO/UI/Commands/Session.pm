@@ -10,7 +10,7 @@ use parent 'CLIO::UI::Commands::Base';
 
 use Carp qw(croak);
 use CLIO::Util::PathResolver qw(expand_tilde);
-use CLIO::Core::Logger qw(should_log log_info log_debug log_warning);
+use CLIO::Core::Logger qw(should_log log_debug log_warning);
 
 =head1 NAME
 
@@ -115,7 +115,7 @@ sub auto_prune_sessions {
     }
     
     if ($deleted > 0 && should_log('INFO')) {
-        log_info('Session', "Auto-pruned $deleted old sessions (older than $days days)");
+        log_debug('Session', "Auto-pruned $deleted old sessions (older than $days days)");
     }
     
     return $deleted;
@@ -650,7 +650,7 @@ sub _trim_sessions {
             if (unlink($sess->{file})) {
                 $bytes_freed += $sess->{size};
             } else {
-                log_warning('SessionCmd', "Failed to delete $sess->{file}: $!");
+                log_debug('SessionCmd', "Failed to delete $sess->{file}: $!");
                 $ok = 0;
             }
         }

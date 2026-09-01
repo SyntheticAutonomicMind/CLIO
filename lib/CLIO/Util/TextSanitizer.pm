@@ -87,7 +87,7 @@ sub sanitize_text {
         # generate a warning. In relaxed mode, all detections log at debug level only.
         # LOW/MEDIUM detections always log at debug (legitimate in UI strings/tool output).
         if (@high && $SANITIZE_MODE eq 'strict') {
-            log_warning('TextSanitizer', "Invisible character injection attempt detected: $report->{summary}");
+            log_debug('TextSanitizer', "Invisible character injection attempt detected: $report->{summary}");
         } else {
             log_debug('TextSanitizer', "Stripping invisible Unicode chars: $report->{summary}");
         }

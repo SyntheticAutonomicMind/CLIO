@@ -649,7 +649,7 @@ sub send {
     };
     if ($@) {
         eval { $self->{socket}->blocking(0) };  # Restore non-blocking on error
-        CLIO::Core::Logger::log_warning("BrokerClient", "Failed to send message: $@");
+        CLIO::Core::Logger::log_debug("BrokerClient", "Failed to send message: $@");
         return 0;
     }
     
@@ -672,7 +672,7 @@ sub reconnect {
     }
     
     $self->{_disconnected} = 0;
-    CLIO::Core::Logger::log_info("BrokerClient", "Reconnected to broker");
+    CLIO::Core::Logger::log_debug("BrokerClient", "Reconnected to broker");
     return 1;
 }
 
@@ -726,7 +726,7 @@ sub send_and_wait {
         }
     }
     
-    CLIO::Core::Logger::log_warning("BrokerClient", "Timeout waiting for broker response");
+    CLIO::Core::Logger::log_debug("BrokerClient", "Timeout waiting for broker response");
     return undef;
 }
 

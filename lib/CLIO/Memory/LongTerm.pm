@@ -5,7 +5,7 @@ package CLIO::Memory::LongTerm;
 
 use strict;
 use warnings;
-use CLIO::Core::Logger qw(log_debug log_info);
+use CLIO::Core::Logger qw(log_debug);
 use CLIO::Util::JSON qw(encode_json decode_json encode_json_pretty safe_decode_json);
 use CLIO::Util::AtomicWrite qw(atomic_write);
 use utf8;
@@ -541,7 +541,7 @@ sub add_corroboration {
             if ($entry->{corroboration_count} >= 2 && $entry->{tier} eq 'unverified') {
                 $entry->{tier} = 'trusted';
                 $promoted = 1;
-                log_info('LTM', "Entry promoted to trusted tier: " . substr($text, 0, 80));
+                log_debug('LTM', "Entry promoted to trusted tier: " . substr($text, 0, 80));
             }
             
             return {
@@ -607,7 +607,7 @@ sub promote_entry {
             $self->{_dirty} = 1;
             $self->{metadata}{last_updated} = $now;
             
-            log_info('LTM', "Entry manually promoted to trusted: " . substr($text, 0, 80));
+            log_debug('LTM', "Entry manually promoted to trusted: " . substr($text, 0, 80));
             
             return {
                 found => 1,
@@ -1402,7 +1402,7 @@ sub consolidate {
 
     my $total_changes = $stats->{removed} + $stats->{decayed} + $stats->{deduped};
     if ($total_changes > 0) {
-        log_info('LTM', "Consolidation: removed=$stats->{removed}, decayed=$stats->{decayed}, deduped=$stats->{deduped}");
+        log_debug('LTM', "Consolidation: removed=$stats->{removed}, decayed=$stats->{decayed}, deduped=$stats->{deduped}");
     }
 
     return $stats;

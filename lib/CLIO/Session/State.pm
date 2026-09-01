@@ -34,7 +34,7 @@ use strict;
 use warnings;
 use utf8;
 use Carp qw(croak);
-use CLIO::Core::Logger qw(log_error log_warning log_debug log_info);
+use CLIO::Core::Logger qw(log_error log_warning log_debug);
 use CLIO::Util::UUID qw(uuid_v4);
 use CLIO::Util::PathResolver;
 use File::Spec;
@@ -139,7 +139,7 @@ sub save {
         my $ltm_file = CLIO::Util::PathResolver::find_ltm_path($current_dir);
         eval { $self->{ltm}->save($ltm_file); };
         if ($@) {
-            log_warning('State', "Failed to save LTM: $@");
+            log_debug('State', "Failed to save LTM: $@");
         }
     }
     
@@ -182,10 +182,10 @@ my $data = {
     # sharing the same session file. The lock is on the target file path itself.
     my $lock_fh;
     open($lock_fh, '>>', $self->{file}) or do {
-        log_warning('State', "Cannot open session file for locking: $!");
+        log_debug('State', "Cannot open session file for locking: $!");
     };
     if ($lock_fh) {
-        flock($lock_fh, LOCK_EX) or log_warning('State', "Cannot acquire exclusive lock: $!");
+        flock($lock_fh, LOCK_EX) or log_debug('State', "Cannot acquire exclusive lock: $!");
     }
 
     # Ensure session directory exists before writing with secure permissions
@@ -194,7 +194,7 @@ my $data = {
         require File::Path;
         eval { File::Path::make_path($dir, { mode => 0700 }) };
         if ($@) {
-            log_warning('State', "Failed to create session directory: $@");
+            log_debug('State', "Failed to create session directory: $@");
         }
     }
     
@@ -233,7 +233,7 @@ sub load {
     
     # Fallback: If old session has ltm->{store} data, migrate it
     if (!-e $ltm_file && $data->{ltm} && ref($data->{ltm}) eq 'HASH') {
-        log_info('State', "Migrating legacy LTM data to new format");
+        log_debug('State', "Migrating legacy LTM data to new format");
         $ltm = CLIO::Memory::LongTerm->new(debug => $args{debug});
         # Convert old store format to discoveries
         for my $key (keys %{$data->{ltm}}) {
@@ -321,7 +321,7 @@ sub load {
     $data->{history} = \@cleaned_history;
     if ($corruption_migrated) {
         $data->{_corruption_migrated} = $corruption_migrated;
-        log_info('State::load', "Migrated $corruption_migrated corrupted message(s) "
+        log_debug('State::load', "Migrated $corruption_migrated corrupted message(s) "
             . "(hash/array content -> string marker). Session will be re-saved to persist fix.");
     }
     my $yarn = CLIO::Memory::YaRN->new(threads => $data->{yarn} // {}, debug => $args{debug});
@@ -401,7 +401,7 @@ sub load {
     if ($data->{_corruption_migrated}) {
         eval { $self->save(); };
         if ($@) {
-            log_warning('State::load', "Failed to persist corruption migration: $@");
+            log_debug('State::load', "Failed to persist corruption migration: $@");
         }
     }
     log_debug('State::load', "returning self: $self");
@@ -409,7 +409,7 @@ sub load {
     # Restore model to ENV if one was saved (so it persists across resume)
     if ($self->{selected_model}) {
         $ENV{OPENAI_MODEL} = $self->{selected_model};
-        log_info('State::load', "Restored model from session: $self->{selected_model}");
+        log_debug('State::load', "Restored model from session: $self->{selected_model}");
     }
     
     return $self;
@@ -1010,7 +1010,7 @@ sub trim_context {
         }
     };
     if ($@) {
-        log_warning('SessionState', "YaRN compression in trim_context failed: $@");
+        log_debug('SessionState', "YaRN compression in trim_context failed: $@");
     }
     
     # Build trim notification - include compressed summary if available
@@ -1051,7 +1051,7 @@ sub trim_context {
         use CLIO::Memory::TokenEstimator;
         my $before_tokens = CLIO::Memory::TokenEstimator::estimate_messages_tokens(\@messages);
         my $after_tokens = CLIO::Memory::TokenEstimator::estimate_messages_tokens(\@trimmed);
-        log_info('SessionState', "Context trim: $before -> $after messages ($before_tokens -> $after_tokens tokens, " .
+        log_debug('SessionState', "Context trim: $before -> $after messages ($before_tokens -> $after_tokens tokens, " .
                      int(($after_tokens / $before_tokens) * 100) . "% retained)");
         log_debug('SessionState', "[STATE] Trim notification injected - agent notified of archived context");
     }

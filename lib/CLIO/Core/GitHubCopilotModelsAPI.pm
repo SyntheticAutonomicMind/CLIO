@@ -6,7 +6,7 @@ package CLIO::Core::GitHubCopilotModelsAPI;
 use strict;
 use warnings;
 use utf8;
-use CLIO::Core::Logger qw(log_error log_warning log_debug);
+use CLIO::Core::Logger qw(log_debug log_warning);
 use CLIO::Util::ConfigPath qw(get_config_dir get_config_file);
 use CLIO::Util::JSON qw(encode_json decode_json safe_decode_json);
 use CLIO::Compat::HTTP;
@@ -195,7 +195,7 @@ sub fetch_models {
     
     my $data = safe_decode_json($resp->decoded_content);
     if ($@) {
-        log_error('GitHubCopilotModelsAPI', "Failed to parse JSON: $@");
+        log_debug('GitHubCopilotModelsAPI', "Failed to parse JSON: $@");
         return undef;
     }
     
@@ -270,7 +270,7 @@ sub get_model_billing {
     }
 
     # Model not found in API response
-    log_warning('GitHubCopilotModelsAPI', "Model $model_id not found in API response");
+    log_debug('GitHubCopilotModelsAPI', "Model $model_id not found in API response");
 
     return {is_premium => 0, multiplier => 0, category => undef, vendor => undef};
 }
@@ -515,7 +515,7 @@ sub _save_cache {
     my $cache_dir = dirname($self->{cache_file});
     unless (-d $cache_dir) {
         mkdir $cache_dir or do {
-            log_warning('GitHubCopilotModelsAPI', "Cannot create cache directory: $!");
+            log_debug('GitHubCopilotModelsAPI', "Cannot create cache directory: $!");
             return;
         };
     }
@@ -528,14 +528,14 @@ sub _save_cache {
     # ModelCapabilitiesManager::_save_cache).
     my $temp_file = $self->{cache_file} . '.tmp';
     open my $fh, '>', $temp_file or do {
-        log_warning('GitHubCopilotModelsAPI', "Cannot write cache temp file: $!");
+        log_debug('GitHubCopilotModelsAPI', "Cannot write cache temp file: $!");
         return;
     };
     print $fh encode_json($data);
     close $fh;
 
     if (!rename($temp_file, $self->{cache_file})) {
-        log_warning('GitHubCopilotModelsAPI', "Cannot rename cache: $!");
+        log_debug('GitHubCopilotModelsAPI', "Cannot rename cache: $!");
         unlink $temp_file;  # Clean up temp file
         return;
     }

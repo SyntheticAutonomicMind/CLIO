@@ -13,7 +13,7 @@ use parent 'CLIO::Tools::Tool';
 use Cwd 'getcwd';
 use POSIX qw(WNOHANG);
 use Time::HiRes ();
-use CLIO::Core::Logger qw(log_debug log_info log_warning log_error);
+use CLIO::Core::Logger qw(log_debug log_warning log_error);
 use CLIO::Security::CommandAnalyzer qw(analyze_command);
 
 =head1 NAME
@@ -264,7 +264,7 @@ sub _execute_captured {
             if ($@ =~ /alarm/) {
                 $exit_code = 124;
             } else {
-                log_warning('TerminalOps', "Command execution error: $@");
+                log_debug('TerminalOps', "Command execution error: $@");
                 $exit_code = 1 unless defined $exit_code;
             }
         }
@@ -322,7 +322,7 @@ sub _execute_captured {
             # the package-level global flag (the latter is set by the ALRM handler
             # and is visible to code paths that do not have a session reference).
             if ($session && $session->can('state') && $session->state()->{user_interrupted}) {
-                log_info('TerminalOps', "User interrupt detected (ESC/Ctrl-C), killing child process group $pid (wall=" . sprintf('%.1fs', $wall_seconds) . " idle=" . sprintf('%.1fs', $idle_seconds) . ")");
+                log_debug('TerminalOps', "User interrupt detected (ESC/Ctrl-C), killing child process group $pid (wall=" . sprintf('%.1fs', $wall_seconds) . " idle=" . sprintf('%.1fs', $idle_seconds) . ")");
                 $interrupted = 1;
                 $self->_kill_process_group($pid);
                 $exit_code = 130;
@@ -338,19 +338,19 @@ sub _execute_captured {
             
             # Hard ceiling: absolute wall-clock limit regardless of activity
             if ($wall_seconds > $hard_ceiling) {
-                log_info('TerminalOps', "Hard ceiling reached: wall=" . sprintf('%.1fs', $wall_seconds) . " > $hard_ceiling, killing child process group $pid (idle=" . sprintf('%.1fs', $idle_seconds) . ")");
+                log_debug('TerminalOps', "Hard ceiling reached: wall=" . sprintf('%.1fs', $wall_seconds) . " > $hard_ceiling, killing child process group $pid (idle=" . sprintf('%.1fs', $idle_seconds) . ")");
                 $timed_out = 1;
-                log_warning('TerminalOps', "Command hit hard ceiling after ${hard_ceiling}s, killing process group $pid");
+                log_debug('TerminalOps', "Command hit hard ceiling after ${hard_ceiling}s, killing process group $pid");
                 $self->_kill_process_group($pid);
                 last;
             }
             
             # Idle timeout: no output for $timeout seconds
             if ($idle_seconds > $timeout) {
-                log_info('TerminalOps', "Idle timeout reached: idle=" . sprintf('%.1fs', $idle_seconds) . " > $timeout (wall=" . sprintf('%.1fs', $wall_seconds) . "), killing child process group $pid");
+                log_debug('TerminalOps', "Idle timeout reached: idle=" . sprintf('%.1fs', $idle_seconds) . " > $timeout (wall=" . sprintf('%.1fs', $wall_seconds) . "), killing child process group $pid");
                 $timed_out = 1;
                 my $total = int($wall_seconds);
-                log_warning('TerminalOps', "Command idle for ${timeout}s (${total}s total), killing process group $pid");
+                log_debug('TerminalOps', "Command idle for ${timeout}s (${total}s total), killing process group $pid");
                 $self->_kill_process_group($pid);
                 last;
             }
@@ -370,7 +370,7 @@ sub _execute_captured {
             $exit_code = 124;
         } else {
             # Fork or other unexpected failure - log and set error exit code
-            log_warning('TerminalOps', "Command execution error: $@");
+            log_debug('TerminalOps', "Command execution error: $@");
             $exit_code = 1 unless defined $exit_code;
         }
     }
@@ -475,7 +475,7 @@ sub _execute_passthrough {
             if ($@ =~ /alarm/) {
                 $exit_code = 124;
             } else {
-                log_warning('TerminalOps', "Command execution error: $@");
+                log_debug('TerminalOps', "Command execution error: $@");
                 $exit_code = 1 unless defined $exit_code;
             }
         }
@@ -521,7 +521,7 @@ sub _execute_passthrough {
 
             # Check for user interrupt
             if ($session && $session->can('state') && $session->state()->{user_interrupted}) {
-                log_info('TerminalOps', "User interrupt detected (ESC/Ctrl-C), killing passthrough process group $child_pid (wall=" . sprintf('%.1fs', $wall_seconds) . " idle=" . sprintf('%.1fs', $idle_seconds) . ")");
+                log_debug('TerminalOps', "User interrupt detected (ESC/Ctrl-C), killing passthrough process group $child_pid (wall=" . sprintf('%.1fs', $wall_seconds) . " idle=" . sprintf('%.1fs', $idle_seconds) . ")");
                 $interrupted = 1;
                 $self->_kill_process_group($child_pid);
                 $exit_code = 130;
@@ -537,19 +537,19 @@ sub _execute_passthrough {
             
             # Hard ceiling
             if ($wall_seconds > $hard_ceiling) {
-                log_info('TerminalOps', "Hard ceiling reached in passthrough: wall=" . sprintf('%.1fs', $wall_seconds) . " > $hard_ceiling, killing process group $child_pid (idle=" . sprintf('%.1fs', $idle_seconds) . ")");
+                log_debug('TerminalOps', "Hard ceiling reached in passthrough: wall=" . sprintf('%.1fs', $wall_seconds) . " > $hard_ceiling, killing process group $child_pid (idle=" . sprintf('%.1fs', $idle_seconds) . ")");
                 $timed_out = 1;
-                log_warning('TerminalOps', "Passthrough hit hard ceiling after ${hard_ceiling}s, killing process group $child_pid");
+                log_debug('TerminalOps', "Passthrough hit hard ceiling after ${hard_ceiling}s, killing process group $child_pid");
                 $self->_kill_process_group($child_pid);
                 last;
             }
             
             # Idle timeout
             if ($idle_seconds > $timeout) {
-                log_info('TerminalOps', "Idle timeout reached in passthrough: idle=" . sprintf('%.1fs', $idle_seconds) . " > $timeout (wall=" . sprintf('%.1fs', $wall_seconds) . "), killing process group $child_pid");
+                log_debug('TerminalOps', "Idle timeout reached in passthrough: idle=" . sprintf('%.1fs', $idle_seconds) . " > $timeout (wall=" . sprintf('%.1fs', $wall_seconds) . "), killing process group $child_pid");
                 $timed_out = 1;
                 my $total = int($wall_seconds);
-                log_warning('TerminalOps', "Passthrough idle for ${timeout}s (${total}s total), killing process group $child_pid");
+                log_debug('TerminalOps', "Passthrough idle for ${timeout}s (${total}s total), killing process group $child_pid");
                 $self->_kill_process_group($child_pid);
                 last;
             }
@@ -640,7 +640,7 @@ sub _kill_process_group {
     my ($self, $pid) = @_;
     return unless $pid && $pid > 0;
 
-    log_info('TerminalOps', "_kill_process_group entered: pid=$pid my_pid=$$ my_pgid=" . (_get_pid_pgid($$) // 'unknown'));
+    log_debug('TerminalOps', "_kill_process_group entered: pid=$pid my_pid=$$ my_pgid=" . (_get_pid_pgid($$) // 'unknown'));
 
     # Safety check: verify the child's PGID is the child's PID before
     # targeting that process group with SIGKILL. If the child's setpgid(0, 0)
@@ -650,12 +650,12 @@ sub _kill_process_group {
     # CLIO::Compat::Terminal::kill_stale_children.
     my $child_pgid = _get_pid_pgid($pid);
     if (!defined $child_pgid || $child_pgid != $pid) {
-        log_warning('TerminalOps', "Refusing to kill PID $pid: its PGID is " . ($child_pgid // 'unknown') . ", not its own PID. Child setpgid likely failed at fork; would risk killing CLIO or its peers.");
+        log_debug('TerminalOps', "Refusing to kill PID $pid: its PGID is " . ($child_pgid // 'unknown') . ", not its own PID. Child setpgid likely failed at fork; would risk killing CLIO or its peers.");
         return;
     }
 
     my $term_sent = kill('TERM', -$pid);
-    log_info('TerminalOps', "Sent SIGTERM to PGID=$pid (kill returned: " . ($term_sent ? scalar($term_sent) : '0') . " targets)");
+    log_debug('TerminalOps', "Sent SIGTERM to PGID=$pid (kill returned: " . ($term_sent ? scalar($term_sent) : '0') . " targets)");
     my $wait_start = Time::HiRes::time();
     my $term_grace = 0;
     while (Time::HiRes::time() - $wait_start < 2) {
@@ -665,19 +665,19 @@ sub _kill_process_group {
             last;
         }
         if ($w < 0) {
-            log_warning('TerminalOps', "waitpid($pid, WNOHANG) returned -1 during TERM grace: errno=$!");
+            log_debug('TerminalOps', "waitpid($pid, WNOHANG) returned -1 during TERM grace: errno=$!");
         }
         Time::HiRes::usleep(50_000);
     }
     my $final_w = waitpid($pid, POSIX::WNOHANG());
     if ($final_w <= 0) {
-        log_info('TerminalOps', "PID $pid did not exit within 2s of SIGTERM, escalating to SIGKILL");
+        log_debug('TerminalOps', "PID $pid did not exit within 2s of SIGTERM, escalating to SIGKILL");
         my $kill_sent = kill('KILL', -$pid);
-        log_info('TerminalOps', "Sent SIGKILL to PGID=$pid (kill returned: " . ($kill_sent ? scalar($kill_sent) : '0') . " targets)");
+        log_debug('TerminalOps', "Sent SIGKILL to PGID=$pid (kill returned: " . ($kill_sent ? scalar($kill_sent) : '0') . " targets)");
         my $reaped = waitpid($pid, 0);
-        log_info('TerminalOps', "Blocking waitpid($pid) returned: " . ($reaped // 'undef') . " status=" . (($reaped && $reaped > 0) ? ($? >> 8) : 'n/a'));
+        log_debug('TerminalOps', "Blocking waitpid($pid) returned: " . ($reaped // 'undef') . " status=" . (($reaped && $reaped > 0) ? ($? >> 8) : 'n/a'));
     } else {
-        log_info('TerminalOps', "PID $pid exited cleanly after SIGTERM within " . sprintf('%.2fs', $term_grace));
+        log_debug('TerminalOps', "PID $pid exited cleanly after SIGTERM within " . sprintf('%.2fs', $term_grace));
     }
 
     # Reap any remaining children in the process group to prevent zombies
@@ -687,9 +687,9 @@ sub _kill_process_group {
         $reaped_count++;
     }
     if ($reaped_count > 0) {
-        log_info('TerminalOps', "Reaped $reaped_count remaining child(ren) via waitpid(-1) to prevent zombies");
+        log_debug('TerminalOps', "Reaped $reaped_count remaining child(ren) via waitpid(-1) to prevent zombies");
     }
-    log_info('TerminalOps', "_kill_process_group complete for pid=$pid");
+    log_debug('TerminalOps', "_kill_process_group complete for pid=$pid");
 }
 
 =head2 _suspend_clio_input
@@ -762,7 +762,7 @@ sub validate_command {
     if ($analysis->{blocked} && !-t STDIN) {
         my @descs = map { $_->{description} } @{$analysis->{flags}};
         my $reason = join('; ', @descs);
-        log_warning('TermOps', "DENIED critical command in non-interactive context: $reason");
+        log_debug('TermOps', "DENIED critical command in non-interactive context: $reason");
         return $self->error_result(
             "Command denied (critical risk, non-interactive context).\n\n" .
             "Security analysis: $reason\n" .
@@ -776,33 +776,33 @@ sub validate_command {
     if ($analysis->{blocked}) {
         my @descs = map { $_->{description} } @{$analysis->{flags}};
         my $reason = join('; ', @descs);
-        log_warning('TermOps', "CRITICAL risk command: $reason");
+        log_debug('TermOps', "CRITICAL risk command: $reason");
 
         # Route through user confirmation with critical risk context
         my $approved = $self->_prompt_command_confirmation($command, $analysis, $context);
         unless ($approved) {
-            log_info('TermOps', "User DENIED critical command: $analysis->{summary}");
+            log_debug('TermOps', "User DENIED critical command: $analysis->{summary}");
             return $self->error_result(
                 "Command denied by user (critical risk).\n\n" .
                 "Security analysis: $reason\n" .
                 "The user chose not to allow this command. Try a different approach."
             );
         }
-        log_info('TermOps', "User APPROVED critical command: $analysis->{summary}");
+        log_debug('TermOps', "User APPROVED critical command: $analysis->{summary}");
     }
 
     # Commands requiring user confirmation
     if ($analysis->{requires_confirmation}) {
         my $approved = $self->_prompt_command_confirmation($command, $analysis, $context);
         unless ($approved) {
-            log_info('TermOps', "User DENIED command: $analysis->{summary}");
+            log_debug('TermOps', "User DENIED command: $analysis->{summary}");
             return $self->error_result(
                 "Command denied by user.\n\n" .
                 "Security analysis: $analysis->{summary}\n" .
                 "The user chose not to allow this command. Try a different approach."
             );
         }
-        log_info('TermOps', "User APPROVED command: $analysis->{summary}");
+        log_debug('TermOps', "User APPROVED command: $analysis->{summary}");
     }
 
     # Truncate command for display if very long
@@ -883,7 +883,7 @@ sub _prompt_command_confirmation {
         # No TTY - try broker relay for headless sub-agents
         my $broker = ($context && $context->{broker_client}) ? $context->{broker_client} : undef;
         if ($broker) {
-            log_info('TermOps', "No TTY - relaying command authorization through broker");
+            log_debug('TermOps', "No TTY - relaying command authorization through broker");
             require CLIO::Security::AuthorizationRelay;
             my $relay = CLIO::Security::AuthorizationRelay->new(broker_client => $broker);
             if ($relay->available()) {
@@ -893,7 +893,7 @@ sub _prompt_command_confirmation {
                     if ($result->{grant_type} eq 'session') {
                         for my $flag (@{$analysis->{flags}}) {
                             $_session_grants{$flag->{category}} = 1;
-                            log_info('TermOps', "Session grant (via relay) for: $flag->{category}");
+                            log_debug('TermOps', "Session grant (via relay) for: $flag->{category}");
                         }
                     }
                     return 1;
@@ -901,7 +901,7 @@ sub _prompt_command_confirmation {
                 return 0;
             }
         }
-        log_warning('TermOps', "No UI and no broker relay - denying command");
+        log_debug('TermOps', "No UI and no broker relay - denying command");
         return 0;
     }
 
@@ -982,7 +982,7 @@ sub _prompt_command_confirmation {
         # Grant for the session - by category for all risk levels
         for my $flag (@{$analysis->{flags}}) {
             $_session_grants{$flag->{category}} = 1;
-            log_info('TermOps', "Session grant added for category: $flag->{category}");
+            log_debug('TermOps', "Session grant added for category: $flag->{category}");
         }
         return 1;
     }

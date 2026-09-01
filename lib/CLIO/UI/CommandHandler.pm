@@ -804,7 +804,7 @@ sub _save_mcp_to_config {
         $chat->display_system_message("Saved '$name' to MCP config") if $chat;
     };
     if ($@) {
-        log_warning('CommandHandler', "Failed to save MCP config: $@");
+        log_debug('CommandHandler', "Failed to save MCP config: $@");
     }
 }
 
@@ -820,7 +820,7 @@ sub _remove_mcp_from_config {
         $config->set('mcp', $mcp);
     };
     if ($@) {
-        log_warning('CommandHandler', "Failed to update MCP config: $@");
+        log_debug('CommandHandler', "Failed to update MCP config: $@");
     }
 }
 

@@ -36,7 +36,7 @@ MCP is configured. The feature degrades gracefully when unavailable.
 
 use CLIO::Util::JSON qw(encode_json decode_json);
 
-use CLIO::Core::Logger qw(log_debug log_error log_info log_warning);
+use CLIO::Core::Logger qw(log_debug log_warning);
 use CLIO::MCP::Client;
 
 my $INSTANCE;
@@ -147,7 +147,7 @@ sub start {
             my $url = $server_config->{url};
             unless ($url) {
                 $self->{status}{$name} = { status => 'failed', error => 'No url configured for remote server' };
-                log_warning('MCP', "Server '$name' has no url configured");
+                log_debug('MCP', "Server '$name' has no url configured");
                 next;
             }
             
@@ -174,11 +174,11 @@ sub start {
                         $self->{_oauth}{$name} = $oauth;  # Cache for token refresh
                         log_debug('MCP', "OAuth token acquired for '$name'");
                     } else {
-                        log_warning('MCP', "OAuth authentication failed for '$name'");
+                        log_debug('MCP', "OAuth authentication failed for '$name'");
                     }
                 };
                 if ($@) {
-                    log_warning('MCP', "OAuth setup failed for '$name': $@");
+                    log_debug('MCP', "OAuth setup failed for '$name': $@");
                 }
             }
             
@@ -200,7 +200,7 @@ sub start {
             my $command = $server_config->{command};
             unless ($command && ref($command) eq 'ARRAY' && @$command) {
                 $self->{status}{$name} = { status => 'failed', error => 'No command configured' };
-                log_warning('MCP', "Server '$name' has no command configured");
+                log_debug('MCP', "Server '$name' has no command configured");
                 next;
             }
             
@@ -208,7 +208,7 @@ sub start {
             my $exe = $command->[0];
             unless ($self->_command_exists($exe)) {
                 $self->{status}{$name} = { status => 'failed', error => "Command not found: $exe" };
-                log_warning('MCP', "Server '$name': command '$exe' not found in PATH");
+                log_debug('MCP', "Server '$name': command '$exe' not found in PATH");
                 next;
             }
             
@@ -232,20 +232,20 @@ sub start {
                 my $info = $client->server_info();
                 my $server_name = $info ? ($info->{name} || $name) : $name;
                 
-                log_info('MCP', "Connected to '$server_name' ($tool_count tools)");
+                log_debug('MCP', "Connected to '$server_name' ($tool_count tools)");
             } else {
                 $self->{status}{$name} = { status => 'failed', error => 'Connection failed' };
-                log_warning('MCP', "Failed to connect to '$name'");
+                log_debug('MCP', "Failed to connect to '$name'");
             }
         };
         if ($@) {
             $self->{status}{$name} = { status => 'failed', error => "$@" };
-            log_error('MCP', "Error connecting to '$name': $@");
+            log_debug('MCP', "Error connecting to '$name': $@");
         }
     }
     
     if ($connected > 0) {
-        log_info('MCP', "$connected MCP server(s) connected");
+        log_debug('MCP', "$connected MCP server(s) connected");
     }
     
     return $connected;
@@ -265,7 +265,7 @@ sub shutdown {
             $self->{clients}{$name}->disconnect();
         };
         if ($@) {
-            log_warning('MCP', "Error disconnecting '$name': $@");
+            log_debug('MCP', "Error disconnecting '$name': $@");
         }
     }
     

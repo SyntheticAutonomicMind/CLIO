@@ -77,7 +77,7 @@ invisible object placeholders
 
     # Check if text contains suspicious chars (for logging/alerting)
     if (has_invisible_chars($text)) {
-        log_warning('Security', "Invisible chars detected in input");
+        log_debug('Security', "Invisible chars detected in input");
     }
 
     # Get human-readable description of what was found

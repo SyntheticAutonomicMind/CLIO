@@ -6,7 +6,7 @@ package CLIO::Core::PromptManager;
 use strict;
 use warnings;
 use utf8;
-use CLIO::Core::Logger qw(log_error log_debug log_warning log_info);
+use CLIO::Core::Logger qw(log_debug log_warning);
 use CLIO::Util::ConfigPath qw(get_config_file);
 use CLIO::Util::TextSanitizer qw(sanitize_text);
 use Carp qw(croak);
@@ -141,7 +141,7 @@ sub get_system_prompt {
     }
     
     unless ($prompt) {
-        log_error('PromptManager', "Failed to load active prompt '$active', falling back to embedded default");
+        log_debug('PromptManager', "Failed to load active prompt '$active', falling back to embedded default");
         $prompt = $self->_get_default_prompt_content();
     }
     
@@ -199,7 +199,7 @@ sub get_system_prompt {
             $prompt .= "\n\n<puppeteerTopology>\n";
             $prompt .= $summary;
             $prompt .= "\n</puppeteerTopology>\n";
-            log_info('PromptManager', "Injected puppeteer topology: %d projects", $topology->{count});
+            log_debug('PromptManager', "Injected puppeteer topology: %d projects", $topology->{count});
         }
     };
     log_debug('PromptManager', "Puppeteer topology check: $@") if $@;
@@ -300,7 +300,7 @@ sub list_prompts {
     # Find custom prompts
     if (-d $self->{custom_dir}) {
         opendir(my $dh, $self->{custom_dir}) or do {
-            log_error('PromptManager', "Cannot read custom prompts dir: $!");
+            log_debug('PromptManager', "Cannot read custom prompts dir: $!");
             return { builtin => \@builtin, custom => \@custom };
         };
         
@@ -692,13 +692,13 @@ sub _read_prompt_file {
     }
     
     unless (-f $file) {
-        log_error('PromptManager', "Prompt file not found: $name");
+        log_debug('PromptManager', "Prompt file not found: $name");
         return undef;
     }
     
     # Read file
     open(my $fh, '<:encoding(UTF-8)', $file) or do {
-        log_error('PromptManager', "Cannot read $file: $!");
+        log_debug('PromptManager', "Cannot read $file: $!");
         return undef;
     };
     
@@ -749,7 +749,7 @@ sub _load_metadata {
     
     if (-f $self->{metadata_file}) {
         open(my $fh, '<:encoding(UTF-8)', $self->{metadata_file}) or do {
-            log_error('PromptManager', "Cannot read metadata: $!");
+            log_debug('PromptManager', "Cannot read metadata: $!");
             return;
         };
         
@@ -760,7 +760,7 @@ sub _load_metadata {
             $self->{metadata} = decode_json($json);
         };
         if ($@) {
-            log_error('PromptManager', "Invalid metadata JSON: $@");
+            log_debug('PromptManager', "Invalid metadata JSON: $@");
             $self->{metadata} = {};
         }
     } else {
@@ -784,7 +784,7 @@ sub _save_metadata {
     my $json = encode_json($self->{metadata});
     
     open(my $fh, '>:encoding(UTF-8)', $self->{metadata_file}) or do {
-        log_error('PromptManager', "Cannot write metadata: $!");
+        log_debug('PromptManager', "Cannot write metadata: $!");
         return;
     };
     
@@ -1571,7 +1571,7 @@ sub _format_ltm_patterns {
                 my $ltm_file = File::Spec->catfile(Cwd::getcwd(), '.clio', 'ltm.json');
                 $ltm->save($ltm_file);
             };
-            log_warning('PromptManager', "Failed to save consolidated LTM: $@") if $@;
+            log_debug('PromptManager', "Failed to save consolidated LTM: $@") if $@;
         }
     }
     

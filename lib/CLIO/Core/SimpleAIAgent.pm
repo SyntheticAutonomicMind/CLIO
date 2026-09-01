@@ -196,7 +196,7 @@ sub process_user_request {
         }
     };
     if ($@) {
-        log_warning('SimpleAIAgent', "Hashtag parsing failed: $@");
+        log_debug('SimpleAIAgent', "Hashtag parsing failed: $@");
         # Continue with original input if hashtag parsing fails
     }
     
@@ -312,7 +312,7 @@ sub process_user_request {
         $result->{success} = 0;
         $result->{error} = "API exception: $@";
         $result->{final_response} = "API exception: $@";
-        log_error('SimpleAIAgent', "API error: $@");
+        log_debug('SimpleAIAgent', "API error: $@");
     }
     
     # Set processing time

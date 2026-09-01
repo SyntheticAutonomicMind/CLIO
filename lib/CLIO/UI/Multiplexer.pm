@@ -7,7 +7,7 @@ use strict;
 use warnings;
 use utf8;
 use Carp qw(croak);
-use CLIO::Core::Logger qw(log_debug log_info log_warning);
+use CLIO::Core::Logger qw(log_debug log_warning);
 
 
 =head1 NAME
@@ -148,7 +148,7 @@ sub create_pane {
     my ($self, %args) = @_;
 
     unless ($self->{driver}) {
-        log_warning('Multiplexer', 'No multiplexer detected, cannot create pane');
+        log_debug('Multiplexer', 'No multiplexer detected, cannot create pane');
         return undef;
     }
 
@@ -161,7 +161,7 @@ sub create_pane {
         $self->{driver}->create_pane(%args);
     };
     if ($@) {
-        log_warning('Multiplexer', "Failed to create pane '$name': $@");
+        log_debug('Multiplexer', "Failed to create pane '$name': $@");
         return undef;
     }
 
@@ -171,7 +171,7 @@ sub create_pane {
             command    => $command,
             created_at => time(),
         };
-        log_info('Multiplexer', "Created pane '$name' ($pane_id)");
+        log_debug('Multiplexer', "Created pane '$name' ($pane_id)");
     }
 
     return $pane_id;
@@ -196,7 +196,7 @@ sub kill_pane {
         $self->{driver}->kill_pane($pane_id);
     };
     if ($@) {
-        log_warning('Multiplexer', "Failed to kill pane $pane_id: $@");
+        log_debug('Multiplexer', "Failed to kill pane $pane_id: $@");
         return 0;
     }
 
@@ -296,14 +296,14 @@ sub _detect {
     my $module = $DRIVER_MODULES{$type};
     eval { (my $f = "$module.pm") =~ s{::}{/}g; require $f };
     if ($@) {
-        log_warning('Multiplexer', "Detected $type but failed to load driver: $@");
+        log_debug('Multiplexer', "Detected $type but failed to load driver: $@");
         return;
     }
 
     $self->{driver} = $module->new(debug => $self->{debug});
     $self->{type} = $type;
 
-    log_info('Multiplexer', "Detected multiplexer: $type");
+    log_debug('Multiplexer', "Detected multiplexer: $type");
 }
 
 1;

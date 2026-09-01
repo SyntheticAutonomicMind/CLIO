@@ -11,7 +11,7 @@ use Cwd qw(getcwd);
 use File::Path qw(mkpath rmtree);
 use CLIO::Util::JSON qw(decode_json);
 use CLIO::Util::Proxy qw(resolve_proxy_url);
-use CLIO::Core::Logger qw(log_debug log_error log_warning);
+use CLIO::Core::Logger qw(log_debug log_warning);
 
 my $NULLDEV = $^O eq 'MSWin32' ? 'nul' : '/dev/null';
 
@@ -207,7 +207,7 @@ sub get_release_by_version {
     return undef unless $version;
 
     unless ($version =~ /^[A-Za-z0-9._-]+$/) {
-        log_error("Update", "Invalid version format: $version");
+        log_debug("Update", "Invalid version format: $version");
         return undef;
     }
 
@@ -274,13 +274,13 @@ sub download_version {
     return undef unless $version;
 
     unless ($version =~ /^[A-Za-z0-9._-]+$/) {
-        log_error("Update", "Invalid version format: $version");
+        log_debug("Update", "Invalid version format: $version");
         return undef;
     }
 
     my $release = get_release_by_version(%opts, version => $version);
     unless ($release && $release->{tarball_url}) {
-        log_error('Update', "Cannot find release for version: $version");
+        log_debug('Update', "Cannot find release for version: $version");
         return undef;
     }
 
@@ -304,7 +304,7 @@ sub download_latest {
 
     my $release = get_latest_version(%opts);
     unless ($release && $release->{tarball_url}) {
-        log_error('Update', "Cannot get latest release info");
+        log_debug('Update', "Cannot get latest release info");
         return undef;
     }
 
@@ -330,7 +330,7 @@ sub _download_and_extract {
     }
 
     mkpath($download_dir) or do {
-        log_error('Update', "Cannot create download dir: $!");
+        log_debug('Update', "Cannot create download dir: $!");
         return undef;
     };
 
@@ -339,7 +339,7 @@ sub _download_and_extract {
 
     my $curl_result = system("curl", "-sL", "-m", $timeout, _proxy_arg(), "-o", $tarball_path, $tarball_url);
     if ($curl_result != 0) {
-        log_error('Update', "Download failed");
+        log_debug('Update', "Download failed");
         rmtree($download_dir);
         return undef;
     }
@@ -349,11 +349,11 @@ sub _download_and_extract {
     my $extract_ok = 0;
     if (chdir($download_dir)) {
         $extract_ok = (system("tar", "-xzf", "clio.tar.gz") == 0);
-        chdir($orig_dir) or log_warning("Update", "Cannot return to $orig_dir: $!");
+        chdir($orig_dir) or log_debug("Update", "Cannot return to $orig_dir: $!");
     }
 
     if (!$extract_ok) {
-        log_error('Update', "Extraction failed");
+        log_debug('Update', "Extraction failed");
         rmtree($download_dir);
         return undef;
     }
@@ -363,7 +363,7 @@ sub _download_and_extract {
     closedir($dh);
 
     unless (@subdirs) {
-        log_error('Update', "No extracted directory found");
+        log_debug('Update', "No extracted directory found");
         rmtree($download_dir);
         return undef;
     }
@@ -371,7 +371,7 @@ sub _download_and_extract {
     my $extracted_dir = File::Spec->catdir($download_dir, $subdirs[0]);
 
     unless (-f "$extracted_dir/clio") {
-        log_error('Update', "Downloaded directory doesn't look like CLIO (no ./clio executable)");
+        log_debug('Update', "Downloaded directory doesn't look like CLIO (no ./clio executable)");
         rmtree($download_dir);
         return undef;
     }

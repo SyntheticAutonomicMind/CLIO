@@ -18,7 +18,7 @@ our @EXPORT_OK = qw(
     with_alrm_handler
 );
 
-use CLIO::Core::Logger qw(log_debug log_info log_warning);
+use CLIO::Core::Logger qw(log_debug log_warning);
 use CLIO::Compat::Terminal qw(ReadKey);
 use CLIO::Util::JSON qw(is_hashref);
 
@@ -143,7 +143,7 @@ sub check {
             return 0;
         }
         # Standalone ESC, treated as interrupt.
-        log_info('Interrupt', 'ESC key detected (standalone)');
+        log_debug('Interrupt', 'ESC key detected (standalone)');
         while (defined(eval { ReadKey(-1) })) { }
         set(session => $session);
         return 1;
@@ -246,7 +246,7 @@ sub set {
             }
         }
     }
-    log_info('Interrupt', "Interrupt set ($reason)");
+    log_debug('Interrupt', "Interrupt set ($reason)");
     return 1;
 }
 

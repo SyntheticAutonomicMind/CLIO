@@ -99,7 +99,7 @@ sub add_to_thread {
     if (defined $msg && !ref $msg && $msg =~ /^\s*\{.*\}\s*$/) {
         eval { $msg = decode_json($msg); };
         if ($@) {
-            log_warning('YaRN', "Failed to decode JSON message: $@");
+            log_debug('YaRN', "Failed to decode JSON message: $@");
             return;
         }
     }

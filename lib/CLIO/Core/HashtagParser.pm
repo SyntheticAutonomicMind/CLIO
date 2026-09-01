@@ -6,7 +6,7 @@ package CLIO::Core::HashtagParser;
 use strict;
 use warnings;
 use utf8;
-use CLIO::Core::Logger qw(log_debug log_error log_info log_warning);
+use CLIO::Core::Logger qw(log_debug log_warning);
 use File::Basename;
 use File::Spec;
 use Cwd 'abs_path';
@@ -227,7 +227,7 @@ sub resolve {
             $result = $self->resolve_terminal_selection();
         }
         else {
-            log_warning('HashtagParser', "Unknown hashtag type: $tag->{type}");
+            log_debug('HashtagParser', "Unknown hashtag type: $tag->{type}");
             next;
         }
         
@@ -235,7 +235,7 @@ sub resolve {
             # Check byte size limits first (fast check)
             my $size = $result->{size} || 0;
             if ($size > $self->{max_file_size}) {
-                log_warning('HashtagParser', "Content too large: $size bytes (max $self->{max_file_size})");
+                log_debug('HashtagParser', "Content too large: $size bytes (max $self->{max_file_size})");
                 $result->{error} = "Content exceeds size limit ($size bytes)";
                 $result->{content} = "[Content too large to include]";
                 push @context, $result;
@@ -243,7 +243,7 @@ sub resolve {
             }
             
             if ($total_size + $size > $self->{max_total_size}) {
-                log_warning('HashtagParser', "Total context too large: would be " . ($total_size + $size) . " bytes");
+                log_debug('HashtagParser', "Total context too large: would be " . ($total_size + $size) . " bytes");
                 $result->{error} = "Would exceed total context limit";
                 $result->{content} = "[Skipped due to context limit]";
                 push @context, $result;
@@ -258,7 +258,7 @@ sub resolve {
             
             # Check if this single item exceeds per-file token limit
             if ($tokens > $self->{max_tokens_per_file}) {
-                log_warning('HashtagParser', "Content exceeds per-file token limit: $tokens > $self->{max_tokens_per_file}");
+                log_debug('HashtagParser', "Content exceeds per-file token limit: $tokens > $self->{max_tokens_per_file}");
                 # Truncate the content
                 $result = $self->truncate_content($result, $self->{max_tokens_per_file});
                 $tokens = $result->{estimated_tokens};
@@ -269,12 +269,12 @@ sub resolve {
                 my $remaining = $self->{max_total_tokens} - $self->{total_tokens_used};
                 
                 if ($remaining > 1000) {  # If we have at least 1K tokens left, include truncated version
-                    log_warning('HashtagParser', "Would exceed total token budget, truncating to fit ($remaining tokens remaining)");
+                    log_debug('HashtagParser', "Would exceed total token budget, truncating to fit ($remaining tokens remaining)");
                     $result = $self->truncate_content($result, $remaining);
                     $tokens = $result->{estimated_tokens};
                 } else {
                     # Not enough budget left - skip this item entirely
-                    log_warning('HashtagParser', "Insufficient token budget remaining: $remaining tokens");
+                    log_debug('HashtagParser', "Insufficient token budget remaining: $remaining tokens");
                     $result->{error} = "Skipped - insufficient token budget";
                     $result->{content} = "[Skipped due to token budget]";
                     $result->{estimated_tokens} = 0;
@@ -295,7 +295,7 @@ sub resolve {
     log_debug('HashtagParser', "Total: $total_size bytes, $self->{total_tokens_used} tokens");
     
     if (@{$self->{truncated_items}}) {
-        log_info('HashtagParser', "Truncated " . scalar(@{$self->{truncated_items}}) . " items to fit token budget");
+        log_debug('HashtagParser', "Truncated " . scalar(@{$self->{truncated_items}}) . " items to fit token budget");
     }
     
     return \@context;
@@ -419,7 +419,7 @@ sub resolve_file {
     
     # Check if file exists and is readable
     unless (-f $path && -r $path) {
-        log_warning('HashtagParser', "File not found or not readable: $path");
+        log_debug('HashtagParser', "File not found or not readable: $path");
         return {
             type => 'file',
             path => $path,
@@ -437,7 +437,7 @@ sub resolve_file {
         close $fh;
     }
     else {
-        log_error('HashtagParser', "Failed to read file $path: $!");
+        log_debug('HashtagParser', "Failed to read file $path: $!");
         return {
             type => 'file',
             path => $path,
@@ -494,7 +494,7 @@ sub resolve_folder {
     }
     
     unless (-d $path && -r $path) {
-        log_warning('HashtagParser', "Folder not found or not readable: $path");
+        log_debug('HashtagParser', "Folder not found or not readable: $path");
         return {
             type => 'folder',
             path => $path,

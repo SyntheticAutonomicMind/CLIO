@@ -198,7 +198,7 @@ sub _extract_xml_format {
         # Parse JSON
         my $data = safe_decode_json($json_str);
         if ($@) {
-            log_warning('ToolCallExtractor', "Failed to parse XML tool_call JSON: $@");
+            log_debug('ToolCallExtractor', "Failed to parse XML tool_call JSON: $@");
             next;
         }
        
@@ -211,7 +211,7 @@ sub _extract_xml_format {
             # "tool calls" have valid JSON (like {"key":"value"}) but
             # garbage names that are not real tool identifiers.
             unless ($data->{name} =~ /^[a-zA-Z_][a-zA-Z0-9_-]*$/) {
-                log_warning('ToolCallExtractor',
+                log_debug('ToolCallExtractor',
                     "Rejecting extracted tool call with invalid name: " .
                     substr($data->{name}, 0, 80));
                 next;
@@ -227,7 +227,7 @@ sub _extract_xml_format {
                     if ($kt->{function}{name} eq $name) { $is_known = 1; last; }
                 }
                 unless ($is_known) {
-                    log_warning('ToolCallExtractor',
+                    log_debug('ToolCallExtractor',
                         "Rejecting extracted tool call with unknown tool: " . $name);
                     next;
                 }
@@ -419,7 +419,7 @@ sub _extract_dsml_format {
                     # string="false" -> JSON value
                     my $decoded = safe_decode_json($pvalue);
                     if ($@ || !defined $decoded) {
-                        log_warning('ToolCallExtractor',
+                        log_debug('ToolCallExtractor',
                             "DSML parameter '$pname' marked string=false but value is not valid JSON ($pvalue); keeping raw value");
                         $params{$pname} = $pvalue;
                     }
@@ -492,7 +492,7 @@ sub _extract_clio_format {
         # The JSON might already contain the operation, or we need to wrap it
         my $arguments_data = safe_decode_json($json_str);
         if ($@) {
-            log_warning('ToolCallExtractor', "Failed to parse CLIO format JSON: $@");
+            log_debug('ToolCallExtractor', "Failed to parse CLIO format JSON: $@");
             next;
         }
         
@@ -552,7 +552,7 @@ sub _extract_call_format {
         # Validate JSON
         my $arguments_data = safe_decode_json($json_str);
         if ($@) {
-            log_warning('ToolCallExtractor', "Failed to parse CALL format JSON: $@");
+            log_debug('ToolCallExtractor', "Failed to parse CALL format JSON: $@");
             next;
         }
         

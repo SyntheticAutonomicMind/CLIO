@@ -9,7 +9,7 @@ use utf8;
 binmode(STDOUT, ':encoding(UTF-8)');
 binmode(STDERR, ':encoding(UTF-8)');
 use Carp qw(croak confess);
-use CLIO::Core::Logger qw(log_debug log_info log_warning);
+use CLIO::Core::Logger qw(log_debug log_warning);
 use CLIO::Security::CommandAnalyzer qw(analyze_command);
 use parent 'CLIO::Tools::Tool';
 use File::Spec;
@@ -463,20 +463,20 @@ sub _acquire_file_lock {
     
     return (0, undef) unless $context->{broker_client};
     
-    log_info('FileOp', "Requesting file lock via broker: $path");
+    log_debug('FileOp', "Requesting file lock via broker: $path");
     
     eval {
         my $lock_result = $context->{broker_client}->request_file_lock([$path], 'write');
         if ($lock_result) {
-            log_info('FileOp', "Lock acquired for: $path");
+            log_debug('FileOp', "Lock acquired for: $path");
             return (1, undef);
         } else {
             return (0, "File is locked by another agent. Wait for the other agent to finish or coordinate with them.");
         }
     };
     if ($@) {
-        log_warning('FileOp', "Failed to acquire lock (broker error): $@");
-        log_warning('FileOp', "Continuing without lock");
+        log_debug('FileOp', "Failed to acquire lock (broker error): $@");
+        log_debug('FileOp', "Continuing without lock");
         return (0, undef);  # Continue without lock on broker errors
     }
 }
@@ -494,10 +494,10 @@ sub _release_file_lock {
     
     eval {
         $context->{broker_client}->release_file_lock([$path]);
-        log_info('FileOp', "Released lock for: $path");
+        log_debug('FileOp', "Released lock for: $path");
     };
     if ($@) {
-        log_warning('FileOp', "Failed to release lock: $@");
+        log_debug('FileOp', "Failed to release lock: $@");
     }
 }
 
@@ -623,7 +623,7 @@ sub _check_sandbox {
         return { allowed => 1 };
     }
     
-    log_info('FileOp', "Sandbox: BLOCKED path $resolved_path (outside $project_dir)");
+    log_debug('FileOp', "Sandbox: BLOCKED path $resolved_path (outside $project_dir)");
     
     return {
         allowed => 0,
@@ -1366,7 +1366,7 @@ sub grep_search {
             # Open in raw mode and let Perl handle encoding gracefully
             my $fh;
             unless (open $fh, '<', $path) {
-                log_warning('FileOp', "Cannot open $path: $!");
+                log_debug('FileOp', "Cannot open $path: $!");
                 next;
             }
             
@@ -1837,14 +1837,14 @@ sub write_file {
     if ($scan) {
         my $approved = $self->_prompt_script_confirmation($path, $scan, $context);
         unless ($approved) {
-            log_info('FileOp', "User DENIED script write: $path");
+            log_debug('FileOp', "User DENIED script write: $path");
             return $self->error_result(
                 "Script write denied by user.\n\n" .
                 "Security analysis: $scan->{summary}\n" .
                 "The user chose not to allow this file. Try a different approach."
             );
         }
-        log_info('FileOp', "User APPROVED script write: $path");
+        log_debug('FileOp', "User APPROVED script write: $path");
     }
 
     # Multi-agent coordination: Request file lock via broker
@@ -2519,7 +2519,7 @@ sub _prompt_script_confirmation {
         # No TTY - try broker relay for headless sub-agents
         my $broker = ($context && $context->{broker_client}) ? $context->{broker_client} : undef;
         if ($broker) {
-            log_info('FileOp', "No TTY - relaying script authorization through broker");
+            log_debug('FileOp', "No TTY - relaying script authorization through broker");
             require CLIO::Security::AuthorizationRelay;
             my $relay = CLIO::Security::AuthorizationRelay->new(broker_client => $broker);
             if ($relay->available()) {
@@ -2527,14 +2527,14 @@ sub _prompt_script_confirmation {
                 if ($result->{approved}) {
                     if ($result->{grant_type} eq 'session') {
                         $_script_write_grants{script_creation} = 1;
-                        log_info('FileOp', "Session grant (via relay) for script creation");
+                        log_debug('FileOp', "Session grant (via relay) for script creation");
                     }
                     return 1;
                 }
                 return 0;
             }
         }
-        log_warning('FileOp', "No UI and no broker relay - denying script");
+        log_debug('FileOp', "No UI and no broker relay - denying script");
         return 0;
     }
 
@@ -2588,7 +2588,7 @@ sub _prompt_script_confirmation {
         return 1;
     } elsif ($response eq 'a' || $response eq 'allow') {
         $_script_write_grants{script_creation} = 1;
-        log_info('FileOp', "Session grant added for script creation");
+        log_debug('FileOp', "Session grant added for script creation");
         return 1;
     }
 
@@ -2699,7 +2699,7 @@ sub _secure_open {
     # Set permissions on temp file before writing sensitive content
     # Note: Perl's chmod works on the inode, affecting the file
     chmod($mode, $temp_path)
-        or log_warning('FileOp', "Could not set permissions on temp file: $!");
+        or log_debug('FileOp', "Could not set permissions on temp file: $!");
 
     return ($fh, $temp_path);
 }

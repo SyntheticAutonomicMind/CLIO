@@ -8,7 +8,7 @@ use strict;
 use warnings;
 use utf8;
 
-use CLIO::Core::Logger qw(log_info log_warning log_debug);
+use CLIO::Core::Logger qw(log_debug log_warning);
 use CLIO::Compat::Terminal qw(ReadKey ReadMode);
 
 =head1 NAME
@@ -50,7 +50,7 @@ sub check_agent_messages {
     my $messages = eval { $broker_client->poll_user_inbox() };
 
     if ($@) {
-        log_warning('Chat', "Failed to poll agent inbox: $@");
+        log_debug('Chat', "Failed to poll agent inbox: $@");
         return 0;
     }
 
@@ -164,7 +164,7 @@ sub _handle_agent_authorization {
         $grant_type = 'denied';
     }
 
-    log_info('Chat', "Agent auth response for $request_id: approved=$approved grant=$grant_type");
+    log_debug('Chat', "Agent auth response for $request_id: approved=$approved grant=$grant_type");
 
     eval {
         $broker_client->send_authorization_response(
@@ -174,7 +174,7 @@ sub _handle_agent_authorization {
         );
     };
     if ($@) {
-        log_warning('Chat', "Failed to send authorization response: $@");
+        log_debug('Chat', "Failed to send authorization response: $@");
     }
 }
 

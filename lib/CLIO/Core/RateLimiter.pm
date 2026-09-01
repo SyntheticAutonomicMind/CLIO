@@ -48,7 +48,7 @@ binmode(STDOUT, ':encoding(UTF-8)');
 binmode(STDERR, ':encoding(UTF-8)');
 
 use Time::HiRes qw(time sleep);
-use CLIO::Core::Logger qw(should_log log_debug log_info log_warning);
+use CLIO::Core::Logger qw(should_log log_debug log_warning);
 
 # Default concurrency limit per provider
 use constant DEFAULT_MAX_CONCURRENT => 2;

@@ -6,10 +6,9 @@ package CLIO::Core::API::MessageValidator;
 use strict;
 use warnings;
 use utf8;
-use CLIO::Core::Logger qw(should_log log_debug log_info log_warning);
+use CLIO::Core::Logger qw(log_debug);
 use CLIO::Memory::TokenEstimator qw(estimate_tokens compute_prompt_budget);
-use CLIO::Util::JSON qw(encode_json decode_json safe_encode_json);
-use POSIX qw(strftime);
+use CLIO::Util::JSON qw(safe_encode_json);
 
 
 =head1 NAME
@@ -137,171 +136,15 @@ sub validate_and_truncate {
     }
     
     # Exceeds limit - need to truncate
-    log_debug('MessageValidator', "Messages exceed token limit: $estimated_tokens > $effective_limit, truncating");
+    log_debug('MessageValidator', "Messages exceed token limit: $estimated_tokens > $effective_limit");
 
-    # DIAGNOSTIC: Dump MessageValidator internal thresholds to /tmp (CLIO_TRIM_DIAG=1 to enable)
-    if ($ENV{CLIO_TRIM_DIAG}) {
-    eval {
-        my $ts = POSIX::strftime('%Y%m%d_%H%M%S', localtime);
-        my $diag_file = "/tmp/clio_trim_validator_${ts}_$$.log";
-        if (open my $dfh, '>:encoding(UTF-8)', $diag_file) {
-            print $dfh "MessageValidator TRUNCATION TRIGGERED\n";
-            print $dfh "=" x 60, "\n";
-            print $dfh "Timestamp: ", scalar(localtime), "\n";
-            print $dfh "Model: $model\n";
-            print $dfh "max_prompt (from caps): $max_prompt\n";
-            print $dfh "max_output_tokens (from caps): " . ($caps->{max_output_tokens} // 'undef') . "\n";
-            print $dfh "tool_tokens: $tool_tokens\n";
-            print $dfh "prompt_budget (ctx - output - buffer): $prompt_budget\n";
-            print $dfh "effective_limit (budget - tools): $effective_limit\n";
-            print $dfh "estimated_tokens: $estimated_tokens\n";
-            print $dfh "overage: " . ($estimated_tokens - $effective_limit) . "\n";
-            print $dfh "message_count: " . scalar(@$messages) . "\n";
-            close $dfh;
-            log_info('MessageValidator', "Validator thresholds dumped to $diag_file");
-        }
-    };
-    }
-    
-    # Group messages into units
-    my ($units_ref, $tool_id_map) = _group_into_units($messages);
-    my @units = @$units_ref;
-    
-    log_debug('MessageValidator', "Grouped " . scalar(@$messages) . " messages into " . scalar(@units) . " units");
-    
-    # Extract system message and most recent user message
-    my ($system_msg, $last_user_unit, $start_unit, $system_tokens, $last_user_tokens,
-        $summary_unit, $summary_tokens, $_unused) = 
-        _extract_preserved_units(\@units);
-    
-    # Build conversation from newest to oldest
-    my @conversation;
-    # Don't pre-allocate token budget for last_user_unit - it will be included
-    # naturally by the budget walk below (it's a recent message). Only reserve
-    # space for the always-present system prompt and any existing summary.
-    my $current_tokens = $system_tokens + $summary_tokens;
-    my %included_tool_ids;
-    # Extract previous summary content for merging into new compression
-    my $previous_summary_content = '';
-    if ($summary_unit && $summary_unit->{messages} && @{$summary_unit->{messages}}) {
-        $previous_summary_content = $summary_unit->{messages}[0]{content} || '';
-    }
-    my @dropped_units;
-    
-    my @remaining = @units[$start_unit .. $#units];
-    
-    # Post-trim target: keep context at the prompt budget computed
-    # from model capabilities. The estimation buffer in
-    # compute_prompt_budget already covers next-burst headroom; no
-    # additional percentage-based haircut is needed.
-    my $post_trim_keep_limit = $prompt_budget;
-    $post_trim_keep_limit = int($effective_limit * 0.5) if $post_trim_keep_limit < $effective_limit * 0.5;
-    $post_trim_keep_limit = CLIO::Core::Defaults::DEFAULT_POST_TRIM_FLOOR() if $post_trim_keep_limit < CLIO::Core::Defaults::DEFAULT_POST_TRIM_FLOOR();
-    log_debug('MessageValidator', "Post-trim keep target: $post_trim_keep_limit tokens (prompt budget for $model)");
-
-    # DIAGNOSTIC: Append post_trim_keep_limit to the validator diagnostic (CLIO_TRIM_DIAG=1 to enable)
-    if ($ENV{CLIO_TRIM_DIAG}) {
-    eval {
-        my $ts = POSIX::strftime('%Y%m%d_%H%M%S', localtime);
-        # Append to the most recent validator log
-        my @logs = glob("/tmp/clio_trim_validator_*_$$.log");
-        if (@logs) {
-            my $latest = $logs[-1];
-            if (open my $dfh, '>>:encoding(UTF-8)', $latest) {
-                print $dfh "post_trim_keep_limit: $post_trim_keep_limit\n";
-                print $dfh "system_tokens: $system_tokens\n";
-                print $dfh "last_user_tokens: $last_user_tokens\n";
-                print $dfh "summary_tokens: $summary_tokens\n";
-                print $dfh "units_count: " . scalar(@units) . "\n";
-                print $dfh "remaining_units: " . scalar(@remaining) . "\n";
-                close $dfh;
-            }
-        }
-    };
-    }
-
-    for my $unit (reverse @remaining) {
-        if ($unit->{is_orphan_tool_result}) {
-            log_debug('MessageValidator', "Skipping orphan tool_result unit (tool_id: $unit->{orphan_tool_id})");
-            next;
-        }
-        
-        if ($current_tokens + $unit->{tokens} <= $post_trim_keep_limit) {
-            unshift @conversation, @{$unit->{messages}};
-            $current_tokens += $unit->{tokens};
-            for my $id (keys %{$unit->{tool_call_ids} || {}}) {
-                $included_tool_ids{$id} = 1;
-            }
-        } else {
-            push @dropped_units, $unit;
-        }
-    }
-    
-    # Compress dropped units
-    # Create merged summary only if there are dropped messages to compress.
-    # If nothing was dropped, preserve the existing summary as-is.
-    my $summary_to_use;
-    if (@dropped_units) {
-        my $compressed = _compress_dropped(\@dropped_units, $last_user_unit, $debug, $previous_summary_content);
-        $summary_to_use = $compressed;
-    } elsif ($summary_unit && $summary_unit->{messages} && @{$summary_unit->{messages}}) {
-        # No new drops - keep the existing summary intact
-        $summary_to_use = $summary_unit->{messages}[0];
-        log_debug('MessageValidator', "No dropped messages - preserving existing thread_summary");
-    }
-    
-    # Post-truncation validation
-    my @validated;
-    for my $msg (@conversation) {
-        my $is_tool_result = $msg->{tool_call_id} || ($msg->{role} && $msg->{role} eq 'tool');
-        if ($is_tool_result && $msg->{tool_call_id} && !$included_tool_ids{$msg->{tool_call_id}}) {
-            log_debug('MessageValidator', "Dropping orphaned tool_result after truncation");
-            next;
-        }
-        push @validated, $msg;
-    }
-    
-    # Combine: system + compressed summary + validated conversation
-    # Ensure at least one user message exists in the conversation.
-    # In long autonomous tool loops (50+ iterations), the original user message
-    # can be far enough back that the budget walk drops it. Without a user
-    # message, the model sees only assistant+tool pairs and may hallucinate
-    # that it's in a new session with no active task.
-    my $has_user_msg = grep { $_->{role} && $_->{role} eq 'user' } @validated;
-    if (!$has_user_msg && $last_user_unit && @{$last_user_unit->{messages}}) {
-        my $user_content = $last_user_unit->{messages}[0]{content} || '';
-        if (length($user_content) > 0) {
-            # Inject the most recent user message at the start of the conversation
-            # so the model knows there's an active task
-            unshift @validated, { role => 'user', content => $user_content };
-            log_info('MessageValidator', "Injected preserved user message (budget walk dropped it)");
-        }
-    }
-    if (!$has_user_msg && !($last_user_unit && @{$last_user_unit->{messages}})) {
-        # No user unit found at all - extract task from thread_summary as fallback
-        my $task_content = '';
-        if ($summary_to_use && $summary_to_use->{content}) {
-            if ($summary_to_use->{content} =~ /Current task:\s*(.+?)(?:\n\n|\z)/s) {
-                $task_content = $1;
-            }
-        }
-        if (length($task_content) > 0) {
-            unshift @validated, { role => 'user', content => $task_content };
-            log_info('MessageValidator', "Injected synthetic user message from thread_summary task");
-        }
-    }
-    my @truncated;
-    push @truncated, $system_msg if $system_msg;
-    push @truncated, $summary_to_use if $summary_to_use;
-    push @truncated, @validated;
-    
-    if (should_log('DEBUG')) {
-        my $final_tokens = _estimate_tokens(\@truncated);
-        log_debug('MessageValidator', "Truncated: " . scalar(@$messages) . " -> " . scalar(@truncated) . 
-            " messages, $final_tokens tokens");
-    }
-    
-    return \@truncated;
+    # Legacy non-messageHistory format: should not happen in normal
+    # operation (the messageHistory feature is the only producer of @messages
+    # sent here). validate_tool_message_pairs cleans up any orphaned tool pairs
+    # but does not drop messages. Logged at debug because this should be a
+    # quiet no-op for callers.
+    log_debug('MessageValidator', "Legacy non-messageHistory format exceeded budget ($estimated_tokens > $effective_limit); returning as-is. validate_tool_message_pairs will prune orphans.");
+    return validate_tool_message_pairs($messages);
 }
 
 =head2 validate_tool_message_pairs
@@ -412,7 +255,7 @@ sub validate_tool_message_pairs {
         push @validated, $msg;
     }
     
-    log_info('MessageValidator', "Fixed $fixes orphaned tool messages") if $fixes > 0;
+    log_debug('MessageValidator', "Fixed $fixes orphaned tool messages") if $fixes > 0;
     
     return \@validated;
 }
@@ -508,188 +351,6 @@ sub _estimate_tokens {
         }
     }
     return $total;
-}
-
-sub _group_into_units {
-    my ($messages) = @_;
-
-    my @units;
-    my $current_unit;
-    my %pending_tool_ids;
-    my %tool_call_id_to_unit_idx;
-
-    for my $msg (@$messages) {
-        my $msg_tokens = estimate_tokens($msg->{content} || '') + 4;
-        $msg_tokens += 8 if $msg->{role} && $msg->{role} eq 'tool';
-        my $has_tool_calls = $msg->{tool_calls} && ref($msg->{tool_calls}) eq 'ARRAY' && @{$msg->{tool_calls}};
-        my $is_tool_result = $msg->{tool_call_id} || ($msg->{role} && $msg->{role} eq 'tool');
-        
-        if ($has_tool_calls) {
-            push @units, $current_unit if $current_unit;
-            
-            # Include tool_call JSON tokens in the unit's token count
-            my $tc_tokens = 0;
-            for my $tc (@{$msg->{tool_calls}}) {
-                my $json = safe_encode_json($tc, '');
-                $tc_tokens += estimate_tokens($json);
-            }
-            $current_unit = { messages => [$msg], tokens => $msg_tokens + $tc_tokens, tool_call_ids => {} };
-            %pending_tool_ids = ();
-            
-            for my $tc (@{$msg->{tool_calls}}) {
-                if ($tc->{id}) {
-                    $pending_tool_ids{$tc->{id}} = 1;
-                    $current_unit->{tool_call_ids}{$tc->{id}} = 1;
-                    $tool_call_id_to_unit_idx{$tc->{id}} = scalar(@units);
-                }
-            }
-        }
-        elsif ($is_tool_result) {
-            my $tool_id = $msg->{tool_call_id};
-            
-            if ($current_unit) {
-                push @{$current_unit->{messages}}, $msg;
-                $current_unit->{tokens} += $msg_tokens;
-                delete $pending_tool_ids{$tool_id} if $tool_id;
-                
-                if (!keys %pending_tool_ids) {
-                    push @units, $current_unit;
-                    $current_unit = undef;
-                }
-            }
-            elsif ($tool_id && exists $tool_call_id_to_unit_idx{$tool_id}) {
-                my $parent_idx = $tool_call_id_to_unit_idx{$tool_id};
-                if ($parent_idx < scalar(@units)) {
-                    push @{$units[$parent_idx]{messages}}, $msg;
-                    $units[$parent_idx]{tokens} += $msg_tokens;
-                    log_debug('MessageValidator', "Merged orphan tool_result to unit $parent_idx");
-                } else {
-                    push @units, { messages => [$msg], tokens => $msg_tokens, 
-                                   tool_call_ids => {}, is_orphan_tool_result => 1,
-                                   orphan_tool_id => $tool_id };
-                }
-            }
-            else {
-                log_debug('MessageValidator', "Orphan tool_result: $tool_id (from truncation)");
-                push @units, { messages => [$msg], tokens => $msg_tokens,
-                               tool_call_ids => {}, is_orphan_tool_result => 1,
-                               orphan_tool_id => $tool_id };
-            }
-        }
-        else {
-            if ($current_unit) {
-                push @units, $current_unit;
-                $current_unit = undef;
-                %pending_tool_ids = ();
-            }
-            push @units, { messages => [$msg], tokens => $msg_tokens, tool_call_ids => {} };
-        }
-    }
-    
-    push @units, $current_unit if $current_unit;
-    
-    return (\@units, \%tool_call_id_to_unit_idx);
-}
-
-sub _extract_preserved_units {
-    my ($units) = @_;
-    
-    my $system_msg;
-    my $start_unit = 0;
-    my $system_tokens = 0;
-    my $summary_unit;         # Previous thread_summary (preserved across trims)
-    my $summary_tokens = 0;
-    
-    # Extract system message
-    if (@$units && @{$units->[0]{messages}} && $units->[0]{messages}[0]{role} eq 'system') {
-        $system_msg = $units->[0]{messages}[0];
-        $system_tokens = $units->[0]{tokens};
-        $start_unit = 1;
-    }
-    
-    # Find any thread_summary units between system msg and conversation
-    for my $i ($start_unit .. $#$units) {
-        my $unit = $units->[$i];
-        next unless $unit && $unit->{messages} && @{$unit->{messages}};
-        
-        my $first_msg = $unit->{messages}[0];
-        my $content = $first_msg->{content} || '';
-        if ($content =~ /\A<thread_summary>/) {
-            $summary_unit = $unit;
-            $summary_tokens = $unit->{tokens};
-            $start_unit = $i + 1;
-            log_debug('MessageValidator', "Preserving thread_summary ($summary_tokens tokens)");
-        } elsif ($first_msg->{role} && $first_msg->{role} ne 'system') {
-            # Hit a non-system, non-summary message - start of conversation
-            $start_unit = $i;
-            last;
-        }
-    }
-    
-    # Find the MOST RECENT user unit for task context preservation.
-    # The most recent user message represents the current work; the
-    # original task is captured in the thread_summary.
-    my $last_user_unit;
-    my $last_user_tokens = 0;
-    my $last_user_idx = -1;
-    for my $i ($start_unit .. $#$units) {
-        my $unit = $units->[$i];
-        next unless $unit && $unit->{messages} && @{$unit->{messages}};
-        my $first_msg = $unit->{messages}[0];
-        if ($first_msg->{role} && $first_msg->{role} eq 'user') {
-            $last_user_unit = $unit;
-            $last_user_tokens = $unit->{tokens};
-            $last_user_idx = $i;
-        }
-    }
-    
-    if ($last_user_unit) {
-        log_debug('MessageValidator', "Found most recent user message at unit $last_user_idx (tokens=$last_user_tokens)");
-    }
-    
-    return ($system_msg, $last_user_unit, $start_unit, $system_tokens, $last_user_tokens,
-            $summary_unit, $summary_tokens, undef);
-}
-
-sub _compress_dropped {
-    my ($dropped_units, $last_user_unit, $debug, $previous_summary) = @_;
-    
-    return undef unless $dropped_units && @$dropped_units;
-    
-    my @dropped_messages;
-    for my $unit (@$dropped_units) {
-        push @dropped_messages, @{$unit->{messages}};
-    }
-    
-    log_debug('MessageValidator', "Compressing " . scalar(@dropped_messages) . " dropped messages");
-    
-    my $compressed;
-    eval {
-        require CLIO::Memory::YaRN;
-        my $yarn = CLIO::Memory::YaRN->new(debug => $debug);
-        
-        # Get task context from most recent user message, falling back to
-        # a substantive message from the dropped set if it's too short.
-        my $original_task = '';
-        if ($last_user_unit && @{$last_user_unit->{messages}}) {
-            $original_task = $last_user_unit->{messages}[0]{content} || '';
-        }
-        $original_task = CLIO::Memory::YaRN::find_substantive_task($original_task, \@dropped_messages);
-        
-        $compressed = $yarn->compress_messages(\@dropped_messages,
-            original_task    => $original_task,
-            previous_summary => $previous_summary,
-        );
-        
-        log_debug('MessageValidator', "Compression successful: " . scalar(@dropped_messages) . 
-            " messages -> " . ($compressed->{_metadata}{compressed_tokens} || 0) . " tokens");
-    };
-    if ($@) {
-        log_warning('MessageValidator', "Compression failed: $@");
-        return undef;
-    }
-    
-    return $compressed;
 }
 
 1;

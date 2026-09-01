@@ -8,7 +8,7 @@ use warnings;
 use utf8;
 binmode(STDOUT, ':encoding(UTF-8)');
 binmode(STDERR, ':encoding(UTF-8)');
-use CLIO::Core::Logger qw(log_info log_warning);
+use CLIO::Core::Logger qw(log_debug log_warning);
 use Carp qw(croak confess);
 use parent 'CLIO::Tools::Tool';
 use Cwd qw(getcwd abs_path);
@@ -104,7 +104,7 @@ sub _run_with_interrupt {
             last;
         }
         if ($self->check_interrupt($context)) {
-            log_info('VersionControl', "User interrupt detected, killing git pid $pid");
+            log_debug('VersionControl', "User interrupt detected, killing git pid $pid");
             $interrupted = 1;
             kill '-KILL', -$pid;  # Kill process group
             waitpid($pid, 0);
@@ -441,12 +441,12 @@ sub commit {
     # Multi-agent coordination: Request git lock via broker
     my $lock_acquired = 0;
     if ($context->{broker_client}) {
-        log_info('VersionControl', "Requesting git lock via broker");
+        log_debug('VersionControl', "Requesting git lock via broker");
         eval {
             my $lock_result = $context->{broker_client}->request_git_lock();
             if ($lock_result) {
                 $lock_acquired = 1;
-                log_info('VersionControl', "Git lock acquired");
+                log_debug('VersionControl', "Git lock acquired");
             } else {
                 return $self->error_result(
                     "Git is locked by another agent.\n" .
@@ -455,8 +455,8 @@ sub commit {
             }
         };
         if ($@) {
-            log_warning('VersionControl', "Failed to acquire git lock: $@");
-            log_warning('VersionControl', "Continuing without lock");
+            log_debug('VersionControl', "Failed to acquire git lock: $@");
+            log_debug('VersionControl', "Continuing without lock");
         }
     }
 
@@ -525,10 +525,10 @@ sub commit {
     if ($lock_acquired && $context->{broker_client}) {
         eval {
             $context->{broker_client}->release_git_lock();
-            log_info('VersionControl', "Git lock released");
+            log_debug('VersionControl', "Git lock released");
         };
         if ($@) {
-            log_warning('VersionControl', "Failed to release git lock: $@");
+            log_debug('VersionControl', "Failed to release git lock: $@");
         }
     }
 
@@ -827,13 +827,13 @@ sub worktree {
     # Acquire git lock for mutating operations (add, remove, prune)
     my $lock_acquired = 0;
     if ($action ne 'list' && $context->{broker_client}) {
-        log_info('VersionControl', "Requesting git lock for worktree $action");
+        log_debug('VersionControl', "Requesting git lock for worktree $action");
         my $lock_denied = 0;
         eval {
             my $lock_result = $context->{broker_client}->request_git_lock();
             if ($lock_result) {
                 $lock_acquired = 1;
-                log_info('VersionControl', "Git lock acquired for worktree $action");
+                log_debug('VersionControl', "Git lock acquired for worktree $action");
             } else {
                 $lock_denied = 1;
             }
@@ -845,8 +845,8 @@ sub worktree {
             );
         }
         if ($@) {
-            log_warning('VersionControl', "Failed to acquire git lock: $@");
-            log_warning('VersionControl', "Continuing without lock");
+            log_debug('VersionControl', "Failed to acquire git lock: $@");
+            log_debug('VersionControl', "Continuing without lock");
         }
     }
     
@@ -930,10 +930,10 @@ sub worktree {
     if ($lock_acquired && $context->{broker_client}) {
         eval {
             $context->{broker_client}->release_git_lock();
-            log_info('VersionControl', "Git lock released after worktree $action");
+            log_debug('VersionControl', "Git lock released after worktree $action");
         };
         if ($@) {
-            log_warning('VersionControl', "Failed to release git lock: $@");
+            log_debug('VersionControl', "Failed to release git lock: $@");
         }
     }
     

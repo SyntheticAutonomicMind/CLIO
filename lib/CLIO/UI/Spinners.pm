@@ -110,7 +110,7 @@ sub spinner_frames {
     unless ($entry) {
         # Unknown spinner - log and fall back to dots.
         if (eval { require CLIO::Core::Logger; 1 }) {
-            CLIO::Core::Logger::log_warning('Spinners',
+            CLIO::Core::Logger::log_debug('Spinners',
                 "Unknown spinner style '$name', falling back to dots");
         }
         return [ @{$SPINNERS{dots}{frames}} ];

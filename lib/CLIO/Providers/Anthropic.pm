@@ -122,7 +122,7 @@ sub new {
             if (%parsed) {
                 %all_custom_headers = (%all_custom_headers, %parsed);
             } else {
-                log_warning('Anthropic', "Failed to parse ANTHROPIC_CUSTOM_HEADERS: $@");
+                log_debug('Anthropic', "Failed to parse ANTHROPIC_CUSTOM_HEADERS: $@");
             }
         }
     }
@@ -574,7 +574,7 @@ sub parse_stream_event {
                     $arguments = decode_json($json_str);
                 };
                 if ($@) {
-                    log_warning('Anthropic', "Failed to parse tool arguments: $@");
+                    log_debug('Anthropic', "Failed to parse tool arguments: $@");
                 }
             }
             $self->{_accumulated_json} = '';

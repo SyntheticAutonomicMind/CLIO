@@ -6,7 +6,7 @@ package CLIO::Code::TreeSitter;
 use strict;
 use warnings;
 use utf8;
-use CLIO::Core::Logger qw(log_debug log_info log_warning log_error);
+use CLIO::Core::Logger qw(log_debug log_warning);
 use File::Basename;
 
 =head1 NAME
@@ -217,7 +217,7 @@ sub analyze_file {
     
     # Read file content
     open my $fh, '<', $filepath or do {
-        log_error("TreeSitter", "Cannot read file $filepath: $!");
+        log_debug("TreeSitter", "Cannot read file $filepath: $!");
         return undef;
     };
     

@@ -57,7 +57,7 @@ sub new {
     # Read with locking to prevent race conditions
     if (-f $counter_file) {
         if (open(my $fh, '+<', $counter_file)) {
-            flock($fh, 2) or log_warning("SubAgent", "Cannot lock counter: $!");  # LOCK_EX
+            flock($fh, 2) or log_debug("SubAgent", "Cannot lock counter: $!");  # LOCK_EX
             $next_id = <$fh> || 1;
             chomp $next_id;
             $next_id = int($next_id) || 1;
@@ -93,7 +93,7 @@ sub spawn_agent {
     # Persist counter for next spawn (with locking)
     if ($self->{counter_file}) {
         if (open(my $fh, '>', $self->{counter_file})) {
-            flock($fh, 2) or log_warning("SubAgent", "Cannot lock counter: $!");  # LOCK_EX
+            flock($fh, 2) or log_debug("SubAgent", "Cannot lock counter: $!");  # LOCK_EX
             print $fh $self->{next_agent_id};
             close $fh;  # Releases lock
         }

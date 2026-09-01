@@ -233,6 +233,52 @@ log_warning('ModuleName', 'something unexpected');
 log_error('ModuleName', 'something failed: %s', $error);
 ```
 
+**Log Level Conventions:**
+
+The default log level is `ERROR` (set via `--debug` for `DEBUG`). Follow these
+guidelines when choosing a level:
+
+- **DEBUG** - Use for the vast majority of operational messages: trim details,
+  SSE chunk parsing, token budget calculations, internal state transitions,
+  tool dispatch routing. These are implementation details that are useful when
+  investigating but should not appear in normal operation. The rule of thumb:
+  if the system handles the condition, it should be `log_debug`, not
+  `log_warning` or `log_info`.
+
+- **INFO** - Reserved. No current use in CLIO — all informational
+  messages have been demoted to `log_debug`. If INFO-level logging is
+  needed in the future, it should be for genuinely notable events that
+  the user should see without `--debug` (e.g. model routing switches,
+  provider auto-selection). Do not use `log_info` for routine operational
+  flow (trims, token recovery, format conversions) - those belong at
+  `log_debug`.
+
+- **WARNING** - Use only when something is wrong AND the system does NOT
+  handle it. If the code path stashes an error for retry/rerouting, logs a
+  themed error for the user, or falls back to a sensible default, logging a
+  warning is a smell - it produces console noise for a condition that is
+  already under control. Examples of smells to avoid:
+  - `log_warning` for SSE error chunks that are stashed and retried
+  - `log_warning` for auth token refresh that succeeds
+  - `log_warning` for tool load failures that fall back to core tools
+  - `log_info` for proactive trims that the user did not request
+
+- **ERROR** - Use for unrecoverable failures where the process cannot
+  continue or the user must intervene.
+
+**Setting the log level:**
+
+```bash
+# From /config command (persisted):
+/config set log_level DEBUG
+
+# Or /loglevel shorthand (immediate + persisted):
+/loglevel DEBUG
+
+# From CLI flag:
+./clio --debug --new       # sets DEBUG for this session only
+```
+
 ---
 
 ## Module Naming Conventions
@@ -741,6 +787,10 @@ Permanent knowledge -> Detailed commit message (committed)
 | Technical jargon in action_desc | Users don't care about implementation details | Use user-focused descriptions |
 | Negative framing in user-facing messages | "This is not X" or "Retrying won't help" assumes the user has a mental model we haven't given them | State what IS true and what to do. Tell the user what action to take, not what this isn't |
 | Changelog-style comments in code | Git history explains why; comments should describe what | Write comments for current state, not history |
+| Surface warnings for handled conditions | Produces console noise for errors the system already handles (retry, reroute, fallback) | If the code path handles the condition, use `log_debug`. See Log Level Conventions above |
+| Log operational noise at INFO | With default level now ERROR, routine operations (trims, token recovery, injected messages) are invisible — but `log_info` calls still exist and could surface if a user sets WARNING or INFO level | Demote to `log_debug` — the user did not explicitly request this |
+| Provide useless stats to the model | Tool call counts, token tallies, and framework metadata in summaries are noise that models fixate on (garbage in = garbage out) | Include only actionable work product (task description, files changed, decisions) in thread summaries |
+| Leak framework narration to the model | Telling the model "this is a framework feature" or "the system maintains a summary" primes it to acknowledge or second-guess context recovery | Inject work product only (task, todos, summary). Never explain the mechanism |
 
 **Technical jargon example:**
 - WRONG: `"searching codebase (hybrid keyword+symbols)"` 
@@ -749,6 +799,30 @@ Permanent knowledge -> Detailed commit message (committed)
 The `action_description` appears in user-facing tool output. Keep it simple and focused on results, not implementation.
 
 **Remember:** If you find yourself doing any of these, STOP and do it correctly.
+
+---
+
+## No Fallbacks (Unless Required)
+
+CLIO always rebuilds sessions and manages resume state internally. Backwards-
+compatibility shims (deprecated config key handlers, old-format migrations,
+alias layers, fallback defaults) are not needed and should not be added.
+
+- **Don't add deprecated key handlers** — if a config key is renamed, update
+  all call sites. Do not keep the old key working.
+- **Don't add format migrations** — if a data structure changes, update the
+  storage code to write the new format. Old sessions are discarded, not
+  migrated.
+- **Don't add alias layers** — if a function is renamed, move all callers.
+  If a tool gains a canonical name, update the schema, not an alias map.
+- **Don't add fallback defaults for missing data** — if a config value is
+  missing, surface the error. Default values should only exist for genuinely
+  optional settings.
+
+If a fallback is genuinely unavoidable (e.g., a provider API changes its
+response shape), fix it at the source (normalize the response before it
+reaches the rest of the code) rather than adding a compatibility shim that
+will live forever.
 
 ---
 

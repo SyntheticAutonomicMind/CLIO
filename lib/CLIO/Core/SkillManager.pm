@@ -6,7 +6,7 @@ package CLIO::Core::SkillManager;
 use strict;
 use warnings;
 use utf8;
-use CLIO::Core::Logger qw(log_debug log_error);
+use CLIO::Core::Logger qw(log_debug);
 use CLIO::Util::ConfigPath qw(get_config_file);
 use CLIO::Util::JSON qw(encode_json decode_json safe_decode_json);
 use File::Spec;
@@ -915,7 +915,7 @@ sub _read_skills_file {
     
     my $data = safe_decode_json($json);
     if ($@) {
-        log_error('SkillManager', "Failed to parse $file: $@");
+        log_debug('SkillManager', "Failed to parse $file: $@");
         return {};
     }
     
@@ -1535,16 +1535,16 @@ sub _save_skills {
         # mid-write never leaves a half-truncated skills.json behind.
         my $tmp_file = "$file.tmp.$$";
         open my $fh, '>:encoding(UTF-8)', $tmp_file or do {
-            log_error('SkillManager', "Cannot write to $tmp_file: $!");
+            log_debug('SkillManager', "Cannot write to $tmp_file: $!");
             next;
         };
         print $fh encode_json($data);
         close $fh or do {
-            log_error('SkillManager', "Cannot close $tmp_file: $!");
+            log_debug('SkillManager', "Cannot close $tmp_file: $!");
             next;
         };
         rename $tmp_file, $file or do {
-            log_error('SkillManager', "Cannot rename $tmp_file to $file: $!");
+            log_debug('SkillManager', "Cannot rename $tmp_file to $file: $!");
             next;
         };
     

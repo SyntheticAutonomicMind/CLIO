@@ -12,7 +12,7 @@ use CLIO::UI::Terminal qw(ui_char);
 use parent 'CLIO::UI::Commands::Base';
 
 
-use CLIO::Core::Logger qw(log_debug log_error log_info log_warning);
+use CLIO::Core::Logger qw(log_debug log_error log_warning);
 
 =head1 NAME
 
@@ -927,7 +927,7 @@ sub _multiplexer {
         );
     };
     if ($@) {
-        log_warning('SubAgent', "Failed to load Multiplexer: $@");
+        log_debug('SubAgent', "Failed to load Multiplexer: $@");
         $self->{_multiplexer} = undef;
     }
 
@@ -966,7 +966,7 @@ sub ensure_broker {
             return 1;
         }
         # Broker died - clean up and restart
-        log_warning('SubAgent', "Broker PID $self->{broker_pid} is dead, restarting");
+        log_debug('SubAgent', "Broker PID $self->{broker_pid} is dead, restarting");
         $self->{broker_pid} = undef;
         $self->{broker_client} = undef;
     }
@@ -1009,7 +1009,7 @@ sub start_broker {
         log_debug('SubAgent', "Terminal reset complete");
         
         # Close inherited file descriptors
-        close(STDIN) or do { CLIO::Core::Logger::log_warning('SubAgent', "Cannot close STDIN: $!"); };
+        close(STDIN) or do { CLIO::Core::Logger::log_debug('SubAgent', "Cannot close STDIN: $!"); };
         log_debug('SubAgent', "STDIN closed");
         
         # Detach from terminal
@@ -1043,7 +1043,7 @@ sub start_broker {
             
             log_debug('SubAgent', "Broker object created, calling run()");
             $broker->run();
-            log_info('SubAgent', "[INFO] Broker run() returned (should not happen)");
+            log_debug('SubAgent', "[INFO] Broker run() returned (should not happen)");
         };
         
         if ($@) {
@@ -1075,10 +1075,10 @@ sub start_broker {
         # primary agent to block on broker API slots while sub-agents are working.
     };
     if ($@) {
-        log_warning('SubAgent', "Could not connect to broker: $@");
+        log_debug('SubAgent', "Could not connect to broker: $@");
     }
     
-    log_info('SubAgent', "Broker started with PID: $pid for session: $session_id");
+    log_debug('SubAgent', "Broker started with PID: $pid for session: $session_id");
 }
 
 1;

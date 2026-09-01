@@ -97,7 +97,7 @@ sub new {
         $http_tiny_opts{verify_SSL} = $tls_verify;
     } elsif (!$HAS_CURL) {
         # Only warn if neither SSL nor curl is available - this is a real problem
-        log_warning('HTTP', "Neither IO::Socket::SSL nor curl available - HTTPS will not work!");
+        log_debug('HTTP', "Neither IO::Socket::SSL nor curl available - HTTPS will not work!");
     }
     
     # Always create HTTP::Tiny instance (needed for HTTP URLs even with curl for HTTPS)
@@ -479,7 +479,7 @@ sub _request_via_curl_streaming {
             # waiting for the full server response.
             if ($! == EINTR) {
                 if (eval { CLIO::Core::Interrupt::pending() }) {
-                    log_info('HTTP::curl_streaming', "User interrupt detected (EINTR), aborting stream");
+                    log_debug('HTTP::curl_streaming', "User interrupt detected (EINTR), aborting stream");
                     kill('TERM', $curl_pid);
                     waitpid($curl_pid, 0);
                     last;
@@ -504,7 +504,7 @@ sub _request_via_curl_streaming {
             }, 'CLIO::Compat::HTTP::Response';
             eval { $callback->($read_buf, $preliminary_response, undef); };
             if ($@) {
-                log_warning('HTTP::curl_streaming', "Callback error: $@");
+                log_debug('HTTP::curl_streaming', "Callback error: $@");
             }
         }
 
@@ -512,7 +512,7 @@ sub _request_via_curl_streaming {
         # Even if the syscall didn't return EINTR, the ALRM handler
         # may have set the global flag between iterations.
         if (eval { CLIO::Core::Interrupt::pending() }) {
-            log_info('HTTP::curl_streaming', "User interrupt detected after chunk, aborting stream");
+            log_debug('HTTP::curl_streaming', "User interrupt detected after chunk, aborting stream");
             kill('TERM', $curl_pid);
             waitpid($curl_pid, 0);
             last;
@@ -715,7 +715,7 @@ sub request {
                     # ~250ms (the ALRM interval) instead of waiting for the
                     # server to finish its full response.
                     if (eval { CLIO::Core::Interrupt::pending() }) {
-                        log_info('HTTP', "User interrupt detected during HTTP::Tiny streaming, aborting");
+                        log_debug('HTTP', "User interrupt detected during HTTP::Tiny streaming, aborting");
                         die "__CLIO_INTERRUPT_ABORT__\n";
                     }
                 };

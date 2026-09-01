@@ -543,7 +543,7 @@ sub _git_grep_search {
         # Allow ESC interrupt during git grep. Codebase searches can return
         # thousands of matches; polling lets the user bail early.
         if ($files_seen % 50 == 0 && $self->check_interrupt($ext_context)) {
-            log_info('CodeIntelligence', "User interrupt during git grep after " . scalar(@results) . " match(es)");
+            log_debug('CodeIntelligence', "User interrupt during git grep after " . scalar(@results) . " match(es)");
             close $fh;
             last;
         }
@@ -600,7 +600,7 @@ sub _file_grep_search {
         # codebase-wide grep can take many seconds; without polling the user
         # waits for the entire search to complete.
         if ($self->check_interrupt($ext_context)) {
-            log_info('CodeIntelligence', "User interrupt during search after " . scalar(@results) . " match(es)");
+            log_debug('CodeIntelligence', "User interrupt during search after " . scalar(@results) . " match(es)");
             last;
         }
 

@@ -7,7 +7,7 @@ use strict;
 use warnings;
 use utf8;
 use Carp qw(croak);
-use CLIO::Core::Logger qw(log_debug log_info log_warning);
+use CLIO::Core::Logger qw(log_debug log_warning);
 
 
 =head1 NAME
@@ -72,7 +72,7 @@ sub create_pane {
 
     eval { $self->_run_cmd(@cmd) };
     if ($@) {
-        log_warning('Tmux', "split-window failed: $@");
+        log_debug('Tmux', "split-window failed: $@");
         return undef;
     }
 
@@ -81,9 +81,9 @@ sub create_pane {
 
     if ($pane_id) {
         $self->{pane_map}{$name} = $pane_id;
-        log_info('Tmux', "Created pane $pane_id for '$name'");
+        log_debug('Tmux', "Created pane $pane_id for '$name'");
     } else {
-        log_warning('Tmux', "Created pane but could not determine its ID");
+        log_debug('Tmux', "Created pane but could not determine its ID");
         # Use a synthetic ID for tracking
         $pane_id = "tmux:$name:" . time();
         $self->{pane_map}{$name} = $pane_id;

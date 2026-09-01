@@ -12,7 +12,7 @@ use File::Path qw(make_path);
 use File::Spec;
 use POSIX qw(strftime);
 use Time::HiRes qw(time);
-use CLIO::Core::Logger qw(log_debug log_error);
+use CLIO::Core::Logger qw(log_debug);
 
 =head1 NAME
 
@@ -82,7 +82,7 @@ sub new {
     if (!-d $self->{log_dir}) {
         eval { make_path($self->{log_dir}); };
         if ($@) {
-            log_error('ProcessStats', "Failed to create log directory: $@");
+            log_debug('ProcessStats', "Failed to create log directory: $@");
         }
     }
 
@@ -275,7 +275,7 @@ sub _write_entry {
     };
 
     if ($@) {
-        log_error('ProcessStats', "Failed to write stats: $@");
+        log_debug('ProcessStats', "Failed to write stats: $@");
     }
 }
 

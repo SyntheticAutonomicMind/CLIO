@@ -6,7 +6,7 @@ package CLIO::Session::ToolResultStore;
 use strict;
 use warnings;
 use utf8;
-use CLIO::Core::Logger qw(log_debug log_error log_info);
+use CLIO::Core::Logger qw(log_debug);
 use Carp qw(croak);
 use File::Path qw(make_path remove_tree);
 use File::Spec;
@@ -140,13 +140,13 @@ To read the full result, use:
 file_operations(operation: "read_tool_result", toolCallId: "$toolCallId", offset: 0, length: 8192)
 END_MARKER
         
-        log_info('ToolResultStore', "Persisted: toolCallId=$toolCallId, totalSize=$stored_length bytes, preview=$PREVIEW_SIZE bytes, path=$metadata->{filePath}");
+        log_debug('ToolResultStore', "Persisted: toolCallId=$toolCallId, totalSize=$stored_length bytes, preview=$PREVIEW_SIZE bytes, path=$metadata->{filePath}");
     };
     
     if ($@) {
         # Fallback: If persistence fails, truncate and log warning
         my $error = $@;
-        log_error('ToolResultStore', "Failed to persist result: $error");
+        log_debug('ToolResultStore', "Failed to persist result: $error");
         
         my $truncated = substr($content, 0, $MAX_INLINE_SIZE);
         $marker = <<END_FALLBACK;
@@ -237,7 +237,7 @@ sub persistResult {
     };
     if ($@) {
         my $error = $@;
-        log_error('ToolResultStore', "Failed to create directory: $error");
+        log_debug('ToolResultStore', "Failed to create directory: $error");
         croak "Failed to create tool_results directory: $error";
     }
     
@@ -254,7 +254,7 @@ sub persistResult {
     };
     if ($@) {
         my $error = $@;
-        log_error('ToolResultStore', "Failed to write file: $error");
+        log_debug('ToolResultStore', "Failed to write file: $error");
         croak "Failed to write tool result file: $error";
     }
     
@@ -413,7 +413,7 @@ sub retrieveChunk {
     };
     if ($@) {
         my $error = $@;
-        log_error('ToolResultStore', "Failed to read file: $error");
+        log_debug('ToolResultStore', "Failed to read file: $error");
         croak "Failed to read tool result file: $error";
     }
     
@@ -594,7 +594,7 @@ sub deleteResult {
     };
     if ($@) {
         my $error = $@;
-        log_error('ToolResultStore', "Failed to delete result: $error");
+        log_debug('ToolResultStore', "Failed to delete result: $error");
          croak "Failed to delete tool result: $error";
     }
 }
@@ -626,7 +626,7 @@ sub deleteAllResults {
     };
     if ($@) {
         my $error = $@;
-        log_error('ToolResultStore', "Failed to delete tool results directory: $error");
+        log_debug('ToolResultStore', "Failed to delete tool results directory: $error");
          croak "Failed to delete tool results directory: $error";
     }
 }
@@ -717,7 +717,7 @@ sub cleanupOldResults {
     # Log summary
     if ($deleted_count > 0) {
         my $reclaimed_mb = sprintf("%.2f", $reclaimed_bytes / 1_048_576);
-        log_info('ToolResultStore', "Cleanup completed: deleted $deleted_count old tool results, reclaimed ${reclaimed_mb}MB in session $session_id");
+        log_debug('ToolResultStore', "Cleanup completed: deleted $deleted_count old tool results, reclaimed ${reclaimed_mb}MB in session $session_id");
     } elsif ($self->{debug}) {
         log_debug('ToolResultStore', "Cleanup: no old results to delete in session $session_id");
     }

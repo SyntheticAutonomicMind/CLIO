@@ -331,7 +331,7 @@ sub search {
                 next unless $file =~ /\.json$/;
 
                 if ($self->check_interrupt($context)) {
-                    log_info('MemoryOps', "User interrupt during memory search");
+                    log_debug('MemoryOps', "User interrupt during memory search");
                     last;
                 }
 
@@ -526,7 +526,7 @@ sub recall_sessions {
             # sessions on disk this loop can take many seconds; without
             # polling the user waits for the entire history to be scanned.
             if ($self->check_interrupt($context)) {
-                log_info('MemoryOps', "User interrupt during recall_sessions after $sessions_searched session(s)");
+                log_debug('MemoryOps', "User interrupt during recall_sessions after $sessions_searched session(s)");
                 last SESSION;
             }
 
@@ -537,7 +537,7 @@ sub recall_sessions {
             # Check file size before reading - skip huge files to prevent OOM
             my $file_size = -s $session_path;
             if ($file_size > 50_000_000) {  # 50MB limit
-                log_warning('MemoryOps', "Skipping large session file $session_id ($file_size bytes)");
+                log_debug('MemoryOps', "Skipping large session file $session_id ($file_size bytes)");
                 next SESSION;
             }
             

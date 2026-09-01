@@ -220,7 +220,7 @@ sub _fetch_provider_models {
             $models = $data->{data} || [] if $data;
         };
         if ($@) {
-            log_warning('API', "Failed to fetch GitHub Copilot models: $@");
+            log_debug('API', "Failed to fetch GitHub Copilot models: $@");
         }
     } elsif ($provider_def->{native_api}) {
         if ($provider_def->{endpoint} && $provider_def->{endpoint}{anthropic}) {
@@ -256,11 +256,11 @@ sub _fetch_provider_models {
                         };
                     }
                 } else {
-                    log_warning('API', "Failed to fetch Anthropic models: HTTP " . $resp->code . " " . ($resp->decoded_content // ''));
+                    log_debug('API', "Failed to fetch Anthropic models: HTTP " . $resp->code . " " . ($resp->decoded_content // ''));
                 }
             };
             if ($@) {
-                log_warning('API', "Failed to fetch Anthropic models: $@");
+                log_debug('API', "Failed to fetch Anthropic models: $@");
             }
         } elsif ($provider_def->{endpoint} && $provider_def->{endpoint}{google}) {
             # Google native provider
@@ -289,11 +289,11 @@ sub _fetch_provider_models {
                         };
                     }
                 } else {
-                    log_warning('API', "Failed to fetch Google models: HTTP " . $resp->code . " " . ($resp->decoded_content // ''));
+                    log_debug('API', "Failed to fetch Google models: HTTP " . $resp->code . " " . ($resp->decoded_content // ''));
                 }
             };
             if ($@) {
-                log_warning('API', "Failed to fetch Google models: $@");
+                log_debug('API', "Failed to fetch Google models: $@");
             }
         } else {
             # OAI-compatible native provider (NVIDIA, etc.)
@@ -325,11 +325,11 @@ sub _fetch_provider_models {
                         };
                     }
                 } else {
-                    log_warning('API', "Failed to fetch $provider_name models: HTTP " . $resp->code . " " . ($resp->decoded_content // ''));
+                    log_debug('API', "Failed to fetch $provider_name models: HTTP " . $resp->code . " " . ($resp->decoded_content // ''));
                 }
             };
             if ($@) {
-                log_warning('API', "Failed to fetch models from $provider_name: $@");
+                log_debug('API', "Failed to fetch models from $provider_name: $@");
             }
         }
     } elsif ($provider_def->{static_models}) {
@@ -384,7 +384,7 @@ sub _fetch_provider_models {
             }
         };
         if ($@) {
-            log_warning('API', "Failed to fetch models from $provider_name: $@");
+            log_debug('API', "Failed to fetch models from $provider_name: $@");
         }
     }
 

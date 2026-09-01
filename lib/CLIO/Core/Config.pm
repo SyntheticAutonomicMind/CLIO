@@ -8,7 +8,7 @@ use warnings;
 use utf8;
 use Carp qw(croak);
 use CLIO::UI::Terminal qw(box_char);
-use CLIO::Core::Logger qw(should_log log_debug log_error log_warning);
+use CLIO::Core::Logger qw(should_log log_debug log_warning);
 use CLIO::Util::ConfigPath qw(get_config_dir);
 use CLIO::Providers qw(get_provider list_providers provider_exists);
 use CLIO::Util::JSON qw(encode_json decode_json);
@@ -73,7 +73,7 @@ use constant DEFAULT_CONFIG => {
     provider => undef,  # No default - must be configured by user
     route_name => undef,  # Active named routing profile (from --route or /api route use)
     editor => $ENV{EDITOR} || $ENV{VISUAL} || 'vim',  # Default editor
-    log_level => 'WARNING',  # Default log level: ERROR, WARNING, INFO, DEBUG
+    log_level => 'ERROR',  # Default log level: ERROR, WARNING, INFO, DEBUG
     # Web search configuration (SerpAPI)
     serpapi_key => '',  # SerpAPI key for reliable web search
     search_engine => 'google',  # SerpAPI engine: google, bing, duckduckgo
@@ -247,7 +247,7 @@ sub load {
         };
         
         if ($@) {
-            log_warning('Config', "Failed to load config file: $@");
+            log_debug('Config', "Failed to load config file: $@");
         }
     } else {
         log_debug('Config', "No config file found at $self->{config_file}");
@@ -331,7 +331,7 @@ sub load {
                 config => \%provider_defaults,
             };
         } else {
-            log_warning('Config', "Unknown provider '$config{provider}', using defaults");
+            log_debug('Config', "Unknown provider '$config{provider}', using defaults");
         }
     } else {
         # No provider set
@@ -441,7 +441,7 @@ sub save {
     };
     
     if ($@) {
-        log_error('Config', "Failed to save config: $@");
+        log_debug('Config', "Failed to save config: $@");
         return 0;
     }
     
@@ -603,8 +603,8 @@ sub set_provider {
     
     # Check if provider exists in Providers.pm
     unless (provider_exists($provider)) {
-        log_error('Config', "Unknown provider: $provider");
-        log_error('Config', "Available providers: " . join(', ', list_providers()));
+        log_debug('Config', "Unknown provider: $provider");
+        log_debug('Config', "Available providers: " . join(', ', list_providers()));
         return 0;
     }
     
@@ -1187,7 +1187,7 @@ sub display {
         $self->{user_set}->{model} ? ' (user-set)' : ' (from provider)');
     
     # Log Level
-    push @lines, sprintf("Log Level: %s", $config->{log_level} || 'WARNING');
+    push @lines, sprintf("Log Level: %s", $config->{log_level} || 'ERROR');
     
     # Current Provider
     push @lines, sprintf("Provider:  %s%s", 

@@ -76,7 +76,7 @@ sub sanitize_payload {
         # Unknown blessed ref: pass through unchanged. The caller
         # is responsible for serialising it. We log once per process for
         # visibility, since this is unusual.
-        log_warning('PayloadSanitizer',
+        log_debug('PayloadSanitizer',
             'Passing through blessed ref of type ' . ($class // 'unknown') .
             ' - caller is responsible for serialising') if $class;
         return $data;

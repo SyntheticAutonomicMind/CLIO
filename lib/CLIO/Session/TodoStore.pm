@@ -6,7 +6,7 @@ package CLIO::Session::TodoStore;
 use strict;
 use warnings;
 use utf8;
-use CLIO::Core::Logger qw(log_debug log_error);
+use CLIO::Core::Logger qw(log_debug);
 use Carp qw(croak);
 use File::Path qw(make_path);
 use File::Spec;
@@ -148,7 +148,7 @@ sub read {
     };
     
     if ($@) {
-        log_error('TodoStore', "Failed to read todos: $@");
+        log_debug('TodoStore', "Failed to read todos: $@");
         return [];
     }
     
@@ -196,7 +196,7 @@ sub write {
     my $errors = $self->validate($todos);
     if (@$errors) {
         my $error_msg = "Todo list validation failed:\n" . join("\n", map { "  - $_" } @$errors);
-        log_error('TodoStore', "$error_msg");
+        log_debug('TodoStore', "$error_msg");
         return (0, $error_msg);
     }
     
@@ -213,7 +213,7 @@ sub write {
     };
     
     if ($@) {
-        log_error('TodoStore', "Failed to save todos: $@");
+        log_debug('TodoStore', "Failed to save todos: $@");
         return (0, "Failed to save todos: $@");
     }
     
