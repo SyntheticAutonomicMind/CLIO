@@ -3286,8 +3286,16 @@ Resolution order (first match wins):
 sub _ensure_reasoning_mode {
     my ($self, $capabilities, $provider, $model) = @_;
 
-    # Already set - keep it
-    return if exists $capabilities->{reasoning_mode};
+    # Already set (and defined) - keep it. NB: exists() is intentionally
+    # NOT used here because _build_caps_from_json may set
+    # reasoning_mode => undef when the source data lacks the field.
+    # exists() returns true for a key with an undef value, which would
+    # short-circuit the heuristic fallback below and leave
+    # reasoning_mode as undef for models that DO support reasoning
+    # (e.g. NVIDIA nemotron-3-ultra-550b-a55b matched via heuristics
+    # that set reasoning_mode, but the JSON caps hash had the key
+    # pre-set to undef by _build_caps_from_json).
+    return if defined $capabilities->{reasoning_mode};
 
     # Not a reasoning model - nothing to set
     return unless $capabilities->{supports_reasoning};
@@ -3325,6 +3333,7 @@ sub _ensure_reasoning_mode {
     # DeepSeek gets 'effort'. MiniMax is the notable exception: the
     # M3-vs-M2.x split is a model-name property, not a single value,
     # so it lives in the MiniMax branch below.
+    require CLIO::Providers;
     my $mode;
     my $provider_default;
 

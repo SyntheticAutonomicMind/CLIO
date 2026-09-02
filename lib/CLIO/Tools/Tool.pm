@@ -58,6 +58,7 @@ sub new {
         name => $opts{name},
         description => $opts{description},
         supported_operations => $opts{supported_operations},
+        operation_aliases    => $opts{operation_aliases} || [],
         debug => $opts{debug} || 0,
         
         # Execution control metadata (SAM-inspired pattern + CLIO enhancements)
@@ -303,9 +304,21 @@ sub _infer_operation_from_params {
 sub validate_operation {
     my ($self, $operation) = @_;
     
-    # Build hash lookup on first call (avoids linear grep on every tool dispatch)
+    # Build hash lookup on first call (avoids linear grep on every tool dispatch).
+    # Includes canonical operations AND natural-language aliases so the
+    # LLM can use either form (e.g. 'write' for 'write_file', 'mv' for
+    # 'rename_file'). The dispatch_table maps all accepted names to methods;
+    # we check it plus supported_operations and operation_aliases.
     unless ($self->{_supported_ops_hash}) {
-        $self->{_supported_ops_hash} = { map { $_ => 1 } @{$self->{supported_operations}} };
+        my @all = (@{$self->{supported_operations} || []},
+                   @{$self->{operation_aliases} || []});
+        # Also accept any key present in the dispatch table that isn't
+        # already listed (covers aliases defined only there).
+        my $table = $self->dispatch_table();
+        if ($table && ref($table) eq 'HASH') {
+            push @all, keys %$table;
+        }
+        $self->{_supported_ops_hash} = { map { $_ => 1 } @all };
     }
     return $self->{_supported_ops_hash}{$operation} ? 1 : 0;
 }
