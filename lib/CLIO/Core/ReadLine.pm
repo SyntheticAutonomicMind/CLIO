@@ -41,23 +41,18 @@ to a regex-based range check covering the common East Asian wide blocks.
 
 =cut
 
-{
-    # Cache Unicode::GCString availability check
-    my $HAS_UNICODE_GCSTRING;
-    sub _check_gcstring {
-        unless (defined $HAS_UNICODE_GCSTRING) {
-            $HAS_UNICODE_GCSTRING = eval { require Unicode::GCString; 1 } ? 1 : 0;
-        }
-        return $HAS_UNICODE_GCSTRING;
-    }
-}
+# Probe for Unicode::GCString at startup so we don't repeat the eval
+# on every _display_width call. The result is captured in a closure.
+my $HAS_UNICODE_GCSTRING = eval { require Unicode::GCString; 1 } ? 1 : 0;
+
+sub _check_gcstring { $HAS_UNICODE_GCSTRING }
 
 sub _display_width {
     my ($str) = @_;
     return 0 unless defined $str && length($str);
 
     # Use Unicode::GCString for accurate width if available
-    if (_check_gcstring()) {
+    if ($HAS_UNICODE_GCSTRING) {
         return Unicode::GCString->new($str)->columns();
     }
 
@@ -105,7 +100,7 @@ sub _display_width {
 
 sub new {
     my ($class, %args) = @_;
-    
+
     my $self = {
         prompt => $args{prompt} || '> ',
         history => $args{history} || [],
@@ -116,20 +111,34 @@ sub new {
         # Track how many terminal lines the current input occupies
         # This is MEASURED (from last redraw), not calculated
         display_lines => 1,
-        # Track where the cursor was positioned in the last redraw
-        # This allows us to know exactly where to start the next redraw from
+        # Actual terminal cursor position (0-indexed row, 1-indexed col).
+        # This is what the terminal physically shows - NOT a logical guess
+        # based on input length. Updated whenever we emit any cursor
+        # movement or text.
         last_cursor_row => 0,
-        last_cursor_col => 0,
+        last_cursor_col => 1,
         # Absolute (0-indexed) display column of the cursor in the last paint.
         # Used to compute incremental horizontal movement without flashing
         # to column 1. Updated whenever we emit any cursor positioning.
         last_cursor_disp => 0,
+        # True when the terminal is in the VT100 "pending wrap" state: we
+        # just emitted exactly N*term_width columns and the next printed
+        # character will wrap to column 1 of the next row. Cursor
+        # physically sits at (last row, term_width) until then.
+        #
+        # This flag is the single source of truth that fixes the
+        # "text corrupts crossing wrap boundary" and "shift+arrow then
+        # type appends to end" bugs - before this existed, the code
+        # computed cursor position from _pos_to_rowcol(input_length)
+        # which incorrectly assumed pending-wrap state even after the
+        # terminal had already wrapped.
+        pending_wrap => 0,
         # Performance caches (invalidated per-readline call)
         _prompt_disp_cache => undef,   # cached prompt display width
         _term_width_cache => undef,    # cached terminal width
         _term_width_time => 0,         # when we last checked terminal width
     };
-    
+
     return bless $self, $class;
 }
 
@@ -201,25 +210,42 @@ sub _redraw_from_cursor {
     my $term_width = $self->_get_term_width();
     my $prompt_disp = $self->_get_prompt_disp($prompt);
 
-    # Print everything after cursor, then clear leftover chars
+    # Print everything after cursor, then clear leftover chars.
+    # _emit_text handles wide-char widths and pending wrap correctly.
     my $tail = substr($$input_ref, $$cursor_pos_ref);
-    print $tail;
+    $self->_emit_text($tail);
     print "\e[J";
 
-    # Calculate where the cursor IS now (end of input) and where it SHOULD be
+    # Calculate where the cursor IS now (end of input) and where it
+    # SHOULD be. _pos_to_rowcol needs to know whether pending_wrap is
+    # set so the target reflects the post-emit physical position.
     my $total_disp = $prompt_disp + _display_width($$input_ref);
     my $cursor_disp = $prompt_disp + _display_width(substr($$input_ref, 0, $$cursor_pos_ref));
 
-    my ($end_row, $end_col)       = $self->_pos_to_rowcol($total_disp);
-    my ($target_row, $target_col) = $self->_pos_to_rowcol($cursor_disp);
+    # After emitting the tail, last_cursor_* reflects the end position
+    # of the input. We need to move from there to where the cursor
+    # should land (just after the inserted char).
+    my $end_row = $self->{last_cursor_row};
+    my $end_col = $self->{last_cursor_col};
+
+    # Target: row/col for cursor_pos in the input. _pos_to_rowcol is
+    # safe to call here because there's no pending_wrap at the cursor
+    # position - cursor_pos always sits at an "ordinary" column.
+    my ($target_row, $target_col) = $self->_pos_to_rowcol($cursor_disp, 0);
 
     # Move vertically (if needed) using absolute offsets. After vertical
     # movement the terminal cursor is at column 1 of the target row, so
     # the horizontal positioning below is correct.
     if ($target_row < $end_row) {
-        print "\e[" . ($end_row - $target_row) . "A";   # up
+        my $up = $end_row - $target_row;
+        print "\e[${up}A";
+        $self->{last_cursor_row} = $target_row;
+        $self->{pending_wrap} = 0;
     } elsif ($target_row > $end_row) {
-        print "\e[" . ($target_row - $end_row) . "B";   # down
+        my $down = $target_row - $end_row;
+        print "\e[${down}B";
+        $self->{last_cursor_row} = $target_row;
+        $self->{pending_wrap} = 0;
     }
 
     # Horizontal: carriage return + advance to $target_col (1-indexed).
@@ -227,46 +253,297 @@ sub _redraw_from_cursor {
     if ($target_col > 1) {
         print "\e[" . ($target_col - 1) . "C";
     }
+    $self->{last_cursor_col} = $target_col;
+    $self->{last_cursor_disp} = $cursor_disp;
+    $self->{pending_wrap} = 0;
 
-    # Update tracking. last_cursor_disp is the absolute 0-indexed position
-    # the terminal cursor occupies now (column $target_col - 1 within row
-    # $target_row). Subsequent same-row movements use incremental horizontal
-    # offsets and skip the flash to column 1.
+    # Update display_lines.
     my $new_display_lines = $total_disp > 0
         ? int(($total_disp - 1) / $term_width) + 1
         : 1;
-    $self->{display_lines}    = $new_display_lines;
-    $self->{last_cursor_row}  = $target_row;
-    $self->{last_cursor_col}  = $target_col;
-    $self->{last_cursor_disp} = $cursor_disp;
+    $self->{display_lines} = $new_display_lines;
 }
 
 =head2 _pos_to_rowcol
 
 Convert an absolute (0-indexed) display column to a (row, col) pair.
 
-Handles the VT100 "pending wrap" edge case: when a terminal has just
-printed exactly N*term_width columns, the cursor sits at column term_width
-of row N-1, NOT at column 1 of row N. The pending state is invisible
-until the next print, but cursor positioning must respect it.
+The conversion respects the VT100 "pending wrap" state. Pending wrap means
+the terminal just emitted exactly N*term_width columns and the next
+printed character will wrap to column 1 of the next row. Cursor
+physically sits at (row N-1, col term_width) until then.
+
+The caller passes the current pending_wrap flag as the third argument.
+When pending_wrap is true, pos is forced to "row N-1, col term_width"
+even when it falls on a wrap boundary.
 
 Returns: ($row, $col) where $row is 0-indexed and $col is 1-indexed.
 
 =cut
 
 sub _pos_to_rowcol {
-    my ($self, $pos) = @_;
+    my ($self, $pos, $pending) = @_;
+    $pending //= 0;
     my $term_width = $self->_get_term_width();
+    if ($pos == 0) {
+        # Empty line: cursor at col 1 row 0.
+        return (0, 1);
+    }
     my ($row, $col);
     if ($pos > 0 && $pos % $term_width == 0) {
-        # Pending wrap: cursor at last column of previous row.
-        $row = int($pos / $term_width) - 1;
-        $col = $term_width;
+        # Wrap boundary. Position is either:
+        #   pending-wrap: cursor at last col of previous row
+        #   after-wrap:   cursor at col 1 of current row (just past the wrap,
+        #                 no char placed at this position yet)
+        if ($pending) {
+            $row = int($pos / $term_width) - 1;
+            $col = $term_width;
+        } else {
+            $row = int($pos / $term_width);
+            $col = 1;
+        }
     } else {
         $row = int($pos / $term_width);
-        $col = ($pos % $term_width) + 1;  # 1-indexed
+        $col = ($pos % $term_width) + 1;
     }
     return ($row, $col);
+}
+
+=head2 _cursor_at_codepoint
+
+Compute the physical (row, col) that the cursor would be at if it sat
+at codepoint $cp in $input. Starts at (0, 1+prompt_disp) and walks through
+each codepoint, tracking wraps.
+
+This is the ground truth for "where the cursor sits at cp". Use this
+in reposition_cursor instead of computing (prompt + cp) and translating
+through _pos_to_rowcol - which gets the wrap accounting wrong by 1 col.
+
+=cut
+
+sub _cursor_at_codepoint {
+    my ($self, $input, $cp, $prompt) = @_;
+    $prompt //= $self->{prompt} // '';
+
+    my $term_width = $self->_get_term_width();
+    my $prompt_disp = $self->_get_prompt_disp($prompt);
+
+    # Start at (0, prompt_disp+1) - the position right after the prompt.
+    my $row = 0;
+    my $col = $prompt_disp + 1;
+
+    # Walk through codepoints 0..cp-1, advancing col and wrapping on
+    # boundary. We track pending state internally so we know whether the
+    # cursor is at col 1 of a new row (after a wrap) or col term_width
+    # (pending wrap on the previous row).
+    my $pending = 0;
+    for my $i (0 .. $cp - 1) {
+        my $ch = substr($input, $i, 1);
+        my $w = _display_width($ch);
+
+        if ($pending) {
+            $row += 1;
+            $col = 1;
+            $pending = 0;
+        }
+        # If this char doesn't fit in remaining space, wrap first.
+        if ($col + $w - 1 > $term_width) {
+            $row += 1;
+            $col = 1;
+        }
+        $col += $w;
+        if ($col == $term_width) {
+            $pending = 1;
+        }
+    }
+
+    # Note: the cursor at codepoint $cp is "before" char $cp. If pending
+    # is set here, the cursor sits at last col of current row (the
+    # wrap will resolve when char $cp is printed). Convert to a
+    # 1-indexed col for the caller.
+    if ($pending) {
+        # Cursor is at last col of current row.
+        return ($row, $term_width);
+    }
+    return ($row, $col);
+}
+
+=head2 _emit_text
+
+Print $text and update last_cursor_* / pending_wrap tracking to reflect
+the cursor's actual position after the text is rendered.
+
+Wide-character widths are honored via _display_width.
+
+This is the single source of truth for cursor position. Every place
+that prints text must route through here so that arrow-key navigation,
+Ctrl+W, and redraw_line all see the *physical* terminal cursor position
+rather than a logical guess derived from input length.
+
+The terminal-emulator model:
+  - Cursor has a (row, col) position (col is 1-indexed).
+  - Print a char at (row, col); col advances by char width.
+  - If col exceeds term_width after a print, wrap to (row+1, 1) and
+    place remaining char(s) there.
+  - If the cursor sits at exactly col=term_width, it's in pending-wrap
+    state: the next print wraps first.
+
+=cut
+
+sub _emit_text {
+    my ($self, $text) = @_;
+    return unless defined $text && length $text;
+
+    my $term_width = $self->_get_term_width();
+    my $row = $self->{last_cursor_row};
+    my $col = $self->{last_cursor_col};
+    my $pending = $self->{pending_wrap};
+
+    for my $i (0 .. length($text) - 1) {
+        my $ch = substr($text, $i, 1);
+        my $w = _display_width($ch);
+
+        # Step 1: Resolve pending-wrap if set. The wrap happens BEFORE
+        # the char is placed.
+        if ($pending) {
+            $row += 1;
+            $col = 1;
+            $pending = 0;
+        }
+
+        # Step 2: Place the char. If it doesn't fit in the remaining
+        # space (col + w > term_width + 1), it wraps to next row.
+        if ($col + $w - 1 > $term_width) {
+            # Wrap before placing.
+            $row += 1;
+            $col = 1;
+        }
+        print $ch;
+        $col += $w;
+
+        # Step 3: If we landed exactly at col=term_width, set pending
+        # for the NEXT char (which will wrap). Note: if this is the
+        # LAST char of $text, pending is set but never used (caller
+        # will likely clear it before the next operation).
+        if ($col == $term_width + 1) {
+            # Shouldn't happen since we wrap when col + w > term_width;
+            # defensive.
+            $col = 1;
+            $row += 1;
+        } elsif ($col == $term_width) {
+            $pending = 1;
+        }
+    }
+
+    $self->{last_cursor_row} = $row;
+    $self->{last_cursor_col} = $col;
+    $self->{last_cursor_disp} = $row * $term_width + ($col - 1);
+    $self->{pending_wrap} = $pending;
+}
+
+=head2 _emit_move
+
+Emit a relative cursor movement (no text) and update tracking.
+
+$rows and $cols are signed offsets. Negative rows move up, positive down.
+Positive cols move right, negative left. Either may be 0.
+
+Pending wrap is cleared on any movement (the terminal cursor is now at
+a definite position).
+
+=cut
+
+sub _emit_move {
+    my ($self, $drows, $dcols) = @_;
+    my $term_width = $self->_get_term_width();
+    my $row = $self->{last_cursor_row};
+    my $col = $self->{last_cursor_col};
+
+    # Pending wrap is implicitly resolved by any movement: the cursor
+    # is now at an absolute position, not the "between rows" limbo.
+    if ($self->{pending_wrap}) {
+        $row += 1;
+        $col = 1;
+    }
+
+    $row += $drows;
+    $col += $dcols;
+
+    # Clamp to non-negative.
+    $row = 0 if $row < 0;
+    $col = 1 if $col < 1;
+    $col = $term_width if $col > $term_width;
+
+    $self->{last_cursor_row} = $row;
+    $self->{last_cursor_col} = $col;
+    $self->{last_cursor_disp} = $row * $term_width + ($col - 1);
+    $self->{pending_wrap} = 0;
+}
+
+=head2 _emit_cursor_to
+
+Move the cursor to an absolute (row, col) and update tracking.
+Row is 0-indexed; col is 1-indexed.
+
+=cut
+
+sub _emit_cursor_to {
+    my ($self, $row, $col) = @_;
+    $self->{last_cursor_row} = $row;
+    $self->{last_cursor_col} = $col;
+    $self->{last_cursor_disp} = $row * $self->_get_term_width() + ($col - 1);
+    $self->{pending_wrap} = 0;
+}
+
+=head2 _emit_newline
+
+Emit a newline: move to column 1 of the next row. Updates tracking.
+
+Pending wrap is resolved (a newline always wraps to col 1 of next row).
+
+=cut
+
+sub _emit_newline {
+    my ($self) = @_;
+    print "\r\n";
+    # Newline: move to (row+1, col 1).
+    my $row = $self->{last_cursor_row};
+    if ($self->{pending_wrap}) {
+        # Wrap resolves: row stays (we're at last col of current row),
+        # newline moves to (row+1, 1).
+        $row += 1;
+    } else {
+        $row += 1;
+    }
+    $self->{last_cursor_row} = $row;
+    $self->{last_cursor_col} = 1;
+    $self->{last_cursor_disp} = $row * $self->_get_term_width();
+    $self->{pending_wrap} = 0;
+}
+
+=head2 _emit_ctrl_c
+
+Emit the "^C\n" sequence shown when the user hits Ctrl+C. Updates
+tracking to leave the cursor at col 1 of the next row.
+
+=cut
+
+sub _emit_ctrl_c {
+    my ($self) = @_;
+    print "^C";
+    # "^" is 1 col, "C" is 1 col = 2 cols of text.
+    my $row = $self->{last_cursor_row};
+    my $col = $self->{last_cursor_col} + 2;
+    my $term_width = $self->_get_term_width();
+    if ($col > $term_width) {
+        $row += 1;
+        $col = 1;
+    }
+    $self->{last_cursor_row} = $row;
+    $self->{last_cursor_col} = $col;
+    $self->{last_cursor_disp} = $row * $term_width + ($col - 1);
+    $self->{pending_wrap} = ($col == $term_width);
+    $self->_emit_newline();  # The trailing \n
 }
 
 sub readline {
@@ -284,8 +561,9 @@ sub readline {
     # Reset display lines tracking for new input
     $self->{display_lines} = 1;
     $self->{last_cursor_row} = 0;
-    $self->{last_cursor_col} = 0;
+    $self->{last_cursor_col} = 1;
     $self->{last_cursor_disp} = 0;
+    $self->{pending_wrap} = 0;
     
     # Reset performance caches for this readline session
     $self->{_prompt_disp_cache} = undef;
@@ -299,11 +577,11 @@ sub readline {
     local $SIG{WINCH} = sub { $resize_flag = 1; };
     
     # Print prompt
-    print $prompt;
-    
+    $self->_emit_text($prompt);
+
     # Set terminal to raw mode
     ReadMode('raw');
-    
+
     my $input = $prefill;
     my $cursor_pos = length($prefill);  # Position in $input
     my $completion_state = {
@@ -312,10 +590,10 @@ sub readline {
         index => 0,
         original_input => '',
     };
-    
+
     # If pre-filled, display the restored text
     if (length $prefill) {
-        print $prefill;
+        $self->_emit_text($prefill);
     }
     
     while (1) {
@@ -360,7 +638,7 @@ sub readline {
                         $self->_redraw_line_external($prompt, \$input, \$cursor_pos);
                     } else {
                         # No user input yet - safe to hand control to AI
-                        print "\r\n";
+                        $self->_emit_newline();
                         ReadMode('restore');
                         return { type => '__AGENT_EVENT__', partial_input => '' };
                     }
@@ -400,21 +678,21 @@ sub readline {
         
         # Enter key
         if ($ord == 10 || $ord == 13) {
-            print "\r\n";  # Return to column 0 and newline
+            $self->_emit_newline();  # Return to column 0 and newline
             ReadMode('restore');
-            
+
             # Add to history if non-empty
             if (length($input) > 0) {
                 $self->add_to_history($input);
             }
-            
+
             return $input;
         }
-        
+
         # Ctrl-D (EOF)
         if ($ord == 4) {
             if (length($input) == 0) {
-                print "\r\n";  # Return to column 0 and newline
+                $self->_emit_newline();  # Return to column 0 and newline
                 ReadMode('restore');
                 return undef;
             }
@@ -425,10 +703,10 @@ sub readline {
             }
             next;
         }
-        
+
         # Ctrl-C
         if ($ord == 3) {
-            print "^C\n";
+            $self->_emit_ctrl_c();
             ReadMode('restore');
             # Raise actual SIGINT so session cleanup handlers can run
             # This allows the main signal handler to save session state
@@ -454,15 +732,16 @@ sub readline {
                 $cursor_pos--;
 
                 if ($deleting_at_end) {
-                    # Optimization: if deleting from end, we can handle it locally
-                    # This avoids full redraw and prevents scroll issues when unwrapping.
+                    # Optimization: if deleting from end, we can handle it
+                    # locally. Avoids full redraw for the common single-
+                    # column-ASCII case.
 
                     my $term_width = $self->_get_term_width();
                     my $prompt_disp = $self->_get_prompt_disp($prompt);
                     my $input_before = substr($input, 0, $cursor_pos);  # after decrement
                     my $cursor_disp  = _display_width($input_before);
 
-                    # Display-column positions of old and new cursor
+                    # Display-column positions of old and new cursor.
                     my $old_total_pos = $prompt_disp + $cursor_disp + $deleted_width;
                     my $new_total_pos = $prompt_disp + $cursor_disp;
 
@@ -478,10 +757,17 @@ sub readline {
                     #   When wide characters are present, the cursor may land inside a
                     #   2-column cell, which terminals handle inconsistently and can
                     #   leave visual ghost characters on screen.
+                    # - wrap tightens: old_row == new_row BUT total display
+                    #   width drops by enough that the previous wrap boundary
+                    #   disappears. Without redraw the orphan chars stay on
+                    #   screen (this was bug #2).
+                    my $wrap_tightened = ($old_row == $new_row)
+                        && ($old_total_pos % $term_width == 0 || $old_total_pos > $term_width);
                     if ($old_row > $new_row ||
                         ($new_total_pos > 0 && $new_total_pos % $term_width == 0) ||
                         $deleted_width > 1 ||
-                        _display_width($input) != length($input))
+                        _display_width($input) != length($input) ||
+                        $wrap_tightened)
                     {
                         $self->redraw_line(\$input, \$cursor_pos, $prompt);
                     } else {
@@ -489,13 +775,19 @@ sub readline {
                         # Move back, overwrite with space, move back again.
                         print "\b \b";
 
-                        # Update cursor tracking. new_total_pos is the
-                        # 0-indexed position of the new cursor after the
-                        # deletion, so it doubles as last_cursor_disp.
-                        my ($new_row, $new_col) = $self->_pos_to_rowcol($new_total_pos);
-                        $self->{last_cursor_row}  = $new_row;
-                        $self->{last_cursor_col}  = $new_col;
-                        $self->{last_cursor_disp} = $new_total_pos;
+                        # Update cursor tracking using actual physical
+                        # position. The terminal cursor moved left by 1
+                        # column from where it was.
+                        if ($self->{pending_wrap}) {
+                            # Cursor was at last col of previous row in
+                            # pending-wrap. \b moves left within row.
+                            $self->{last_cursor_col} -= 1;
+                            $self->{pending_wrap} = 0;
+                        } else {
+                            $self->{last_cursor_col} -= 1;
+                        }
+                        $self->{last_cursor_col} = 1 if $self->{last_cursor_col} < 1;
+                        $self->{last_cursor_disp} = $self->{last_cursor_row} * $term_width + ($self->{last_cursor_col} - 1);
 
                         # Update display_lines to match actual content
                         my $total_disp = $prompt_disp + _display_width($input);
@@ -606,29 +898,18 @@ sub readline {
             if ($inserting_at_end) {
                 # Optimization: if inserting at end, just print the character.
                 # This avoids full redraw and prevents scroll issues when wrapping.
-                print $char;
+                $self->_emit_text($char);
 
-                # Update cursor tracking using display-column widths, not codepoint counts.
+                # Update display lines if we wrapped to a new line.
                 my $term_width = $self->_get_term_width();
-                my $prompt_disp = $self->_get_prompt_disp($prompt);
-                my $input_so_far  = substr($input, 0, $cursor_pos);
-                my $total_pos     = $prompt_disp + _display_width($input_so_far);
-
-                my ($new_row, $new_col) = $self->_pos_to_rowcol($total_pos);
-
-                # Update display lines if we wrapped to a new line
-                if ($new_row >= $self->{display_lines}) {
-                    $self->{display_lines} = $new_row + 1;
+                if ($self->{last_cursor_row} >= $self->{display_lines}) {
+                    $self->{display_lines} = $self->{last_cursor_row} + 1;
                 }
-
-                $self->{last_cursor_row}  = $new_row;
-                $self->{last_cursor_col}  = $new_col;
-                $self->{last_cursor_disp} = $total_pos;
             } else {
                 # Inserting in middle: print the new char (advances terminal
                 # cursor past it), then redraw the remaining tail and
                 # reposition the cursor back.
-                print $char;
+                $self->_emit_text($char);
                 $self->_redraw_from_cursor(\$input, \$cursor_pos, $prompt);
             }
         }
@@ -1109,71 +1390,70 @@ sub reposition_cursor {
     my $term_width = $self->_get_term_width();
     my $prompt_disp = $self->_get_prompt_disp($prompt);
 
-    # Calculate display-column positions of old and new cursor.
-    # $$old_pos_ref and $$new_pos_ref are codepoint offsets into $$input_ref.
-    # We need to convert them to display columns by measuring the display width
-    # of the prefix up to each offset.
-    my $old_prefix_disp = _display_width(substr($$input_ref, 0, $$old_pos_ref));
-    my $new_prefix_disp = _display_width(substr($$input_ref, 0, $$new_pos_ref));
+    # The terminal cursor is currently at the *physical* position stored
+    # in last_cursor_row/col. Use the tracked position as the source of
+    # truth for "where we are now".
+    my $old_row = $self->{last_cursor_row};
+    my $old_col = $self->{last_cursor_col};
+    my $old_pending = $self->{pending_wrap};
 
-    my $old_total_pos = $prompt_disp + $old_prefix_disp;
-    my $new_total_pos = $prompt_disp + $new_prefix_disp;
-
-    # Calculate row and column for both positions. _pos_to_rowcol handles
-    # the VT100 pending-wrap edge case correctly (cursor at last col of
-    # previous row when total display columns are an exact multiple of
-    # term_width).
-    my ($old_row, $old_col) = $self->_pos_to_rowcol($old_total_pos);
-    my ($new_row, $new_col) = $self->_pos_to_rowcol($new_total_pos);
+    # Target row/col: walk from start of input to new_pos codepoints,
+    # tracking row/col as we go. This gives the actual physical cursor
+    # position for the new cursor_pos, accounting for all wraps.
+    my ($new_row, $new_col) = $self->_cursor_at_codepoint($$input_ref, $$new_pos_ref);
 
     if (should_log('DEBUG')) {
         log_debug('ReadLine', "reposition_cursor: old_pos=$$old_pos_ref, new_pos=$$new_pos_ref");
-        log_debug('ReadLine', "reposition_cursor: old_total=$old_total_pos, new_total=$new_total_pos");
-        log_debug('ReadLine', "reposition_cursor: from ($old_row,$old_col) to ($new_row,$new_col)");
+        log_debug('ReadLine', "reposition_cursor: from ($old_row,$old_col,pending=$old_pending) to ($new_row,$new_col)");
     }
 
-    # Currently at old position (old_row, old_col). Need to move to
-    # new position (new_row, new_col).
-    if ($new_row < $old_row) {
-        # Moving UP to an earlier line. After vertical motion the cursor
-        # is at column 1 of the new row, so horizontal motion is absolute.
-        print "\e[" . ($old_row - $new_row) . "A";
-        print "\r";
-        print "\e[" . ($new_col - 1) . "C" if $new_col > 1;
-    } elsif ($new_row > $old_row) {
-        # Moving DOWN to a later line. Same logic as up.
-        print "\e[" . ($new_row - $old_row) . "B";
+    # Emit cursor movement using the tracked physical position.
+    if ($old_pending) {
+        # We were in pending-wrap state. Any movement resolves it.
+        # The pending wrap goes to (old_row+1, 1). Apply the row delta.
+        my $effective_old_row = $old_row + 1;
+        my $effective_old_col = 1;
+        if ($new_row < $effective_old_row) {
+            my $up = $effective_old_row - $new_row;
+            print "\e[${up}A";
+        } elsif ($new_row > $effective_old_row) {
+            my $down = $new_row - $effective_old_row;
+            print "\e[${down}B";
+        }
+        # Same effective row: print CR + advance.
         print "\r";
         print "\e[" . ($new_col - 1) . "C" if $new_col > 1;
     } else {
-        # Same row. Prefer INCREMENTAL horizontal movement from our
-        # last tracked column so the cursor doesn't flash to column 1.
-        # Only fall back to absolute positioning when tracking is missing
-        # (e.g. caller forgot to update last_cursor_col) or when the
-        # current column is unknown (terminal cursor state is ambiguous).
-        my $known_col = $self->{last_cursor_col};
-        my $known_row = $self->{last_cursor_row};
-        if (defined $known_col && defined $known_row && $known_row == $old_row) {
-            my $delta = $new_col - $known_col;
+        # Standard case: move from (old_row, old_col) to (new_row, new_col).
+        if ($new_row < $old_row) {
+            my $up = $old_row - $new_row;
+            print "\e[${up}A";
+            print "\r";
+            print "\e[" . ($new_col - 1) . "C" if $new_col > 1;
+        } elsif ($new_row > $old_row) {
+            my $down = $new_row - $old_row;
+            print "\e[${down}B";
+            print "\r";
+            print "\e[" . ($new_col - 1) . "C" if $new_col > 1;
+        } else {
+            # Same row. Use incremental movement from tracked column.
+            my $delta = $new_col - $old_col;
             if ($delta > 0) {
                 print "\e[${delta}C";
             } elsif ($delta < 0) {
-                print "\e[" . (-$delta) . "D";
+                my $abs = -$delta;
+                print "\e[${abs}D";
             }
-            # delta == 0: already there
-        } else {
-            # Fall back to absolute positioning.
-            print "\r";
-            print "\e[" . ($new_col - 1) . "C" if $new_col > 1;
+            # delta == 0: already there.
         }
     }
-    
-    # Update tracked cursor position. last_cursor_disp is the absolute
-    # 0-indexed position - convenient for detecting pending-wrap state.
+
+    # Update tracked cursor position to reflect the move.
     $self->{last_cursor_row}  = $new_row;
     $self->{last_cursor_col}  = $new_col;
-    $self->{last_cursor_disp} = $new_total_pos;
-    
+    $self->{last_cursor_disp} = $new_row * $term_width + ($new_col - 1);
+    $self->{pending_wrap} = 0;
+
     if (should_log('DEBUG')) {
         log_debug('ReadLine', "reposition_cursor: saved last_cursor=($new_row,$new_col)");
     }
@@ -1228,61 +1508,81 @@ sub redraw_line {
         log_debug('ReadLine', "redraw_line: input_len=$input_len, prompt_disp=$prompt_disp, input_disp=$input_disp, total_disp=$total_disp");
         log_debug('ReadLine', "redraw_line: term_width=$term_width, new_lines_needed=$new_lines_needed");
         log_debug('ReadLine', "redraw_line: old_display_lines=$old_display_lines, max_lines=$max_lines");
-        log_debug('ReadLine', "redraw_line: last cursor was at row=$self->{last_cursor_row}, col=$self->{last_cursor_col}");
+        log_debug('ReadLine', "redraw_line: last cursor was at row=$self->{last_cursor_row}, col=$self->{last_cursor_col} pending=$self->{pending_wrap}");
     }
 
-    # Move to column 1 of current line, then back to row 0 of our input area
+    # Move to (row 0, col 1). After \r the cursor is at col1 of current
+    # row; if pending_wrap was set, we are at (last_cursor_row, 1)
+    # after \r, then \e[N A moves us up to (0, 1).
     print "\r";
-    my $lines_to_move_up = $self->{last_cursor_row};
-    if ($lines_to_move_up > 0) {
-        print "\e[${lines_to_move_up}A";
+    if ($self->{pending_wrap}) {
+        $self->{last_cursor_col} = 1;
+        $self->{pending_wrap} = 0;
+    } else {
+        $self->{last_cursor_col} = 1;
+    }
+    my $current_row = $self->{last_cursor_row};
+    if ($current_row > 0) {
+        print "\e[${current_row}A";
+        $self->{last_cursor_row} = 0;
     }
 
     # Clear from here to end of screen, then redraw prompt + input
     print "\e[J";
-    print $prompt, $$input_ref;
+    # Use _emit_text so cursor tracking stays in sync with what we actually
+    # print, including pending_wrap state at the boundary.
+    $self->_emit_text($prompt);
+    $self->_emit_text($$input_ref);
 
-    # Update display_lines for next redraw
+    # Update display_lines for next redraw.
     $self->{display_lines} = $new_lines_needed;
 
     # After printing, the terminal cursor is at the end of the output.
-    # _pos_to_rowcol handles the pending-wrap edge case (cursor at last
-    # column of the previous row when exactly N*term_width columns were
-    # emitted).
-    my $end_pos = $total_disp;
-    my ($end_row, $end_col) = $self->_pos_to_rowcol($end_pos);
+    # last_cursor_row/col/disp reflect the physical position now.
+    my $end_row = $self->{last_cursor_row};
+    my $end_col = $self->{last_cursor_col};
 
-    # Calculate where we WANT the cursor to be (at $$cursor_pos_ref codepoints into input)
+    # Calculate where we WANT the cursor to be (at $$cursor_pos_ref
+    # codepoints into input). The cursor position is always at an
+    # "ordinary" column - no pending wrap at the cursor's location.
     my $cursor_prefix_disp = _display_width(substr($$input_ref, 0, $$cursor_pos_ref));
     my $desired_pos = $prompt_disp + $cursor_prefix_disp;
-    my ($desired_row, $desired_col) = $self->_pos_to_rowcol($desired_pos);
+    my ($desired_row, $desired_col) = $self->_pos_to_rowcol($desired_pos, 0);
 
     if (should_log('DEBUG')) {
         log_debug('ReadLine', "redraw_line: end position: row=$end_row, col=$end_col");
         log_debug('ReadLine', "redraw_line: desired cursor: row=$desired_row, col=$desired_col");
     }
 
-    # Reposition cursor to desired location if necessary
+    # Reposition cursor to desired location if necessary. After \r and
+    # moving up, our current row is 0. Reapply last_cursor tracking from
+    # this point.
     if ($desired_row != $end_row || $desired_col != $end_col) {
         if ($desired_row < $end_row) {
             my $rows_up = $end_row - $desired_row;
             print "\e[${rows_up}A";
+            $self->{last_cursor_row} -= $rows_up;
         } elsif ($desired_row > $end_row) {
             my $rows_down = $desired_row - $end_row;
             print "\e[${rows_down}B";
+            $self->{last_cursor_row} += $rows_down;
         }
 
         # Absolute column positioning avoids pending-wrap ambiguity.
         print "\r";
-        print "\e[" . ($desired_col - 1) . "C" if $desired_col > 1;
+        $self->{last_cursor_col} = 1;
+        $self->{pending_wrap} = 0;
+        if ($desired_col > 1) {
+            print "\e[" . ($desired_col - 1) . "C";
+            $self->{last_cursor_col} = $desired_col;
+        }
     }
 
-    # Save final cursor position for next redraw. last_cursor_disp is
-    # the absolute 0-indexed position - convenient for incremental
-    # horizontal movements.
+    # Save final cursor position for next redraw.
     $self->{last_cursor_row} = $desired_row;
     $self->{last_cursor_col} = $desired_col;
     $self->{last_cursor_disp} = $desired_pos;
+    $self->{pending_wrap} = 0;
 }
 
 =head2 _redraw_line_external
@@ -1298,39 +1598,53 @@ displaying agent events inline.
 
 sub _redraw_line_external {
     my ($self, $prompt, $input_ref, $cursor_pos_ref) = @_;
-    
+
     $prompt //= '';
-    
-    # Move to column 0, clear the line, reprint prompt + input
+
+    # Clamp cursor position.
+    my $input_len = length($$input_ref);
+    if ($$cursor_pos_ref < 0) {
+        $$cursor_pos_ref = 0;
+    } elsif ($$cursor_pos_ref > $input_len) {
+        $$cursor_pos_ref = $input_len;
+    }
+
+    # Move to column 0 of current row, clear from there to end of screen,
+    # then redraw prompt + input. Uses _emit_text so cursor tracking stays
+    # in sync with what we actually print.
     print "\r";
-    print "\e[J";  # Clear from cursor to end of screen
-    print $prompt, $$input_ref;
-    
-    # Reposition cursor to the correct location
+    print "\e[J";
+    $self->_emit_text($prompt);
+    $self->_emit_text($$input_ref);
+
+    # Reposition cursor to the correct location using tracked positions.
     my $term_width = $self->_get_term_width();
     my $prompt_disp = $self->_get_prompt_disp($prompt);
-    my $input_disp = _display_width($$input_ref);
-    my $cursor_disp = _display_width(substr($$input_ref, 0, $$cursor_pos_ref));
-    
-    my $total_disp = $prompt_disp + $input_disp;
-    my $cursor_total = $prompt_disp + $cursor_disp;
-    
-    my $end_row = $total_disp > 0 ? int(($total_disp - 1) / $term_width) : 0;
-    my $cursor_row = $cursor_total > 0 ? int(($cursor_total - 1) / $term_width) : 0;
-    my $cursor_col = $cursor_total > 0 ? (($cursor_total - 1) % $term_width) + 1 : 0;
-    
-    # Move from end of input to cursor position
-    my $rows_up = $end_row - $cursor_row;
-    print "\e[${rows_up}A" if $rows_up > 0;
+    my $cursor_disp = $prompt_disp + _display_width(substr($$input_ref, 0, $$cursor_pos_ref));
+
+    my ($cursor_row, $cursor_col) = $self->_pos_to_rowcol($cursor_disp, 0);
+
+    # last_cursor_row/col reflect end-of-input now. Move to desired.
+    my $end_row = $self->{last_cursor_row};
+    if ($cursor_row < $end_row) {
+        my $rows_up = $end_row - $cursor_row;
+        print "\e[${rows_up}A";
+    } elsif ($cursor_row > $end_row) {
+        my $rows_down = $cursor_row - $end_row;
+        print "\e[${rows_down}B";
+    }
+
     print "\r";
     print "\e[${cursor_col}C" if $cursor_col > 0;
-    
-    # Update tracking
+
+    # Update tracking.
+    my $total_disp = $prompt_disp + _display_width($$input_ref);
     my $new_display_lines = $total_disp > 0 ? int(($total_disp - 1) / $term_width) + 1 : 1;
     $self->{display_lines} = $new_display_lines;
     $self->{last_cursor_row} = $cursor_row;
     $self->{last_cursor_col} = $cursor_col > 0 ? $cursor_col : 1;
-    $self->{last_cursor_disp} = $cursor_total;
+    $self->{last_cursor_disp} = $cursor_disp;
+    $self->{pending_wrap} = 0;
 }
 
 =head2 add_to_history

@@ -1,7 +1,7 @@
 #!/usr/bin/perl
 # Test: ReadLine cursor positioning math
 # Covers:
-#   - _pos_to_rowcol pending-wrap handling
+#   - _pos_to_rowcol with and without pending-wrap state
 #   - Off-by-one bug that caused cursor to drift right after typing in middle
 #   - End-of-row / wrapped cursor positioning
 
@@ -47,54 +47,60 @@ sub rows_equal {
 }
 
 # --- _pos_to_rowcol tests ---
+# The function takes (pos, pending) where pending=1 means the terminal
+# has just emitted N*term_width columns and the cursor physically sits
+# at last col of the previous row (the wrap will happen on next print).
 # Pos 0 -> row 0, col 1 (after \r)
-rows_equal($rl->_pos_to_rowcol(0),  0, 1, "pos=0 -> row=0 col=1");
+rows_equal($rl->_pos_to_rowcol(0, 0),  0, 1, "pos=0 -> row=0 col=1");
 
 # Pos 1 -> row 0, col 2
-rows_equal($rl->_pos_to_rowcol(1),  0, 2, "pos=1 -> row=0 col=2");
+rows_equal($rl->_pos_to_rowcol(1, 0),  0, 2, "pos=1 -> row=0 col=2");
 
 # Pos 79 -> row 0, col 80
-rows_equal($rl->_pos_to_rowcol(79), 0, 80, "pos=79 -> row=0 col=80");
+rows_equal($rl->_pos_to_rowcol(79, 0), 0, 80, "pos=79 -> row=0 col=80");
 
-# Pos 80 -> PENDING WRAP -> row 0 col 80 (NOT row 1 col 1)
-rows_equal($rl->_pos_to_rowcol(80), 0, 80, "pos=80 -> row=0 col=80 (pending wrap)");
+# Pos 80 with pending-wrap: row 0 col 80
+rows_equal($rl->_pos_to_rowcol(80, 1), 0, 80, "pos=80 -> row=0 col=80 (pending wrap)");
+
+# Pos 80 without pending-wrap: already wrapped, row 1 col 1
+rows_equal($rl->_pos_to_rowcol(80, 0), 1, 1, "pos=80 -> row=1 col=1 (already wrapped)");
 
 # Pos 81 -> row 1 col 2
-rows_equal($rl->_pos_to_rowcol(81), 1, 2, "pos=81 -> row=1 col=2");
+rows_equal($rl->_pos_to_rowcol(81, 0), 1, 2, "pos=81 -> row=1 col=2");
 
 # Pos 159 -> row 1 col 80
-rows_equal($rl->_pos_to_rowcol(159), 1, 80, "pos=159 -> row=1 col=80");
+rows_equal($rl->_pos_to_rowcol(159, 0), 1, 80, "pos=159 -> row=1 col=80");
 
-# Pos 160 -> PENDING WRAP at row 1
-rows_equal($rl->_pos_to_rowcol(160), 1, 80, "pos=160 -> row=1 col=80 (pending wrap)");
+# Pos 160 with pending-wrap -> row 1 col 80
+rows_equal($rl->_pos_to_rowcol(160, 1), 1, 80, "pos=160 -> row=1 col=80 (pending wrap)");
 
 # Pos 161 -> row 2 col 2
-rows_equal($rl->_pos_to_rowcol(161), 2, 2, "pos=161 -> row=2 col=2");
+rows_equal($rl->_pos_to_rowcol(161, 0), 2, 2, "pos=161 -> row=2 col=2");
 
 # --- Regression: cursor at codepoint position 5 in "helloX world test" ---
 # Prompt "> " = 2 cols. input[0..5] = "hello" = 5 cols. total = 7.
 # Expected: row=0, col=8 (1-indexed). The bug was col=7 (off by 1).
-my ($r, $c) = $rl->_pos_to_rowcol(7);
+my ($r, $c) = $rl->_pos_to_rowcol(7, 0);
 rows_equal($r, $c, 0, 8, "regression: cursor at input[0..5] -> row=0 col=8 (off-by-one bug)");
 
 # --- Regression: cursor at end of single line (pos=15, "hello world test" 15 chars) ---
 # pos = 2 + 15 = 17
-($r, $c) = $rl->_pos_to_rowcol(17);
+($r, $c) = $rl->_pos_to_rowcol(17, 0);
 rows_equal($r, $c, 0, 18, "regression: cursor at end of 'hello world test' -> col=18");
 
 # --- Regression: cursor at row boundary (78 chars input) ---
-# pos = 2 + 78 = 80 (pending wrap, cursor should be at row 0 col 80)
-($r, $c) = $rl->_pos_to_rowcol(80);
+# pos = 2 + 78 = 80. With pending_wrap, cursor should be at row=0 col=80.
+($r, $c) = $rl->_pos_to_rowcol(80, 1);
 rows_equal($r, $c, 0, 80, "regression: 78-char input ends at pending-wrap boundary col=80");
 
-# --- Regression: cursor at row 1 start (81-char input) ---
+# --- Regression: cursor at row 1 start (79-char input, after wrap) ---
 # pos = 2 + 79 = 81 -> row 1 col 2 (after prompt chars on row 0)
-($r, $c) = $rl->_pos_to_rowcol(81);
-rows_equal($r, $c, 1, 2, "regression: 79-char input -> row 1 col 2");
+($r, $c) = $rl->_pos_to_rowcol(81, 0);
+rows_equal($r, $c, 1, 2, "regression: 79-char input -> row 1 col=2");
 
 # --- Regression: cursor at exact wrap boundary mid-input (input[0..78] of 79-char input) ---
 # pos = 2 + 78 = 80 -> pending wrap at row 0 col 80
-($r, $c) = $rl->_pos_to_rowcol(80);
+($r, $c) = $rl->_pos_to_rowcol(80, 1);
 rows_equal($r, $c, 0, 80, "regression: cursor at position 78 in 79-char input -> pending-wrap col=80");
 
 # --- Simulate the original bug scenario ---
@@ -106,7 +112,7 @@ rows_equal($r, $c, 0, 80, "regression: cursor at position 78 in 79-char input ->
 # The desired cursor position is codepoint 17 -> display pos 19
 # (prompt=2, "hello world this X" = 17 cols).
 # _pos_to_rowcol(19) should give row=0, col=20.
-($r, $c) = $rl->_pos_to_rowcol(19);
+($r, $c) = $rl->_pos_to_rowcol(19, 0);
 rows_equal($r, $c, 0, 20, "regression: insert 'X' at pos 16 -> target col=20 (was off-by-one =19)");
 
 print "\n$pass passed, $fail failed\n";
