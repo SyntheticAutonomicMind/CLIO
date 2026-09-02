@@ -61,6 +61,12 @@ use constant MODEL_SCOPED_KEYS => [
 # Provider-specific defaults come from CLIO::Providers
 use constant DEFAULT_CONFIG => {
     model_configs => {},  # Per-model scoped config
+    model_configs_explicit => {},  # Per-model explicit override flags: { model_id => { key => 1 } }
+                                  # Marks per-model entries the user set explicitly via
+                                  # /api set, even when the value matches DEFAULT_CONFIG.
+                                  # Used by load() to distinguish deliberate per-model
+                                  # overrides (honored on restore) from migration junk
+                                  # (skipped on restore).
     model_candidates => [],  # List of models for routing (e.g. ["openrouter/foo", "kilo/bar"])
     model_routing_index => 0,  # Current index into model_candidates
     model_routes => {},  # Named routing profiles: { "route-name" => ["model1", "model2"] }
@@ -346,57 +352,43 @@ sub load {
     
     $self->{config} = \%config;
 
-    # Restore per-model scoped config for the current model (if resolved).
-    # Migration: if model_configs is empty but scoped keys have non-default
-    # values, migrate them into model_configs for the current model.
-    {
+    # Per-model scoped config for the current model. Two phases:
+    #   1. Migration: if the current model has no model_configs entry yet
+    #      but the global scoped keys have non-default values, snapshot
+    #      those into the model's entry so they survive model switches.
+    #   2. Restore: apply the model's entry on top of the global config.
+    #      Uses the shared _restore_model_config helper so the same
+    #      model_configs_explicit logic applies at startup and at
+    #      model-switch time.
+    if ($self->{config}->{model} && $self->{config}->{model} =~ m{/}) {
         my $model = $self->{config}->{model};
         my $model_configs = $self->{config}->{model_configs} ||= {};
-        
-        if ($model && $model =~ m{/}) {
-            # If no stored config for this model yet, check for migration
-            if (!exists $model_configs->{$model} || !%{$model_configs->{$model}}) {
-                my $has_migration = 0;
-                my $entry = $model_configs->{$model} ||= {};
-                for my $key (@{MODEL_SCOPED_KEYS()}) {
-                    my $val = $self->{config}->{$key};
-                    my $default = DEFAULT_CONFIG->{$key};
-                    # Only migrate if value differs from default
-                    if (defined $val && (!defined $default || $val ne $default)) {
-                        $entry->{$key} = $val;
-                        $has_migration = 1;
-                    }
-                }
-                if ($has_migration) {
-                    log_debug('Config', "Migrated existing scoped config values to model_configs{$model}");
+
+        # Migration: seed the model's entry from current global scoped
+        # values if it doesn't exist yet. Only non-default values are
+        # migrated - default-value entries are skipped to avoid creating
+        # migration junk that the explicit-flag guard would later ignore.
+        if (!exists $model_configs->{$model} || !%{$model_configs->{$model}}) {
+            my $has_migration = 0;
+            my $entry = $model_configs->{$model} ||= {};
+            for my $key (@{MODEL_SCOPED_KEYS()}) {
+                my $val = $self->{config}->{$key};
+                my $default = DEFAULT_CONFIG->{$key};
+                if (defined $val && (!defined $default || $val ne $default)) {
+                    $entry->{$key} = $val;
+                    $has_migration = 1;
                 }
             }
-            # Restore scoped config from model_configs if available.
-            # CRITICAL: only apply values that DIFFER from DEFAULT_CONFIG so that stale
-            # auto-migrated entries can't silently override the user's newer
-            # global settings on every load. With this guard:
-            #   - Default-value entries (from older auto-population) are skipped
-            #   - Explicit per-model overrides (non-default) are still applied
-            #   - Global `/api set X` values survive model switches intact
-            if ($model_configs->{$model}) {
-                my $restored_count = 0;
-                for my $key (@{MODEL_SCOPED_KEYS()}) {
-                    next unless exists $model_configs->{$model}{$key};
-                    my $val = $model_configs->{$model}{$key};
-                    my $default = DEFAULT_CONFIG->{$key};
-                    next if defined $default && defined $val && $val eq $default;
-                    $self->{config}->{$key} = $val;
-                    $restored_count++;
-                }
-                if ($restored_count) {
-                    log_debug('Config', "Restored $restored_count non-default model config value(s) for '$model'");
-                } else {
-                    log_debug('Config', "Model config for '$model' contains only default values - keeping global values");
-                }
+            if ($has_migration) {
+                log_debug('Config', "Migrated existing scoped config values to model_configs{$model}");
             }
         }
+
+        # Restore delegates to the helper for consistent semantics with
+        # the model-switch path (set('model', ...)).
+        $self->_restore_model_config($model);
     }
-    
+
     return 1;
 }
 
@@ -424,6 +416,8 @@ sub save {
    }
     $config_to_save{model_configs} = $self->{config}->{model_configs}
         if $self->{config}->{model_configs} && %{$self->{config}->{model_configs}};
+    $config_to_save{model_configs_explicit} = $self->{config}->{model_configs_explicit}
+        if $self->{config}->{model_configs_explicit} && %{$self->{config}->{model_configs_explicit}};
    
    # Log what we're saving
     if (should_log('DEBUG')) {
@@ -489,12 +483,20 @@ sub set {
         #
         # We do NOT overwrite an existing new-model entry - if the user
         # ever explicitly customized settings for the destination model,
-        # those still win.
+        # those still win. The explicit-flag map must be copied alongside
+        # so the seeded values are honored as explicit overrides if the
+        # destination model is later restored.
         if ($old_model =~ m{^([^/]+)/} && $value =~ m{^\Q$1\E/}) {
             my $old_entry = $self->{config}->{model_configs}{$old_model};
             my $new_entry = $self->{config}->{model_configs}{$value};
             if ($old_entry && %$old_entry && (!$new_entry || !%$new_entry)) {
                 $self->{config}->{model_configs}{$value} = { %$old_entry };
+                # Carry over the explicit-flag set so restore honors
+                # the seeded values as deliberate overrides (not migration junk).
+                if ($self->{config}->{model_configs_explicit}{$old_model}) {
+                    $self->{config}->{model_configs_explicit}{$value}
+                        = { %{$self->{config}->{model_configs_explicit}{$old_model}} };
+                }
                 log_debug('Config', "Seeded new model entry '$value' from '$old_model' (same provider, no prior entry)");
             }
         }
@@ -514,22 +516,76 @@ sub set {
        log_debug('Config', "Marked '$key' as user-set");
    }
    
-    # If this is a model-scoped key, update model_configs immediately
+    # If this is a model-scoped key, update model_configs immediately.
+    # Mark the (model, key) pair as explicit so load()'s restore can
+    # distinguish deliberate per-model overrides (including ones whose
+    # value happens to match DEFAULT_CONFIG) from migration junk.
     if (grep { $_ eq $key } @{MODEL_SCOPED_KEYS()}) {
         my $model = $self->{config}->{model};
         if ($model && $model =~ m{/}) {
             $self->{config}->{model_configs} ||= {};
             $self->{config}->{model_configs}{$model} ||= {};
             $self->{config}->{model_configs}{$model}{$key} = $value;
+            if (!defined $mark_user_set || $mark_user_set) {
+                $self->{config}->{model_configs_explicit} ||= {};
+                $self->{config}->{model_configs_explicit}{$model} ||= {};
+                $self->{config}->{model_configs_explicit}{$model}{$key} = 1;
+            }
         }
     }
     return 1;
 }
 
+=head2 clear_model_scoped($key)
+
+Remove a model-scoped key from EVERY model_configs entry.
+
+Use this when the user signals a true reset (e.g. /api set X off) so that
+no stale per-model shadow can resurrect the old value on the next load.
+Distinct from set($key, '') which only updates the current model's entry -
+callers that genuinely want a per-model override to the default value
+(e.g. setting show_thinking=0 for one model while another stays at 1)
+should use set(), not clear_model_scoped().
+
+Arguments:
+    $key - A model-scoped key name (sampling_*, cap_*, force_*, show_thinking, etc.)
+
+Returns: number of model_configs entries the key was removed from
+
+=cut
+
+sub clear_model_scoped {
+    my ($self, $key) = @_;
+
+    return 0 unless grep { $_ eq $key } @{MODEL_SCOPED_KEYS()};
+    return 0 unless $self->{config}->{model_configs};
+
+    my $cleared = 0;
+    for my $model_id (keys %{$self->{config}->{model_configs}}) {
+        if (exists $self->{config}->{model_configs}{$model_id}{$key}) {
+            delete $self->{config}->{model_configs}{$model_id}{$key};
+            $cleared++;
+        }
+        # Also drop the explicit marker so a future set() on this same
+        # model starts fresh (no stale "user once pinned this" flag).
+        if ($self->{config}->{model_configs_explicit}
+            && $self->{config}->{model_configs_explicit}{$model_id}) {
+            delete $self->{config}->{model_configs_explicit}{$model_id}{$key};
+        }
+    }
+    return $cleared;
+}
+
 
 =head2 _save_model_config($model_id)
 
-Save current per-model scoped config values to model_configs{$model_id}.
+Snapshot the current global scoped-key state into
+model_configs{$model_id} for the model being switched away from.
+Only NON-default values are written - default-value entries are
+skipped so they cannot accumulate as stale junk. Combined with the
+explicit-flag restore logic, this keeps model_configs slim while
+preserving any genuine per-model override the user has set.
+
 Called automatically when switching models via set('model', ...).
 
 =cut
@@ -537,15 +593,20 @@ Called automatically when switching models via set('model', ...).
 sub _save_model_config {
     my ($self, $model_id) = @_;
     return unless $model_id;
-    
+
     $self->{config}->{model_configs} ||= {};
     my $entry = $self->{config}->{model_configs}{$model_id} ||= {};
-    
+
     for my $key (@{MODEL_SCOPED_KEYS()}) {
         my $val = $self->{config}->{$key};
-        $entry->{$key} = $val if defined $val;
+        my $default = DEFAULT_CONFIG->{$key};
+        next unless defined $val;
+        # Skip default-valued writes. They wouldn't be honored on restore
+        # (explicit flag wouldn't be set), so writing them is dead data.
+        next if defined $default && $val eq $default;
+        $entry->{$key} = $val;
     }
-    
+
     log_debug('Config', "Saved model config for '$model_id': " . scalar(keys %$entry) . " keys");
 }
 
@@ -560,31 +621,41 @@ Called automatically when switching models via set('model', ...).
 sub _restore_model_config {
     my ($self, $model_id) = @_;
     return unless $model_id;
-    
+
     $self->{config}->{model_configs} ||= {};
+    $self->{config}->{model_configs_explicit} ||= {};
     my $entry = $self->{config}->{model_configs}{$model_id};
-    
+    my $explicit = $self->{config}->{model_configs_explicit}{$model_id} || {};
+
     my $restored_count = 0;
     for my $key (@{MODEL_SCOPED_KEYS()}) {
         if ($entry && exists $entry->{$key}) {
             my $val = $entry->{$key};
             my $default = DEFAULT_CONFIG->{$key};
-            # Only restore if the stored value differs from default.
-            # This prevents stale default entries (e.g., from old migrations)
-            # from silently overwriting newer global config values.
-            next if defined $default && defined $val && $val eq $default;
+            # Only restore if either:
+            #   (a) the value differs from DEFAULT_CONFIG (it's a real override), or
+            #   (b) the user explicitly set this per-model key (tracked in
+            #       model_configs_explicit). Without (b), a stale default-value
+            #       entry from old migrations would silently override the user's
+            #       newer global setting on every load.
+            # The explicit flag also lets users pin a single model to a value
+            # that happens to match the default (e.g. show_thinking=0 for
+            # model A while model B is at 1) - the per-model override is
+            # honored regardless of whether it equals the default.
+            my $is_default_value = defined $default && defined $val && $val eq $default;
+            next if $is_default_value && !$explicit->{$key};
             $self->{config}->{$key} = $val;
             $restored_count++;
         }
-        # If no stored value (or value equals default), KEEP current global config value.
+        # If no stored value, KEEP current global config value.
         # Do NOT fall back to DEFAULT_CONFIG here - the global config may have
         # user-set values that should persist across model switches.
     }
-    
+
     if ($restored_count) {
-        log_debug('Config', "Restored $restored_count non-default model config value(s) for '$model_id'");
+        log_debug('Config', "Restored $restored_count model config value(s) for '$model_id'");
     } else {
-        log_debug('Config', "No non-default model config for '$model_id' - keeping global values");
+        log_debug('Config', "No model config for '$model_id' - keeping global values");
     }
 }
 
