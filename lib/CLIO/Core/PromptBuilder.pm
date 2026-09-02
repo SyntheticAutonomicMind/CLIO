@@ -605,7 +605,7 @@ sub get_user_context {
     if (!$self->{_user_context_cache}
         || ($now - $self->{_user_context_cache_time}) >= $cache_ttl
         || $cache_mismatch) {
-        $self->{_user_context_cache} = $self->_generate_user_context_section();
+        $self->{_user_context_cache} = $self->_generate_user_context_section($session_id);
         $self->{_user_context_cache_time} = $now;
         $self->{_user_context_cache_session_id} = $session_id;
         log_debug('PromptBuilder', "User context cache refreshed at " . scalar(localtime($now))
@@ -722,15 +722,21 @@ sub _language_name {
 
 =head2 _generate_user_context_section
 
-Internal: Generate the user-context section with date/time, path, and language.
+Internal: Generate the <sessionContext> block with working directory,
+date/time, language, and (when available) session id. The block is
+the model's single source of truth for "where am I" - the working
+directory is the lead field so local models anchor to it.
+
+Arguments:
+- $session_id: Optional session identifier; included as **Session ID:** when set.
 
 Returns:
-- User context block text
+- Session context block text (wraps in <sessionContext>...</sessionContext>)
 
 =cut
 
 sub _generate_user_context_section {
-    my ($self) = @_;
+    my ($self, $session_id) = @_;
 
     my ($sec, $min, $hour, $mday, $mon, $year, $wday, $yday, $isdst) = localtime(time);
     $year += 1900;
@@ -748,13 +754,19 @@ sub _generate_user_context_section {
     # Detect user language for response language directive
     my $lang = $self->_detect_user_language();
 
-    # Format without seconds for stability
-    my $section = "<userContext>\n";
-    $section .= "**Current Date/Time:** $datetime_iso ($day_name, $month_name $mday, $year)\n";
+    # Working directory is the LEAD field. Local models (and some hosted
+    # ones) lose track of the cwd when it appears mid-block under a generic
+    # "informational context" disclaimer. Putting the path first maximises
+    # the chance the model anchors to it when reading files. The block is
+    # wrapped in <sessionContext> (not <userContext>) to signal that this is
+    # operational metadata the model should USE, not a user message to be
+    # summarised or paraphrased.
+    my $section = "<sessionContext>\n";
     $section .= "**Working Directory:** `$cwd`\n";
+    $section .= "**Current Date/Time:** $datetime_iso ($day_name, $month_name $mday, $year)\n";
     $section .= "**Language:** $lang->{name} ($lang->{locale}) - Always respond in $lang->{name} unless the user specifies otherwise\n";
-    $section .= "- This is informational context only - do not reference or repeat in your responses\n";
-    $section .= "</userContext>\n\n";
+    $section .= "**Session ID:** `$session_id`\n" if defined $session_id;
+    $section .= "</sessionContext>\n\n";
 
     return $section;
 }
@@ -898,7 +910,7 @@ sub _read_active_todos {
         # the OLD todo state in <activeTodos>. The model would then
         # re-issue the same mutation (cluttering the conversation)
         # or, worse, conclude that its previous mutation had no effect.
-        # The cache invalidation is scoped to the cached <userContext>
+        # The cache invalidation is scoped to the cached <sessionContext>
         # base (date/time/path) - activeTodos itself is read fresh on
         # every call, but it lives inside get_user_context which is
         # cached. Clearing _user_context_cache forces a full rebuild

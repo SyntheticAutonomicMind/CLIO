@@ -1118,7 +1118,7 @@ sub _build_turn_context {
             }
             if (@$cached_messages
                 && $cached_messages->[-1]{role} eq 'system'
-                && $cached_messages->[-1]{content} =~ /<(?:userContext|dynamicContext|sessionGoals)[\s>]/) {
+                && $cached_messages->[-1]{content} =~ /^\s*<(?:sessionContext|dynamicContext|sessionGoals)[\s>]/) {
                 pop @$cached_messages;
             }
 

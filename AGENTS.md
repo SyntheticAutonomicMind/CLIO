@@ -791,6 +791,7 @@ Permanent knowledge -> Detailed commit message (committed)
 | Log operational noise at INFO | With default level now ERROR, routine operations (trims, token recovery, injected messages) are invisible — but `log_info` calls still exist and could surface if a user sets WARNING or INFO level | Demote to `log_debug` — the user did not explicitly request this |
 | Provide useless stats to the model | Tool call counts, token tallies, and framework metadata in summaries are noise that models fixate on (garbage in = garbage out) | Include only actionable work product (task description, files changed, decisions) in thread summaries |
 | Leak framework narration to the model | Telling the model "this is a framework feature" or "the system maintains a summary" primes it to acknowledge or second-guess context recovery | Inject work product only (task, todos, summary). Never explain the mechanism |
+| Test names narrate history | "X does not contain Y (removed 2026-09-02)" or "Z behavior (see commit abc1234)" makes the test a changelog entry instead of a behavior assertion | Tests assert current behavior. State what IS true. Git history is the place for "we used to do X" — tests are not. |
 
 **Technical jargon example:**
 - WRONG: `"searching codebase (hybrid keyword+symbols)"` 

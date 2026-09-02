@@ -437,7 +437,7 @@ subtest 'user_context is a separate role=system message at [-2] (pipeline protoc
     my $tools = $real_tools;
 
     # Build a messages array following the pipeline protocol layout:
-    # [system, summary, dialog..., tool_results, user_context, user_input]
+    # [system, summary, dialog..., tool_results, sessionContext, user_input]
     my $messages = [
         { role => 'system',    content => 'SYSTEM PROMPT' },
         { role => 'user',      content => 'q1' },
@@ -446,7 +446,7 @@ subtest 'user_context is a separate role=system message at [-2] (pipeline protoc
         ] },
         { role => 'tool',      content => 'r1', tool_call_id => 'tc_1' },
         { role => 'assistant', content => 'final' },
-        { role => 'system',    content => "<userContext>\nDate: 2026-08-18\n</userContext>" },
+        { role => 'system',    content => "<sessionContext>\nDate: 2026-08-18\n</sessionContext>" },
         { role => 'user',      content => 'q2' },
     ];
 
@@ -455,29 +455,29 @@ subtest 'user_context is a separate role=system message at [-2] (pipeline protoc
     my $stored = $real_state->last_api_payload;
     is(scalar @$stored, 7, 'snapshot has 7 messages (full pipeline protocol layout)');
 
-    # Verify the user_context is at position [-2]
-    is($stored->[-2]{role}, 'system', 'position [-2] is system (user_context)');
-    like($stored->[-2]{content}, qr/userContext/, 'position [-2] contains <userContext> tag');
+    # Verify the sessionContext is at position [-2]
+    is($stored->[-2]{role}, 'system', 'position [-2] is system (sessionContext)');
+    like($stored->[-2]{content}, qr/sessionContext/, 'position [-2] contains <sessionContext> tag');
 
-    # Verify user_input is at position [-1] (no user_context prefix)
+    # Verify user_input is at position [-1] (no sessionContext prefix)
     is($stored->[-1]{role}, 'user', 'position [-1] is user (raw user_input)');
-    is($stored->[-1]{content}, 'q2', 'user_input is RAW input - no <userContext> prefix');
+    is($stored->[-1]{content}, 'q2', 'user_input is RAW input - no <sessionContext> prefix');
 
-    # Verify user_input is NOT concatenated with user_context
-    unlike($stored->[-1]{content}, qr/userContext/, 'user_input does NOT contain userContext prefix (the bug we just fixed)');
+    # Verify user_input is NOT concatenated with sessionContext
+    unlike($stored->[-1]{content}, qr/sessionContext/, 'user_input does NOT contain sessionContext prefix');
 };
 
-subtest 'resume strips stale trailing user_context and adds fresh (pipeline protocol)' => sub {
+subtest 'resume strips stale trailing sessionContext and adds fresh (pipeline protocol)' => sub {
     my $real_state = CLIO::Session::State->new(session_id => 'pipeline-strip', debug => 0);
     my $sess = StubSession->new(state => $real_state);
     my $tools = $real_tools;
 
-    # Snapshot from previous turn has stale user_context + user_input at the end
+    # Snapshot from previous turn has stale sessionContext + user_input at the end
     my $snapshot = [
         { role => 'system',    content => 'SYSTEM PROMPT' },
         { role => 'user',      content => 'old_q1' },
         { role => 'assistant', content => 'old_a1' },
-        { role => 'system',    content => "<userContext>\nDate: 2026-08-17 (STALE)\n</userContext>" },
+        { role => 'system',    content => "<sessionContext>\nDate: 2026-08-17 (STALE)\n</sessionContext>" },
         { role => 'user',      content => 'old_q2 (STALE)' },
     ];
 
@@ -490,19 +490,19 @@ subtest 'resume strips stale trailing user_context and adds fresh (pipeline prot
     );
     ok($resumed && @$resumed, 'resume returned messages');
 
-    # The fast path appends fresh user_context + user_input (the actual
+    # The fast path appends fresh sessionContext + user_input (the actual
     # _build_turn_context code does this). Simulate it here by adding them.
     # (The full logic is in _build_turn_context; this test verifies the
-    # snapshot doesn't include stale user_context that would survive into
+    # snapshot doesn't include stale sessionContext that would survive into
     # the resumed prompt.)
-    is(scalar @$resumed, 5, 'snapshot had 5 messages including stale user_context + user_input');
+    is(scalar @$resumed, 5, 'snapshot had 5 messages including stale sessionContext + user_input');
 
     # The strip step in _build_turn_context removes the trailing pair
     my $last_user = pop @$resumed;
     is($last_user->{content}, 'old_q2 (STALE)', 'trailing user_input was the stale input');
 
     my $last_system = pop @$resumed;
-    like($last_system->{content}, qr/userContext/, 'trailing system was the stale user_context');
+    like($last_system->{content}, qr/sessionContext/, 'trailing system was the stale sessionContext');
     like($last_system->{content}, qr/2026-08-17/, 'stale date detected');
 
     # Now the snapshot is stripped to [0..2] - the stable core
