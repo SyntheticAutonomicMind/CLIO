@@ -129,7 +129,7 @@ for my $entry (@PROVIDERS) {
 }
 
 # ── Group 2: Provider sampling_defaults are applied correctly ─────────
-# llama.cpp has sampling_defaults {temperature=>1.0, top_p=>0.95, top_k=>20}.
+# llama.cpp has sampling_defaults {temperature=>0.7, top_p=>0.95, top_k=>20}.
 # Without caller opts, all three should appear.
 {
     my ($mgr, $ec, $cfg) = _setup(provider => 'llama.cpp');
@@ -138,7 +138,7 @@ for my $entry (@PROVIDERS) {
     );
     my $adapted = $mgr->adapt_request_for_endpoint($payload, $ec);
 
-    is($adapted->{temperature}, 1.0, 'llama.cpp sampling_defaults.temperature applied');
+    is($adapted->{temperature}, 0.7, 'llama.cpp sampling_defaults.temperature applied');
     is($adapted->{top_p},       0.95, 'llama.cpp sampling_defaults.top_p applied');
     is($adapted->{top_k},       20,   'llama.cpp sampling_defaults.top_k applied');
 }
@@ -200,7 +200,7 @@ for my $entry (
 
 # ── Group 4: Caller opts always win over sampling_defaults ───────────
 
-# Caller temperature=0.4 must override llama.cpp's default of 1.0.
+# Caller temperature=0.4 must override llama.cpp's default of 0.7.
 {
     my ($mgr, $ec, $cfg) = _setup(provider => 'llama.cpp');
     my $payload = $mgr->_build_payload(

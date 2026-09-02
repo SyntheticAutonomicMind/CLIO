@@ -102,7 +102,7 @@ sub _ec {
     my $payload = { model => 'local-model', messages => [] };
     my $result = $mgr->adapt_request_for_endpoint($payload, $ec);
 
-    is($result->{temperature}, 1.0, 'llama.cpp default temperature applied');
+    is($result->{temperature}, 0.7, 'llama.cpp default temperature applied');
     is($result->{top_p},       0.95, 'llama.cpp default top_p applied');
     is($result->{top_k},       20,   'llama.cpp default top_k applied');
 }
