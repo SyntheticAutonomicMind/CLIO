@@ -44,6 +44,11 @@ sub _get_auth_helper {
     );
 }
 
+sub _scope_tag {
+    my ($self, $session_only) = @_;
+    return $session_only ? ' (this session)' : '';
+}
+
 sub handle_set {
     my ($self, $setting, $value, $session_only) = @_;
 
@@ -94,7 +99,7 @@ sub handle_set {
             $self->{config}->save();
         }
         my $state_label = $enabled ? "enabled" : "disabled";
-        $self->display_system_message("Thinking/reasoning display $state_label" . ($session_only ? " (session only)" : " (saved)"));
+        $self->display_system_message("Thinking/reasoning display $state_label" . $self->_scope_tag($session_only));
     }
     elsif ($setting eq 'thinking_effort') {
         my $level = lc($value // '');
@@ -126,7 +131,7 @@ sub handle_set {
             $self->{config}->set('thinking_effort', $level);
             $self->{config}->save();
         }
-        $self->display_system_message("Thinking effort set to '$level'" . ($session_only ? " (session only)" : " (saved)"));
+        $self->display_system_message("Thinking effort set to '$level'" . $self->_scope_tag($session_only));
     }
     elsif ($setting eq 'thinking_mode') {
         my $mode = lc($value // '');
@@ -167,19 +172,22 @@ sub handle_set {
             $self->{config}->set('thinking_mode', $mode);
             $self->{config}->save();
         }
-        $self->display_system_message("Thinking mode set to '$mode'" . ($session_only ? " (session only)" : " (saved)"));
+        $self->display_system_message("Thinking mode set to '$mode'" . $self->_scope_tag($session_only));
     }
     elsif ($setting =~ /^(temperature|top_p|top_k)$/) {
         my $key = "sampling_$setting";
         if (!defined $value || $value eq '' || $value =~ /^(reset|default|off)$/i) {
-            # Clear override - revert to provider defaults
+            # Clear override - revert to provider defaults. A true reset
+            # must scrub stale per-model entries that would otherwise
+            # shadow the cleared global value on the next load.
             if ($session_only) {
                 $self->_write_session_override($key, 0);
             } else {
                 $self->{config}->set($key, '');
+                $self->{config}->clear_model_scoped($key);
                 $self->{config}->save();
             }
-            $self->display_system_message("$setting reset to provider default" . ($session_only ? " (session only)" : " (saved)"));
+            $self->display_system_message("$setting reset to provider default" . $self->_scope_tag($session_only));
         } else {
             unless ($value =~ /^\d+(\.\d+)?$/) {
                 $self->display_error_message("Invalid $setting value: '$value' (must be a number)");
@@ -191,7 +199,7 @@ sub handle_set {
                 $self->{config}->set($key, $value + 0);
                 $self->{config}->save();
             }
-            $self->display_system_message("$setting set to $value" . ($session_only ? " (session only)" : " (saved)"));
+            $self->display_system_message("$setting set to $value" . $self->_scope_tag($session_only));
         }
     }
     elsif ($setting eq 'context_window' || $setting eq 'max_output' || $setting eq 'max_prompt') {
@@ -623,7 +631,7 @@ sub _set_key {
     $self->{config}->set('api_key', $value);
 
     if ($self->{config}->save()) {
-        $self->display_system_message("API key set and saved for provider: $current_provider");
+        $self->display_system_message("API key set for provider: $current_provider");
     } else {
         $self->display_system_message("API key set (warning: failed to save)");
     }
@@ -648,7 +656,7 @@ sub _set_serpapi_key {
 
     if ($self->{config}->save()) {
         my $display_key = substr($value, 0, 8) . '...' . substr($value, -4);
-        $self->display_system_message("SerpAPI key set: $display_key (saved)");
+        $self->display_system_message("SerpAPI key set: $display_key");
         $self->display_system_message("Web search will now use SerpAPI for reliable results");
     } else {
         $self->display_system_message("SerpAPI key set (warning: failed to save)");
@@ -669,7 +677,7 @@ sub _set_search_engine {
     $self->{config}->set('search_engine', lc($result));
 
     if ($self->{config}->save()) {
-        $self->display_system_message("Search engine set to: " . lc($result) . " (saved)");
+        $self->display_system_message("Search engine set to: " . lc($result));
     } else {
         $self->display_system_message("Search engine set (warning: failed to save)");
     }
@@ -689,7 +697,7 @@ sub _set_search_provider {
     $self->{config}->set('search_provider', lc($result));
 
     if ($self->{config}->save()) {
-        $self->display_system_message("Search provider set to: " . lc($result) . " (saved)");
+        $self->display_system_message("Search provider set to: " . lc($result));
     } else {
         $self->display_system_message("Search provider set (warning: failed to save)");
     }
@@ -711,7 +719,7 @@ sub _set_github_pat {
 
     if ($self->{config}->save()) {
         my $display_key = substr($value, 0, 8) . '...' . substr($value, -4);
-        $self->display_system_message("GitHub PAT set: $display_key (saved)");
+        $self->display_system_message("GitHub PAT set: $display_key");
         $self->display_system_message("Extended model access enabled for GitHub Copilot");
     } else {
         $self->display_system_message("GitHub PAT set (warning: failed to save)");
@@ -752,7 +760,7 @@ sub _set_base {
     }
 
     $self->_set_api_setting('api_base', $value, $session_only);
-    $self->display_system_message("API base set to: $value" . ($session_only ? " (session only)" : " (saved)"));
+    $self->display_system_message("API base set to: $value" . $self->_scope_tag($session_only));
     $self->_get_auth_helper()->reinit_api_manager();
 }
 
@@ -878,7 +886,7 @@ sub _set_model_candidates {
         my $marker = ($i == 0) ? ' (active)' : '';
         $self->display_system_message("  [$i] $validated[$i]$marker");
     }
-    $self->display_system_message("Active model: $validated[0]" . ($session_only ? " (session only)" : " (saved)"));
+    $self->display_system_message("Active model: $validated[0]" . $self->_scope_tag($session_only));
     $self->display_system_message("On API errors, CLIO will automatically try the next model in the list");
 
     # Switch the global/session provider to match the first candidate's
@@ -957,7 +965,7 @@ sub _set_model {
     my $ok = $self->_activate_model_with_provider($full_model, $target_provider, $session_only);
     return unless $ok;
 
-    $self->display_system_message("Model set to: $display_model" . ($session_only ? " (session only)" : " (saved)"));
+    $self->display_system_message("Model set to: $display_model" . $self->_scope_tag($session_only));
     $self->_get_auth_helper()->reinit_api_manager();
 
     # Update billing state for /usage
@@ -1188,7 +1196,7 @@ sub _set_provider {
             }
 
             $self->{session}->save();
-            $self->display_system_message("Provider set to: $value (session only)");
+            $self->display_system_message("Provider set to: $value (this session)");
         }
     } else {
         if ($self->{config}->set_provider($value)) {
@@ -1197,7 +1205,7 @@ sub _set_provider {
             my $base_source = $has_stored_base ? "stored" : "provider default";
 
             if ($self->{config}->save()) {
-                $self->display_system_message("Switched to provider: $value (saved)");
+                $self->display_system_message("Switched to provider: $value");
                 $self->display_system_message("  API Base: " . $config->{api_base} . " (from $base_source)");
                 $self->display_system_message("  Model: " . $config->{model} . " (from provider)");
             } else {
@@ -1365,10 +1373,14 @@ sub _set_capability_cap {
         if ($session_only) {
             $self->_write_session_override($config_key, 0);
         } else {
+            # A true cap reset must scrub stale per-model entries that
+            # would otherwise shadow the cleared global value on the
+            # next load (same bug as the sampling_* reset path).
             $self->{config}->set($config_key, 0);
+            $self->{config}->clear_model_scoped($config_key);
             $self->{config}->save();
         }
-        $self->display_system_message("$setting cap cleared (using model default)" . ($session_only ? " (session only)" : " (saved)"));
+        $self->display_system_message("$setting cap cleared (using model default)" . $self->_scope_tag($session_only));
         return;
     }
 
@@ -1394,7 +1406,7 @@ sub _set_capability_cap {
         sprintf("%s capped at %s%s",
             $setting,
             _format_token_count($tokens),
-            ($session_only ? " (session only)" : " (saved)")
+            $self->_scope_tag($session_only)
         )
     );
 }
@@ -1445,15 +1457,18 @@ sub _set_capability_force {
     my $config_key = "force_$setting";
     my $normalized = lc($value // '');
 
-    # Clear triggers - these explicitly ask to revert to model default
+    # Clear triggers - these explicitly ask to revert to model default.
+    # A true reset scrubs stale per-model entries so they cannot shadow
+    # the cleared global value on the next load.
     if ($normalized =~ /^(auto|reset|default|'')$/) {
         if ($session_only) {
             $self->_write_session_override($config_key, 0);
         } else {
             $self->{config}->set($config_key, '');
+            $self->{config}->clear_model_scoped($config_key);
             $self->{config}->save();
         }
-        $self->display_system_message("$setting override cleared (using model default)" . ($session_only ? " (session only)" : " (saved)"));
+        $self->display_system_message("$setting override cleared (using model default)" . $self->_scope_tag($session_only));
         return;
     }
 
@@ -1471,7 +1486,7 @@ sub _set_capability_force {
         $self->{config}->set($config_key, $forced);
         $self->{config}->save();
     }
-    $self->display_system_message("$setting forced: $forced" . ($session_only ? " (session only)" : " (saved)"));
+    $self->display_system_message("$setting forced: $forced" . $self->_scope_tag($session_only));
 }
 
 # Update session billing state when provider or model changes mid-session.
