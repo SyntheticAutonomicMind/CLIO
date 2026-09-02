@@ -1,7 +1,9 @@
 #!/usr/bin/env perl
-# Test: Working directory included in system prompt
-# Bug: Agents hallucinated paths like /Users/andy/ because they didn't know PWD
-# Fix: Added current working directory to system prompt
+# Test: Working directory included in session context
+#
+# Asserts the working directory is included in the <sessionContext>
+# block built by CLIO::Core::PromptBuilder. The PWD is the lead field
+# so the model anchors to it when resolving relative paths.
 
 use strict;
 use warnings;
@@ -36,21 +38,21 @@ ok(defined $section, "Generated user context section");
 if ($section) {
     ok($section =~ /Working Directory/i, "Section includes 'Working Directory' heading");
     ok($section =~ /\Q$current_pwd\E/, "Section includes actual PWD: $current_pwd");
-    ok($section =~ /userContext/i, "Section includes userContext block");
+    ok($section =~ /sessionContext/i, "Section wrapped in <sessionContext>");
 
     print "# Sample from section:\n";
     my @lines = split /\n/, $section;
     # grep against @lines[0..15] - some entries are undef when the section
-    # has fewer than 16 lines (e.g. the 5-line userContext in the fixture).
+    # has fewer than 16 lines (e.g. the 5-line sessionContext in the fixture).
     # Default to '' so the regex doesn't fire on undef under `perl -W`.
-    for my $line (grep { defined $_ && /Working Directory|userContext|Language/ } @lines[0..15]) {
+    for my $line (grep { defined $_ && /Working Directory|sessionContext|Language/ } @lines[0..15]) {
         print "#   $line\n";
     }
 } else {
     fail("Could not generate section: $@");
     fail("No section content");
     fail("No PWD found");
-    fail("No userContext found");
+    fail("No sessionContext found");
 }
 
 # Cleanup
