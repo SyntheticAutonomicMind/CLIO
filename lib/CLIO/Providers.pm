@@ -248,9 +248,8 @@ my %PROVIDERS = (
             supports_tools => 1,
             openrouter => 1,
             # OpenRouter uses its own `reasoning: {enabled, effort}` param,
-            # not OpenAI's `reasoning_effort`. The flag tells APIManager
-            # to skip the OpenAI-compat reasoning_effort injection.
-            native_thinking_format => 1,
+            # not OpenAI's `reasoning_effort`. The reasoning_schema
+            # (mode=nested) in provider-defaults.json drives injection.
         },
     },
     
@@ -290,10 +289,8 @@ my %PROVIDERS = (
             temperature_range => [0.0, 2.0],
             supports_tools => 1,
             # OrcaRouter is OpenAI-compatible but routes to upstreams
-            # with different reasoning formats. Native thinking format
-            # skips the OpenAI-compat reasoning_effort injection; the
-            # reasoning_schema in provider-defaults.json governs injection.
-            native_thinking_format => 1,
+            # with different reasoning formats. The reasoning_schema
+            # (mode=effort) in provider-defaults.json governs injection.
         },
     },
 
@@ -311,7 +308,6 @@ my %PROVIDERS = (
             path_suffix => '',
             temperature_range => [0.0, 2.0],
             supports_tools => 1,
-            native_thinking_format => 1,
         },
     },
 
@@ -335,8 +331,8 @@ my %PROVIDERS = (
             google => 1,
             # Google's Gemini handles thinking via its own native API
             # (temperature settings + thought tokens), not via OpenAI's
-            # `reasoning_effort`. Skip the OpenAI-compat injection.
-            native_thinking_format => 1,
+            # `reasoning_effort`. The reasoning_schema (mode=native) in
+            # provider-defaults.json skips OpenAI-compat injection.
         },
     },
     
@@ -375,8 +371,8 @@ my %PROVIDERS = (
             minimax => 1,
             # MiniMax handles thinking via its own `thinking: {type}`
             # param + `reasoning_split: true` flag. Skip the OpenAI-compat
-            # reasoning_effort injection to avoid double-sending.
-            native_thinking_format => 1,
+            # reasoning_effort injection to avoid double-sending. The
+            # reasoning_schema (mode=think_object) handles this.
             # Recommended sampling params per MiniMax model card
             sampling_defaults => { temperature => 1.0, top_p => 0.95, top_k => 40 },
         },
@@ -406,7 +402,6 @@ my %PROVIDERS = (
             temperature_range => [0.0, 2.0],
             supports_tools => 1,
             minimax => 1,
-            native_thinking_format => 1,
             sampling_defaults => { temperature => 1.0, top_p => 0.95, top_k => 40 },
         },
     },
@@ -434,8 +429,7 @@ my %PROVIDERS = (
             zai => 1,
             reasoning_field => 'reasoning_content',
             # Z.AI handles thinking via its own `thinking: {type}` param.
-            # Skip the OpenAI-compat reasoning_effort injection.
-            native_thinking_format => 1,
+            # The reasoning_schema (mode=mixed) handles injection.
             sampling_defaults => { temperature => 1.0, top_p => 0.95 },
         },
     },
@@ -461,7 +455,6 @@ my %PROVIDERS = (
             supports_tools => 1,
             zai => 1,
             reasoning_field => 'reasoning_content',
-            native_thinking_format => 1,
             coding_plan => 1,
             sampling_defaults => { temperature => 1.0, top_p => 0.95 },
         },
@@ -496,9 +489,8 @@ my %PROVIDERS = (
             supports_tools => 1,
             anthropic => 1,
             # Anthropic handles thinking via its own `thinking: {type}`
-            # param (native API). Skip the OpenAI-compat reasoning_effort
-            # injection.
-            native_thinking_format => 1,
+            # param (native API). The reasoning_schema (mode=native) in
+            # provider-defaults.json governs this.
             auth_header => 'x-api-key',
             auth_value_format => '{api_key}',
             extra_headers => {
