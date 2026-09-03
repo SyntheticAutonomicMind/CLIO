@@ -84,6 +84,45 @@ use warnings;
     ok_int($cursor_pos, 6, 'backward: cursor lands after preceding space');
 }
 
+# Right after first char of word: "hello w|orld" -> "hello orld"
+# (deletes only "w", does NOT consume the preceding space or word)
+{
+    my $input = 'hello world';
+    my $cursor_pos = 7;
+    $rl->_kill_word_backward(\$input, \$cursor_pos, '> ');
+    ok($input, 'hello orld', 'backward: cursor after first word char deletes only that char');
+    ok_int($cursor_pos, 6, 'backward: cursor lands at word start (6)');
+}
+
+# Multiple consecutive Ctrl-W from mid-word, simulating repeated presses.
+# First press at position 7 deletes only "w" (the fix), not the entire
+# previous word.  Second press: cursor is now right after the space, so
+# whitespace is consumed first and the previous word "hello" is deleted.
+# "hello world" cursor at 7 -> "hello orld" (cursor 6) -> "orld" (cursor 0)
+{
+    my $input = 'hello world';
+    my $cursor_pos = 7;
+    $rl->_kill_word_backward(\$input, \$cursor_pos, '> ');
+    ok($input, 'hello orld', 'backward: first Ctrl-W from pos 7 deletes "w" only');
+    ok_int($cursor_pos, 6, 'backward: cursor at 6 after first Ctrl-W');
+
+    $input = 'hello orld';
+    $cursor_pos = 6;
+    $rl->_kill_word_backward(\$input, \$cursor_pos, '> ');
+    ok($input, 'orld', 'backward: second Ctrl-W deletes "hello " (skips space)');
+    ok_int($cursor_pos, 0, 'backward: cursor at 0 after second Ctrl-W');
+}
+
+# Multiple spaces between words: "hello  world" cursor at 7 (second space)
+# Whitespace is consumed first, then the previous word is deleted.
+{
+    my $input = 'hello  world';
+    my $cursor_pos = 7;
+    $rl->_kill_word_backward(\$input, \$cursor_pos, '> ');
+    ok($input, 'world', 'backward: double space consumed before previous word');
+    ok_int($cursor_pos, 0, 'backward: cursor at 0 after consuming word');
+}
+
 # At end of input: "hello world|" -> "hello " (deletes "world")
 {
     my $input = 'hello world';

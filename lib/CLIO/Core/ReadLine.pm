@@ -1302,12 +1302,25 @@ sub _kill_word_backward {
 
     my $old_pos = $$cursor_pos_ref;
     my $pos = $$cursor_pos_ref - 1;
-    while ($pos > 0 && substr($$input_ref, $pos - 1, 1) =~ /\s/) {
+    my $text = $$input_ref;
+
+    # Same word-boundary logic as move_word_backward: only skip whitespace
+    # if the character at the starting position is whitespace. The original
+    # code checked substr(pos-1) in the first loop, which unconditionally
+    # skipped backward whitespace even when the cursor was mid-word (e.g.
+    # just after the first character of a word).  That caused Ctrl-W to
+    # delete the entire previous word instead of stopping at the current
+    # word boundary.
+    if (substr($text, $pos, 1) =~ /\s/) {
+        while ($pos > 0 && substr($text, $pos, 1) =~ /\s/) {
+            $pos--;
+        }
+    }
+
+    while ($pos > 0 && substr($text, $pos - 1, 1) !~ /\s/) {
         $pos--;
     }
-    while ($pos > 0 && substr($$input_ref, $pos - 1, 1) !~ /\s/) {
-        $pos--;
-    }
+
     substr($$input_ref, $pos, $old_pos - $pos, '');
     $$cursor_pos_ref = $pos;
     $self->redraw_line($input_ref, $cursor_pos_ref, $prompt);
