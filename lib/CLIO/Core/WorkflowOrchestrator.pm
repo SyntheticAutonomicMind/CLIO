@@ -1286,9 +1286,10 @@ sub _build_turn_context {
             # Rebuild history block with fresh userContext. When
             # ContextBuilder is wired in (Phase 2+), we run the
             # projection pipeline so anchor + recent + structured
-            # <userContext> elements are emitted instead of the
-            # legacy freeform userContext string. This prevents the
-            # resume fast path from bypassing the projection by
+            # userContext are emitted via the prose renderer
+            # (MessageHistory::messages_to_prose_dynamic) instead of
+            # the legacy freeform userContext string. This prevents
+            # the resume fast path from bypassing the projection by
             # reusing the stale cached payload verbatim.
             my $history = load_conversation_history($session, debug => $self->{debug});
             if ($history && @$history) {
@@ -1440,8 +1441,8 @@ sub _build_turn_context {
     # turn (original substantive task), the most recent complete turn(s),
     # collapses repeated tool calls within each recent turn, scores LTM
     # entries against the current request, and renders the structured
-    # <userContext> block. Raw $history is never mutated; the
-    # projection is discarded after serialization.
+    # userContext block via MessageHistory. Raw $history is never
+    # mutated; the projection is discarded after serialization.
     #
     # The projection always runs (including empty/first-turn history).
     # messages_to_prose handles empty anchor/turns gracefully - it just

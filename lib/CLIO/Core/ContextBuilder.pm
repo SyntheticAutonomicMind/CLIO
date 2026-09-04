@@ -138,7 +138,7 @@ Returns a hashref:
         turns             => [ ... ],  # selected full turns (newest 1-2)
         anchor            => { ... },  # original task turn (1 element) or undef
         compressed_tail   => "...",    # one combined thread_summary text, or ''
-        userContext       => "<userContext>...</userContext>",
+        userContext       => '',        # legacy field - kept for backwards compat with tests
         relevant_memory   => [ ... ],  # arrayref of {confidence, content}
         active_task       => "...",    # for per-iteration LTM re-score
         user_input        => "...",    # for per-iteration LTM re-score
