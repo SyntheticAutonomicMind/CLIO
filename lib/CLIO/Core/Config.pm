@@ -671,7 +671,7 @@ sub _restore_model_config {
 
     my $restored_count = 0;
     for my $key (@{MODEL_SCOPED_KEYS()}) {
-        if ($entry && exists $entry->{$key}) {
+        if (exists $entry->{$key}) {
             my $val = $entry->{$key};
             my $default = DEFAULT_CONFIG->{$key};
             # Only restore if either:
