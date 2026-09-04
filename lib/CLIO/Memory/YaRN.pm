@@ -538,6 +538,72 @@ sub find_substantive_task {
     return $candidate || '';
 }
 
+=head2 recover_substantive_task
+
+Class method. Anchor-recovery fallback for CLIO::Core::ContextBuilder
+when the source history has been trimmed past the original user task.
+Walks the session's durable YaRN thread (which is never trimmed) and
+returns the oldest substantive user message found.
+
+Arguments:
+- $session_or_yarn: Either a session object (with ->yarn accessor)
+                    or a YaRN instance directly. If undef, returns ''.
+- $thread_id: The thread ID to query (usually the session ID).
+              If undef and $session_or_yarn is a session, falls back
+              to $session->id().
+
+Returns:
+- Scalar: the original user task (>= 50 chars), or '' if nothing is
+  recoverable from the durable thread.
+
+The returned string is suitable for use as a synthetic anchor in a
+projection when no live history is available. The ContextBuilder
+turns it into a one-message synthetic turn (a role:user message) so
+the model still sees the original task.
+
+=cut
+
+sub recover_substantive_task {
+    my ($session_or_yarn, $thread_id) = @_;
+    return '' unless $session_or_yarn;
+
+    my $yarn;
+    if (ref($session_or_yarn) && $session_or_yarn->isa('CLIO::Memory::YaRN')) {
+        $yarn = $session_or_yarn;
+        $thread_id //= $ENV{CLIO_SESSION_ID} // '';
+    } else {
+        return '' unless $session_or_yarn->can('yarn');
+        $yarn = $session_or_yarn->yarn;
+        $thread_id //= ($session_or_yarn->can('id') ? $session_or_yarn->id() : ($ENV{CLIO_SESSION_ID} // ''));
+    }
+    return '' unless $yarn && ref($yarn) && $yarn->can('get_thread');
+
+    my $thread = $yarn->get_thread($thread_id);
+    return '' unless $thread && ref($thread) eq 'ARRAY' && @$thread;
+
+    # Walk oldest-first looking for a substantive user message.
+    # YaRN stores the full message history of the session in this
+    # thread, so even messages that got trimmed out of state->{history}
+    # are still here.
+    my $min_len = 50;
+    for my $item (@$thread) {
+        next unless ref($item) eq 'HASH';
+        next unless ($item->{role} // '') eq 'user';
+        my $content = $item->{content} // '';
+        return $content if length($content) >= $min_len;
+    }
+
+    # Fall back to whatever user message we have, even if short.
+    for my $item (@$thread) {
+        next unless ref($item) eq 'HASH';
+        next unless ($item->{role} // '') eq 'user';
+        my $content = $item->{content} // '';
+        return $content if length $content;
+    }
+
+    return '';
+}
+
 # Parse structured sections from a previous thread_summary to seed extraction buckets.
 # This preserves accumulated history across multiple trim cycles.
 sub _parse_previous_summary {

@@ -48,19 +48,27 @@ tool name (e.g., file_operations with 17 operations instead of 17 separate tools
 
 sub new {
     my ($class, %opts) = @_;
-    
+
     # Validate required fields
     croak "Subclass must define 'name'" unless $opts{name};
     croak "Subclass must define 'description'" unless $opts{description};
     croak "Subclass must define 'supported_operations'" unless $opts{supported_operations};
-    
+
     return bless {
         name => $opts{name},
         description => $opts{description},
         supported_operations => $opts{supported_operations},
-        operation_aliases    => $opts{operation_aliases} || [],
+        # operation_aliases is the silent natural-language alias set
+        # (e.g. "create" -> write_file, "read" -> read_file, "mkdir" ->
+        # create_directory). Subclasses declare it in their supported_operations
+        # hash but the base class MUST also store it on the instance,
+        # otherwise validate_operation and _infer_operation_from_params
+        # can't see the aliases and tools fail with "Unknown operation"
+        # for every alias name. The field is also folded into the dispatch
+        # hash below so aliases route correctly.
+        operation_aliases => $opts{operation_aliases} || [],
         debug => $opts{debug} || 0,
-        
+
         # Execution control metadata (SAM-inspired pattern + CLIO enhancements)
         requires_blocking => $opts{requires_blocking} || 0,  # Tool must wait for completion before workflow continues
         requires_serial => $opts{requires_serial} || 0,      # Tool executes one-at-a-time (but doesn't block workflow)
@@ -303,7 +311,7 @@ sub _infer_operation_from_params {
 
 sub validate_operation {
     my ($self, $operation) = @_;
-    
+
     # Build hash lookup on first call (avoids linear grep on every tool dispatch).
     # Includes canonical operations AND natural-language aliases so the
     # LLM can use either form (e.g. 'write' for 'write_file', 'mv' for

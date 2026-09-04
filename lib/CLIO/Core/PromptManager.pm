@@ -6,7 +6,7 @@ package CLIO::Core::PromptManager;
 use strict;
 use warnings;
 use utf8;
-use CLIO::Core::Logger qw(log_debug log_warning);
+use CLIO::Core::Logger qw(log_error log_debug log_warning log_info);
 use CLIO::Util::ConfigPath qw(get_config_file);
 use CLIO::Util::TextSanitizer qw(sanitize_text);
 use Carp qw(croak);
@@ -96,9 +96,16 @@ sub new {
 
 Get the currently active system prompt text (STABLE PORTION ONLY).
 
-Dynamic sections (LTM patterns, loaded skills, OpenSpec context) are NOT
-included here - they are returned separately by get_dynamic_context() for
-injection into the user message to preserve prompt cache stability.
+Dynamic sections (LTM patterns, loaded skills, OpenSpec context) are
+NOT included here - they are delivered via the role-based history
+projection's dynamic userContext block (built by ContextBuilder in
+turn with WorkflowOrchestrator). See CLIO::Core::ContextBuilder
+and CLIO::Core::WorkflowOrchestrator for the active pipeline.
+
+The earlier get_dynamic_context() method and _format_ltm_patterns
+helper that used to inject these into the user message are now
+deleted (dead since the role-based refactor moved LTM/skills/
+OpenSpec into ContextBuilder's projection).
 
 Includes: base prompt, custom instructions, plugin instructions,
 puppeteer topology.
@@ -141,22 +148,23 @@ sub get_system_prompt {
     }
     
     unless ($prompt) {
-        log_debug('PromptManager', "Failed to load active prompt '$active', falling back to embedded default");
+        log_error('PromptManager', "Failed to load active prompt '$active', falling back to embedded default");
         $prompt = $self->_get_default_prompt_content();
     }
     
-    # LTM patterns are now injected via get_dynamic_context() into the user message
-    # to preserve prompt cache stability across turns.
-    
+    # LTM/skills/OpenSpec are now delivered via the ContextBuilder
+    # projection's dynamic userContext block. See
+    # CLIO::Core::ContextBuilder::build_projection.
+
     # Append custom instructions if they exist (unless --no-custom-instructions flag set)
     if (!$self->{skip_custom}) {
         my $custom = $self->_load_custom_instructions();
         if ($custom) {
             log_debug('PromptManager', "Appending custom instructions (" . length($custom) . " bytes)");
-            
+
             # Sanitize UTF-8 emojis to prevent JSON encoding issues
             $custom = sanitize_text($custom);
-            
+
             $prompt .= "\n\n<customInstructions>\n";
             $prompt .= $custom;
             $prompt .= "\n</customInstructions>\n";
@@ -166,13 +174,9 @@ sub get_system_prompt {
     } elsif ($self->{debug}) {
         log_debug('PromptManager', "Skipping custom instructions (--no-custom-instructions flag)");
     }
-    
-    # Loaded skills are now injected via get_dynamic_context() into the user message
-    # to preserve prompt cache stability across turns.
-    
-    # OpenSpec context is now injected via get_dynamic_context() into the user message
-    # to preserve prompt cache stability across turns.
-    
+
+    # (loaded skills + OpenSpec are now in the ContextBuilder projection.)
+
     # Inject plugin instructions if any plugins are loaded
     eval {
         require CLIO::Core::PluginManager;
@@ -199,7 +203,7 @@ sub get_system_prompt {
             $prompt .= "\n\n<puppeteerTopology>\n";
             $prompt .= $summary;
             $prompt .= "\n</puppeteerTopology>\n";
-            log_debug('PromptManager', "Injected puppeteer topology: %d projects", $topology->{count});
+            log_info('PromptManager', "Injected puppeteer topology: %d projects", $topology->{count});
         }
     };
     log_debug('PromptManager', "Puppeteer topology check: $@") if $@;
@@ -209,75 +213,20 @@ sub get_system_prompt {
 
 =head2 get_dynamic_context
 
-Get dynamic context sections for injection into the user message (AFTER
-cache breakpoints). These sections change between turns and would
-invalidate the prompt cache if included in the system prompt.
+DELETED in this commit. Dynamic sections (LTM patterns, loaded skills,
+OpenSpec context) are now delivered via ContextBuilder's projection
+dynamic userContext block. See CLIO::Core::ContextBuilder for the
+active pipeline.
 
-Includes: LTM patterns, loaded skills, OpenSpec context.
-
-Arguments:
-- $session: Session object (required for LTM and loaded skills)
-
-Returns: Dynamic context string, or empty string if nothing to inject
+The previous get_dynamic_context and _format_ltm_patterns helpers
+were orphaned when the role-based history refactor moved LTM into
+the projection. Removing the dead code:
 
 =cut
 
-sub get_dynamic_context {
-    my ($self, $session) = @_;
-
-    my @sections;
-
-    # LTM patterns (from session)
-    if ($session) {
-        my $ltm_section = $self->_format_ltm_patterns($session);
-        if ($ltm_section) {
-            push @sections, $ltm_section;
-            log_debug('PromptManager', "Dynamic context: LTM patterns (" . length($ltm_section) . " chars)");
-        }
-
-        # Loaded skills
-        if ($session->{loaded_skills} && @{$session->{loaded_skills}}) {
-            my @loaded = @{$session->{loaded_skills}};
-            log_debug('PromptManager', "Dynamic context: " . scalar(@loaded) . " loaded skill(s)");
-
-            for my $skill (@loaded) {
-                my $name = $skill->{name} || 'unknown';
-                my $content = $skill->{content} || '';
-                next unless length($content) > 0;
-
-                my $skill_block = "\n\n<loadedSkill name=\"$name\">\n";
-                $skill_block .= $content;
-                $skill_block .= "\n</loadedSkill>\n";
-                push @sections, $skill_block;
-
-                log_debug('PromptManager', "Dynamic context: loaded skill '$name' (" . length($content) . " bytes)");
-            }
-        }
-    }
-
-    # OpenSpec context
-    eval {
-        require CLIO::Spec::Manager;
-        my $spec_mgr = CLIO::Spec::Manager->new(project_root => '.');
-        if ($spec_mgr->is_initialized()) {
-            my $spec_context = $spec_mgr->get_spec_context();
-            if ($spec_context && length($spec_context) > 0) {
-                my $spec_block = "\n\n<openSpecContext>\n";
-                $spec_block .= $spec_context;
-                $spec_block .= "</openSpecContext>\n";
-                push @sections, $spec_block;
-                log_debug('PromptManager', "Dynamic context: OpenSpec (" . length($spec_context) . " bytes)");
-            }
-        }
-    };
-    log_debug('PromptManager', "Dynamic context OpenSpec check: $@") if $@;
-
-    return '' unless @sections;
-
-    my $dynamic = join('', @sections);
-    log_debug('PromptManager', "Dynamic context total: " . length($dynamic) . " chars");
-    return $dynamic;
-}
+# DELETED in this commit: sub get_dynamic_context was removed.
+# (Implementation between here and the next =head2 block has been
+# deleted. See git history for the prior version.)
 
 =head2 list_prompts
 
@@ -300,7 +249,7 @@ sub list_prompts {
     # Find custom prompts
     if (-d $self->{custom_dir}) {
         opendir(my $dh, $self->{custom_dir}) or do {
-            log_debug('PromptManager', "Cannot read custom prompts dir: $!");
+            log_error('PromptManager', "Cannot read custom prompts dir: $!");
             return { builtin => \@builtin, custom => \@custom };
         };
         
@@ -692,13 +641,13 @@ sub _read_prompt_file {
     }
     
     unless (-f $file) {
-        log_debug('PromptManager', "Prompt file not found: $name");
+        log_error('PromptManager', "Prompt file not found: $name");
         return undef;
     }
     
     # Read file
     open(my $fh, '<:encoding(UTF-8)', $file) or do {
-        log_debug('PromptManager', "Cannot read $file: $!");
+        log_error('PromptManager', "Cannot read $file: $!");
         return undef;
     };
     
@@ -749,7 +698,7 @@ sub _load_metadata {
     
     if (-f $self->{metadata_file}) {
         open(my $fh, '<:encoding(UTF-8)', $self->{metadata_file}) or do {
-            log_debug('PromptManager', "Cannot read metadata: $!");
+            log_error('PromptManager', "Cannot read metadata: $!");
             return;
         };
         
@@ -760,7 +709,7 @@ sub _load_metadata {
             $self->{metadata} = decode_json($json);
         };
         if ($@) {
-            log_debug('PromptManager', "Invalid metadata JSON: $@");
+            log_error('PromptManager', "Invalid metadata JSON: $@");
             $self->{metadata} = {};
         }
     } else {
@@ -784,7 +733,7 @@ sub _save_metadata {
     my $json = encode_json($self->{metadata});
     
     open(my $fh, '>:encoding(UTF-8)', $self->{metadata_file}) or do {
-        log_debug('PromptManager', "Cannot write metadata: $!");
+        log_error('PromptManager', "Cannot write metadata: $!");
         return;
     };
     
@@ -1538,54 +1487,11 @@ REMAINING
 
 =head2 _format_ltm_patterns
 
-Format LTM (Long-Term Memory) patterns for injection into system prompt.
-Uses token-budgeted rendering to keep the LTM section within bounds.
-Entries are scored by confidence, recency, type, and usage - only the
-highest-scoring entries that fit within the budget are included.
-A compact index footer shows what additional memories are available.
-
-Arguments:
-- $session: Session object containing LTM
-
-Returns: Formatted LTM section or empty string if no patterns
+DELETED in this commit. Was only called by get_dynamic_context,
+which is also deleted. LTM is now rendered by
+CLIO::Memory::LongTerm::render_budgeted_section() through the
+ContextBuilder projection pipeline (see CLIO::Core::ContextBuilder).
 
 =cut
-
-sub _format_ltm_patterns {
-    my ($self, $session) = @_;
-    
-    return '' unless $session;
-    
-    # Get LTM from session
-    my $ltm = $session->can('ltm') ? $session->ltm() : undef;
-    return '' unless $ltm;
-    
-    # Run inline consolidation if gate conditions are met
-    my $consol_stats = $ltm->maybe_consolidate();
-    if ($consol_stats) {
-        my $total = $consol_stats->{removed} + $consol_stats->{decayed} + $consol_stats->{deduped};
-        if ($total > 0) {
-            log_debug('PromptManager', "LTM consolidated: removed=$consol_stats->{removed}, decayed=$consol_stats->{decayed}, deduped=$consol_stats->{deduped}");
-            # Save consolidated LTM
-            eval {
-                my $ltm_file = File::Spec->catfile(Cwd::getcwd(), '.clio', 'ltm.json');
-                $ltm->save($ltm_file);
-            };
-            log_debug('PromptManager', "Failed to save consolidated LTM: $@") if $@;
-        }
-    }
-    
-    # Use budgeted rendering (~3000 tokens / ~12000 chars)
-    my ($section, $included, $total) = $ltm->render_budgeted_section(max_chars => 12000);
-    
-    return '' unless $included > 0;
-    
-    log_debug('PromptManager', "LTM budgeted render: $included of $total entries, " . length($section) . " chars");
-    
-    # Add recovery guidance at end
-    $section .= "\n_After context trimming, use these patterns plus `memory_operations(recall_sessions)` to recover context instead of reading handoff documents._\n";
-    
-    return "\n" . $section;
-}
 
 1;

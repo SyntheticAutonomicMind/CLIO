@@ -322,26 +322,84 @@ These memory components work together in a coordinated pipeline to keep the AI e
 
 AI models have a fixed context window (e.g., 128K tokens for Claude Sonnet, 200K for Claude Opus). A long session with many tool calls can easily exceed this. CLIO's context management prevents overflow without losing critical information.
 
-### Three-Stage Trimming
+### The Role-Based History Pipeline
+
+The history the model sees is built by three layers:
 
 ```text
-Stage 1: Proactive Trim (before API call, every iteration)
-  WorkflowOrchestrator checks messages against 75% of context window
-  If over: MessageValidator drops oldest message units (budget-walk newest to oldest)
-  Dropped messages -> YaRN compression -> thread_summary injected
-  thread_summary is preserved and merged across successive trim cycles
+Layer 1: PromptBuilder
+  Loads the active system prompt (default.md or chat.md), inserts the
+  dynamic tools section, the installed-skills catalog, and the user
+  profile section. Plugin instructions and the puppeteer topology are
+  appended if present. This is the [0] cache-stable prefix anchor.
 
-Stage 2: Validation Trim (just before sending to API)
-  Final check against effective token limit
-  Smart unit-based truncation (keeps tool call/result pairs together)
-  Post-trim target: 50% of max prompt tokens
+Layer 2: ContextBuilder (the projection)
+  Walks the role-based history, picks the anchor turn (first
+  substantive user message, >=50 chars) and the 1-2 most recent
+  complete turns, scores LTM entries against the current request,
+  collapses identical-tool-call continuation turns, and renders the
+  structured fields (active task, active todos, unresolved state,
+  relevant memory, environment, context files) into a projection
+  hashref.
 
-Stage 3: Reactive Trim (after API rejection)
-  If API returns token_limit_exceeded despite proactive trim:
-  Progressive reduction across up to 3 retry attempts (50% -> 25% -> minimal)
-  Each retry injects recovery context (YaRN summary + todo state + git activity)
-  Most recent user message preserved as the current task anchor
+Layer 3: WorkflowOrchestrator
+  Pushes system_prompt, then anchor+recent as role-based messages,
+  then renders the projection's dynamic fields as one trailing
+  system message (the dynamic userContext), then appends the
+  current user_input. The result is the messages array sent to
+  the API.
 ```
+
+### Two Trim Layers (not three)
+
+```text
+Stage 1: Proactive Trim (before API call, every iteration after the first)
+  WorkflowOrchestrator calls validate_and_truncate on @messages
+  when iteration > 1.
+  trim_with_noise_dropping strips reasoning_content (DeepSeek,
+  Anthropic native, OpenAI o-series, MiniMax reasoning_details,
+  Anthropic reasoning_blocks) from old assistant messages first -
+  the model produced it once and doesn't need to see it again.
+  Then _role_based_tail_walk drops oldest messages while protecting
+  the system_prompt, dynamic userContext, current user_input,
+  and tool_call/tool_result pairs.
+
+Stage 2: Reactive Trim (after API token_limit_exceeded)
+  validate_and_truncate on the oversized @messages, same code path
+  as the proactive trim. Single-pass; the proactive trim keeps the
+  array trim enough that reactive drops are small.
+
+There is no third "validation" stage. The earlier design had a
+separate stage that XML-parsed the messageHistory block, but the
+role-based history refactor made that obsolete - the trim path is
+generic over the messages array and works for any provider's wire
+format.
+```
+
+### Compression (Compressed Tail)
+
+When `ContextBuilder::_select_turns` drops turns that don't fit
+the budget, the dropped turns are summarized into a `# Earlier
+work` section that appears at the top of the dynamic userContext
+system message.
+
+The current implementation concatenates user/assistant text from
+each dropped turn (`User: <200 chars>. Assistant: <200 chars>.`
+joined with ` / `). It is NOT YaRN-compressed prose. For long
+sessions dominated by short continuation turns this section can
+be mostly noise - see `scratch/optimize.md` "What gets dropped"
+for the design intent. A real compression pass (YaRN's
+`_compress_dropped_for_recovery`) is planned.
+
+### Anchor Recovery
+
+When `state->{history}` has been trimmed past the original
+substantive user message, `ContextBuilder::_select_turns` falls
+back to `YaRN::recover_substantive_task`, which walks the durable
+YaRN thread (never trimmed) and returns the oldest substantive
+user message. The recovered text is sanitized and synthesized into
+a one-message synthetic anchor turn so the model still sees the
+original task even after extreme state trimming.
 
 ### Token Estimation
 
@@ -355,11 +413,14 @@ The learned ratio is critical - an inaccurate ratio means proactive trimming eit
 
 When messages must be dropped, CLIO prioritizes keeping:
 
-1. **System prompt** - Always preserved
-2. **Most recent user message** - The current task anchor (newest user message, not the session-start message)
-3. **Recent messages** - Most recent conversation context (budget-walked newest to oldest)
-4. **Tool call/result pairs** - Kept together to avoid orphaned results
-5. **Thread summary** - Compressed history of dropped messages, injected before the conversation
+1. **System prompt** (`messages[0]`) — never dropped; protects the cache-stable prefix anchor.
+2. **Anchor turn** — the first substantive user message, even if it pushes the budget over. If it does, the proactive trim yields and the reactive trim fires.
+3. **Dynamic userContext system message** — never dropped. The model needs the active task, todos, and relevant memory references regardless of how aggressive the trim is. Without this protection, long sessions lose the model's current focus when budget pressure hits.
+4. **Current turn's user input** — never dropped. The model has to know what the user just asked.
+5. **Recent tool exchanges** — newest first within the recent-turn range.
+6. **Tool call/result pairs** — kept together, never orphaned.
+
+Note on task continuity: the anchor is the FIRST substantive user message, not the most recent one. The most recent user input is protected separately (item 4). Long sessions with multiple task transitions keep the original task visible to the model even when recent turns drift.
 
 ---
 

@@ -25,6 +25,15 @@ my %LTM_CATEGORY_MAP = (
     failure   => 'failures',
 );
 
+# Sanitization patterns. Declared here (not inside a sub) so that ALL
+# methods - including sanitize_narration_drop_only and
+# _prepare_for_storage_code which are defined ABOVE this data
+# section in this file - can see them at compile time under
+# `use strict`. The patterns themselves are documented at the
+# point of use (see sanitize_narration below).
+our @SANITIZE_DROP_PHRASES;
+our %SANITIZE_REPLACEMENTS;
+
 =head1 NAME
 
 CLIO::Memory::LongTerm - Dynamic experience database for project-specific learning
@@ -75,47 +84,54 @@ log_debug('LongTerm', "CLIO::Memory::LongTerm loaded");
 
 sub new {
     my ($class, %args) = @_;
-    
-    my $self = {
-        debug => $args{debug} // 0,
-        _dirty => 0,  # Lazy save: only write to disk when data changed
-        
-        # Core data structure
-        patterns => {
-            # Facts discovered about the codebase
-            discoveries => [],
-            # example: {fact => "Config in CLIO::Core::Config", confidence => 1.0, verified => 1, timestamp => ...}
-            
-            # Error messages and their solutions
-            problem_solutions => [],
-            # example: {error => "syntax error near }", solution => "Check semicolon", solved_count => 5, examples => [...]}
-            
-            # Project-specific code patterns
-            code_patterns => [],
-            # example: {pattern => "Use error_result() not die", confidence => 0.9, examples => [...]}
-            
-            # Repeated workflow sequences
-            workflows => [],
-            # example: {sequence => ["read", "analyze", "fix", "test"], count => 10, success_rate => 0.95}
-            
-            # Things that broke and why
-            failures => [],
-            # example: {what => "Changed API without updating callers", impact => "Runtime errors", prevention => "grep first"}
-            
-            # Rules specific to directories/modules
-            context_rules => {},
-            # example: {"lib/CLIO/Core/" => ["use strict/warnings", "POD required"]}
-        },
-        
-        # Metadata
-        metadata => {
-            created => time(),
-            last_updated => time(),
-            version => "1.0",
-        },
-    };
-    
-    bless $self, $class;
+
+    # Allow both class method (LongTerm->new) and instance method
+    # ($self->new) calls. If $class is already a blessed reference,
+    # re-bless it instead of trying to construct a new one.
+    my $self;
+    if (ref($class)) {
+        $self = $class;
+    } else {
+        $self = {
+            debug => $args{debug} // 0,
+            _dirty => 0,  # Lazy save: only write to disk when data changed
+
+            # Core data structure
+            patterns => {
+                # Facts discovered about the codebase
+                discoveries => [],
+                # example: {fact => "Config in CLIO::Core::Config", confidence => 1.0, verified => 1, timestamp => ...}
+
+                # Error messages and their solutions
+                problem_solutions => [],
+                # example: {error => "syntax error near }", solution => "Check semicolon", solved_count => 5, examples => [...]}
+
+                # Project-specific code patterns
+                code_patterns => [],
+                # example: {pattern => "Use error_result() not die", confidence => 0.9, examples => [...]}
+
+                # Repeated workflow sequences
+                workflows => [],
+                # example: {sequence => ["read", "analyze", "fix", "test"], count => 10, success_rate => 0.95}
+
+                # Things that broke and why
+                failures => [],
+                # example: {what => "Changed API without updating callers", impact => "Runtime errors", prevention => "grep first"}
+
+                # Rules specific to directories/modules
+                context_rules => {},
+                # example: {"lib/CLIO/Core/" => ["use strict/warnings", "POD required"]}
+            },
+
+            # Metadata
+            metadata => {
+                created => time(),
+                last_updated => time(),
+                version => "1.0",
+            },
+        };
+        bless $self, $class;
+    }
     return $self;
 }
 
@@ -132,7 +148,7 @@ sub add_discovery {
    
    $confidence //= 0.8;
    $verified //= 0;
-   $fact = $self->absolutize_dates($fact);
+   $fact = $self->_prepare_for_storage($fact);
    
    # Check if already exists
    for my $d (@{$self->{patterns}{discoveries}}) {
@@ -175,10 +191,15 @@ Add a problem-solution mapping from debugging experience
 
 sub add_problem_solution {
    my ($self, $error, $solution, $examples) = @_;
-   
+
    $examples //= [];
-   $error = $self->absolutize_dates($error);
-   $solution = $self->absolutize_dates($solution);
+   # Problem solutions typically describe a specific function or
+   # call site that was the root cause (e.g. "the bug was in
+   # validate_and_truncate's eviction loop"). Tool/function names
+   # are part of the value, not narration. Use the code-safe
+   # preparation that drops narration phrases but keeps names.
+   $error = $self->_prepare_for_storage_code($error);
+   $solution = $self->_prepare_for_storage_code($solution);
    
    # Check if already exists
    for my $ps (@{$self->{patterns}{problem_solutions}}) {
@@ -224,10 +245,16 @@ Add a code pattern observed in the project
 
 sub add_code_pattern {
    my ($self, $pattern, $confidence, $examples) = @_;
-   
+
    $confidence //= 0.7;
    $examples //= [];
-   $pattern = $self->absolutize_dates($pattern);
+   # Code patterns legitimately need tool/function names so the
+   # model can recall "use this specific tool". Run the
+   # drop-phrase cleanup (no value to code patterns but no harm
+   # either) but skip the tool-name replacement (which would
+   # rewrite "apply_patch" -> "patch operations" and make the
+   # entry useless). Same fix applies to problem_solutions.
+   $pattern = $self->_prepare_for_storage_code($pattern);
    
    # Check if already exists
    for my $cp (@{$self->{patterns}{code_patterns}}) {
@@ -286,7 +313,7 @@ sub update_entry {
     my $search_lc = lc($search);
     my $now = time();
     
-    $replacement = $self->absolutize_dates($replacement);
+    $replacement = $self->_prepare_for_storage($replacement);
     
     # Search discoveries
     if (!$type_filter || $type_filter eq 'discovery') {
@@ -313,8 +340,8 @@ sub update_entry {
                 my $old_solution = $s->{solution};
                 # If replacement contains ' -> ', split into error/solution
                 if ($replacement =~ /^(.+?)\s*->\s*(.+)$/) {
-                    $s->{error} = $self->absolutize_dates($1);
-                    $s->{solution} = $self->absolutize_dates($2);
+                    $s->{error} = $self->_prepare_for_storage($1);
+                    $s->{solution} = $self->_prepare_for_storage($2);
                 } else {
                     # Replace whichever field matched
                     if (index(lc($s->{error} || ''), $search_lc) >= 0) {
@@ -1066,6 +1093,75 @@ sub render_budgeted_section {
     return ($section, scalar(@included), $total_count);
 }
 
+=head2 get_entries_for_projection
+
+Return all LTM entries (across all types) as a flat arrayref of
+{confidence, content, type} hashes suitable for ContextBuilder's
+relevance scoring.
+
+This is the lightweight accessor used by the projection pipeline -
+it avoids rendering any text, tier badges, or framework narration.
+The caller (ContextBuilder::score_ltm) decides what to include
+based on relevance to the current request.
+
+Returns: ArrayRef of {content, confidence, type, entry} where
+entry is the original hashref.
+
+=cut
+
+sub get_entries_for_projection {
+    my ($self) = @_;
+
+    my @out;
+    for my $d (@{$self->{patterns}{discoveries} || []}) {
+        push @out, {
+            content    => $d->{fact} || '',
+            confidence => $d->{confidence} // 0.5,
+            type       => 'discovery',
+            entry      => $d,
+        };
+    }
+    for my $s (@{$self->{patterns}{problem_solutions} || []}) {
+        # Solutions have error + solution fields - concatenate for
+        # keyword matching, keep both fields available to callers.
+        my $content = join(' ', grep { defined } ($s->{error}, $s->{solution}));
+        push @out, {
+            content    => $content,
+            confidence => $s->{confidence} // 0.5,
+            type       => 'solution',
+            entry      => $s,
+        };
+    }
+    for my $p (@{$self->{patterns}{code_patterns} || []}) {
+        push @out, {
+            content    => $p->{pattern} || '',
+            confidence => $p->{confidence} // 0.5,
+            type       => 'pattern',
+            entry      => $p,
+        };
+    }
+    for my $w (@{$self->{patterns}{workflows} || []}) {
+        my $seq = ref($w->{sequence}) eq 'ARRAY' ? join(' ', @{$w->{sequence}}) : '';
+        push @out, {
+            content    => $seq,
+            confidence => 0.5,
+            type       => 'workflow',
+            entry      => $w,
+        };
+    }
+    for my $f (@{$self->{patterns}{failures} || []}) {
+        my $content = join(' ', grep { defined } ($f->{what}, $f->{impact}, $f->{prevention}));
+        push @out, {
+            content    => $content,
+            confidence => 0.5,
+            type       => 'failure',
+            entry      => $f,
+        };
+    }
+
+    return \@out;
+}
+
 =head2 _render_entry
 
 Render a single LTM entry as markdown text.
@@ -1536,6 +1632,224 @@ sub absolutize_dates {
         my $absolute = $replacements{$relative};
         $text =~ s/\b\Q$relative\E\b/$absolute/gi;
     }
+
+    return $text;
+}
+
+=head2 _prepare_for_storage
+
+Internal: chain absolutize_dates + sanitize_narration so every entry
+written to LTM goes through both passes. New framework-narration
+words are caught at write time, and pre-existing entries get
+re-sanitized whenever they are read by score_ltm or when the
+projection is built.
+
+=cut
+
+sub _prepare_for_storage {
+    my ($self, $text) = @_;
+    return $text unless defined $text;
+    $text = $self->absolutize_dates($text);
+    $text = $self->sanitize_narration($text);
+    return $text;
+}
+
+=head2 _prepare_for_storage_code
+
+Internal: like _prepare_for_storage but skips the tool/function
+name replacements. Code patterns and problem solutions legitimately
+need tool names (apply_patch, validate_and_truncate, file_operations,
+etc.) so the model can recall "use this specific tool to do this
+specific thing". The drop-phrase cleanup still runs because pure
+narration sentences (e.g. "After context trimming, use these
+patterns...") have no recoverable value regardless of category.
+
+Discovery / context_rule entries that the user wrote as pure narration
+still go through _prepare_for_storage (full sanitize). Code-pattern
+and problem-solution entries go through _prepare_for_storage_code.
+
+=cut
+
+sub _prepare_for_storage_code {
+    my ($self, $text) = @_;
+    return $text unless defined $text;
+    $text = $self->absolutize_dates($text);
+    return $self->sanitize_narration_drop_only($text);
+}
+
+=head2 sanitize_narration_drop_only
+
+Public method: run the drop-phrase cleanup from L<sanitize_narration>
+without the tool-name replacement. Used for entries that legitimately
+need tool/function names (code patterns, problem solutions) so the
+model can recall "use this specific tool to do this specific thing".
+Pure narration sentences ("After context trimming, use these
+patterns...") still get dropped.
+
+This is what _prepare_for_storage_code uses internally; we expose it
+publicly so ContextBuilder::score_ltm can apply the same rule at
+read time.
+
+=cut
+
+sub sanitize_narration_drop_only {
+    my ($self, $text) = @_;
+    return $text unless defined $text && length $text;
+    for my $rx (@SANITIZE_DROP_PHRASES) {
+        $text =~ s/$rx//gs;
+    }
+    # Same whitespace collapse as sanitize_narration
+    $text =~ s/[ \t]{2,}/ /g;
+    $text =~ s/^[ \t]+//gm;
+    $text =~ s/[ \t]+$//gm;
+    $text =~ s/\n{3,}/\n\n/g;
+    return $text;
+}
+
+=head2 sanitize_narration
+
+Strip framework-internal narration from LTM entries so they don't leak
+into the model's context. The ContextBuilder prose renderer injects
+memory bodies verbatim, and the model treats any framework-mechanic
+language (tool names, recovery instructions, cache strategy words) as
+directives and starts spending turns on those tools instead of the
+real task.
+
+Replacements are applied as case-insensitive whole-word substitutions.
+A small set of phrases are dropped entirely. New entries go through
+this on write; existing entries get re-sanitized lazily when they are
+read by score_ltm or read for projection.
+
+Arguments:
+- $text: Text to sanitize
+
+Returns: Text with framework narration stripped
+
+=cut
+
+# Whole-phrase drops: these are pure framework narration with no
+# recoverable content. Drop the entire phrase.
+@SANITIZE_DROP_PHRASES = (
+    # Pure narration sentences with no recoverable content
+    qr/After context trimming[,.]?\s*use these patterns[^.]*\./is,
+    qr/To recover:?\s*\d+\.\s*[^.]*\./is,
+    # The "Showing X of Y" footer block, including its multi-line
+    # "Additional memories available: _- 20 more solutions_ ..." tail.
+    # The block contains literal underscores around individual memory
+    # lists (e.g. `_- 20 more solutions_`), so we can't use `[^_]*?`
+    # to bound it. Instead match until a blank line or end-of-text.
+    qr/_Showing \d+ of \d+ memories.*?(?=\n\n|\Z)/is,
+    # Standalone "_- N more <type>_" lines (drop individually if the
+    # main Showing block missed them).
+    qr/_- \d+ more (?:solutions|discoveries|patterns|memories)_/is,
+    # The "Framework narration:" self-referential headers.
+    qr/Framework narration[:.]?\s*[^.]*\./is,
+);
+
+# Word/phrase replacements: framework-internal names are replaced with
+# neutral descriptions. We keep the technical meaning but remove the
+# self-referential tool-narration smell.
+# Tool/API names. Every tool name from CLIO::Tools must be in this
+# table (or the model will see it verbatim and may treat the syntax
+# as a directive). Order: longer phrases first (memory_operations(...)
+# before memory_operations) so the regex sort matches the longer
+# match.
+%SANITIZE_REPLACEMENTS = (
+    # Tool API forms
+    'memory_operations(...)'       => 'long-term memory',
+    'memory_operations'            => 'long-term memory',
+    'file_operations(...)'         => 'file operations',
+    'file_operations'              => 'file operations',
+    'terminal_operations(...)'     => 'shell commands',
+    'terminal_operations'          => 'shell commands',
+    'version_control(...)'         => 'git operations',
+    'version_control'              => 'git operations',
+    'todo_operations(...)'         => 'todo operations',
+    'todo_operations'              => 'todo operations',
+    'web_operations(...)'          => 'web requests',
+    'web_operations'               => 'web requests',
+    'apply_patch(...)'              => 'patch operations',
+    'apply_patch'                   => 'patch operations',
+    'code_intelligence(...)'        => 'code search',
+    'code_intelligence'             => 'code search',
+    'interact(...)'                 => 'user input',
+    'interact'                      => 'user input',
+    'skill_operations(...)'        => 'skill operations',
+    'skill_operations'             => 'skill operations',
+    'remote_execution(...)'         => 'remote execution',
+    'remote_execution'             => 'remote execution',
+    'subagent_operations(...)'      => 'subagent operations',
+    'subagent_operations'           => 'subagent operations',
+    'todo_list(...)'                => 'todo list',
+    'todo_list'                     => 'todo list',
+    'recall_sessions'              => 'session search',
+    'prompt caching'               => 'caching',
+    'prompt cache'                 => 'cache',
+    'LCP cache'                    => 'cache',
+    'LCP'                          => 'cache prefix',
+    'thread_summary'               => 'thread summary',
+    'userContext'                  => 'user context',
+    'dynamicContext'               => 'dynamic context',
+    'activeTask'                   => 'active task',
+    'activeTodos'                  => 'active todos',
+    'unresolvedState'              => 'unresolved state',
+    'relevantMemory'               => 'relevant memory',
+    'contextFiles'                 => 'context files',
+
+    # Internal mechanisms
+    'framework narration'          => 'internal logging',
+    'To recover'                   => 'To resolve',
+    'recovery'                     => 'follow-up',
+    'trim notice'                  => 'summary',
+    'cache-collapse'               => 'cache miss',
+    'cache collapse'               => 'cache miss',
+    'validate_and_truncate'        => 'context validation',
+    'validate_tool_message_pairs'  => 'tool message validation',
+    'inject_context_files'         => 'context file loading',
+    'load_conversation_history'    => 'session history loading',
+    'trim_with_noise_dropping'     => 'context trimming',
+    'deinterleave'                 => 'restructure',
+    'reinterleave'                 => 'restructure',
+    'session_goals'                => 'active goals',
+    'in_flight_budget_exhausted'   => 'budget exhausted',
+    # Project-internal class/file names
+    'messageHistory'               => 'message history',
+    'messages_to_prose'            => 'prose serializer',
+    'ContextBuilder'               => 'context builder',
+    'MessageHistory.pm'            => 'message history module',
+    'PromptBuilder.pm'             => 'prompt builder module',
+    'WorkflowOrchestrator.pm'      => 'workflow module',
+    'ConversationManager.pm'       => 'conversation manager module',
+);
+
+sub sanitize_narration {
+    my ($self, $text) = @_;
+    return $text unless defined $text && length $text;
+
+    # Drop pure-narration phrases first (whole-sentence drops).
+    # The /s flag on the drop patterns lets . span newlines so
+    # multi-line narration blocks (e.g. "_Showing X of Y ... _\n_- 20
+    # more solutions_\n_- 15 more discoveries_") get cleaned in one pass.
+    for my $rx (@SANITIZE_DROP_PHRASES) {
+        $text =~ s/$rx//gs;
+    }
+
+    # Replace framework-internal terms. Sort by length desc so longer
+    # phrases (e.g. "memory_operations(...)") match before their
+    # substrings ("memory_operations") would.
+    for my $needle (sort { length($b) <=> length($a) } keys %SANITIZE_REPLACEMENTS) {
+        my $replacement = $SANITIZE_REPLACEMENTS{$needle};
+        my $rx = qr/\Q$needle\E/i;
+        $text =~ s/$rx/$replacement/g;
+    }
+
+    # Collapse multiple spaces left by drops
+    $text =~ s/[ \t]{2,}/ /g;
+    # Trim leading/trailing whitespace per line
+    $text =~ s/^[ \t]+//gm;
+    $text =~ s/[ \t]+$//gm;
+    # Collapse 3+ blank lines to 2
+    $text =~ s/\n{3,}/\n\n/g;
 
     return $text;
 }

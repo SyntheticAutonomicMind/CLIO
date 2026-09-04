@@ -45,10 +45,14 @@ subtest 'Most recent messages preserved in tight budget' => sub {
     # Last message in trimmed should be the last message from original
     is($trimmed->[-1]{content}, $history[-1]{content}, 'Last message preserved (tail kept)');
     
-    # First message (old task) should NOT be in the trimmed result
-    # (it was old and got dropped)
+    # First user message is pinned (B1 fix) - the original task
+    # must survive aggressive trim so the model doesn't lose its
+    # place. Long-session regression fix: prior to the pin, the
+    # trim was tail-preserving only, which dropped the original
+    # task and left the model without a task anchor after several
+    # trim cycles.
     my $old_task_found = grep { $_->{content} eq 'Old task from start of session' } @$trimmed;
-    is($old_task_found, 0, 'Old first user message was dropped (not immortal)');
+    is($old_task_found, 1, 'First user message (original task) pinned across aggressive trim');
     
     diag("Original: " . scalar(@history) . " messages, Trimmed: " . scalar(@$trimmed) . " messages");
 };
@@ -130,10 +134,14 @@ subtest 'Multi-task session keeps current work' => sub {
     # Task B (current) should be preserved
     my $task_b_found = grep { $_->{content} =~ /audit all changes/ } @$trimmed;
     ok($task_b_found, 'Current task (Task B) preserved in trimmed history');
-    
-    # Task A (old) should be dropped
+
+    # First user message (Task A) is pinned - it survives aggressive
+    # trim. This is the deliberate trade-off vs the prior tail-only
+    # behavior (see QA report SMELL/BUG analysis). The model's task
+    # anchor is preserved across trims at the cost of keeping a
+    # completed task description in the prefix.
     my $task_a_found = grep { $_->{content} =~ /fix the color codes/ } @$trimmed;
-    is($task_a_found, 0, 'Old completed task (Task A) was dropped');
+    ok($task_a_found, 'First user message (Task A) preserved by pin - anchor survives aggressive trim');
     
     # Most recent messages should be at the end
     is($trimmed->[-1]{content}, 'Auditing Jewel Thief now...', 'Most recent message is last');

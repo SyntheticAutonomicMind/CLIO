@@ -702,37 +702,76 @@ A typical profile includes:
 
 CLIO manages a limited context window (the amount of conversation the AI can "see" at once). This is critical for long sessions. For the full technical details, see [Memory Architecture](MEMORY.md).
 
-### Three-Layer Trimming
+### How Context Is Delivered to the Model
 
-1. **Proactive trimming** - Before each API call, CLIO estimates token usage and trims older messages if approaching 75% of the model's context window. This preserves the most recent and most important messages.
+CLIO builds the per-request model-facing context as a stack of role-based messages plus one dynamic userContext system message. The cache-stable prefix is `[system prompt, anchor turn, recent turns]`; the dynamic suffix is `[userContext, user input, current turn exchanges]`. The split is what keeps long sessions fast.
 
-2. **Validation trimming** - Just before sending to the API, messages are validated for token limits with smart unit-based truncation. Dropped messages are compressed into a summary.
+```text
+messages array sent to the API:
+  [0]  system         system prompt (cache-stable)
+  [1..N] user/assistant/tool   anchor turn + recent turns (cache-stable)
+  [N+1] system        dynamic userContext (changes per turn)
+  [N+2] user          current user input
+  [N+3..] assistant/tool      current turn tool exchanges
+```
 
-3. **Reactive trimming** - If the API returns a token limit error despite proactive trimming, CLIO progressively trims (50%, then 25%, then minimal) and creates a compressed summary of what was dropped, including the current task state.
+#### System prompt `[0]` (cache-stable prefix anchor)
 
-### What Gets Preserved
+Built by `PromptBuilder::build_system_prompt`. Includes the base prompt, installed-skills section, user-profile section, plugin instructions, and puppeteer topology. Only changes when these inputs change. The thinking-steering section is added for Anthropic adaptive-mode models only (other providers' native thinking does not benefit from it and M3 was observed producing low-quality thinking when steered).
 
-When trimming is needed, CLIO prioritizes:
-- **System prompt** (always kept)
-- **Most recent user message** (the current task anchor - what you're working on NOW)
-- **Thread summary** (compressed record of dropped messages, preserved across trim cycles)
-- **Recent messages** (most recent context, budget-walked newest to oldest)
-- **Tool call/result pairs** (kept together to avoid orphans)
+#### Anchor + recent turns `[1..N]` (cache-stable)
 
-**Note on task continuity:** CLIO preserves the **most recent** user message as the task anchor, not the session-start message. In long sessions with multiple task transitions, the original session-start message is stale and already captured in the thread summary. Preserving the most recent message keeps the AI focused on what you're working on now.
+Selected by `ContextBuilder::build_projection` from the role-based history:
 
-### Context Recovery
+- **Anchor turn** — the first substantive user message (>=50 chars) plus the assistant's first response. The model always knows what it was originally asked to do, even after aggressive trimming. Falls back to YaRN's `recover_substantive_task` when state history has been trimmed past the original.
+- **Recent turns** — the latest 1-2 complete turns, pushed as role-based messages. The model sees the tool_call/tool_result pairs in their native wire format, not as prose.
 
-When aggressive trimming occurs, CLIO injects recovery context that includes:
-- A thread summary of dropped messages (user requests, tool operations, key events)
-- The current todo/task state (what the AI was working on)
-- Recent git activity (commits, working tree status)
+This is the role-based history refactor: history was previously collapsed into a single `<messageHistory>` XML system message (which required a custom XML parser for trim and had cache-stability problems with attribute mutations). It's now structured messages the APIs expect natively.
 
-Context recovery is **seamless** - the AI continues working without announcing that trimming occurred. Thread summaries accumulate across trim cycles, building a running record of the full session history.
+#### Dynamic userContext system message `[N+1]` (dynamic suffix)
+
+Rendered by `MessageHistory::messages_to_prose_dynamic` as markdown. Changes every turn (datetime, todo mutations, LTM rescore, environment), so it's placed AFTER the cache-stable prefix to avoid invalidating it. Sections:
+
+```text
+# Earlier work       (compressed tail of dropped turns)
+# Active task        (from session_goals)
+# Active todos       (current in-progress + pending + blocked)
+# Unresolved state   (recent tool errors, only when present)
+# Relevant memory    (top-5 LTM entries by relevance score)
+# Environment        (cwd, language, datetime_iso)
+[CONTEXT FILES]      (block from /context add, if any)
+```
+
+No framework narration. No tier labels. No "After context trimming" footer. No "Use `memory_operations` to retrieve" instructions. These were removed because the model was treating them as directives and spending turns on unnecessary tool calls.
+
+#### Cross-turn tool-call dedup
+
+Within the recent turns, identical-tool-call turns (same tool + same args + same result, where the second turn's user message is a short continuation prompt like "continue", "ok", "go on") are collapsed. The dedup sets a `_repeats` counter on the kept turn's tool message; WorkflowOrchestrator pushes that message to the API once. This recovers budget for the common "model re-reads the same file after a retry" case without losing signal.
+
+### What Gets Preserved During Trimming
+
+When the role-based tail walk has to drop messages to fit the budget, CLIO protects (in order):
+
+1. **System prompt** `[0]` — never dropped (would invalidate the cache-stable prefix anchor).
+2. **Anchor user message** (first user message) — never dropped, even if it pushes the budget over. If it does, the proactive trim aborts and reactive trim kicks in.
+3. **Dynamic userContext system message** `[N+1]` — never dropped. The model needs the active task, todos, and relevant memory references regardless of how aggressive the trim is.
+4. **Current turn's user input** — never dropped (the model has to know what the user just asked).
+5. **Tool call/result pairs** — always kept together, never orphaned.
+6. **Recent tool exchanges** — newest first, oldest dropped first within the recent-turn range.
+
+If the trim still exceeds budget after protecting these, the proactive trim yields and the reactive trim fires (below).
+
+### Trim Layers
+
+1. **Reactive trim** (after API rejection) — If the API returns `token_limit_exceeded`, `validate_and_truncate` calls `MessageValidator::trim_with_noise_dropping` to strip reasoning_content from old assistant messages (the model produced it once, doesn't need to see it again), then walks the array newest-to-oldest dropping tool exchanges. The trim is by-message-unit, not by-percentage-of-context,.
+
+3. **Proactive trim** (before API call, every iteration after the first) — Same role-based tail walk as the reactive path, but applied preventively based on the model capability's `compute_prompt_budget` minus estimated tool tokens. The proactive trim keeps `@messages` under budget each iteration so the API never sees an oversized request.
+
+There is **no third trim layer**. The earlier design (validation trimming + reactive progressive reduction) was superseded by the role-based trim which does both jobs.
 
 ### Token Estimation
 
-CLIO estimates token counts using a learned character-to-token ratio that calibrates itself against actual API responses over time.
+CLIO estimates token counts using a learned character-to-token ratio that calibrates itself against actual API responses over time. The proactive trim uses `TokenEstimator::compute_prompt_budget($caps)` which subtracts max_output_tokens and tool definitions from the model's max_context_window_tokens, then subtracts estimated tool tokens to get the effective prompt budget.
 
 ---
 
