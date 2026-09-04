@@ -133,10 +133,18 @@ sub new {
         last_cursor_col => 1,
         last_cursor_disp => 0,
         pending_wrap => 0,
+        # How many input rows are scrolled off the top of the screen.
+        # When the input is taller than the screen, the visible portion
+        # is the last term_height rows of the input; scroll_offset
+        # tracks how many input rows are above the visible window.
+        # Used by redraw_line to convert input rows to screen rows.
+        scroll_offset => 0,
         # Performance caches (invalidated per-readline call)
         _prompt_disp_cache => undef,   # cached prompt display width
         _term_width_cache => undef,    # cached terminal width
         _term_width_time => 0,         # when we last checked terminal width
+        _term_height_cache => undef,   # cached terminal height
+        _term_height_time => 0,        # when we last checked terminal height
     };
 
     return bless $self, $class;
@@ -175,6 +183,24 @@ sub _get_term_width {
         $self->{_term_width_time} = $now;
     }
     return $self->{_term_width_cache};
+}
+
+=head2 _get_term_height
+
+Return cached terminal height. Refreshes from the terminal at most once
+per second (same call as _get_term_width). Defaults to 24.
+
+=cut
+
+sub _get_term_height {
+    my ($self) = @_;
+    my $now = time();
+    if (!$self->{_term_height_cache} || $now > $self->{_term_height_time}) {
+        my ($w, $h) = GetTerminalSize();
+        $self->{_term_height_cache} = ($h && $h >= 5) ? $h : 24;
+        $self->{_term_height_time} = $now;
+    }
+    return $self->{_term_height_cache};
 }
 
 =head2 _get_prompt_disp
@@ -255,6 +281,29 @@ sub _cursor_at_codepoint {
     return ($row, $col);
 }
 
+=head2 _input_row_to_screen_row
+
+Convert an input row (as returned by _cursor_at_codepoint) to a
+screen row, accounting for terminal scrolling.
+
+When the input is taller than the terminal, the terminal scrolls the
+content up. The visible portion is the last term_height rows of the
+input. scroll_offset tracks how many input rows are above the visible
+window.
+
+Returns: screen row (0-indexed, clamped to 0..max_row).
+
+=cut
+
+sub _input_row_to_screen_row {
+    my ($self, $input_row) = @_;
+    my $term_height = $self->_get_term_height();
+    my $max_row = $term_height - 1;
+    my $scroll_offset = $self->{scroll_offset} || 0;
+    my $screen_row = $input_row - $scroll_offset;
+    return $screen_row > $max_row ? $max_row : ($screen_row < 0 ? 0 : $screen_row);
+}
+
 =head2 _emit_text
 
 Print $text and update last_cursor_* / pending_wrap tracking to reflect
@@ -329,10 +378,23 @@ sub _emit_text {
         }
     }
 
+    # Step 4: If the row went past the bottom of the screen, the
+    # terminal scrolled up by 1 row per overflowing row. Track how
+    # many rows have scrolled off so cursor positioning can convert
+    # input rows to screen rows.
+    my $term_height = $self->_get_term_height();
+    my $max_row = $term_height - 1;
+    my $scroll_offset = $self->{scroll_offset} || 0;
+    if ($row > $max_row) {
+        $scroll_offset += ($row - $max_row);
+        $row = $max_row;
+    }
+
     $self->{last_cursor_row} = $row;
     $self->{last_cursor_col} = $col;
     $self->{last_cursor_disp} = $row * $term_width + ($col - 1);
     $self->{pending_wrap} = $pending;
+    $self->{scroll_offset} = $scroll_offset;
 }
 
 =head2 _emit_newline
@@ -347,18 +409,25 @@ sub _emit_newline {
     my ($self) = @_;
     print "\r\n";
     # Newline: move to (row+1, col 1).
-    my $row = $self->{last_cursor_row};
-    if ($self->{pending_wrap}) {
-        # Wrap resolves: row stays (we're at last col of current row),
-        # newline moves to (row+1, 1).
-        $row += 1;
-    } else {
-        $row += 1;
+    my $row = $self->{last_cursor_row} + 1;
+    # If pending-wrap was set, the terminal already resolved it (moved
+    # to the next row). The row increment already happened in a sense,
+    # but we count it once here.
+
+    # Clamp to screen and track scroll_offset for input row accounting.
+    my $term_height = $self->_get_term_height();
+    my $max_row = $term_height - 1;
+    my $scroll_offset = $self->{scroll_offset} || 0;
+    if ($row > $max_row) {
+        $scroll_offset += ($row - $max_row);
+        $row = $max_row;
     }
+
     $self->{last_cursor_row} = $row;
     $self->{last_cursor_col} = 1;
     $self->{last_cursor_disp} = $row * $self->_get_term_width();
     $self->{pending_wrap} = 0;
+    $self->{scroll_offset} = $scroll_offset;
 }
 
 =head2 _emit_ctrl_c
@@ -437,8 +506,9 @@ sub redraw_line {
     }
 
     # Move to (row 0, col 1) of the input area.
-    # last_cursor_row is always correct (set by _cursor_at_codepoint
-    # in every operation that changes the cursor).
+    # last_cursor_row is the current SCREEN row (clamped by _emit_text
+    # to the terminal height). Moving up by last_cursor_row rows brings
+    # us to screen row 0, which is the top of the visible input area.
     print "\r";
     if ($self->{pending_wrap}) {
         $self->{last_cursor_col} = 1;
@@ -464,10 +534,15 @@ sub redraw_line {
     # Compute the desired cursor position from input state (NOT from
     # last_cursor_* or arithmetic division -- both can be wrong,
     # especially with wide characters).
-    my ($desired_row, $desired_col) = $self->_cursor_at_codepoint($$input_ref, $$cursor_pos_ref, $prompt);
+    my ($desired_input_row, $desired_col) = $self->_cursor_at_codepoint($$input_ref, $$cursor_pos_ref, $prompt);
 
     # Compute end position from input state too.
-    my ($end_row, $end_col) = $self->_cursor_at_codepoint($$input_ref, length($$input_ref), $prompt);
+    my ($end_input_row, $end_col) = $self->_cursor_at_codepoint($$input_ref, length($$input_ref), $prompt);
+
+    # Convert input rows to screen rows (account for terminal scrolling
+    # when the input is taller than the screen).
+    my $desired_row = $self->_input_row_to_screen_row($desired_input_row);
+    my $end_row = $self->_input_row_to_screen_row($end_input_row);
 
     if (should_log('DEBUG')) {
         log_debug('ReadLine', "redraw_line: end position: ($end_row,$end_col)");
@@ -514,10 +589,14 @@ sub _redraw_from_cursor {
     print "\e[J";
 
     # Compute end-of-input position from input state.
-    my ($end_row, $end_col) = $self->_cursor_at_codepoint($$input_ref, length($$input_ref), $prompt);
+    my ($end_input_row, $end_col) = $self->_cursor_at_codepoint($$input_ref, length($$input_ref), $prompt);
 
     # Compute target cursor position from input state.
-    my ($target_row, $target_col) = $self->_cursor_at_codepoint($$input_ref, $$cursor_pos_ref, $prompt);
+    my ($target_input_row, $target_col) = $self->_cursor_at_codepoint($$input_ref, $$cursor_pos_ref, $prompt);
+
+    # Convert input rows to screen rows (account for terminal scrolling).
+    my $end_row   = $self->_input_row_to_screen_row($end_input_row);
+    my $target_row = $self->_input_row_to_screen_row($target_input_row);
 
     if (should_log('DEBUG')) {
         log_debug('ReadLine', "_redraw_from_cursor: end=($end_row,$end_col), target=($target_row,$target_col)");
@@ -578,10 +657,14 @@ sub _redraw_line_external {
     $self->_emit_text($$input_ref);
 
     # Compute cursor position from input state.
-    my ($cursor_row, $cursor_col) = $self->_cursor_at_codepoint($$input_ref, $$cursor_pos_ref, $prompt);
+    my ($cursor_input_row, $cursor_col) = $self->_cursor_at_codepoint($$input_ref, $$cursor_pos_ref, $prompt);
 
     # Compute end-of-input position from input state.
-    my ($end_row, $end_col) = $self->_cursor_at_codepoint($$input_ref, length($$input_ref), $prompt);
+    my ($end_input_row, $end_col) = $self->_cursor_at_codepoint($$input_ref, length($$input_ref), $prompt);
+
+    # Convert input rows to screen rows (account for terminal scrolling).
+    my $cursor_row = $self->_input_row_to_screen_row($cursor_input_row);
+    my $end_row = $self->_input_row_to_screen_row($end_input_row);
 
     # Move from end to cursor position.
     if ($cursor_row != $end_row || $cursor_col != $end_col) {
@@ -623,11 +706,14 @@ sub readline {
     $self->{last_cursor_col} = 1;
     $self->{last_cursor_disp} = 0;
     $self->{pending_wrap} = 0;
+    $self->{scroll_offset} = 0;
 
     # Reset performance caches for this readline session
     $self->{_prompt_disp_cache} = undef;
     $self->{_term_width_cache} = undef;
     $self->{_term_width_time} = 0;
+    $self->{_term_height_cache} = undef;
+    $self->{_term_height_time} = 0;
 
     # Install SIGWINCH handler
     my $resize_flag = 0;
@@ -1152,8 +1238,13 @@ sub reposition_cursor {
     # last_cursor_* as the source. _cursor_at_codepoint is a pure
     # function — given the same (input, cp, prompt), it always
     # returns the same (row, col).
-    my ($old_row, $old_col) = $self->_cursor_at_codepoint($$input_ref, $$old_pos_ref, $prompt);
-    my ($new_row, $new_col) = $self->_cursor_at_codepoint($$input_ref, $$new_pos_ref, $prompt);
+    my ($old_input_row, $old_col) = $self->_cursor_at_codepoint($$input_ref, $$old_pos_ref, $prompt);
+    my ($new_input_row, $new_col) = $self->_cursor_at_codepoint($$input_ref, $$new_pos_ref, $prompt);
+
+    # Convert input rows to screen rows (account for terminal scrolling
+    # when the input is taller than the screen).
+    my $old_row = $self->_input_row_to_screen_row($old_input_row);
+    my $new_row = $self->_input_row_to_screen_row($new_input_row);
 
     if (should_log('DEBUG')) {
         log_debug('ReadLine', "reposition_cursor: old_pos=$$old_pos_ref, new_pos=$$new_pos_ref");
