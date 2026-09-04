@@ -8,7 +8,7 @@ use warnings;
 use utf8;
 use Carp qw(croak);
 
-use CLIO::Core::Logger qw(log_error log_warning log_debug);
+use CLIO::Core::Logger qw(log_error log_warning log_info log_debug);
 use CLIO::Util::JSON qw(decode_json);
 use CLIO::Memory::TokenEstimator;
 use Digest::MD5 qw(md5_hex);
@@ -17,7 +17,10 @@ use Exporter 'import';
 our @EXPORT_OK = qw(
     load_conversation_history
     trim_conversation_for_api
+    trim_with_noise_dropping
+    _strip_message_noise
     enforce_message_alternation
+    filter_continuation_prompts
     inject_context_files
     generate_tool_call_id
     repair_tool_call_json
@@ -174,7 +177,7 @@ sub load_conversation_history {
         # string marker so strict-schema providers (e.g. NVIDIA NIM) accept it.
         if (ref($msg->{content}) ne '') {
             $msg->{content} = _coerce_ref_content_to_string($msg->{content});
-            log_debug('ConversationManager',
+            log_warning('ConversationManager',
                 "Coerced ref content to string at JIT time - State::load migration may be stale");
         }
 
@@ -193,7 +196,7 @@ sub load_conversation_history {
         # If missing, API returns "tool call must have a tool call ID" error
         if ($msg->{role} eq 'tool' && !$msg->{tool_call_id}) {
             if ($debug) {
-                log_debug('ConversationManager', "Skipping tool message without tool_call_id " .
+                log_warning('ConversationManager', "Skipping tool message without tool_call_id " .
                     "(content: " . substr($msg->{content} // '', 0, 50) . "...)");
             }
             next;
@@ -365,7 +368,7 @@ sub trim_conversation_for_api {
     }
 
     if ($debug) {
-        log_debug('ConversationManager', "History exceeds prompt budget: $current_total tokens (budget: $safe_threshold of $model_context total). Trimming...");
+        log_warning('ConversationManager', "History exceeds prompt budget: $current_total tokens (budget: $safe_threshold of $model_context total). Trimming...");
         log_debug('ConversationManager', "Model context window: $model_context tokens");
         log_debug('ConversationManager', "Max response: $max_response tokens");
         log_debug('ConversationManager', "Prompt budget (ctx - output - buffer): $safe_threshold tokens");
@@ -376,38 +379,66 @@ sub trim_conversation_for_api {
 
     my @messages = @$history;
 
-    # Calculate target based on available space (90% of remaining budget
-    # after system prompt reserve - gives 10% headroom for next burst).
-    my $target_tokens = int(($safe_threshold - $system_tokens) * 0.9);
+    # Identify pinned indices (force-included regardless of budget):
+    # - First user message (original task anchor) - the original task
+    #   must survive even under aggressive trim.
+    # - Last user message (current turn's user_input) - the model's
+    #   actual question must survive.
+    #
+    # The role-based `_role_based_tail_walk` (in MessageValidator)
+    # handles the full messages array including system_prompt and
+    # dynamic userContext. This legacy trim operates on history only
+    # (system_prompt is passed separately). The dynamic userContext
+    # is added by WorkflowOrchestrator AFTER this trim runs, so it
+    # isn't a concern here.
+    my $first_user_idx;
+    for my $i (0 .. $#messages) {
+        if (ref($messages[$i]) eq 'HASH' && ($messages[$i]{role} // '') eq 'user') {
+            $first_user_idx = $i;
+            last;
+        }
+    }
+    return $history unless defined $first_user_idx;
 
-    if ($target_tokens < 5000) {
-        $target_tokens = 5000;
-        log_debug('ConversationManager', "Target tokens very low ($target_tokens), system prompt may be too large");
+    my $last_user_idx;
+    for my $i ($first_user_idx .. $#messages) {
+        $last_user_idx = $i if ($messages[$i]{role} // '') eq 'user';
     }
 
-    my $current_count = scalar(@messages);
+    my @pinned = ($first_user_idx);
+    push @pinned, $last_user_idx if defined $last_user_idx && $last_user_idx != $first_user_idx;
+    my %pinned_idx = map { $_ => 1 } @pinned;
 
-    # Tail-preserving trim: walk backwards from newest message, keeping
-    # messages until token budget is exhausted. This ensures the most recent
-    # context (current task) survives, not old completed tasks.
-    # The proactive trim in MessageValidator handles sophisticated compression
-    # with thread_summary generation. This is a simple budget-based tail keep.
-    #
-    # IMPORTANT: Preserve tool_call/tool_result pairs together - never split them.
+    # Reserve walk budget for pinned up front. Without this, the
+    # walk accumulates non-pinned content close to target_tokens,
+    # and adding pinned overflows. Mirror the fix applied to
+    # `_role_based_tail_walk` in MessageValidator.pm.
+    my $pinned_total = 0;
+    for my $idx (@pinned) {
+        $pinned_total += CLIO::Memory::TokenEstimator::estimate_messages_tokens([$messages[$idx]]);
+    }
+    my $walk_budget = int(($safe_threshold - $system_tokens) * 0.9);
+    $walk_budget = 5000 if $walk_budget < 5000;
+    $walk_budget -= $pinned_total;
+    $walk_budget = 0 if $walk_budget < 0;
 
-    my @kept = ();
+    # Track kept INDICES (not messages) so we can reconstruct in
+    # conversation order at the end.
+    my @kept_indices;
     my $kept_tokens = 0;
 
     for my $i (reverse 0 .. $#messages) {
         my $msg = $messages[$i];
-        my $msg_tokens = CLIO::Memory::TokenEstimator::estimate_tokens($msg->{content} // '');
-        
+
+        # Skip pinned indices during the walk; force-include them below.
+        next if $pinned_idx{$i};
+
+        my $msg_tokens = CLIO::Memory::TokenEstimator::estimate_messages_tokens([$msg]);
+
         # Check if this is a tool_result that needs its tool_call partner
         my $is_tool_result = ($msg->{role} // '') eq 'tool';
         my $tool_call_id = $msg->{tool_call_id};
-        
-        # If this is a tool_result, check if we have its tool_call in the kept messages
-        # If not, we need to also keep the tool_call (which would be earlier in the array)
+
         if ($is_tool_result && $tool_call_id) {
             # Look for the matching tool_call in the remaining messages (earlier indices)
             my $has_tool_call = 0;
@@ -423,20 +454,19 @@ sub trim_conversation_for_api {
                 }
                 last if $has_tool_call;
             }
-            
-            # If we don't have the tool_call in kept messages, we need to include it
-            # This means we need to also include the assistant message with the tool_call
+
+            # Tool pairing is a hard invariant that must be honored regardless
+            # of pinned-budget accounting - if we can't fit the pair, we accept
+            # over-budget for the tool result rather than strand it.
             if (!$has_tool_call) {
-                # Find the assistant message with this tool_call
                 for my $j (0 .. $i - 1) {
                     my $prev_msg = $messages[$j];
                     if (($prev_msg->{role} // '') eq 'assistant' && $prev_msg->{tool_calls}) {
                         for my $tc (@{$prev_msg->{tool_calls}}) {
                             if ($tc->{id} eq $tool_call_id) {
-                                # Include this assistant message (and its tool_calls)
-                                my $assistant_tokens = CLIO::Memory::TokenEstimator::estimate_tokens($prev_msg->{content} // '');
-                                if ($kept_tokens + $msg_tokens + $assistant_tokens <= $target_tokens) {
-                                    unshift @kept, $prev_msg;
+                                my $assistant_tokens = CLIO::Memory::TokenEstimator::estimate_messages_tokens([$prev_msg]);
+                                if (!grep { $_ == $j } @kept_indices) {
+                                    unshift @kept_indices, $j;
                                     $kept_tokens += $assistant_tokens;
                                 }
                                 last;
@@ -446,9 +476,12 @@ sub trim_conversation_for_api {
                 }
             }
         }
-        
-        if ($kept_tokens + $msg_tokens <= $target_tokens) {
-            unshift @kept, $msg;
+
+        # Skip if already in @kept_indices (tool_pair spliced it in)
+        next if grep { $_ == $i } @kept_indices;
+
+        if ($kept_tokens + $msg_tokens <= $walk_budget) {
+            unshift @kept_indices, $i;
             $kept_tokens += $msg_tokens;
         } else {
             # Budget exhausted - stop adding older messages
@@ -456,15 +489,257 @@ sub trim_conversation_for_api {
         }
     }
 
+    # Force-include the pinned indices. If they push us over budget,
+    # accept over-budget rather than silently dropping them.
+    my %kept_set = map { $_ => 1 } @kept_indices;
+    for my $idx (@pinned) {
+        next if $kept_set{$idx};
+        my $msg = $messages[$idx];
+        my $msg_tokens = CLIO::Memory::TokenEstimator::estimate_messages_tokens([$msg]);
+        unshift @kept_indices, $idx;
+        $kept_tokens += $msg_tokens;
+        $kept_set{$idx} = 1;
+    }
+
+    # @kept_indices is in reverse-insertion order; sort ascending.
+    @kept_indices = sort { $a <=> $b } @kept_indices;
+    my @final = @messages[@kept_indices];
+
     if ($debug) {
-        log_debug('ConversationManager', "Trimmed: " . scalar(@messages) . " -> " . scalar(@kept) . " messages");
-        log_debug('ConversationManager', "Token reduction: $history_tokens -> $kept_tokens tokens");
+        log_debug('ConversationManager', "Trimmed: " . scalar(@messages) . " -> " . scalar(@final) . " messages");
+        log_debug('ConversationManager', "Token reduction: $history_tokens -> $kept_tokens tokens (pinned: $pinned_total)");
         log_debug('ConversationManager', "Final total with system: " . ($system_tokens + $kept_tokens) . " of $safe_threshold prompt budget");
     }
 
-    return \@kept if @kept;
+    # Filter continuation-only user prompts (mirror of the filter in
+    # MessageValidator::_role_based_tail_walk). Both trim paths
+    # produce similar outputs so the filter is applied symmetrically.
+    my $filtered = filter_continuation_prompts(\@final);
+
+    return $filtered if $filtered && @$filtered;
 
     return $history;
+}
+
+=head2 trim_with_noise_dropping
+
+Trim conversation history to fit within model's token limits, with
+additional noise-stripping to preserve more signal at the same token cost.
+
+Strategy (messageHistory feature):
+1. Phase 1 (NEW): Strip noise from each message
+   - Drop assistant reasoning_content (one-shot thinking the model
+     already used to produce the response - it doesn't need to see it
+     again in history). This is the biggest single token saving in
+     long sessions where thinking blocks are 500-2000 tokens each.
+   - Preserve user text and tool result content (model needs both).
+2. Phase 2: Delegate to trim_conversation_for_api to do the tail-walk
+   with tool_call/tool_result pairing.
+
+This wrapper is called from WorkflowOrchestrator::_build_turn_context
+in place of trim_conversation_for_api directly. The new behavior is
+"strip noise first, then walk" - both phases run before the history
+is serialized into the messageHistory XML block.
+
+Arguments:
+- $history: Arrayref of message objects
+- $system_prompt: System prompt string (for token accounting)
+- %opts: Options hash (passed through to trim_conversation_for_api)
+  - model_context_window => int (default: 128000)
+  - max_response_tokens => int (default: 16000)
+  - debug => 0|1
+
+Returns:
+- Arrayref of trimmed messages (may be same ref if no trimming needed)
+
+=cut
+
+sub trim_with_noise_dropping {
+    my ($history, $system_prompt, %opts) = @_;
+    return $history unless $history && @$history;
+
+    my $debug = $opts{debug} // 0;
+
+    # Phase 1: Strip noise from each message (non-destructive shallow copy).
+    # The token savings from dropping reasoning_content often bring
+    # the history under budget without needing to drop any messages at all.
+    my @stripped = map { _strip_message_noise($_, $debug) } @$history;
+
+    # Phase 2: Standard trim walk on the noise-reduced history.
+    return trim_conversation_for_api(\@stripped, $system_prompt, %opts);
+}
+
+=head2 _strip_message_noise
+
+Drop content from a single message that is high-volume but low-signal.
+Operates on a DEEP copy of the message (non-destructive) so the
+caller's hash is not mutated.
+
+For an assistant message, strips:
+  - reasoning_content (string - DeepSeek, Anthropic native, Qwen thinking)
+  - reasoning_details (arrayref - OpenAI Responses API, OpenRouter, MiniMax)
+  - reasoning_blocks (arrayref - Anthropic native thinking blocks)
+For a tool message, keeps everything (model needs the result).
+For a user message, never strips. User text is sacred.
+
+=cut
+
+sub _strip_message_noise {
+    my ($msg, $debug) = @_;
+    return $msg unless ref($msg) eq 'HASH';
+
+    my $role = $msg->{role} // '';
+    # Deep-ish copy: clone the top-level hash and clone nested
+    # arrayrefs that we mutate. tool_calls and content (when arrayref)
+    # would otherwise be shared with the caller's data and any later
+    # edit to the stripped message would corrupt the original. Strings
+    # are immutable in Perl so we don't need to clone them.
+    my $stripped = { %$msg };
+    for my $key (qw(tool_calls reasoning_details reasoning_blocks)) {
+        if (ref($stripped->{$key}) eq 'ARRAY') {
+            $stripped->{$key} = [ @{$stripped->{$key}} ];
+        }
+    }
+    if (ref($stripped->{content}) eq 'ARRAY') {
+        $stripped->{content} = [ @{$stripped->{content}} ];
+    }
+
+    if ($role eq 'assistant') {
+        # Strip reasoning_content from old assistant messages. The
+        # model produced it once and processed it - keeping it in
+        # history just burns tokens.
+        if (defined $stripped->{reasoning_content} && length $stripped->{reasoning_content}) {
+            my $saved = int(length($msg->{reasoning_content}) / 4);
+            $stripped->{_stripped_thinking} = 1;
+            delete $stripped->{reasoning_content};
+            log_debug('ConversationManager', "Stripped reasoning_content from assistant (saved $saved tokens)") if $debug;
+        }
+
+        # reasoning_details (arrayref of OpenRouter/MiniMax/Responses-API
+        # blocks). Can be just as large as reasoning_content when the
+        # model emits detailed chain-of-thought.
+        if (ref($stripped->{reasoning_details}) eq 'ARRAY' && @{$stripped->{reasoning_details}}) {
+            my $saved = 0;
+            $saved += length($_->{text} // '') for @{$stripped->{reasoning_details}};
+            $saved = int($saved / 4);
+            $stripped->{_stripped_thinking} = 1;
+            delete $stripped->{reasoning_details};
+            log_debug('ConversationManager', "Stripped reasoning_details from assistant (saved $saved tokens)") if $debug;
+        }
+
+        # reasoning_blocks (arrayref of Anthropic native thinking blocks).
+        if (ref($stripped->{reasoning_blocks}) eq 'ARRAY' && @{$stripped->{reasoning_blocks}}) {
+            my $saved = 0;
+            for my $b (@{$stripped->{reasoning_blocks}}) {
+                if (ref($b) eq 'HASH') {
+                    $saved += length($b->{thinking} // $b->{text} // '');
+                } else {
+                    $saved += length($b // '');
+                }
+            }
+            $saved = int($saved / 4);
+            $stripped->{_stripped_thinking} = 1;
+            delete $stripped->{reasoning_blocks};
+            log_debug('ConversationManager', "Stripped reasoning_blocks from assistant (saved $saved tokens)") if $debug;
+        }
+    }
+
+    return $stripped;
+}
+
+=head2 filter_continuation_prompts
+
+Remove continuation-only user messages (e.g. 'continue', 'go on',
+'ok', 'yes') from a messages array, EXCEPT keep the very last
+user message (which is the actual current input). Continuation
+prompts that survive trim pollute the alternation merge: a
+sequence like:
+
+    user: continue
+    assistant: ...
+    user: continue
+    assistant: ...
+
+becomes after `enforce_message_alternation`:
+
+    user: continue
+
+continue
+
+<actual user input>
+
+The model sees `continue\n\ncontinue\n\n<actual question>` with
+no assistant responses explaining what was being continued.
+Stripping the continuation prompts (except the last user, which
+is the actual current input) prevents this.
+
+This is a no-op for messages arrays without continuation
+prompts.
+
+Arguments:
+- $messages: ArrayRef of message hashes
+
+Returns: New ArrayRef with continuation prompts removed (or the
+input arrayref if no changes needed)
+
+=cut
+
+my @CONT_PROMPT_PHRASES = (
+    qr/\Acontinue\.?\z/i,
+    qr/\Ago on\.?\z/i,
+    qr/\Aok\.?\z/i,
+    qr/\Aokay\.?\z/i,
+    qr/\Aproceed\.?\z/i,
+    qr/\Akeep going\.?\z/i,
+    qr/\Ayes\.?\z/i,
+    qr/\Ay\.?\z/i,
+    qr/\Aplease continue\.?\z/i,
+    qr/\Ago ahead\.?\z/i,
+    qr/\Asame as before\.?\z/i,
+    qr/\Aagain\.?\z/i,
+);
+
+sub _is_continuation_only {
+    my ($text) = @_;
+    return 0 unless defined $text;
+    $text = '' . $text;
+    return 0 if length($text) > 80;
+    return 1 if grep { $text =~ $_ } @CONT_PROMPT_PHRASES;
+    return 0;
+}
+
+sub filter_continuation_prompts {
+    my ($messages) = @_;
+    return $messages unless $messages && @$messages;
+
+    # Identify the LAST user message index - keep it as-is even if
+    # it's a continuation prompt (e.g. user types 'continue' as their
+    # actual current input).
+    my $last_user_idx;
+    for my $i (0 .. $#$messages) {
+        if (ref($messages->[$i]) eq 'HASH' && ($messages->[$i]{role} // '') eq 'user') {
+            $last_user_idx = $i;
+        }
+    }
+
+    my @filtered;
+    my $removed = 0;
+    for my $i (0 .. $#$messages) {
+        my $msg = $messages->[$i];
+        if (ref($msg) eq 'HASH'
+            && ($msg->{role} // '') eq 'user'
+            && defined $last_user_idx
+            && $i != $last_user_idx
+            && _is_continuation_only($msg->{content} // '')) {
+            $removed++;
+            next;
+        }
+        push @filtered, $msg;
+    }
+
+    return $messages if $removed == 0;
+    log_debug('ConversationManager', "filter_continuation_prompts: removed $removed continuation prompts");
+    return \@filtered;
 }
 
 =head2 enforce_message_alternation
@@ -527,7 +802,18 @@ sub enforce_message_alternation {
                     $has_content = @{$msg->{content}} > 0;
                 }
             }
-            if ($has_content) {
+            # Drop empty assistant content when merging consecutive
+            # assistants. This handles the case where trim kept a
+            # trailing "Done N" assistant (no tool_calls, just text)
+            # but dropped the turn's tool pair - the next assistant
+            # "Work N+1" should stand alone rather than being fused
+            # with orphaned "Done N" text.
+            my $drop_this_content = 0;
+            if ($role eq 'assistant' && !$has_content
+                && (!defined $msg->{tool_calls} || !@{$msg->{tool_calls}})) {
+                $drop_this_content = 1;
+            }
+            if ($has_content && !$drop_this_content) {
                 $accumulated_content .= "\n\n" if length($accumulated_content) > 0;
                 if (!ref($msg->{content})) {
                     $accumulated_content .= $msg->{content};
@@ -539,7 +825,7 @@ sub enforce_message_alternation {
             }
             $accumulated_reasoning_content = $msg->{reasoning_content} if $msg->{reasoning_content};
 
-            log_debug('ConversationManager', "Merged consecutive $role message");
+            log_debug('ConversationManager', "Merged consecutive $role message" . ($drop_this_content ? ' (dropped empty content)' : ''));
         } else {
             # Different role, arrayref content, or tool message - flush accumulated message
             if (defined $last_role) {
@@ -648,7 +934,7 @@ sub inject_context_files {
 
     for my $file (@context_files) {
         unless (-f $file) {
-            log_debug('ConversationManager', "Context file not found: $file");
+            log_warning('ConversationManager', "Context file not found: $file");
             next;
         }
 

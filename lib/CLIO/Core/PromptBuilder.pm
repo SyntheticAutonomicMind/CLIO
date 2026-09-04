@@ -829,10 +829,15 @@ sub _read_session_goals {
         $goals_text .= "Track progress using memory_operations:\n";
         $goals_text .= "  memory_operations(operation: 'retrieve', key: 'session_goals')\n";
         $goals_text .= "  memory_operations(operation: 'store', key: 'session_goals', content: '<json>')\n\n";
+        # Drop the internal goal id from the prose - it is framework
+        # bookkeeping for the todo_operations tool, not something the
+        # model needs to read or remember. The model only sees title
+        # and description (mirrors the prose-renderer's handling of
+        # todo ids in messages_to_prose_dynamic).
         for my $goal (@active) {
             my $title = $goal->{title} || 'Untitled';
             my $desc  = $goal->{description} || '';
-            $goals_text .= "- [#$goal->{id}] $title";
+            $goals_text .= "- $title";
             $goals_text .= ": $desc" if $desc;
             $goals_text .= "\n";
         }
@@ -887,8 +892,15 @@ sub _read_active_todos {
         require CLIO::Util::PathResolver;
         my $clio_dir = CLIO::Util::PathResolver::find_clio_dir(Cwd::getcwd());
         my $store = CLIO::Session::TodoStore->new(
-            clio_dir => $clio_dir,
-            session_id => $session->can('id') ? $session->id() : undef,
+            # TodoStore's constructor takes `sessions_dir`, NOT
+            # `clio_dir`. Passing `clio_dir` was silently dropped and
+            # TodoStore read from `<cwd>/sessions/<id>/todos.json`,
+            # which is empty for puppeteer child projects (tests/,
+            # scratch/) whose session data lives under their own
+            # `.clio/`. Mirrors the fix applied to
+            # WorkflowOrchestrator::_read_active_todos_for_projection.
+            sessions_dir => "$clio_dir/sessions",
+            session_id   => $session->can('id') ? $session->id() : undef,
         );
         # Subscribe to todo mutations so the activeTodos block reflects
         # the new state on the very next prompt build, not 60s later

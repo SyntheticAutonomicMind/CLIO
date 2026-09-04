@@ -177,10 +177,10 @@ sub write {
     # Auto-assign IDs to todos that don't have them
     my $max_id = 0;
     foreach my $todo (@$todos) {
-        $max_id = $todo->{id} if defined $todo->{id} && $todo->{id} > $max_id;
+        $max_id = $todo->{id} if _is_valid_id($todo->{id}) && $todo->{id} > $max_id;
     }
     foreach my $todo (@$todos) {
-        unless (defined $todo->{id}) {
+        unless (_is_valid_id($todo->{id})) {
             $max_id++;
             $todo->{id} = $max_id;
         }
@@ -274,7 +274,7 @@ sub update {
         my $found = 0;
         
         foreach my $todo (@$todos) {
-            if (defined $todo->{id} && $todo->{id} == $todo_id) {
+            if (_is_valid_id($todo->{id}) && $todo->{id} == $todo_id) {
                 # Apply updates
                 foreach my $key (keys %$update) {
                     next if $key eq 'id';  # Don't update ID
@@ -347,9 +347,9 @@ sub add {
     # Find highest existing ID
     my $max_id = 0;
     foreach my $todo (@$existing) {
-        $max_id = $todo->{id} if $todo->{id} > $max_id;
+        $max_id = $todo->{id} if _is_valid_id($todo->{id}) && $todo->{id} > $max_id;
     }
-    
+
     # Assign IDs to new todos
     my $now = time();
     foreach my $new_todo (@$new_todos) {
@@ -484,6 +484,19 @@ sub validate {
 }
 
 # MARK: - Private Methods
+
+# Returns true iff $id is a positive integer (the documented shape of
+# todo ids per docs/MEMORY.md and the existing validator). Used to
+# guard numeric comparisons on $todo->{id} so a corrupt or out-of-shape
+# record (e.g. an id of "5b" or undef) does not trigger
+# "Argument isn't numeric in numeric gt" warnings from Perl.
+sub _is_valid_id {
+    my ($id) = @_;
+    return 0 unless defined $id;
+    return 0 unless $id =~ /^\d+$/;
+    return 0 if $id + 0 > 2147483647;  # avoid overflow surprises on 32-bit
+    return 1;
+}
 
 sub _session_dir {
     my ($self) = @_;
