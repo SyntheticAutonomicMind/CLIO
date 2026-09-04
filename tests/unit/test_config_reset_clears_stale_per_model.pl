@@ -322,4 +322,64 @@ subtest 'end-to-end: stale value cannot resurrect after reset through reload' =>
         'session 2: sampling_top_k not resurrected');
 };
 
+# ============================================================================
+# 7. Same shape of bug for show_thinking / thinking_effort / thinking_mode.
+# These are also in MODEL_SCOPED_KEYS. The /api handlers for them now call
+# clear_model_scoped after set() so a switch back to a model that
+# previously had the opposite value does not resurrect the old setting.
+# ============================================================================
+
+for my $key (qw(show_thinking thinking_effort thinking_mode)) {
+    subtest "thinking handler clear: $key stale entry cleared across models" => sub {
+        my $tmpdir = tempdir(CLEANUP => 1);
+
+        my $value_for_key = {
+            show_thinking   => 1,
+            thinking_effort => 'high',
+            thinking_mode   => 'enabled',
+        };
+        my $global_value = $value_for_key->{$key};
+
+        # Seed: two models, both have the key set.
+        write_disk($tmpdir, {
+            api_base => 'http://localhost:9090/v1/chat/completions',
+            api_key  => '1234',
+            model    => 'minimax/MiniMax-M3',
+            provider => 'minimax',
+            model_configs => {
+                'minimax/MiniMax-M3' => { $key => $global_value },
+                'anthropic/claude-4-sonnet' => { $key => $global_value },
+            },
+        });
+
+        # Simulate the API handler: user on minimax toggles thinking OFF.
+        # The handler calls set() then clear_model_scoped().
+        my $reset_value = {
+            show_thinking   => 0,
+            thinking_effort => 'medium',
+            thinking_mode   => 'auto',
+        };
+
+        my $config = CLIO::Core::Config->new(config_dir => $tmpdir);
+        $config->set($key, $reset_value->{$key}, 1);
+        $config->clear_model_scoped($key);
+        $config->save();
+
+        # Both models' entries for $key should be gone.
+        ok(!exists $config->{config}{model_configs}{'minimax/MiniMax-M3'}{$key},
+            "$key: minimax entry cleared");
+        ok(!exists $config->{config}{model_configs}{'anthropic/claude-4-sonnet'}{$key},
+            "$key: anthropic entry cleared");
+
+        # Global value should be the new value.
+        is($config->{config}{$key}, $reset_value->{$key},
+            "$key: global value updated to reset value");
+
+        # Restart and switch to anthropic: stale value must not resurrect.
+        my $config2 = CLIO::Core::Config->new(config_dir => $tmpdir);
+        is($config2->{config}{$key}, $reset_value->{$key},
+            "$key: global value persists across reload");
+    };
+}
+
 done_testing();

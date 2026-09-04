@@ -96,6 +96,10 @@ sub handle_set {
             $self->_write_session_override($thinking_key, $enabled);
         } else {
             $self->{config}->set($thinking_key, $enabled);
+            # show_thinking is model-scoped; clear stale per-model
+            # entries so a switch back to a model that previously had
+            # the opposite value does not resurrect the old setting.
+            $self->{config}->clear_model_scoped($thinking_key);
             $self->{config}->save();
         }
         my $state_label = $enabled ? "enabled" : "disabled";
@@ -129,6 +133,10 @@ sub handle_set {
             $self->_write_session_override('thinking_effort', $level);
         } else {
             $self->{config}->set('thinking_effort', $level);
+            # thinking_effort is model-scoped; clear stale per-model
+            # entries so a switch back to a model that previously had
+            # a different effort does not resurrect the old setting.
+            $self->{config}->clear_model_scoped('thinking_effort');
             $self->{config}->save();
         }
         $self->display_system_message("Thinking effort set to '$level'" . $self->_scope_tag($session_only));
@@ -170,6 +178,10 @@ sub handle_set {
             $self->_write_session_override('thinking_mode', $mode);
         } else {
             $self->{config}->set('thinking_mode', $mode);
+            # thinking_mode is model-scoped; clear stale per-model
+            # entries so a switch back to a model that previously had
+            # a different mode does not resurrect the old setting.
+            $self->{config}->clear_model_scoped('thinking_mode');
             $self->{config}->save();
         }
         $self->display_system_message("Thinking mode set to '$mode'" . $self->_scope_tag($session_only));
