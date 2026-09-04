@@ -8,7 +8,7 @@ use warnings;
 use utf8;
 use Carp qw(croak);
 
-use CLIO::Core::Logger qw(log_error log_warning log_info log_debug);
+use CLIO::Core::Logger qw(log_error log_warning log_debug);
 use CLIO::Util::JSON qw(decode_json);
 use CLIO::Memory::TokenEstimator;
 use Digest::MD5 qw(md5_hex);
@@ -177,7 +177,7 @@ sub load_conversation_history {
         # string marker so strict-schema providers (e.g. NVIDIA NIM) accept it.
         if (ref($msg->{content}) ne '') {
             $msg->{content} = _coerce_ref_content_to_string($msg->{content});
-            log_warning('ConversationManager',
+            log_debug('ConversationManager',
                 "Coerced ref content to string at JIT time - State::load migration may be stale");
         }
 
@@ -196,7 +196,7 @@ sub load_conversation_history {
         # If missing, API returns "tool call must have a tool call ID" error
         if ($msg->{role} eq 'tool' && !$msg->{tool_call_id}) {
             if ($debug) {
-                log_warning('ConversationManager', "Skipping tool message without tool_call_id " .
+                log_debug('ConversationManager', "Skipping tool message without tool_call_id " .
                     "(content: " . substr($msg->{content} // '', 0, 50) . "...)");
             }
             next;
@@ -368,7 +368,7 @@ sub trim_conversation_for_api {
     }
 
     if ($debug) {
-        log_warning('ConversationManager', "History exceeds prompt budget: $current_total tokens (budget: $safe_threshold of $model_context total). Trimming...");
+        log_debug('ConversationManager', "History exceeds prompt budget: $current_total tokens (budget: $safe_threshold of $model_context total). Trimming...");
         log_debug('ConversationManager', "Model context window: $model_context tokens");
         log_debug('ConversationManager', "Max response: $max_response tokens");
         log_debug('ConversationManager', "Prompt budget (ctx - output - buffer): $safe_threshold tokens");
@@ -934,7 +934,7 @@ sub inject_context_files {
 
     for my $file (@context_files) {
         unless (-f $file) {
-            log_warning('ConversationManager', "Context file not found: $file");
+            log_debug('ConversationManager', "Context file not found: $file");
             next;
         }
 

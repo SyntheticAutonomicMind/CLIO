@@ -6,7 +6,7 @@ package CLIO::Core::API::MessageValidator;
 use strict;
 use warnings;
 use utf8;
-use CLIO::Core::Logger qw(log_debug log_info log_warning);
+use CLIO::Core::Logger qw(log_debug log_warning);
 use CLIO::Memory::TokenEstimator qw(estimate_tokens compute_prompt_budget);
 use CLIO::Util::JSON qw(safe_encode_json);
 
@@ -625,7 +625,7 @@ sub validate_tool_message_pairs {
         push @validated, $msg;
     }
 
-    log_info('MessageValidator', "Fixed $fixes orphaned tool messages") if $fixes > 0;
+    log_debug('MessageValidator', "Fixed $fixes orphaned tool messages") if $fixes > 0;
 
     return \@validated;
 }
