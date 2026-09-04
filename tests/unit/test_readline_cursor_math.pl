@@ -7,7 +7,7 @@
 # Test cases (20-col terminal, 2-char prompt "> "):
 #   - Cursor at codepoint 0 in empty input
 #   - Cursor at various codepoint offsets in ASCII input
-#   - Cursor at wrap boundaries (pending wrap vs already-wrapped)
+#   - Cursor at wrap boundaries (autowrap positions)
 #   - Cursor at start/end of multi-row input
 #   - Wide character (CJK) positioning (the bug _pos_to_rowcol had)
 #   - Off-by-one regression at position 5
@@ -74,15 +74,14 @@ rows_equal($rl->_cursor_at_codepoint("a", 1, '> '), 0, 4, "cp=1 in 'a' -> (0,4) 
 # Cursor at cp=17 (before 18th char): col = 3 + 17 = 20 (last col)
 rows_equal($rl->_cursor_at_codepoint("a" x 18, 17, '> '), 0, 20, "cp=17 in 18-char input -> (0,20) last col of row 0");
 
-# Cursor at cp=18 (after all 18 chars): col = 20, pending wrap
-# _cursor_at_codepoint returns (0, 20) because col == term_width
-rows_equal($rl->_cursor_at_codepoint("a" x 18, 18, '> '), 1, 2, "cp=18 in 18-char input -> (1,2) after wrap");
+# Cursor at cp=18 (after all 18 chars): the 18th char lands at col=20,
+# then autowraps the cursor to (row=1, col=1). Cursor before char 19
+# therefore sits at (1, 1).
+rows_equal($rl->_cursor_at_codepoint("a" x 18, 18, '> '), 1, 1, "cp=18 in 18-char input -> (1,1) after wrap");
 
-# Cursor at cp=19 (before 19th char, which wraps to row 1):
-# After 18 chars: col=20, pending. i=18: pending->row=1,col=1. 'a' at col=1, col=2.
-# Cursor at cp=19 is after char 18, before char 19. col=2.
-# Cursor at cp=19 (after 19 chars): 17 chars on row 0, 2 on row 1.
-rows_equal($rl->_cursor_at_codepoint("a" x 19, 19, '> '), 1, 3, "cp=19 in 19-char input -> (1,3) end of input");
+# Cursor at cp=19 (before 19th char): char 19 lands on row 1 col 1,
+# cursor advances to (1, 2). End of input.
+rows_equal($rl->_cursor_at_codepoint("a" x 19, 19, '> '), 1, 2, "cp=19 in 19-char input -> (1,2) end of input");
 
 # Cursor at cp=0 in 19-char input: at start of row 0
 rows_equal($rl->_cursor_at_codepoint("a" x 19, 0, '> '), 0, 3, "cp=0 in 19-char input -> (0,3) at start");
@@ -91,12 +90,16 @@ rows_equal($rl->_cursor_at_codepoint("a" x 19, 0, '> '), 0, 3, "cp=0 in 19-char 
 # 20-col terminal, 2-char prompt. 18 chars fill row 0 (cols 3-20).
 # 36 chars fill row 0 + row 1.
 
-# Cursor at cp=36 (after 36 chars = 2 full rows): col=20, pending wrap
-rows_equal($rl->_cursor_at_codepoint("a" x 36, 36, '> '), 1, 20, "cp=36 in 36-char input -> (1,20) pending wrap on row 1");
+# Cursor at cp=36 (after 36 chars = 2 full rows): 18 chars on row 0
+# (last at col=20), 18 chars on row 1 (last at col=18). Cursor at (1, 19).
+rows_equal($rl->_cursor_at_codepoint("a" x 36, 36, '> '), 1, 19, "cp=36 in 36-char input -> (1,19) after row 1 fills");
 
-# Cursor at cp=37 (before 37th char, wraps to row 2):
-# After 36 chars: (1,20) pending. i=36: pending->row=2,col=1. 'a' at col=1, col=2.
-rows_equal($rl->_cursor_at_codepoint("a" x 37, 37, '> '), 2, 2, "cp=37 in 37-char input -> (2,2) after second wrap");
+# Cursor at cp=37 (before 37th char): char 37 lands on row 1 col 19,
+# cursor advances to (1, 20).
+rows_equal($rl->_cursor_at_codepoint("a" x 37, 37, '> '), 1, 20, "cp=37 in 37-char input -> (1,20) before next wrap");
+
+# Cursor at cp=38 (after char 37, which autowraps): cursor at (2, 1).
+rows_equal($rl->_cursor_at_codepoint("a" x 38, 38, '> '), 2, 1, "cp=38 in 38-char input -> (2,1) after second wrap");
 
 # --- Regression: off-by-one at position 5 ---
 # Input "hello world test" (16 chars), prompt "> " (2 cols).
@@ -113,10 +116,10 @@ rows_equal($r, $c, 0, 19, "regression: cp=16 (end of 16-char input) -> (0,19)");
 ($r, $c) = $rl->_cursor_at_codepoint("a" x 18, 16, '> ');
 rows_equal($r, $c, 0, 19, "cp=16 in 18-char input -> (0,19) before last char");
 
-# Cursor at cp=18 in 18-char input: after 17 chars col=20 (pending),
-# 18th char wraps to row 1. Result is (1,2).
+# Cursor at cp=18 in 18-char input: 18 chars placed, last at col=20.
+# Autowrap moves cursor to (1, 1).
 ($r, $c) = $rl->_cursor_at_codepoint("a" x 18, 18, '> ');
-rows_equal($r, $c, 1, 2, "cp=18 in 18-char input -> (1,2) after wrap");
+rows_equal($r, $c, 1, 1, "cp=18 in 18-char input -> (1,1) after wrap");
 
 # --- Wide character positioning ---
 # _pos_to_rowcol used arithmetic division which doesn't account for
@@ -140,12 +143,12 @@ rows_equal($r, $c, 0, 7, "CJK: cp=3 in 'a你b' -> (0,7) after 'b'");
 # Input: 17 'a's + '你' (2 cols) = 19 display cols. Prompt 2 = 21 total.
 # On 20-col terminal: row 0 = 18 cols (prompt 2 + 16 'a's), row 1 = 3 cols (2 'a's + '你').
 # Cursor at cp=17 (before '你', after 17 'a's):
-#   col after 17 'a's = 3+17 = 20. pending = 1 (col == term_width).
-#   Return (0, 20).
+#   col after 17 'a's = 3+17 = 20. Cursor sits at last col of row 0.
 ($r, $c) = $rl->_cursor_at_codepoint(("a" x 17) . "\x{4F60}", 17, '> ');
-rows_equal($r, $c, 0, 20, "CJK at boundary: cp=17 before '你' -> (0,20) pending wrap");
+rows_equal($r, $c, 0, 20, "CJK at boundary: cp=17 before '你' -> (0,20) at last col");
 # Cursor at cp=18 (after '你', wraps to row 1):
-#   After 17 'a's: col=20, pending=1. i=17: pending->row=1,col=1. '你' w=2: col+w-1=2 <= 20, no wrap. col=3. Not 20, no pending.
+#   After 17 'a's: col=20. i=17 places '你' (w=2): col+w-1=21>20, wrap to (1,1).
+#   col += w = 3. col > 20? No. Cursor at (1, 3).
 ($r, $c) = $rl->_cursor_at_codepoint(("a" x 17) . "\x{4F60}", 18, '> ');
 rows_equal($r, $c, 1, 3, "CJK at boundary: cp=18 after '你' -> (1,3)");
 
@@ -166,12 +169,12 @@ rows_equal($r, $c, 0, 8, "ANSI prompt: cp=5 in 'hello' -> (0,8)");
 # Row 0: 18 chars (cols 3-20). Row 1: 1 char (col 2).
 # Cursor at cp=0: (0, 3)
 rows_equal($rl->_cursor_at_codepoint("a" x 19, 0, '> '), 0, 3, "multi-row: cp=0 -> (0,3) at start");
-# Cursor at cp=18: (1, 2) (after 18 chars: col=20 pending, then i=18 wraps to row 1 col 1, char puts col=2)
+# Cursor at cp=18: 18 chars placed, last at col=20. Autowrap to (1, 1).
 ($r, $c) = $rl->_cursor_at_codepoint("a" x 19, 18, '> ');
-rows_equal($r, $c, 1, 2, "multi-row: cp=18 -> (1,2) start of row 1");
-# Cursor at cp=19: (1, 3) (end of input, col=3)
+rows_equal($r, $c, 1, 1, "multi-row: cp=18 -> (1,1) start of row 1");
+# Cursor at cp=19: char 19 lands at row 1 col 1, cursor at (1, 2).
 ($r, $c) = $rl->_cursor_at_codepoint("a" x 19, 19, '> ');
-rows_equal($r, $c, 1, 3, "multi-row: cp=19 -> (1,3) end of input");
+rows_equal($r, $c, 1, 2, "multi-row: cp=19 -> (1,2) end of input");
 
 print "\n$pass passed, $fail failed\n";
 exit($fail > 0 ? 1 : 0);

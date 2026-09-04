@@ -226,6 +226,10 @@ Compute the physical (row, col) that the cursor would be at if it sat
 at codepoint $cp in $input. Starts at (0, 1+prompt_disp) and walks through
 each codepoint, tracking wraps.
 
+Position semantics match the terminal's autowrap behavior: a char placed
+at the last column (col=term_width) occupies that column, and the cursor
+advances to (row+1, col=1). The cursor is never reported at col > term_width.
+
 This is the single source of truth for cursor position. Every cursor
 movement, redraw, and reposition is computed from this function — never
 from incrementally-tracked shadow state that can desync.
@@ -246,38 +250,33 @@ sub _cursor_at_codepoint {
     my $col = $prompt_disp + 1;
 
     # Walk through codepoints 0..cp-1, advancing col and wrapping on
-    # boundary. We track pending state internally so we know whether the
-    # cursor is at col 1 of a new row (after a wrap) or col term_width
-    # (pending wrap on the previous row).
-    my $pending = 0;
+    # boundary. Two wrap checks per char:
+    #   1. Pre-place: if the char doesn't fit at the current col, wrap first.
+    #   2. Post-place: if the cursor advanced past the last col, the terminal
+    #      autowrapped (char at col=term_width -> cursor at row+1, col=1).
+    # The previous implementation tracked pending=1 when col reached
+    # term_width and modeled the wrap as "wrap first, then place". That
+    # mis-modeled autowrap: the terminal places the char at col=term_width
+    # THEN wraps the cursor. The pending version returned col=2 after the
+    # wrap when the actual position was col=1, causing every cursor position
+    # past the first wrap to be off by one column.
     for my $i (0 .. $cp - 1) {
         my $ch = substr($input, $i, 1);
         my $w = _display_width($ch);
 
-        if ($pending) {
-            $row += 1;
-            $col = 1;
-            $pending = 0;
-        }
-        # If this char doesn't fit in remaining space, wrap first.
+        # Pre-place wrap: char doesn't fit at the current col.
         if ($col + $w - 1 > $term_width) {
             $row += 1;
             $col = 1;
         }
         $col += $w;
-        if ($col == $term_width) {
-            $pending = 1;
+        # Post-place wrap: cursor advanced past last col (autowrap).
+        if ($col > $term_width) {
+            $row += 1;
+            $col = 1;
         }
     }
 
-    # Note: the cursor at codepoint $cp is "before" char $cp. If pending
-    # is set here, the cursor sits at last col of current row (the
-    # wrap will resolve when char $cp is printed). Convert to a
-    # 1-indexed col for the caller.
-    if ($pending) {
-        # Cursor is at last col of current row.
-        return ($row, $term_width);
-    }
     return ($row, $col);
 }
 
@@ -341,44 +340,31 @@ sub _emit_text {
     my $term_width = $self->_get_term_width();
     my $row = $self->{last_cursor_row};
     my $col = $self->{last_cursor_col};
-    my $pending = $self->{pending_wrap};
 
+    # Track last_cursor_* with the terminal's autowrap semantics: a char
+    # placed at col=term_width wraps the cursor to (row+1, col=1) AFTER
+    # the char is placed. The previous "pending wrap first, then place"
+    # model mis-modeled autowrap and left the cursor one column past the
+    # terminal's actual position whenever a wrap occurred (col=2 instead
+    # of col=1 on the new row, and similarly for every subsequent row).
     for my $i (0 .. length($visible) - 1) {
         my $ch = substr($visible, $i, 1);
         my $w = _display_width($ch);
 
-        # Step 1: Resolve pending-wrap if set. The wrap happens BEFORE
-        # the char is placed.
-        if ($pending) {
-            $row += 1;
-            $col = 1;
-            $pending = 0;
-        }
-
-        # Step 2: Place the char. If it doesn't fit in the remaining
-        # space (col + w > term_width + 1), it wraps to next row.
+        # Pre-place wrap: char doesn't fit at the current col.
         if ($col + $w - 1 > $term_width) {
-            # Wrap before placing.
             $row += 1;
             $col = 1;
         }
         $col += $w;
-
-        # Step 3: If we landed exactly at col=term_width, set pending
-        # for the NEXT char (which will wrap). Note: if this is the
-        # LAST char of $text, pending is set but never used (caller
-        # will likely clear it before the next operation).
-        if ($col == $term_width + 1) {
-            # Shouldn't happen since we wrap when col + w > term_width;
-            # defensive.
-            $col = 1;
+        # Post-place wrap: cursor advanced past last col (autowrap).
+        if ($col > $term_width) {
             $row += 1;
-        } elsif ($col == $term_width) {
-            $pending = 1;
+            $col = 1;
         }
     }
 
-    # Step 4: If the row went past the bottom of the screen, the
+    # If the row went past the bottom of the screen, the
     # terminal scrolled up by 1 row per overflowing row. Track how
     # many rows have scrolled off so cursor positioning can convert
     # input rows to screen rows.
@@ -393,15 +379,16 @@ sub _emit_text {
     $self->{last_cursor_row} = $row;
     $self->{last_cursor_col} = $col;
     $self->{last_cursor_disp} = $row * $term_width + ($col - 1);
-    $self->{pending_wrap} = $pending;
+    # pending_wrap is no longer meaningful under autowrap semantics — the
+    # cursor is always at a valid (row, col) with col in [1, term_width].
+    # Stays 0 for any code that still reads the field.
+    $self->{pending_wrap} = 0;
     $self->{scroll_offset} = $scroll_offset;
 }
 
 =head2 _emit_newline
 
 Emit a newline: move to column 1 of the next row. Updates tracking.
-
-Pending wrap is resolved (a newline always wraps to col 1 of next row).
 
 =cut
 
@@ -410,9 +397,6 @@ sub _emit_newline {
     print "\r\n";
     # Newline: move to (row+1, col 1).
     my $row = $self->{last_cursor_row} + 1;
-    # If pending-wrap was set, the terminal already resolved it (moved
-    # to the next row). The row increment already happened in a sense,
-    # but we count it once here.
 
     # Clamp to screen and track scroll_offset for input row accounting.
     my $term_height = $self->_get_term_height();
@@ -445,13 +429,16 @@ sub _emit_ctrl_c {
     my $col = $self->{last_cursor_col} + 2;
     my $term_width = $self->_get_term_width();
     if ($col > $term_width) {
+        # "^C" would land at col=term_width, then col=term_width+1 after
+        # the second char — terminal autowraps to next row, col=1.
         $row += 1;
         $col = 1;
     }
     $self->{last_cursor_row} = $row;
     $self->{last_cursor_col} = $col;
     $self->{last_cursor_disp} = $row * $term_width + ($col - 1);
-    $self->{pending_wrap} = ($col == $term_width);
+    # pending_wrap is no longer meaningful under autowrap semantics.
+    $self->{pending_wrap} = 0;
     $self->_emit_newline();  # The trailing \n
 }
 
@@ -510,12 +497,7 @@ sub redraw_line {
     # to the terminal height). Moving up by last_cursor_row rows brings
     # us to screen row 0, which is the top of the visible input area.
     print "\r";
-    if ($self->{pending_wrap}) {
-        $self->{last_cursor_col} = 1;
-        $self->{pending_wrap} = 0;
-    } else {
-        $self->{last_cursor_col} = 1;
-    }
+    $self->{last_cursor_col} = 1;
     my $current_row = $self->{last_cursor_row};
     if ($current_row > 0) {
         print "\e[${current_row}A";
@@ -876,11 +858,6 @@ sub readline {
 
                         # Update tracking.
                         $self->{last_cursor_col} -= 1;
-                        if ($self->{pending_wrap}) {
-                            $self->{pending_wrap} = 0;
-                            # If we were at pending wrap, col is still term_width.
-                            # Moving left 1 puts us at term_width - 1.
-                        }
                         $self->{last_cursor_col} = 1 if $self->{last_cursor_col} < 1;
                         $self->{last_cursor_disp} = $self->{last_cursor_row} * $term_width + ($self->{last_cursor_col} - 1);
 
