@@ -132,7 +132,6 @@ sub new {
         last_cursor_row => 0,
         last_cursor_col => 1,
         last_cursor_disp => 0,
-        pending_wrap => 0,
         # How many input rows are scrolled off the top of the screen.
         # When the input is taller than the screen, the visible portion
         # is the last term_height rows of the input; scroll_offset
@@ -305,8 +304,8 @@ sub _input_row_to_screen_row {
 
 =head2 _emit_text
 
-Print $text and update last_cursor_* / pending_wrap tracking to reflect
-the cursor's actual position after the text is rendered.
+Print $text and update last_cursor_* tracking to reflect the cursor's
+actual position after the text is rendered.
 
 Wide-character widths are honored via _display_width.
 
@@ -379,10 +378,6 @@ sub _emit_text {
     $self->{last_cursor_row} = $row;
     $self->{last_cursor_col} = $col;
     $self->{last_cursor_disp} = $row * $term_width + ($col - 1);
-    # pending_wrap is no longer meaningful under autowrap semantics — the
-    # cursor is always at a valid (row, col) with col in [1, term_width].
-    # Stays 0 for any code that still reads the field.
-    $self->{pending_wrap} = 0;
     $self->{scroll_offset} = $scroll_offset;
 }
 
@@ -410,7 +405,6 @@ sub _emit_newline {
     $self->{last_cursor_row} = $row;
     $self->{last_cursor_col} = 1;
     $self->{last_cursor_disp} = $row * $self->_get_term_width();
-    $self->{pending_wrap} = 0;
     $self->{scroll_offset} = $scroll_offset;
 }
 
@@ -437,8 +431,6 @@ sub _emit_ctrl_c {
     $self->{last_cursor_row} = $row;
     $self->{last_cursor_col} = $col;
     $self->{last_cursor_disp} = $row * $term_width + ($col - 1);
-    # pending_wrap is no longer meaningful under autowrap semantics.
-    $self->{pending_wrap} = 0;
     $self->_emit_newline();  # The trailing \n
 }
 
@@ -489,7 +481,7 @@ sub redraw_line {
         log_debug('ReadLine', "redraw_line: input_len=$input_len, prompt_disp=$prompt_disp, input_disp=$input_disp, total_disp=$total_disp");
         log_debug('ReadLine', "redraw_line: term_width=$term_width, new_lines_needed=$new_lines_needed");
         log_debug('ReadLine', "redraw_line: old_display_lines=$old_display_lines, max_lines=$max_lines");
-        log_debug('ReadLine', "redraw_line: last cursor was at row=$self->{last_cursor_row}, col=$self->{last_cursor_col} pending=$self->{pending_wrap}");
+        log_debug('ReadLine', "redraw_line: last cursor was at row=$self->{last_cursor_row}, col=$self->{last_cursor_col}");
     }
 
     # Move to (row 0, col 1) of the input area.
@@ -547,7 +539,6 @@ sub redraw_line {
     $self->{last_cursor_row} = $desired_row;
     $self->{last_cursor_col} = $desired_col;
     $self->{last_cursor_disp} = $prompt_disp + _display_width(substr($$input_ref, 0, $$cursor_pos_ref));
-    $self->{pending_wrap} = 0;
 }
 
 =head2 _redraw_from_cursor
@@ -601,7 +592,6 @@ sub _redraw_from_cursor {
     $self->{last_cursor_col} = $target_col;
     my $cursor_disp = $prompt_disp + _display_width(substr($$input_ref, 0, $$cursor_pos_ref));
     $self->{last_cursor_disp} = $cursor_disp;
-    $self->{pending_wrap} = 0;
 
     # Update display_lines.
     my $total_disp = $prompt_disp + _display_width($$input_ref);
@@ -670,7 +660,6 @@ sub _redraw_line_external {
     $self->{last_cursor_row} = $cursor_row;
     $self->{last_cursor_col} = $cursor_col;
     $self->{last_cursor_disp} = $cursor_disp;
-    $self->{pending_wrap} = 0;
 }
 
 sub readline {
@@ -687,7 +676,6 @@ sub readline {
     $self->{last_cursor_row} = 0;
     $self->{last_cursor_col} = 1;
     $self->{last_cursor_disp} = 0;
-    $self->{pending_wrap} = 0;
     $self->{scroll_offset} = 0;
 
     # Reset performance caches for this readline session
@@ -1259,7 +1247,6 @@ sub reposition_cursor {
     $self->{last_cursor_row} = $new_row;
     $self->{last_cursor_col} = $new_col;
     $self->{last_cursor_disp} = $new_row * $term_width + ($new_col - 1);
-    $self->{pending_wrap} = 0;
 
     if (should_log('DEBUG')) {
         log_debug('ReadLine', "reposition_cursor: tracking set to ($new_row,$new_col)");
