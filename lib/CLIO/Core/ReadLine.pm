@@ -34,10 +34,21 @@ single source of truth: it walks the input string character-by-character
 and computes the physical (row, col) for any codepoint offset. Every
 cursor movement, redraw, and reposition uses this pure function.
 
-The only incremental state retained is C<last_cursor_row>, used solely
-by C<redraw_line> to know how many rows to move up before clearing —
-and that value is always set by C<_cursor_at_codepoint> (via
-C<reposition_cursor>, C<_redraw_from_cursor>, or C<redraw_line> itself).
+Incremental state retained for fast-path operations and viewport math
+(see C<new()> for the full list):
+- C<last_cursor_row>: redraw_line uses it to know how many rows to
+  move up before clearing. Always set by C<_cursor_at_codepoint> (via
+  C<reposition_cursor>, C<_redraw_from_cursor>, or C<redraw_line>).
+- C<last_cursor_col>: starting column for the next C<_emit_text> call.
+  Read by emit helpers as the base for per-char advancement; written
+  back by every cursor-moving operation. Not consulted by the compute
+  functions - those always derive position from input state.
+- C<last_cursor_disp>: cached (row * term_width + col - 1) for the
+  fast-path backspace, which uses it as the new position after a
+  same-row single-column deletion.
+- C<scroll_offset>: how many input rows have scrolled off the top of
+  the screen when input overflows the viewport. Used by
+  C<_input_row_to_screen_row> to convert input rows to screen rows.
 
 =cut
 
@@ -109,6 +120,37 @@ sub _display_width {
         }
     }
     return $width;
+}
+
+=head2 _strip_ansi
+
+Strip ANSI CSI sequences from $text and return the visible substring.
+The result contains no control bytes - only printable characters and
+whitespace. Used by cursor-tracking code (C<_get_prompt_disp>,
+C<_emit_text>) to compute display width without inflating the count
+with SGR bytes.
+
+The regex matches every CSI sequence: ESC [ followed by any number of
+parameter bytes (digits, semicolons, ?), then a final byte from
+[A-Za-z]. This covers SGR (m), cursor moves (A/B/C/D/E/F/G/H/J/K/S/T),
+erase/scroll (J/K), mode set/reset (h/l), device attrs (c), and the
+private-mode set/reset (?h/?l) used by some terminals.
+
+Arguments:
+- $text: String that may contain ANSI escape sequences.
+
+Returns:
+- String with all CSI sequences removed. Whitespace and printable
+  characters preserved.
+
+=cut
+
+sub _strip_ansi {
+    my ($text) = @_;
+    return '' unless defined $text && length $text;
+    my $copy = $text;
+    $copy =~ s/\e\[[0-9;?]*[A-Za-z]//g;
+    return $copy;
 }
 
 sub new {
@@ -212,9 +254,7 @@ Set once per readline() call since the prompt doesn't change mid-input.
 sub _get_prompt_disp {
     my ($self, $prompt) = @_;
     unless (defined $self->{_prompt_disp_cache}) {
-        my $visible = $prompt // '';
-        $visible =~ s/\e\[[0-9;]*m//g;
-        $self->{_prompt_disp_cache} = _display_width($visible);
+        $self->{_prompt_disp_cache} = _display_width(_strip_ansi($prompt // ''));
     }
     return $self->{_prompt_disp_cache};
 }
@@ -331,8 +371,7 @@ sub _emit_text {
 
     # For cursor tracking, strip ANSI escape sequences. They must NOT
     # advance the cursor position.
-    my $visible = $text;
-    $visible =~ s/\e\[[0-9;?]*[A-Za-z]//g;
+    my $visible = _strip_ansi($text);
 
     return unless length $visible;
 
