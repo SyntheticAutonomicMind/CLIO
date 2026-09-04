@@ -8,7 +8,7 @@ use warnings;
 use utf8;
 use Carp qw(croak);
 use CLIO::UI::Terminal qw(box_char);
-use CLIO::Core::Logger qw(log_debug log_warning should_log);
+use CLIO::Core::Logger qw(log_error log_warning log_info log_debug should_log);
 use CLIO::Core::ErrorContext qw(classify_error format_error);
 use CLIO::Util::TextSanitizer qw(sanitize_text);
 use CLIO::Util::JSONRepair qw(repair_malformed_json);
@@ -17,14 +17,15 @@ use CLIO::UI::ToolOutputFormatter;
 use CLIO::Core::ToolErrorGuidance;
 use CLIO::Core::ConversationManager qw(
     load_conversation_history
-    trim_conversation_for_api
+    trim_with_noise_dropping
     enforce_message_alternation
-    inject_context_files
     generate_tool_call_id
     repair_tool_call_json
 );
 use CLIO::Core::API::MessageValidator qw(validate_and_truncate);
+use CLIO::Core::MessageHistory qw(messages_to_prose_dynamic);
 use CLIO::Core::PromptBuilder;
+use CLIO::Core::ContextBuilder qw();
 use CLIO::Util::JSON qw(encode_json decode_json safe_decode_json safe_encode_json);
 use CLIO::Core::Diagnostics qw(dump_diagnostic deduplicate_paragraphs);
 use CLIO::Core::API::ErrorHandler;
@@ -155,7 +156,7 @@ sub new {
         }
     };
     if ($@) {
-        log_debug('WorkflowOrchestrator', "MCP initialization failed: $@");
+        log_warning('WorkflowOrchestrator', "MCP initialization failed: $@");
     }
     
     # Initialize Plugin Manager
@@ -172,7 +173,7 @@ sub new {
         }
     };
     if ($@) {
-        log_debug('WorkflowOrchestrator', "Plugin initialization failed: $@");
+        log_warning('WorkflowOrchestrator', "Plugin initialization failed: $@");
     }
     
     # Initialize prompt builder for system prompt construction
@@ -238,7 +239,7 @@ sub new {
     );
 
     if ($auto_discover_skills) {
-        log_debug('WorkflowOrchestrator', 'Auto-discover skills enabled - skill catalog will be injected into system prompt');
+        log_info('WorkflowOrchestrator', 'Auto-discover skills enabled - skill catalog will be injected into system prompt');
     }
     
     # Initialize FileVault for targeted file backup and undo support
@@ -427,7 +428,7 @@ sub _register_default_tools {
         }
         eval { (my $f = "$tool_def->{module}.pm") =~ s{::}{/}g; require $f };
         if ($@) {
-            log_debug('WorkflowOrchestrator', "Failed to load $tool_def->{module}: $@");
+            log_warning('WorkflowOrchestrator', "Failed to load $tool_def->{module}: $@");
             next;
         }
         $self->{tool_registry}->register_tool(
@@ -460,7 +461,7 @@ sub _register_default_tools {
         
         eval { (my $f = "$tool_def->{module}.pm") =~ s{::}{/}g; require $f };
         if ($@) {
-            log_debug('WorkflowOrchestrator', "Failed to load $tool_def->{module}: $@");
+            log_warning('WorkflowOrchestrator', "Failed to load $tool_def->{module}: $@");
             next;
         }
         $self->{tool_registry}->register_tool(
@@ -532,9 +533,81 @@ sub process_input {
     my $max_iter = $self->{max_iterations};
     while (!$max_iter || $iteration < $max_iter) {
         $iteration++;
-        
+
         # Clear interrupt pending flag at start of each iteration
         $self->{_interrupt_pending} = 0;
+
+        # Per-iteration refresh of the dynamic userContext system
+        # message (H2 fix). The Date/Date-time moves every minute;
+        # active_todos / LTM relevance can mutate mid-turn after the
+        # model calls todo_operations or memory_operations. Re-render
+        # the system message so the next API call reflects current
+        # state without invalidating the cache-stable prefix (which
+        # is everything before the dynamic message).
+        #
+        # BUGFIX (long-session context-loss): the previous version
+        # re-rendered from a FROZEN projection built at the start
+        # of the turn. Re-rendering only updated datetime_iso (the
+        # only field that regenerated per call). active_todos and
+        # relevant_memory stayed stale - if the model added a todo
+        # mid-turn and kept thinking, the userContext shown on the
+        # next iteration still showed the OLD todo state. The
+        # model could conclude its mutation had no effect and
+        # re-issue it.
+        #
+        # Fix: before re-rendering, re-read the live session state
+        # (todos, LTM) and patch the projection's structured fields.
+        # environment and context_files_block are not patched - they
+        # are session-stable and don't change mid-turn.
+        #
+        # BUGFIX (BUG #2 in QA review 2026-09-02): the comment above
+        # was wrong. environment's datetime_iso DOES change every
+        # minute, and a turn that lasts >1 minute used to send a
+        # stale timestamp to the model. Re-build the environment
+        # hash per iteration so the date/time stays current. The
+        # environment block sits in the dynamic userContext (the
+        # tail of the messages array), so its churn invalidates
+        # only the tail cache segment, not the cache-stable
+        # prefix. Cheap (a single localtime call).
+        if ($iteration > 1
+            && $self->{_current_projection}
+            && defined $self->{_dynamic_usercontext_idx}
+            && $self->{_dynamic_usercontext_idx} >= 0
+            && $self->{_dynamic_usercontext_idx} < @messages) {
+            my $proj = $self->{_current_projection};
+            # Re-read live state. These calls are cheap (file reads
+            # from a small JSON file) and only run on iterations
+            # >= 2 (after at least one tool call).
+            my $live_todos = $self->_read_active_todos_for_projection($session);
+            my $live_ltm   = $self->_read_ltm_entries_for_projection($session);
+            $proj->{active_todos} = $live_todos;
+            # Re-score LTM against the original user input (stored
+            # on the projection at build time). Using a fresh
+            # user_input each iteration would score against the
+            # model's evolving output, which is unstable.
+            $proj->{relevant_memory} = CLIO::Core::ContextBuilder::score_ltm(
+                $live_ltm,
+                $proj->{user_input} // '',
+                $proj->{active_task},
+                $proj->{unresolved} || [],
+            );
+            $proj->{ltm_total_count} = scalar(@$live_ltm);
+            # BUG #2 fix: refresh the environment hash so the
+            # dynamic userContext shows the current datetime, not the
+            # one from when the projection was first built. The env
+            # block sits in the dynamic UC tail, so its churn only
+            # invalidates that tail segment - cache-stable prefix
+            # (anchor + recent turns) is unaffected.
+            $proj->{environment} = CLIO::Core::ContextBuilder::_build_environment_hash();
+            my $refreshed = CLIO::Core::MessageHistory::messages_to_prose_dynamic(
+                $proj);
+            if (length $refreshed) {
+                $messages[$self->{_dynamic_usercontext_idx}]{content} = $refreshed;
+                log_debug('WorkflowOrchestrator',
+                    "Refreshed dynamic userContext at iteration $iteration ("
+                    . length($refreshed) . " chars)");
+            }
+        }
         
         # Clear any stale user_interrupted session flag from a previous iteration.
         # This prevents the flag from being left over if an interrupt was partially
@@ -573,7 +646,16 @@ sub process_input {
         # iterations, and when the API finally rejected with token_limit_exceeded, the
         # reactive trim had to drop hundreds of messages at once (e.g., 434).
         # Now @messages stays trim every iteration, so reactive trims are small.
-        if ($self->{api_manager} && $iteration > 1) {
+        # SMELL #6 fix (QA review 2026-09-02): the `&& $iteration > 1`
+        # guard was wrong. trim_with_noise_dropping already ran in
+        # _build_turn_context, but it operates on the history array
+        # (which doesn't include the dynamic UC) and uses a softer
+        # budget. If the projection emits a huge dynamic UC (large
+        # todo list, big LTM, big context files), iteration 1 sends
+        # an over-budget array and the API rejects. Remove the guard
+        # so every iteration (including iteration 1) gets the
+        # proactive trim safety net.
+        if ($self->{api_manager}) {
             my $pre_count = scalar(@messages);
             my $model = $self->{api_manager}->get_current_model();
             my $caps = $self->{api_manager}->get_model_capabilities($model);
@@ -613,7 +695,62 @@ sub process_input {
                         trimmed_to     => scalar(@messages),
                     },
                 ) if $ENV{CLIO_TRIM_DIAG};
-                log_debug('WorkflowOrchestrator', "Proactive trim (pre-API): $pre_count -> " . scalar(@messages) . " messages");
+                log_info('WorkflowOrchestrator', "Proactive trim (pre-API): $pre_count -> " . scalar(@messages) . " messages");
+
+                # The proactive trim may have removed messages including
+                # the dynamic userContext. If so, find it by content hash
+                # (the only stable identifier across rebuilds) and
+                # restore its index for the per-iteration refresh path
+                # to work. If it's gone entirely, push a fresh one at
+                # the end and re-stash the projection so the next
+                # refresh can find it.
+                $self->_relocate_dynamic_usercontext(\@messages);
+            }
+        }
+
+        # Move the dynamic userContext to the recency anchor before
+        # each API call (BUG #3 fix). Without this, the dynamic
+        # userContext sits at its initial index (right after history)
+        # and gets displaced by tool/assistant messages appended
+        # during iteration 1+. The per-iteration refresh updates
+        # content at the original index, but that index is no longer
+        # at the tail - the model's recency anchor. Moving it to the
+        # tail puts active_task / active_todos / relevant_memory /
+        # environment where the model attends most.
+        #
+        # Cache stability: for Anthropic, _separate_system_prompt
+        # concatenates ALL system messages into one cache segment.
+        # Position within the segment doesn't affect cache identity -
+        # only content does. Moving is a structural change but the
+        # content is being refreshed anyway each iteration, so cache
+        # invalidation is unchanged. For other providers, the
+        # dynamic userContext is its own system message; position
+        # change is a prefix change but content is being refreshed
+        # anyway, so prefix is invalidated either way.
+        #
+        # Position strategy: place the dynamic userContext as the
+        # very last message in the array. After iteration 1, the
+        # array looks like:
+        #   [0] system_prompt
+        #   [1..N] anchor + recent turns (history)
+        #   [N+1] user_input
+        #   [N+2] assistant (tool_calls)
+        #   [N+3..M] tool_results
+        #   [M+1] dynamic userContext  <- recency anchor, what model attends most
+        # On the next API call, the model sees the most recent
+        # tool_results AND the current task/todos/LTM/environment
+        # in adjacent positions, exactly where it needs them.
+        if ($self->{_current_projection}
+            && $self->{_dynamic_usercontext_idx} >= 0
+            && $self->{_dynamic_usercontext_idx} < @messages) {
+            my $dyn_idx = $self->{_dynamic_usercontext_idx};
+            my $tail_idx = $#messages;
+            if ($dyn_idx != $tail_idx) {
+                my $dyn_msg = splice(@messages, $dyn_idx, 1);
+                push @messages, $dyn_msg;
+                $self->{_dynamic_usercontext_idx} = $#messages;
+                log_debug('WorkflowOrchestrator',
+                    "Moved dynamic userContext to recency anchor: $dyn_idx -> $#messages (iteration $iteration)");
             }
         }
 
@@ -653,7 +790,7 @@ sub process_input {
                 # Check for interrupt on each streaming chunk
                 if (!$self->{_interrupt_pending} && $self->_check_for_user_interrupt($session)) {
                     $self->{_interrupt_pending} = 1;
-                    log_debug('WorkflowOrchestrator', "Interrupt detected during streaming");
+                    log_info('WorkflowOrchestrator', "Interrupt detected during streaming");
                     # Still deliver this chunk, but the flag will be checked after streaming completes
                 }
                 
@@ -889,9 +1026,9 @@ sub process_input {
 
             if ($looks_premature) {
                 if ($content_length == 0) {
-                    log_debug('WorkflowOrchestrator', "Premature stop detected: empty response after $tool_calls_count tool calls");
+                    log_info('WorkflowOrchestrator', "Premature stop detected: empty response after $tool_calls_count tool calls");
                 } else {
-                    log_debug('WorkflowOrchestrator', "Premature stop detected: short mid-sentence response ($content_length chars) after $tool_calls_count tool calls");
+                    log_info('WorkflowOrchestrator', "Premature stop detected: short mid-sentence response ($content_length chars) after $tool_calls_count tool calls");
                 }
                 $premature_stop_retries++;
                 log_debug('WorkflowOrchestrator', "Premature workflow stop detected (retry $premature_stop_retries/$max_premature_stop_retries). Nudging model to continue.");
@@ -904,18 +1041,26 @@ sub process_input {
                     };
                 }
                 
-                # Inject a system-level continuation nudge (prefixed with user context for accurate time)
-                # Pipeline protocol: user_context is a separate role=system
-                # message at [-2], the nudge is the user_input at [-1].
-                push @messages, {
-                    role => 'system',
-                    content => $self->{prompt_builder}->get_user_context($session),
-                };
+                # Inject a continuation nudge as a user-role message.
+                # Note (messageHistory feature): the messageHistory block
+                # at [-2] is the history system message, the user_input
+                # at [-1] is the current turn input. We append the nudge
+                # as a NEW user message at the end. The model sees the
+                # history block, then its own previous response, then
+                # the nudge. No system message injection here - it
+                # would conflict with the messageHistory structure.
+                #
+                # The nudge is intentionally a short instruction rather
+                # than a passive prompt: passive variants ("please
+                # continue", "as you were", etc.) often cause the model
+                # to echo its last message, then re-emit a tool-call. The
+                # active instruction points the model at the next
+                # observable action: produce the rest of the response.
                 push @messages, {
                     role => 'user',
-                    content => "[SYSTEM: Your previous response ended without completing your work. " .
-                               "You were actively using tools and appear to have stopped mid-workflow. " .
-                               "Please continue where you left off - review your recent tool results and proceed with your plan.]"
+                    content => "Your previous response ended without completing your work. "
+                             . "Continue from where you stopped, producing the remaining text or tool calls "
+                             . "needed to finish. Do not repeat what you already wrote."
                 };
 
                 # Don't count this as a full iteration
@@ -979,7 +1124,7 @@ sub process_input {
                 log_debug('WorkflowOrchestrator', "Saved final assistant response to session (" . length($sanitized) . " chars)");
             };
             if ($@) {
-                log_debug('WorkflowOrchestrator', "Failed to save final assistant response: $@");
+                log_warning('WorkflowOrchestrator', "Failed to save final assistant response: $@");
             }
         }
 
@@ -1100,6 +1245,21 @@ sub _build_turn_context {
     # prompt for resumed sessions - exactly the context the model saw
     # when the previous session ended.
     #
+    # Note (role-based history): In the role-based format the cached
+    # payload is [system_prompt, anchor_msgs, recent_msgs,
+    # dynamic_userContext, user_input, assistant, tool_results, ...,
+    # final_assistant]. The trailing assistant/tool_messages belong to
+    # the previous turn's exchanges, not the cached "what we were
+    # doing". Reusing them verbatim would duplicate everything the
+    # build_projection pass below also emits - the model would see
+    # anchor + recent TWICE on every resumed turn.
+    #
+    # The resume fast path therefore only reuses the system_prompt
+    # from the cache. Everything else is rebuilt fresh from session
+    # history via the normal projection pipeline. Tools are still
+    # cached so subsequent _build_turn_context calls in this process
+    # take the normal rebuild path.
+    #
     # Guard with _tools_cache: once we've built tools in this process,
     # we're past the first turn and must use the in-memory path.
     my $model_caps = $self->{api_manager}
@@ -1108,35 +1268,108 @@ sub _build_turn_context {
     unless ($self->{_tools_cache}) {
         my ($cached_messages, $cached_tools) = $self->_try_resume_from_payload($session, $model_caps);
         if ($cached_messages && $cached_tools) {
-            # Pipeline protocol: trailing [user_context, user_input] are
-            # dynamic and must be regenerated each turn. Strip the stale
-            # trailing pair from the snapshot, then append fresh.
-            # See _build_turn_context rebuild path below for the canonical
-            # implementation - the fast path mirrors it.
-            if (@$cached_messages && $cached_messages->[-1]{role} eq 'user') {
-                pop @$cached_messages;
+            # Extract just the system_prompt from the cached payload.
+            # The rest of the payload (role-based history + current
+            # turn's exchanges) is regenerated fresh by the rebuild
+            # path below - reusing it would duplicate everything.
+            my $cached_system_prompt = '';
+            if (@$cached_messages && $cached_messages->[0]{role} eq 'system') {
+                $cached_system_prompt = $cached_messages->[0]{content} // '';
             }
-            if (@$cached_messages
-                && $cached_messages->[-1]{role} eq 'system'
-                && $cached_messages->[-1]{content} =~ /<(?:userContext|dynamicContext|sessionGoals)[\s>]/) {
-                pop @$cached_messages;
+            my @messages = ();
+            if (length $cached_system_prompt) {
+                push @messages, { role => 'system', content => $cached_system_prompt };
+                log_debug('WorkflowOrchestrator',
+                    "Resume fast path: reused cached system_prompt (" . length($cached_system_prompt) . " chars)");
             }
 
-            my $user_context = $self->{prompt_builder}->get_user_context($session);
-            if ($self->{non_interactive}) {
-                $user_context .= CLIO::Core::PromptBuilder::generate_non_interactive_section() . "\n\n";
-                log_debug('WorkflowOrchestrator', "Added non-interactive instruction to user context");
+            # Rebuild history block with fresh userContext. When
+            # ContextBuilder is wired in (Phase 2+), we run the
+            # projection pipeline so anchor + recent + structured
+            # <userContext> elements are emitted instead of the
+            # legacy freeform userContext string. This prevents the
+            # resume fast path from bypassing the projection by
+            # reusing the stale cached payload verbatim.
+            my $history = load_conversation_history($session, debug => $self->{debug});
+            if ($history && @$history) {
+                $history = trim_with_noise_dropping(
+                    $history,
+                    '',
+                    model_context_window => $model_caps->{max_context_window_tokens} // CLIO::Core::Defaults::DEFAULT_CONTEXT_WINDOW,
+                    max_response_tokens  => $model_caps->{max_output_tokens} // CLIO::Core::Defaults::DEFAULT_MAX_RESPONSE_TOKENS,
+                    debug => $self->{debug},
+                );
             }
-            push @$cached_messages, { role => 'system', content => $user_context };
-            push @$cached_messages, { role => 'user',   content => $user_input };
+            my $cf_block = $self->_render_context_files_for_user_context($session);
+            my $resume_projection;
+            if ($history && @$history) {
+                # Build projection and let it own the userContext.
+                my $ltm_entries = $self->_read_ltm_entries_for_projection($session);
+                $resume_projection = CLIO::Core::ContextBuilder::build_projection(
+                    history             => $history,
+                    user_input          => $user_input,
+                    active_task         => $self->_active_task_text($session),
+                    active_todos        => $self->_read_active_todos_for_projection($session),
+                    ltm                 => $ltm_entries,
+                    unresolved          => $self->_collect_unresolved_state($history, $session),
+                    context_files_block => $cf_block,
+                    session             => $session,
+                );
+            } else {
+                # Empty history (e.g. session reset): emit just the
+                # structured userContext via prose so the format stays
+                # consistent with subsequent turns. build_projection
+                # returns an empty-projection hashref in this case.
+                $resume_projection = CLIO::Core::ContextBuilder::build_projection(
+                    history             => [],
+                    user_input          => $user_input,
+                    active_task         => $self->_active_task_text($session),
+                    active_todos        => $self->_read_active_todos_for_projection($session),
+                    ltm                 => $self->_read_ltm_entries_for_projection($session),
+                    unresolved          => [],
+                    context_files_block => $cf_block,
+                    session             => $session,
+                );
+            }
+            # Push role-based history (anchor + recent turns)
+            if (my $anchor = $resume_projection->{anchor}) {
+                if (ref($anchor) eq 'ARRAY' && @$anchor) {
+                    push @messages, @$anchor;
+                }
+            }
+            for my $turn (@{ $resume_projection->{turns} || [] }) {
+                next unless ref($turn) eq 'ARRAY' && @$turn;
+                push @messages, @$turn;
+            }
+            # Push dynamic userContext (after history, before user_input)
+            my $dynamic_usercontext = CLIO::Core::MessageHistory::messages_to_prose_dynamic($resume_projection);
+            if (length $dynamic_usercontext) {
+                push @messages, { role => 'system', content => $dynamic_usercontext };
+            }
+            # Stash projection for per-iteration refresh (H2 fix).
+            $self->{_current_projection} = $resume_projection;
+            # BUG #3 fix (QA review 2026-09-02): guard the idx so it
+            # points to the dynamic UC only when one was actually
+            # pushed. When messages_to_prose_dynamic returns empty
+            # (no todos, no LTM, no compressed_tail, environment
+            # hash empty), the dynamic UC was not pushed but
+            # @messages' last index now points to user_input. The
+            # per-iteration refresh at iteration 2+ would overwrite
+            # user_input with the dynamic UC content, clobbering
+            # the model's question.
+            $self->{_dynamic_usercontext_idx} = -1;
+            if (length $dynamic_usercontext) {
+                $self->{_dynamic_usercontext_idx} = scalar(@messages) - 1;
+            }
+            push @messages, { role => 'user',   content => $user_input };
 
             # Cache tools so subsequent _build_turn_context calls in this
             # process take the normal rebuild path.
             $self->{_tools_cache} = [@$cached_tools];
 
-            log_debug('WorkflowOrchestrator',
-                "Resume fast path: " . scalar(@$cached_messages) . " messages from cached payload");
-            return ($cached_messages, [@$cached_tools]);
+            log_info('WorkflowOrchestrator',
+                "Resume fast path: " . scalar(@messages) . " messages from cached system_prompt");
+            return (\@messages, [@$cached_tools]);
         }
     }
 
@@ -1147,7 +1380,11 @@ sub _build_turn_context {
     push @messages, { role => 'system', content => $system_prompt };
     log_debug('WorkflowOrchestrator', "Added system prompt with tools (" . length($system_prompt) . " chars)");
 
-    inject_context_files($session, \@messages, debug => $self->{debug});
+    # Note: context_files used to be injected as a separate user-role
+    # message here. With the role-based pipeline they are folded into
+    # the dynamic userContext block below via context_files_block in
+    # the projection, so they sit at the recency anchor without
+    # polluting the cache-stable prefix.
 
     # Update session state's max_tokens to match model's actual context window.
     # This ensures State::add_message trims at the correct threshold instead
@@ -1183,7 +1420,14 @@ sub _build_turn_context {
     my $history = load_conversation_history($session, debug => $self->{debug});
 
     if ($history && @$history) {
-        $history = trim_conversation_for_api(
+        # messageHistory feature: use trim_with_noise_dropping which
+        # strips reasoning_content from old assistant messages BEFORE
+        # the standard trim walk. This preserves more of the actual
+        # conversation (user/assistant text + tool results) at the
+        # same token cost. The noise drop is non-destructive - the
+        # original messages are preserved in session state, only the
+        # serialized history is reduced.
+        $history = trim_with_noise_dropping(
             $history,
             $system_prompt,
             model_context_window => $model_caps->{max_context_window_tokens} // CLIO::Core::Defaults::DEFAULT_CONTEXT_WINDOW,
@@ -1192,62 +1436,154 @@ sub _build_turn_context {
         );
     }
 
+    # Build the relevance-aware projection. This selects the anchor
+    # turn (original substantive task), the most recent complete turn(s),
+    # collapses repeated tool calls within each recent turn, scores LTM
+    # entries against the current request, and renders the structured
+    # <userContext> block. Raw $history is never mutated; the
+    # projection is discarded after serialization.
+    #
+    # The projection always runs (including empty/first-turn history).
+    # messages_to_prose handles empty anchor/turns gracefully - it just
+    # omits the # Task and # Recent work sections and emits the
+    # structured userContext block alone. This means first-turn sessions
+    # no longer fall back to the legacy XML path, which was producing
+    # empty-body <messageHistory> blocks that tripped the trimmer's
+    # closing-tag check (see trim_xml_history WARN).
+    my $projection;
     if ($history && @$history) {
-        # Skip any leading system messages from history - process_input
-        # builds a fresh system prompt below and pushes it on top of
-        # @messages. Older sessions may have a stale system prompt
-        # persisted in history (added by clio on session creation, before
-        # the "don't persist system prompt" fix), and including it would
-        # double the per-turn prompt cost (observed in session
-        # 6b09ac2d-b4e7-4f7b-8943-eb448449227a, 2026-08-29 on Ayaneo
-        # Flip with 64K Qwen3.6-35B-A3B-UD-Q4_K_XL: a 71,949-char
-        # persisted system prompt + a fresh 80,973-char system prompt
-        # = 152K chars = ~76K tokens, blowing past the 65,536-token
-        # context window on iteration 9).
-        #
-        # thread_summary system messages ARE preserved (they're the
-        # work-product replacement for trimmed messages, not redundant
-        # system prompts).
-        my $first_non_system_idx = 0;
-        for my $i (0 .. $#$history) {
-            my $m = $history->[$i];
-            last if ($m->{role} // '') ne 'system';
-            # Keep thread_summary - it's a model-facing work product, not
-            # a system prompt.
-            next if ($m->{content} // '') =~ /\A<thread_summary>/;
-            # Otherwise (system prompt, [CONTEXT TRIM:] notices, error
-            # messages), drop. A fresh system prompt will be added below.
-            $first_non_system_idx = $i + 1;
-        }
-        if ($first_non_system_idx > 0) {
-            log_debug('WorkflowOrchestrator', "Skipped $first_non_system_idx leading system message(s) from history (redundant with fresh system prompt)");
-            $history = [@$history[$first_non_system_idx .. $#$history]];
-        }
-        push @messages, @$history;
-        log_debug('WorkflowOrchestrator', "Loaded " . scalar(@$history) . " messages from history (after pre-flight trim, after dropping redundant system messages)");
+        # Pull LTM entries from the session (if available) for relevance
+        # scoring. _read_ltm_entries_for_projection returns the flat
+        # list of {confidence, content, type} hashes.
+        my $ltm_entries = $self->_read_ltm_entries_for_projection($session);
+
+        $projection = CLIO::Core::ContextBuilder::build_projection(
+            history             => $history,
+            user_input          => $user_input,
+            active_task         => $self->_active_task_text($session),
+            active_todos        => $self->_read_active_todos_for_projection($session),
+            ltm                 => $ltm_entries,
+            unresolved          => $self->_collect_unresolved_state($history, $session),
+            context_files_block => $self->_render_context_files_for_user_context($session),
+            session             => $session,
+        );
     }
 
-    # Get user context (date/time, working directory) - cached per‑minute
-    # The context is useful for the LLM but should not be persisted as part of the
-    # raw user message in the session history.  Persisting the context would
-    # duplicate information (the same context is already added to the message
-    # payload sent to the model) and breaks the expectation that the session
-    # stores exactly what the user typed.  Therefore we store only the plain
-    # user input in the session history.
-    my $user_context = $self->{prompt_builder}->get_user_context($session);
+    # When the projection is active, it owns the structured userContext
+    # and the prose renderer emits the relevant memory section from the
+    # projection. The legacy $user_context string (date/time/path/language
+    # plus the legacy <dynamicContext> block) is NOT needed - skip the
+    # call to avoid computing and then discarding the 12k+ legacy LTM
+    # render. Skills are injected via the base system prompt
+    # (generate_skills_section), not via get_user_context, so they are
+    # unaffected. OpenSpec is the one thing this skips; if OpenSpec is
+    # configured for a session, callers should pass it through the
+    # projection's environment hash instead.
+    #
+    # Projection always runs (including first turn / empty history).
+    # messages_to_prose handles empty anchor/turns gracefully - it
+    # omits # Task and # Recent work sections and emits the
+    # structured userContext block alone. This means first-turn
+    # sessions no longer fall back to the legacy XML path, which was
+    # producing empty-body <messageHistory> blocks that tripped the
+    # trimmer's closing-tag check (see trim_xml_history WARN).
 
-    # Append turn-specific instructions to user context (not system prompt) for cacheability
-    # Non-interactive mode instruction (only with --input flag)
-    if ($self->{non_interactive}) {
-        $user_context .= CLIO::Core::PromptBuilder::generate_non_interactive_section() . "\n\n";
-        log_debug('WorkflowOrchestrator', "Added non-interactive instruction to user context");
+    # NEW (role-based history feature): Push the projection's selected
+    # history (anchor + recent turns) directly as role-based messages.
+    # No prose render, no XML wrapper. The projection's `anchor` and
+    # `turns` fields are already arrayrefs of role-based messages
+    # (selected + deduped by build_projection); we just splice them in.
+    #
+    # Then push the dynamic userContext (active task, active todos,
+    # unresolved state, relevant memory, environment, context files)
+    # as a single system message AFTER the history. The dynamic
+    # userContext churns each turn (datetime_iso, todo updates,
+    # LTM rescore) and is re-rendered per-iteration.
+    #
+    # Resulting message layout:
+    #   [0] system_prompt                       (cache-stable)
+    #   [1..N] anchor + recent turn messages    (role-based, cache-stable
+    #                                            until anchor task or
+    #                                            a new turn completes)
+    #   [N+1] system_userContext                (dynamic; churns each
+    #                                            turn; re-rendered in
+    #                                            place per iteration)
+    #   [N+2] user_input                        (current turn)
+    #   [N+3..] assistant/tool/final_assistant  (current turn response)
+    #
+    # Cache stability (provider-dependent):
+    # - For Anthropic (the only provider with explicit cache_control
+    #   in CLIO): the `cache_control: ephemeral` breakpoint sits on
+    #   the system_prompt. _separate_system_prompt concatenates ALL
+    #   system messages into one block, so the dynamic userContext
+    #   shares the system_prompt cache segment. Changes to the
+    #   dynamic userContext invalidate that segment - same as the
+    #   previous XML format. The role-based refactor does NOT
+    #   improve Anthropic cache stability; it improves token
+    #   efficiency and per-iteration renderability.
+    # - For providers with per-message cache_control or auto-detected
+    #   boundaries: the role-based layout may give better stability
+    #   since the dynamic system message is at a distinct position.
+    #   Not verified end-to-end.
+    # - The role-based history ([1..N]) IS more cache-stable than
+    #   the previous XML format within that segment: XML mutated
+    #   per-turn (turn index, repeats, digest, confidence), prose
+    #   doesn't.
+
+    if ($projection) {
+        # Push the projection's anchor turn (if any). The anchor is
+        # the first substantive user turn (original task + first
+        # assistant response). It's the cache-stable prefix anchor
+        # for the history portion.
+        if (my $anchor = $projection->{anchor}) {
+            if (ref($anchor) eq 'ARRAY' && @$anchor) {
+                push @messages, @$anchor;
+            }
+        }
+        # Push each recent turn's messages (latest 1-2 complete turns).
+        # Each turn is an arrayref of role-based messages starting
+        # with the user message; we splice them in directly.
+        for my $turn (@{ $projection->{turns} || [] }) {
+            next unless ref($turn) eq 'ARRAY' && @$turn;
+            push @messages, @$turn;
+        }
+        # Render the dynamic userContext (everything after Recent work
+        # in the prose format) as a single system message. This goes
+        # AFTER history but BEFORE user_input, so it sits at the
+        # recency anchor without invalidating the cache-stable
+        # prefix above.
+        my $dynamic_usercontext = CLIO::Core::MessageHistory::messages_to_prose_dynamic($projection);
+        if (length $dynamic_usercontext) {
+            push @messages, { role => 'system', content => $dynamic_usercontext };
+        }
+        # Stash the projection on $self so per-iteration refresh
+        # (H2: clock-driven datetime_iso + todo mutations + LTM
+        # rescore) can re-render this system message without
+        # rebuilding the whole history.
+        $self->{_current_projection} = $projection;
+        # BUG #3 fix (QA review 2026-09-02): guard the idx so it
+        # points to the dynamic UC only when one was actually
+        # pushed. When messages_to_prose_dynamic returns empty
+        # (no todos, no LTM, no compressed_tail, environment
+        # hash empty), the dynamic UC was not pushed but
+        # @messages' last index now points to user_input. The
+        # per-iteration refresh at iteration 2+ would overwrite
+        # user_input with the dynamic UC content, clobbering
+        # the model's question.
+        $self->{_dynamic_usercontext_idx} = -1;
+        if (length $dynamic_usercontext) {
+            $self->{_dynamic_usercontext_idx} = scalar(@messages) - 1;
+        }
+        log_debug('WorkflowOrchestrator',
+            "Added role-based history (" . scalar(@{$projection->{turns} || []}) . " recent turn(s)) "
+            . "and dynamic userContext (" . length($dynamic_usercontext) . " chars)");
     }
+    # Note: the previous defensive fallback to a legacy XML history
+    # block was removed because messages_to_xml is no longer exported
+    # from CLIO::Core::MessageHistory. Projection is always built
+    # above (the @$history >= 3 gate was removed in the role-based
+    # history refactor), so this branch is unreachable.
 
-    # Pipeline protocol: user_context is a separate role=system message at
-    # position [-2], user_input is at position [-1]. This keeps the dynamic
-    # date/time, dynamic context, and session goals in a fixed slot whose
-    # invalidation doesn't bleed backward into the stable dialog/tool_results.
-    push @messages, { role => 'system', content => $user_context };
     push @messages, { role => 'user',   content => $user_input };
 
     # If image attachments are present, convert user message to array-format content
@@ -1274,7 +1610,7 @@ sub _build_turn_context {
                 $last_msg->{content} = \@content_parts;
             }
         } else {
-            log_debug('WorkflowOrchestrator', "Model does not support vision - image attachments will be sent as text descriptions");
+            log_warning('WorkflowOrchestrator', "Model does not support vision - image attachments will be sent as text descriptions");
             # Append text descriptions of images to the user message instead
             my $last_msg = $messages[-1];
             if ($last_msg && $last_msg->{role} eq 'user') {
@@ -1292,7 +1628,7 @@ sub _build_turn_context {
         # remains at least recoverable. The real fix is upstream (Chat.pm must not
         # leak ReadLine control signals), but this prevents silent corruption.
         if (ref $user_input) {
-            log_debug('WorkflowOrchestrator', sprintf(
+            log_error('WorkflowOrchestrator', sprintf(
                 "BUG: user_input is a %s ref (not a string) - this indicates a ReadLine "
                 . "control signal leaked into user input. Stringifying to preserve session.",
                 ref $user_input
@@ -1364,7 +1700,7 @@ sub _build_tools_for_api {
                 log_debug('WorkflowOrchestrator', "Added " . scalar(@$mcp_defs) . " MCP tool(s) to API definitions");
             }
         };
-        log_debug('WorkflowOrchestrator', "MCP tool definition error: $@") if $@;
+        log_warning('WorkflowOrchestrator', "MCP tool definition error: $@") if $@;
     }
 
     if ($self->{plugin_manager}) {
@@ -1385,7 +1721,7 @@ sub _build_tools_for_api {
                 log_debug('WorkflowOrchestrator', "Added " . scalar(@$plugin_defs) . " plugin tool(s) to API definitions");
             }
         };
-        log_debug('WorkflowOrchestrator', "Plugin tool definition error: $@") if $@;
+        log_warning('WorkflowOrchestrator', "Plugin tool definition error: $@") if $@;
     }
 
     return $tools;
@@ -1401,7 +1737,9 @@ are added/removed, or when tool definitions change.
 sub invalidate_tool_cache {
     my ($self) = @_;
     delete $self->{_tools_cache};
-    log_debug('WorkflowOrchestrator', "Tool definition cache invalidated");
+    delete $self->{_current_projection};
+    delete $self->{_dynamic_usercontext_idx};
+    log_debug('WorkflowOrchestrator', "Tool definition + projection cache invalidated");
 }
 
 =head2 _capture_api_payload($session, \@messages, \@tools)
@@ -1536,7 +1874,11 @@ Reuse rules:
 - provider matches current provider AND
 - tools_signature matches current tools signature AND
 - context_window: payload used verbatim if current ctx >= saved ctx;
-  trimmed via trim_conversation_for_api if current ctx < saved ctx.
+  otherwise trim via the proper pinned path
+  (`validate_and_truncate` -> `_role_based_tail_walk`) which
+  preserves system_prompt / dynamic userContext / last user_input
+  while trimming older turns. We do NOT use the legacy
+  `trim_conversation_for_api` because it doesn't pin messages.
 
 =cut
 
@@ -1554,7 +1896,7 @@ sub _try_resume_from_payload {
 
     my $current_provider = $self->{api_manager} ? $self->{api_manager}->get_current_provider() : undef;
     if (($metadata->{provider} // '') ne ($current_provider // '')) {
-        log_debug('WorkflowOrchestrator',
+        log_info('WorkflowOrchestrator',
             "Resume payload skipped: provider changed ($metadata->{provider} -> $current_provider)");
         return;
     }
@@ -1566,7 +1908,7 @@ sub _try_resume_from_payload {
     $self->{_tools_cache} = [@$tools];
     my $current_sig = $self->_tools_signature($tools);
     if (($metadata->{tools_signature} // '') ne ($current_sig // '')) {
-        log_debug('WorkflowOrchestrator',
+        log_info('WorkflowOrchestrator',
             "Resume payload skipped: tools drifted (saved=$metadata->{tools_signature}, current=$current_sig)");
         return;
     }
@@ -1579,28 +1921,52 @@ sub _try_resume_from_payload {
     my $messages = [ @$payload ];
 
     if ($current_ctx >= $saved_ctx && $saved_ctx > 0) {
-        log_debug('WorkflowOrchestrator',
+        log_info('WorkflowOrchestrator',
             "Resume using cached payload verbatim: " . scalar(@$messages)
             . " messages, ctx=$current_ctx >= saved=$saved_ctx");
         return ($messages, $tools);
     }
 
-    # Smaller context - trim the cached payload like a normal history.
-    require CLIO::Core::ConversationManager;
-    my $system_prompt = '';
-    if ($messages->[0] && $messages->[0]{role} eq 'system') {
-        $system_prompt = $messages->[0]{content} // '';
-    }
-    $messages = CLIO::Core::ConversationManager::trim_conversation_for_api(
-        $messages, $system_prompt,
-        model_context_window => $current_ctx,
-        max_response_tokens  => $model_caps->{max_output_tokens}
-                                 // CLIO::Core::Defaults::DEFAULT_MAX_OUTPUT_TOKENS(),
-        debug => $self->{debug},
+    # Smaller context - reuse the cached payload but trim it to fit
+    # the smaller budget.
+    #
+    # DELETED (role-based history refactor): the previous check for
+    # `<messageHistory>` at [1] was checking for the OLD XML format
+    # which no longer exists. In the role-based format [1] is the
+    # anchor user message, never a system message containing
+    # `<messageHistory>`. The check never matched, and we always
+    # fell through to `trim_conversation_for_api`.
+    #
+    # `trim_conversation_for_api` does NOT pin system_prompt,
+    # dynamic userContext, or current user_input - it just does a
+    # tail-walk. Calling it on a cached payload that may have
+    # trimmed past important content is a context-loss risk.
+    #
+    # Instead, route through the proper pinned trim path
+    # (`validate_and_truncate` -> `_role_based_tail_walk`). This
+    # preserves system_prompt, dynamic userContext, and last
+    # user_input even under tight budget, while still trimming
+    # older turns to fit the smaller context.
+    require CLIO::Core::API::MessageValidator;
+    require CLIO::Providers;
+    require CLIO::Core::Defaults;
+    my $caps = {
+        max_context_window_tokens => $current_ctx,
+        max_output_tokens         => $model_caps->{max_output_tokens}
+                                     // CLIO::Core::Defaults::DEFAULT_MAX_OUTPUT_TOKENS(),
+    };
+    $messages = CLIO::Core::API::MessageValidator::validate_and_truncate(
+        messages           => $messages,
+        model_capabilities => $caps,
+        tools              => $tools,
+        token_ratio        => 2.5,
+        api_base           => '',
+        debug              => $self->{debug},
+        model              => $metadata->{model} || 'unknown',
     );
 
-    log_debug('WorkflowOrchestrator',
-        "Resume using cached payload (trimmed): " . scalar(@$messages)
+    log_info('WorkflowOrchestrator',
+        "Resume using cached payload (trimmed via pinned path): " . scalar(@$messages)
         . " messages, ctx=$current_ctx < saved=$saved_ctx");
 
     return ($messages, $tools);
@@ -1686,7 +2052,7 @@ sub _execute_tool_round {
             last;
         }
         if ($self->_check_and_handle_interrupt($session, $messages)) {
-            log_debug('WorkflowOrchestrator', "Interrupt detected between tool executions, skipping remaining tools");
+            log_info('WorkflowOrchestrator', "Interrupt detected between tool executions, skipping remaining tools");
             last;
         }
         
@@ -2004,7 +2370,7 @@ sub _execute_tool_round {
                     . substr($result_data->{error} // '', 0, 120)
                     . "\". Re-read the schema and call interact() if you need clarification.";
                 $ai_content = $stop_msg;
-                log_debug('WorkflowOrchestrator',
+                log_warning('WorkflowOrchestrator',
                     "Tool error loop detected: 3 consecutive identical-shape errors from $tool_name. "
                     . "Injected stop signal. sig=" . substr($err_sig, 0, 60));
             } elsif ($count > 3) {
@@ -2013,7 +2379,7 @@ sub _execute_tool_round {
                 $ai_content = "STOP: Same tool error pattern repeating (count=$count). "
                     . "Use interact(operation: \"request_input\", message: \"...\") to ask for help, "
                     . "or stop trying this approach.";
-                log_debug('WorkflowOrchestrator', "Tool error loop continues: count=$count");
+                log_info('WorkflowOrchestrator', "Tool error loop continues: count=$count");
             }
         } else {
             # Reset loop tracking on a successful tool call.
@@ -2064,7 +2430,7 @@ sub _execute_tool_round {
                 log_debug('WorkflowOrchestrator', "Saved tool result to session (tool_call_id=" . $tool_call->{id} . ")");
             };
             if ($@) {
-                log_debug('WorkflowOrchestrator', "Failed to save tool result: $@");
+                log_warning('WorkflowOrchestrator', "Failed to save tool result: $@");
             }
         }
 
@@ -2095,7 +2461,7 @@ sub _execute_tool_round {
             log_debug('WorkflowOrchestrator', "Session saved after iteration $iteration (preserving tool execution history)");
         };
         if ($@) {
-            log_debug('WorkflowOrchestrator', "Failed to save session after iteration: $@");
+            log_warning('WorkflowOrchestrator', "Failed to save session after iteration: $@");
         }
     }
 
@@ -2160,7 +2526,7 @@ sub _prepare_tool_round {
         # that corrupt the conversation. A valid tool name is alphanumeric
         # plus underscore/hyphen only.
         unless ($tool_name =~ /^[a-zA-Z_][a-zA-Z0-9_-]*$/) {
-           log_debug('WorkflowOrchestrator',
+           log_warning('WorkflowOrchestrator',
                "Rejecting tool call with suspicious name: '$tool_name' " .
                "(contains markup/regex/non-identifier chars - likely " .
                "model degradation near context limit)");
@@ -2398,7 +2764,7 @@ sub _prepare_tool_round {
                 }
 
                 if (is_anthropic_xml_format($json_str)) {
-                    log_debug('WorkflowOrchestrator', "Detected Anthropic XML format, converting to JSON");
+                    log_info('WorkflowOrchestrator', "Detected Anthropic XML format, converting to JSON");
                     $json_str = parse_anthropic_xml_to_json($json_str, $self->{debug});
                     log_debug('WorkflowOrchestrator', "Converted XML to JSON: " . substr($json_str, 0, 300));
                 } else {
@@ -2423,8 +2789,8 @@ sub _prepare_tool_round {
                 my $error = $@;
                 my $args_full = $tool_call->{function}->{arguments} || '';
 
-                log_debug('WorkflowOrchestrator', "Failed to parse arguments for tool '$tool_name': $error");
-                log_debug('WorkflowOrchestrator', "Full arguments:\n$args_full");
+                log_error('WorkflowOrchestrator', "Failed to parse arguments for tool '$tool_name': $error");
+                log_error('WorkflowOrchestrator', "Full arguments:\n$args_full");
 
                 my $error_message = "JSON parsing failed for tool '$tool_name': $error\nArguments received:\n$args_full";
 
@@ -2495,7 +2861,7 @@ sub _prepare_tool_round {
             }
         } else {
             push @parallel_tools, $tool_call;
-            log_debug('WorkflowOrchestrator', "Unknown tool $tool_name, treating as PARALLEL");
+            log_warning('WorkflowOrchestrator', "Unknown tool $tool_name, treating as PARALLEL");
         }
     }
 
@@ -2714,7 +3080,7 @@ sub _check_authorization_requests {
         $self->{ui}->check_agent_messages($self->{broker_client});
     };
     if ($@) {
-        log_debug('WorkflowOrchestrator', "Auth relay check failed: $@");
+        log_warning('WorkflowOrchestrator', "Auth relay check failed: $@");
     }
 }
 
@@ -2735,7 +3101,7 @@ sub _check_and_handle_interrupt {
         $self->_handle_interrupt($session, $messages_ref);
         $self->{_interrupt_pending} = 1;
         
-        log_debug('WorkflowOrchestrator', "Interrupt detected mid-iteration, setting pending flag");
+        log_info('WorkflowOrchestrator', "Interrupt detected mid-iteration, setting pending flag");
         
         return 1;
     }
@@ -2794,7 +3160,7 @@ Returns: Nothing (modifies messages array in place)
 sub _handle_interrupt {
     my ($self, $session, $messages_ref) = @_;
 
-    log_debug('WorkflowOrchestrator', "Handling user interrupt via forced interact");
+    log_info('WorkflowOrchestrator', "Handling user interrupt via forced interact");
 
     # Clear interrupt flag (it's been handled) via the shared helper. This
     # also logs the clear event so we have a single trail of interrupts.
@@ -2838,10 +3204,10 @@ sub _handle_interrupt {
                     content => $user_response,
                 };
                 
-                log_debug('WorkflowOrchestrator', "User responded to interrupt, continuing workflow");
+                log_info('WorkflowOrchestrator', "User responded to interrupt, continuing workflow");
                 return;
             } else {
-                log_debug('WorkflowOrchestrator', "Interact returned no output or was cancelled");
+                log_warning('WorkflowOrchestrator', "Interact returned no output or was cancelled");
                 # User cancelled or interact failed - add a placeholder message
                 push @$messages_ref, {
                     role => 'user',
@@ -2850,15 +3216,15 @@ sub _handle_interrupt {
                 return;
             }
         } else {
-            log_debug('WorkflowOrchestrator', "Interact tool not found in registry");
+            log_warning('WorkflowOrchestrator', "Interact tool not found in registry");
         }
     } else {
-        log_debug('WorkflowOrchestrator', "Tool registry not available for interrupt handling");
+        log_warning('WorkflowOrchestrator', "Tool registry not available for interrupt handling");
     }
     
     # Fallback: if tool registry is not available, inject message and let AI handle it
     # (This preserves the old behavior as a fallback)
-    log_debug('WorkflowOrchestrator', "Falling back to message injection for interrupt");
+    log_warning('WorkflowOrchestrator', "Falling back to message injection for interrupt");
     my $interrupt_message = {
         role => 'user',
         content =>
@@ -2914,12 +3280,12 @@ sub _compress_dropped_for_recovery {
     
     # Use filtered messages (without old summary) for extraction
     my $messages_to_compress = @actual_messages ? \@actual_messages : $dropped_messages;
-    
+
     my $compressed;
     eval {
         require CLIO::Memory::YaRN;
         my $yarn = CLIO::Memory::YaRN->new();
-        
+
         # Get task context from most recent user message, falling back to
         # a substantive message from the dropped set if it's too short.
         my $original_task = '';
@@ -2927,14 +3293,14 @@ sub _compress_dropped_for_recovery {
             $original_task = $last_user_msg->{content} || '';
         }
         $original_task = CLIO::Memory::YaRN::find_substantive_task($original_task, $messages_to_compress);
-        
+
         $compressed = $yarn->compress_messages($messages_to_compress,
             original_task    => $original_task,
             previous_summary => $previous_summary,
         );
     };
     if ($@) {
-        log_debug('WorkflowOrchestrator', "YaRN compression failed: $@");
+        log_warning('WorkflowOrchestrator', "YaRN compression failed: $@");
     }
     
     # Build recovery context
@@ -3344,6 +3710,79 @@ sub _checkpoint_session_progress {
 
 =head2 _record_turn_metrics($api_response, $session)
 
+=head2 _render_context_files_for_user_context
+
+Render session's context_files (added via /context add) as a block
+suitable for inclusion in the prose-rendered history. The block is
+appended after # Environment via messages_to_prose's
+context_files_block projection field.
+
+Returns empty string if no files are configured or none are readable.
+
+The format mirrors the legacy inject_context_files() block:
+  [CONTEXT FILES]
+  The following files were added to context by the user.
+  Reference these files when relevant to the conversation.
+  Total estimated tokens: ~N
+  <context_file path="..." tokens="~N">...</context_file>
+
+Arguments:
+- $session: Session object (used to access $session->{context_files},
+            which is the live storage used by the /context add command)
+
+Returns: String, or empty string if no files
+
+=cut
+
+sub _render_context_files_for_user_context {
+    my ($self, $session) = @_;
+
+    # Read from $session->{context_files} directly - this is the same
+    # storage the /context add command writes to. Reading from
+    # $session->state()->{context_files} (the old location) returned an
+    # always-empty array, silently dropping every /context add file
+    # from the dynamic userContext.
+    return '' unless $session;
+    return '' unless $session->{context_files} && ref($session->{context_files}) eq 'ARRAY';
+    my @files = @{$session->{context_files}};
+    return '' unless @files;
+
+    my $context_content = '';
+    my $total_tokens = 0;
+    my $loaded = 0;
+
+    for my $file (@files) {
+        next unless -f $file;
+        my $content;
+        eval {
+            open my $fh, '<:encoding(UTF-8)', $file or die "Cannot read: $!";
+            local $/;
+            $content = <$fh>;
+            close $fh;
+        };
+        next if $@ || !defined $content;
+
+        # Strip control chars that would corrupt the XML structure.
+        $content =~ s/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]//g;
+
+        my $tokens = int(length($content) / 4);
+        $total_tokens += $tokens;
+
+        $context_content .= "\n<context_file path=\"$file\" tokens=\"~$tokens\">\n";
+        $context_content .= $content;
+        $context_content .= "\n</context_file>\n";
+        $loaded++;
+    }
+
+    return '' unless $loaded;
+
+    return "[CONTEXT FILES]\n"
+        . "The following files were added to context by the user.\n"
+        . "Reference these files when relevant to the conversation.\n"
+        . "Total estimated tokens: ~$total_tokens\n"
+        . $context_content;
+}
+
 =head2 _get_memory_recovery_context
 
 Retrieves stored session progress from memory for context recovery.
@@ -3568,7 +4007,7 @@ sub _extract_session_marker {
         $title =~ s/^\s+|\s+$//g;
         if (length($title) >= 3) {
             $session->session_name($title);
-            log_debug('WorkflowOrchestrator', "Session named by AI: $title");
+            log_info('WorkflowOrchestrator', "Session named by AI: $title");
         }
         return ($content, 1);
     }
@@ -3579,12 +4018,313 @@ sub _extract_session_marker {
         $title =~ s/^\s+|\s+$//g;
         if (length($title) >= 3) {
             $session->session_name($title);
-            log_debug('WorkflowOrchestrator', "Session named by AI: $title");
+            log_info('WorkflowOrchestrator', "Session named by AI: $title");
         }
         return ($content, 1);
     }
     
     return ($content, 0);
+}
+
+=head2 _read_ltm_entries_for_projection
+
+Read the session's LTM (if any) and return the flat list of
+{confidence, content, type} hashes suitable for ContextBuilder's
+relevance scoring. Returns [] when the session has no LTM or the
+LTM has no entries.
+
+=cut
+
+sub _read_ltm_entries_for_projection {
+    my ($self, $session) = @_;
+    return [] unless $session && $session->can('ltm');
+    my $ltm = eval { $session->ltm() };
+    return [] unless $ltm && $ltm->can('get_entries_for_projection');
+    return eval { $ltm->get_entries_for_projection() } || [];
+}
+
+=head2 _active_task_text
+
+Return the active task text for the projection. Reads the first
+substantive session goal title, falling back to the first substantive
+user message from $history if no goals are set. Returns '' when
+neither is available.
+
+=cut
+
+sub _active_task_text {
+    my ($self, $session) = @_;
+    return '' unless $session;
+
+    my $goals = '';
+    if ($session->can('state')) {
+        my $state = $session->state();
+        if (ref($state) && $state->can('session_goals')) {
+            my $list = eval { $state->session_goals() };
+            if (ref($list) eq 'ARRAY') {
+                for my $g (@$list) {
+                    if (ref($g) eq 'HASH' && ($g->{status} // '') eq 'active') {
+                        $goals = $g->{title} || '';
+                        if (length $goals) {
+                            $goals .= ': ' . ($g->{description} || '') if length($g->{description} // '');
+                            last;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    return $goals if length $goals;
+
+    # Fallback: ask YaRN for the substantive task from the session's
+    # durable thread (which is never trimmed by context trimming).
+    require CLIO::Memory::YaRN;
+    return '' unless $session->can('get_conversation_history');
+    my $history = eval { $session->get_conversation_history() };
+    # Start with empty candidate; YaRN::find_substantive_task scans
+    # the history for a substantive user message (>=50 chars).
+    my $candidate = '';
+    return CLIO::Memory::YaRN::find_substantive_task($candidate, $history);
+}
+
+=head2 _read_active_todos_for_projection
+
+Read the active todo list and return it in the shape ContextBuilder
+expects (arrayref of {id, status, content}). Returns [] when no
+session or no todos.
+
+TodoStore stores items as {title, description, status, ...} (see
+CLIO::Session::TodoStore's POD). Earlier this function read
+$todo->{content} (which doesn't exist on TodoStore records) and so
+returned blank content for every todo - the model's "# Active todos"
+section rendered as `- [in-progress]` with no title or description.
+Fixed: prefer `title` (with `description` appended when present) and
+fall back to `content` for backwards compatibility with any
+non-TodoStore data sources.
+
+Also: TodoStore's constructor takes `sessions_dir`, NOT `clio_dir`.
+Passing `clio_dir` was silently dropped and TodoStore read from
+`<cwd>/sessions/<id>/todos.json`, which is empty for puppeteer child
+projects (tests/, scratch/) whose session data lives under their own
+`.clio/`. Fixed: derive sessions_dir from clio_dir.
+
+=cut
+
+sub _read_active_todos_for_projection {
+    my ($self, $session) = @_;
+    return [] unless $session;
+
+    eval {
+        require CLIO::Session::TodoStore;
+        require Cwd;
+        require CLIO::Util::PathResolver;
+    };
+    return [] if $@;
+
+    my $clio_dir = CLIO::Util::PathResolver::find_clio_dir(Cwd::getcwd());
+    my $store = CLIO::Session::TodoStore->new(
+        sessions_dir => "$clio_dir/sessions",
+        session_id   => $session->can('id') ? $session->id() : undef,
+    );
+    my $todos = eval { $store->read() };
+    return [] unless $todos && ref($todos) eq 'ARRAY';
+
+    my @out;
+    for my $todo (@$todos) {
+        next unless ref($todo) eq 'HASH';
+        # TodoStore normalizes 'pending' to 'not-started' on write;
+        # accept both spellings for forward compatibility.
+        next unless grep { ($todo->{status} // '') eq $_ }
+            ('in-progress', 'pending', 'not-started', 'blocked');
+        # Resolve content: TodoStore uses title + description. Some
+        # legacy code paths may have stored under `content`, so honor
+        # that too.
+        my $content = $todo->{title} || $todo->{content} || '';
+        if ($todo->{description} && length $todo->{description}) {
+            $content .= ': ' . $todo->{description} if length $content;
+            $content .= $todo->{description} unless length $content;
+        }
+        push @out, {
+            id      => $todo->{id},
+            status  => $todo->{status},
+            content => $content,
+        };
+    }
+    return \@out;
+}
+
+=head2 _collect_unresolved_state
+
+Walk the recent history and collect strings describing unresolved
+state: failed tool results (containing "ERROR", "FAILED", or
+"undefined"), blocked todos, and recent [SYSTEM: ...] nudges. Used
+by ContextBuilder for LTM relevance scoring.
+
+Arguments:
+- $history: ArrayRef of message hashes from session history.
+- $session: Session object (required for blocked-todo surfacing).
+  The previous version read $self->{_session}, which is never set
+  anywhere in WorkflowOrchestrator, so the blocked-todo surfacing
+  path was silently dead code. Pass $session explicitly so this
+  method actually sees the session's TodoStore.
+
+Returns arrayref of strings, capped at 10 to keep the keyword overlap
+scoring bounded.
+
+=cut
+
+sub _collect_unresolved_state {
+    my ($self, $history, $session) = @_;
+    return [] unless $history && ref($history) eq 'ARRAY';
+
+    require CLIO::Memory::LongTerm;
+    my $sanitizer = CLIO::Memory::LongTerm->new();
+
+    # Read blocked todos from TodoStore and surface them as
+    # unresolved state. The user explicitly marked the todo as
+    # blocked - that's a signal the model needs to see when
+    # LTM relevance scoring runs, so framework-related memories
+    # (like "model-facing prompt paths must NEVER tell the
+    # model about framework-internal events") get the category
+    # boost and surface to help the model recover from the
+    # blocked state.
+    #
+    # Skipped if TodoStore is unreachable (e.g. test environments
+    # without a session dir). The eval guards the load.
+
+    my @unresolved;
+    eval {
+        require CLIO::Session::TodoStore;
+        require Cwd;
+        require CLIO::Util::PathResolver;
+        my $clio_dir = CLIO::Util::PathResolver::find_clio_dir(Cwd::getcwd());
+        my $store = CLIO::Session::TodoStore->new(
+            sessions_dir => "$clio_dir/sessions",
+            session_id   => $session && $session->can('id') ? $session->id() : undef,
+        );
+        my $todos = $store->read();
+        if ($todos && ref($todos) eq 'ARRAY') {
+            for my $todo (@$todos) {
+                next unless ref($todo) eq 'HASH';
+                next unless ($todo->{status} // '') eq 'blocked';
+                my $content = $todo->{title} || $todo->{content} || '';
+                next unless length $content;
+                # Include description and blockedReason when present so
+                # LTM relevance scoring has more signal to match against
+                # (the "blocked todo: <title>" line is short and unlikely to
+                # score above the relevance floor for framework-meta
+                # memories).
+                if (length $todo->{description} // '') {
+                    $content .= ' - ' . $todo->{description};
+                }
+                if (length $todo->{blockedReason} // '') {
+                    $content .= ' (reason: ' . $todo->{blockedReason} . ')';
+                }
+                push @unresolved, "blocked todo: $content";
+                last if @unresolved >= 10;
+            }
+        }
+    };
+    log_debug('WorkflowOrchestrator', "TodoStore load for blocked todos: $@") if $@;
+
+    my $n = scalar(@$history);
+    my $start = $n - 30;
+    $start = 0 if $start < 0;
+    for my $i ($start .. $n - 1) {
+        my $msg = $history->[$i];
+        next unless ref($msg) eq 'HASH';
+        my $role = $msg->{role} // '';
+        my $content = $msg->{content} // '';
+        if ($role eq 'tool' && $content =~ /\b(ERROR|FAILED|FATAL|UNDEFINED|Exception|croak|Died at|stack trace|traceback|status:\s*failed|HTTP\/\S+\s+5\d\d|connection refused|timeout|out of memory)\b/i) {
+            # Tool error: include the error text directly. The prose
+            # renderer's "- " bullet already structures the list; a
+            # "tool_error:" prefix would be framework-mechanic
+            # narration that the model treats as instruction.
+            # Sanitize so any internal tool names / LTM references
+            # in the error message get cleaned.
+            my $line = $sanitizer->sanitize_narration(substr($content, 0, 200));
+            push @unresolved, $line if length $line;
+        }
+        # [SYSTEM: ...] user nudges are framework narration. Per the
+        # LTM pattern "model-facing prompt paths must NEVER tell the
+        # model about framework-internal events" we deliberately do
+        # not surface them as unresolved state. The model should
+        # never see them at all - if one leaked into the history it
+        # belongs in the sanitizer, not in the unresolved list.
+        last if @unresolved >= 10;
+    }
+    return \@unresolved;
+}
+
+=head2 _relocate_dynamic_usercontext
+
+After a proactive trim, the dynamic userContext message may have been
+removed entirely (the pin list preserves it, but defense in depth:
+verify and restore). If it survived, its index is now potentially
+wrong because the trim changed the message count.
+
+This helper finds the dynamic userContext in the trimmed array and
+updates $self->{_dynamic_usercontext_idx} so the per-iteration
+refresh path can find it. If it's missing, push a fresh one at the
+end (the next iteration's refresh will fix the content).
+
+Arguments:
+- $messages_ref: Reference to the messages array (mutated in place).
+
+Returns: nothing.
+
+=cut
+
+sub _relocate_dynamic_usercontext {
+    my ($self, $messages_ref) = @_;
+
+    return unless $self->{_current_projection};
+    return unless ref($messages_ref) eq 'ARRAY';
+
+    # The original dynamic userContext message content is the
+    # baseline we look for. We can't use message hashref identity
+    # because the proactive trim rebuilds the array. Content match
+    # is the stable identifier.
+    my $current_idx = $self->{_dynamic_usercontext_idx};
+    my $expected = ($current_idx >= 0
+                    && $current_idx < @$messages_ref
+                    && $messages_ref->[$current_idx]{role} eq 'system')
+                   ? $messages_ref-> [$current_idx]{content}
+                   : undef;
+
+    my $found_idx;
+    if (defined $expected) {
+        for my $i (0 .. $#$messages_ref) {
+            next unless ref($messages_ref->[$i]) eq 'HASH';
+            next unless ($messages_ref->[$i]{role} // '') eq 'system';
+            if (($messages_ref->[$i]{content} // '') eq $expected) {
+                $found_idx = $i;
+                last;
+            }
+        }
+    }
+
+    if (defined $found_idx) {
+        $self->{_dynamic_usercontext_idx} = $found_idx;
+        log_debug('WorkflowOrchestrator',
+            "Relocated dynamic userContext to index $found_idx after trim");
+        return;
+    }
+
+    # Dynamic userContext was dropped by the trim. Push a fresh
+    # placeholder at the end. The per-iteration refresh at iteration
+    # >1 will fill in real content; iteration 1 won't get a refresh
+    # but the message will at least exist for alternation/serialization.
+    my $proj = $self->{_current_projection};
+    my $refreshed = CLIO::Core::MessageHistory::messages_to_prose_dynamic($proj);
+    push @$messages_ref, {
+        role    => 'system',
+        content => length($refreshed) ? $refreshed : '[DYNAMIC_USERCONTEXT_PLACEHOLDER]',
+    };
+    $self->{_dynamic_usercontext_idx} = $#$messages_ref;
+    log_debug('WorkflowOrchestrator',
+        "Restored missing dynamic userContext at index $self->{_dynamic_usercontext_idx}");
+    return;
 }
 
 1;

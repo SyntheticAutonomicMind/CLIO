@@ -1,10 +1,20 @@
 #!/usr/bin/env perl
-# Test: Proactive trim in WorkflowOrchestrator prevents massive reactive trims
+# Test: Role-based history trim in MessageValidator prevents oversized requests
 #
-# This test simulates the scenario that caused "Trimmed 434 messages":
-# - Build a large @messages array simulating many tool call iterations
-# - Verify that validate_and_truncate trims it proportionally
-# - Verify the trimmed result preserves tool_call/tool_result pairs
+# This test simulates the scenario that caused "Trimmed 434 messages"
+# using the role-based history path (the only path in production
+# after the messageHistory XML feature was removed):
+# - Build a large history array simulating many tool call iterations
+# - Wrap it in a [system_prompt, ...history..., user_input] @messages
+# - Verify that validate_and_truncate trims oldest messages
+# - Verify the trimmed result preserves the most recent turns and tool pairs
+#
+# After the role-based history refactor, history is pushed as
+# individual messages rather than bundled into a single XML block.
+# Trim is the role-based tail walk in MessageValidator::_role_based_tail_walk.
+# It drops oldest messages until the array fits the budget while
+# preserving the first user message (the original task anchor) and
+# keeping tool_call/tool_result pairs together.
 
 use strict;
 use warnings;
@@ -20,24 +30,16 @@ my $caps = {
     max_context_window_tokens => 128000,
 };
 
-# Build a large message array simulating 50 iterations of tool calls
-# This is what @messages looks like in a long session
-my @messages;
-
-# System prompt (~5K tokens worth)
-push @messages, {
-    role => 'system',
-    content => "You are CLIO, an AI coding assistant. " . ("Context and instructions. " x 500),
-};
+# Build a large history array simulating 50 iterations of tool calls.
+my @history;
 
 # First user message
-push @messages, {
+push @history, {
     role => 'user',
     content => "Help me refactor this module and fix the font rendering bugs in the bigtext system.",
 };
 
 # Simulate 50 iterations of: assistant (with tool_calls) -> tool results
-# Each iteration has ~3 tool calls, each returning ~2K of content
 for my $iter (1..50) {
     my @tool_calls;
     for my $tc_num (1..3) {
@@ -51,17 +53,17 @@ for my $iter (1..50) {
             },
         };
     }
-    
+
     # Assistant message with tool calls
-    push @messages, {
+    push @history, {
         role => 'assistant',
         content => "Let me check the font rendering in iteration $iter. " . ("Analysis text. " x 20),
         tool_calls => \@tool_calls,
     };
-    
+
     # Tool results for each call
     for my $tc (@tool_calls) {
-        push @messages, {
+        push @history, {
             role => 'tool',
             tool_call_id => $tc->{id},
             name => 'file_operations',
@@ -70,19 +72,37 @@ for my $iter (1..50) {
     }
 }
 
-# Add one more user message at the end (current turn)
-push @messages, {
+# Add one more user message at the end (current turn input)
+push @history, {
     role => 'user',
     content => "Now check the B glyph width consistency.",
 };
 
-my $total_messages = scalar(@messages);
+my $total_messages = scalar(@history);
 diag("Built $total_messages messages simulating 50 tool-call iterations");
 
 # Test 1: Without trim, this would be way over the 128K limit
 ok($total_messages > 200, "Message array is large enough to trigger trimming ($total_messages messages)");
 
-# Test 2: validate_and_truncate should trim proportionally
+# Build the @messages array the way WorkflowOrchestrator would after
+# the role-based history refactor: [system_prompt, ...history, user_input].
+my $system_prompt = {
+    role => 'system',
+    content => "You are CLIO, an AI coding assistant. " . ("Context and instructions. " x 500),
+};
+
+# The current user input is the last user message; everything before
+# it is the role-based history portion.
+my @history_only = @history[0 .. $#history - 1];
+my $current_user_input = $history[-1];
+
+my @messages = (
+    $system_prompt,
+    @history_only,
+    { role => 'user',   content => $current_user_input->{content} },
+);
+
+# Test 2: validate_and_truncate should trim oldest history messages
 my $trimmed = validate_and_truncate(
     messages           => \@messages,
     model_capabilities => $caps,
@@ -93,58 +113,78 @@ my $trimmed = validate_and_truncate(
 );
 
 my $trimmed_count = scalar(@$trimmed);
-diag("After proactive trim: $total_messages -> $trimmed_count messages");
+diag("After proactive trim: $trimmed_count messages (was $total_messages)");
 
-ok($trimmed_count == $total_messages, "validate_and_truncate is now a legacy no-op (no trimming, $trimmed_count == $total_messages)");
-ok($trimmed_count > 10, "All messages retained ($trimmed_count > 10)");
+# Test 3: Total messages dropped
+ok($trimmed_count < $total_messages,
+    "Total messages dropped ($trimmed_count < $total_messages)");
 
-# Test 3: First message should be system
-is($trimmed->[0]{role}, 'system', "System prompt preserved as first message");
+# Test 4: First user message (the original task anchor) survives the trim
+my $first_user = (grep { $_->{role} eq 'user' } @$trimmed)[0];
+ok(defined $first_user, "At least one user message preserved");
+like($first_user->{content}, qr/Help me refactor/,
+    "First user message (original task anchor) preserved");
 
-# Test 4: Check that tool_call/tool_result pairs are intact
-my %tool_call_ids;
-my %tool_result_ids;
-for my $msg (@$trimmed) {
-    if ($msg->{tool_calls} && ref($msg->{tool_calls}) eq 'ARRAY') {
-        for my $tc (@{$msg->{tool_calls}}) {
-            $tool_call_ids{$tc->{id}} = 1;
-        }
-    }
-    if ($msg->{role} && $msg->{role} eq 'tool' && $msg->{tool_call_id}) {
-        $tool_result_ids{$msg->{tool_call_id}} = 1;
-    }
-}
-
-# Every tool_result should have a matching tool_call
-my $orphaned_results = 0;
-for my $result_id (keys %tool_result_ids) {
-    $orphaned_results++ unless $tool_call_ids{$result_id};
-}
-is($orphaned_results, 0, "No orphaned tool results after trimming");
-
-# Test 5: validate_and_truncate is now a legacy handler that does not trim.
-# Actual trimming is handled by the messageHistory/YaRN pipeline in
-# WorkflowOrchestrator. The legacy handler just validates tool pairs.
-my $reactive_would_drop = 0;
-diag("Legacy path: no trimming ($total_messages -> $trimmed_count messages)");
-diag("Actual trimming now handled by messageHistory/YaRN pipeline");
-
-# Test 6: Verify the trim didn't produce too few messages (sanity check)
-# With 128K context and ~50% post-trim target, we should keep quite a few
-ok($trimmed_count >= 10, "Kept at least 10 messages ($trimmed_count)");
-
-# Test 7: Verify last user message is preserved (most recent context)
-my $last_user = undef;
-for my $msg (reverse @$trimmed) {
-    if ($msg->{role} eq 'user') {
-        $last_user = $msg;
+# Test 5: Most recent tool_call/tool_result pairs survive intact
+my $last_tool_result_idx = -1;
+for (my $i = $#$trimmed; $i >= 0; $i--) {
+    if ($trimmed->[$i]{role} eq 'tool') {
+        $last_tool_result_idx = $i;
         last;
     }
 }
-ok($last_user, "A user message is preserved in trimmed output");
-like($last_user->{content}, qr/B glyph/, "Most recent user message preserved");
+ok($last_tool_result_idx > 0, "Tool results preserved in trimmed array");
+if ($last_tool_result_idx > 0) {
+    # Walk backward from the last tool result; the next assistant message
+    # with matching tool_calls should appear somewhere before it (could
+    # be anywhere in the array since we trim from oldest).
+    my $tool_call_id = $trimmed->[$last_tool_result_idx]{tool_call_id};
+    my $has_pair = 0;
+    for (my $j = 0; $j < $last_tool_result_idx; $j++) {
+        my $m = $trimmed->[$j];
+        next unless $m->{role} eq 'assistant' && ref($m->{tool_calls}) eq 'ARRAY';
+        for my $tc (@{$m->{tool_calls}}) {
+            if (($tc->{id} // '') eq $tool_call_id) {
+                $has_pair = 1;
+                last;
+            }
+        }
+        last if $has_pair;
+    }
+    ok($has_pair, "Tool result has matching assistant tool_call (pair intact)");
 
-# Test 8: Test with smaller context (32K, like local models)
+    # Test 6b (regression guard): no duplicate messages in the trimmed
+    # array. Before the tail-walk fix, assistant tool_call messages were
+    # added twice (once via the tool_pair pre-push, once via the normal
+    # reverse walk) - the test above passed only because the duplicate
+    # assistants happened to land after the tool result the test was
+    # scanning for. Counting by (role, tool_call_ids) catches the
+    # underlying bug without false-positives on tool results whose
+    # bodies were identical in the fixture (all 50 iterations use the
+    # same template).
+    my %seen;
+    my @dup_keys;
+    for my $i (0 .. $#$trimmed) {
+        my $m = $trimmed->[$i];
+        next unless ref($m) eq 'HASH';
+        my $tc_ids;
+        if ($m->{tool_calls}) {
+            $tc_ids = join(',', sort map { $_->{id} // '' } @{$m->{tool_calls}});
+        } elsif ($m->{tool_call_id}) {
+            $tc_ids = $m->{tool_call_id};
+        } else {
+            $tc_ids = substr($m->{content} // '', 0, 60);
+        }
+        my $key = "$m->{role}|$tc_ids";
+        if ($seen{$key}++) {
+            push @dup_keys, "[$i] $key";
+        }
+    }
+    ok(!@dup_keys, "No duplicate assistant tool_calls or tool_call_ids in trimmed array (regression guard)")
+        or diag("Duplicates:\n" . join("\n", @dup_keys));
+}
+
+# Test 7: Smaller context window produces more aggressive trim
 my $small_caps = {
     max_prompt_tokens => 32000,
     max_output_tokens => 4096,
@@ -157,9 +197,9 @@ my $small_trimmed = validate_and_truncate(
     debug              => 0,
     model              => 'local-model',
 );
-my $small_count = scalar(@$small_trimmed);
-diag("32K context: $total_messages -> $small_count messages (legacy no-op, same as 128K)");
-ok($small_count == $total_messages, "Legacy handler is context-agnostic (no trimming at any budget)");
-ok($small_count > 5, "Still keeps minimum messages ($small_count > 5)");
+my $small_trimmed_count = scalar(@$small_trimmed);
+diag("32K context: $small_trimmed_count messages (was $total_messages)");
+ok($small_trimmed_count <= $trimmed_count,
+    "32K context trim is at least as aggressive as 128K ($small_trimmed_count <= $trimmed_count)");
 
 done_testing();

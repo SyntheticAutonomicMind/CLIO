@@ -48,18 +48,29 @@ tool name (e.g., file_operations with 17 operations instead of 17 separate tools
 
 sub new {
     my ($class, %opts) = @_;
-    
+
     # Validate required fields
     croak "Subclass must define 'name'" unless $opts{name};
     croak "Subclass must define 'description'" unless $opts{description};
     croak "Subclass must define 'supported_operations'" unless $opts{supported_operations};
-    
+
     return bless {
         name => $opts{name},
         description => $opts{description},
         supported_operations => $opts{supported_operations},
+        # operation_aliases is the silent natural-language alias set
+        # (e.g. "create" -> write_file, "read" -> read_file, "mkdir" ->
+        # create_directory). Subclasses declare it in their supported_operations
+        # hash but the base class MUST also store it on the instance,
+        # otherwise validate_operation and _infer_operation_from_params
+        # can't see the aliases and tools fail with "Unknown operation"
+        # for every alias name. This was a latent bug exposed by the
+        # alias test suite in 2026-09-03: the field was declared in
+        # every tool's supported_operations hash but never copied to
+        # $self.
+        operation_aliases => $opts{operation_aliases} || [],
         debug => $opts{debug} || 0,
-        
+
         # Execution control metadata (SAM-inspired pattern + CLIO enhancements)
         requires_blocking => $opts{requires_blocking} || 0,  # Tool must wait for completion before workflow continues
         requires_serial => $opts{requires_serial} || 0,      # Tool executes one-at-a-time (but doesn't block workflow)
@@ -302,10 +313,21 @@ sub _infer_operation_from_params {
 
 sub validate_operation {
     my ($self, $operation) = @_;
-    
-    # Build hash lookup on first call (avoids linear grep on every tool dispatch)
+
+    # Build hash lookup on first call (avoids linear grep on every tool dispatch).
+    # The lookup covers BOTH supported_operations (the canonical names
+    # exposed to the model) AND operation_aliases (the silent natural-
+    # language aliases like create -> write_file). Without the alias
+    # set, validate_operation returns 0 for valid alias names and the
+    # execute() method bails with "Unknown operation" before even
+    # consulting the dispatch table. The dispatch table knows the
+    # alias mapping (create => write_file, etc.) but only gets a
+    # chance to apply it if validate_operation clears the operation
+    # as valid first.
     unless ($self->{_supported_ops_hash}) {
-        $self->{_supported_ops_hash} = { map { $_ => 1 } @{$self->{supported_operations}} };
+        my %h = map { $_ => 1 } @{$self->{supported_operations}};
+        @h{ @{$self->{operation_aliases} || []} } = (1) x scalar(@{$self->{operation_aliases} || []});
+        $self->{_supported_ops_hash} = \%h;
     }
     return $self->{_supported_ops_hash}{$operation} ? 1 : 0;
 }

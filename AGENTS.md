@@ -128,15 +128,19 @@ Terminal Output (with color/theme)
 **Key Files:**
 
 - `clio` - Main executable
-- `lib/CLIO/Core/WorkflowOrchestrator.pm` - Tool orchestration
+- `lib/CLIO/Core/WorkflowOrchestrator.pm` - Tool orchestration, message array construction, role-based history push
 - `lib/CLIO/Core/APIManager.pm` - AI provider integration
 - `lib/CLIO/UI/Chat.pm` - Terminal interface
 - `lib/CLIO/Core/ToolExecutor.pm` - Tool invocation
 - `lib/CLIO/Tools/FileOperations.pm` - File system operations (17 ops)
 - `lib/CLIO/Tools/Registry.pm` - Tool registration
 - `lib/CLIO/Core/PluginManager.pm` - Plugin lifecycle
-- `lib/CLIO/Core/PromptBuilder.pm` - Prompt construction
+- `lib/CLIO/Core/PromptBuilder.pm` - Prompt construction (system prompt, the cache-stable [0])
 - `lib/CLIO/Core/PromptManager.pm` - Prompt template storage
+- `lib/CLIO/Core/ContextBuilder.pm` - Per-request projection: anchor turn + recent turns + LTM relevance + cross-turn dedup
+- `lib/CLIO/Core/MessageHistory.pm` - Prose renderer for the dynamic userContext system message
+- `lib/CLIO/Core/ConversationManager.pm` - History loading + role-based tail walk + reasoning-content stripping
+- `lib/CLIO/Core/API/MessageValidator.pm` - `_role_based_tail_walk` (proactive/reactive trim); protects system_prompt, dynamic userContext, current user_input, tool_call/tool_result pairs
 - `lib/CLIO/Core/ModelDataLoader.pm` - Unified model capability data loader
 - `lib/CLIO/Core/model-data/models.json` - Primary model capability database
 - `lib/CLIO/Core/model-data/provider-defaults.json` - Provider fallback defaults
@@ -285,7 +289,7 @@ guidelines when choosing a level:
 
 | Prefix | Purpose | Examples |
 |--------|---------|----------|
-| `CLIO::Core::` | System core | APIManager, WorkflowOrchestrator, ToolExecutor, Config, PromptManager, ModelCapabilitiesManager, ModelDataLoader |
+| `CLIO::Core::` | System core | APIManager, WorkflowOrchestrator, ToolExecutor, Config, PromptManager, ModelCapabilitiesManager, ModelDataLoader, ContextBuilder (per-request projection), MessageHistory (dynamic userContext renderer), ConversationManager |
 | `CLIO::Core::API::` | APIManager sub-modules | ResponseHandler, MessageValidator, ErrorHandler, PayloadSanitizer |
 | `CLIO::Tools::` | AI-callable tools | FileOperations, VersionControl, TerminalOperations, MemoryOperations, Interact, ApplyPatch, CodeIntelligence, RemoteExecution, SubAgentOperations, TodoList, WebOperations, SkillOperations, MCPBridge, PluginBridge, Registry, Tool |
 | `CLIO::UI::` | Terminal interface | Chat, Markdown, Theme, ANSI, CommandHandler, DiffRenderer, Display, HostProtocol, Multiplexer, PaginationManager, ProgressSpinner, StreamingController, Terminal, ToolOutputFormatter |
