@@ -76,6 +76,8 @@ Terminal Output
 | Prompt Manager | `PromptManager.pm` | System prompts + custom instructions |
 | Prompt Builder | `PromptBuilder.pm` | Prompt construction utilities |
 | Instructions Reader | `InstructionsReader.pm` | Reads `.clio/instructions.md` and `AGENTS.md` |
+| **Context Builder** | `ContextBuilder.pm` | **Per-request projection: anchor turn, recent turns, LTM relevance scoring, cross-turn tool-call dedup** |
+| **Message History** | `MessageHistory.pm` | **Prose renderer for the dynamic userContext system message** |
 | Config | `Config.pm` | API keys, provider selection, model aliases |
 | ReadLine | `ReadLine.pm` | Command history & editing |
 | Editor | `Editor.pm` | Core editing functionality |
@@ -103,13 +105,14 @@ Terminal Output
 
 **How it works:**
 1. APIManager connects to AI provider (GitHub Copilot, OpenAI, Google, OpenRouter, MiniMax, Z.AI, Ollama Cloud, NVIDIA NIM, DeepSeek, SAM, llama.cpp, LM Studio, etc.)
-2. WorkflowOrchestrator manages complex interactions, including:
-   - Proactive context trimming before each API call (keeps messages at ≤75% of context)
-   - Reactive trimming with 3-attempt escalation when the API rejects due to token overflow
-   - 400 Bad Request escalation: silent retry → tool_call repair → context trim → error surface
-3. PromptManager provides system prompt + custom instructions
-4. ToolExecutor invokes selected tools
-5. Results processed and returned
+2. PromptBuilder builds the system prompt (messages[0]) - base prompt + tools section + skills catalog + user profile + plugin instructions + puppeteer topology. Cache-stable across turns.
+3. WorkflowOrchestrator calls ContextBuilder::build_projection to select the anchor turn, recent turns, score LTM, dedup cross-turn tool calls, and read session state. Recent turns are pushed as role-based messages; the projection dynamic fields are rendered by MessageHistory::messages_to_prose_dynamic as a single trailing system message.
+4. WorkflowOrchestrator appends the user input and any current-turn exchanges.
+5. Before each subsequent API call within the same turn, the proactive trim (MessageValidator::validate_and_truncate) keeps at messages under the model effective budget. It protects the system prompt, dynamic userContext, current user_input, and tool_call/tool_result pairs while dropping oldest tool exchanges first.
+6. ToolExecutor invokes selected tools; results return as native role-based tool messages.
+7. On token_limit_exceeded, the same validate_and_truncate path runs reactively.
+8. On 400 Bad Request: silent retry -> tool_call repair -> context trim -> error surface.
+
 
 ### 3. Tool System
 **Files:** `lib/CLIO/Tools/`

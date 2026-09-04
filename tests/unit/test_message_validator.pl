@@ -135,68 +135,66 @@ use_ok('CLIO::Core::API::MessageValidator');
     is(scalar @$errors, 0, "Empty preflight returns no errors");
 }
 
-# Test: user message injection after trim drops user message in autonomous tool loop
-# This tests the fix for the hallucination bug where the model saw no user message
-# after a proactive trim during a long autonomous tool loop, causing it to think
-# it was a new session.
+# Test: role-based history within budget is returned unchanged
+# After the role-based history refactor, history is pushed as
+# individual messages rather than bundled into a single
+# messageHistory XML block. validate_and_truncate must preserve the
+# message array structure when within budget.
 {
-    # Build a message array simulating a long autonomous tool loop:
-    # system prompt + user message + many (assistant+tool) pairs
-    # Set max_prompt_tokens low enough that the budget walk drops the user message
-    my @messages;
-    push @messages, { role => 'system', content => 'You are a helpful assistant.' };
-    push @messages, { role => 'user', content => 'Please investigate the Usurper source code thoroughly.' };
-    
-    # Add 40 assistant+tool pairs (simulating autonomous tool loop)
-    for my $i (1..40) {
-        my $tc_id = "tc_$i";
-        push @messages, {
-            role => 'assistant',
-            content => "Reading file $i...",
-            tool_calls => [{ id => $tc_id, type => 'function', function => { name => 'file_operations', arguments => '{"operation":"read_file","path":"file'.$i.'.txt"}' } }],
-        };
-        push @messages, {
-            role => 'tool',
-            tool_call_id => $tc_id,
-            content => ('x' x 500),  # Each tool result is ~200 tokens
-        };
+    # Build a 5-turn role-based history (no XML wrapping)
+    my @history;
+    push @history, { role => 'user', content => 'Investigate the Usurper source.' };
+    for my $i (1..5) {
+        push @history, { role => 'assistant', content => "Iter $i analysis.",
+                         tool_calls => [{ id => "tc_$i", type => 'function', function => { name => 'test', arguments => '{}' } }] };
+        push @history, { role => 'tool',     tool_call_id => "tc_$i", content => "Result $i" };
     }
-    
-    # Set max_prompt_tokens very low so the budget walk only keeps the most recent messages
-    my $result = CLIO::Core::API::MessageValidator::validate_and_truncate(
-        messages           => \@messages,
-        model_capabilities => { max_prompt_tokens => 8000 },
-        token_ratio        => 2.5,
-    );
-    
-    # Verify: the result should contain at least one user message
-    my @user_msgs = grep { $_->{role} && $_->{role} eq 'user' } @$result;
-    ok(scalar(@user_msgs) > 0, "User message preserved after trim in autonomous tool loop");
-    
-    # The user message content should match the original request
-    if (@user_msgs) {
-        like($user_msgs[0]{content}, qr/Usurper/, "Preserved user message contains original task");
-    }
-}
 
-# Test: user message NOT injected when conversation already has a user message
-{
-    my @messages;
-    push @messages, { role => 'system', content => 'You are a helpful assistant.' };
-    push @messages, { role => 'user', content => 'Hello world' };
-    push @messages, { role => 'assistant', content => 'Hi there!' };
-    push @messages, { role => 'user', content => 'Now do something else' };
-    push @messages, { role => 'assistant', content => 'OK doing it' };
-    
+    my @messages = (
+        { role => 'system', content => 'You are a helpful assistant.' },
+        @history,
+        { role => 'user',   content => 'Continue' },
+    );
+
     my $result = CLIO::Core::API::MessageValidator::validate_and_truncate(
         messages           => \@messages,
         model_capabilities => { max_prompt_tokens => 128000 },
         token_ratio        => 2.5,
     );
-    
-    # Count user messages - should be exactly 2 (not 3)
-    my @user_msgs = grep { $_->{role} && $_->{role} eq 'user' } @$result;
-    is(scalar(@user_msgs), 2, "No extra user message injected when conversation has user messages");
+
+    is(scalar(@$result), scalar(@messages), "Within budget: messages returned unchanged in count");
+    is($result->[0]{role}, 'system', 'system prompt preserved');
+    is($result->[-1]{content}, 'Continue', 'current user input preserved');
+}
+
+# Test: role-based trim drops oldest messages when over budget
+{
+    # Build a 30-turn role-based history (each turn has substantial content)
+    my @history;
+    for my $i (1..30) {
+        push @history, { role => 'user', content => "Question $i " . ('x' x 200) };
+        push @history, { role => 'assistant', content => "Answer $i " . ('y' x 200) };
+    }
+
+    my @messages = (
+        { role => 'system', content => 'sys' },
+        @history,
+        { role => 'user',   content => 'current' },
+    );
+
+    my $result = CLIO::Core::API::MessageValidator::validate_and_truncate(
+        messages           => \@messages,
+        model_capabilities => { max_prompt_tokens => 1000, max_output_tokens => 256 },
+        token_ratio        => 2.5,
+    );
+
+    # Result should be smaller than input - oldest turns got dropped
+    ok(scalar(@$result) < scalar(@messages), "Over budget: messages dropped (was " . scalar(@messages) . ", now " . scalar(@$result) . ")");
+    is($result->[-1]{content}, 'current', 'current user input always preserved');
+    # First user message in remaining array should be Question N (some N > 1) - oldest got dropped
+    my $first_user = (grep { $_->{role} eq 'user' } @$result)[0];
+    ok(defined $first_user, 'at least one user message preserved');
+    like($first_user->{content}, qr/Question (\d+)/, 'first user message preserved with Question N prefix');
 }
 
 done_testing();

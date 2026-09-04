@@ -9,7 +9,7 @@ use utf8;
 use POSIX qw(ceil);
 use Exporter 'import';
 
-our @EXPORT_OK = qw(estimate_tokens get_effective_ratio compute_prompt_budget);
+our @EXPORT_OK = qw(estimate_tokens estimate_messages_tokens get_effective_ratio compute_prompt_budget);
 
 =head1 NAME
 

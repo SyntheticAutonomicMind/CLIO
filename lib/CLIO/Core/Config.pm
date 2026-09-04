@@ -12,6 +12,7 @@ use CLIO::Core::Logger qw(should_log log_debug log_warning);
 use CLIO::Util::ConfigPath qw(get_config_dir);
 use CLIO::Providers qw(get_provider list_providers provider_exists);
 use CLIO::Util::JSON qw(encode_json decode_json);
+use Storable qw(dclone);
 use File::Path qw(make_path);
 use File::Spec;
 
@@ -59,6 +60,11 @@ use constant MODEL_SCOPED_KEYS => [
 
 # Default configuration (system-level defaults only)
 # Provider-specific defaults come from CLIO::Providers
+# IMPORTANT: Mutable nested structures (model_configs, model_candidates,
+# model_routes, api_keys, api_bases) MUST be freshly cloned per consumer.
+# The hashrefs/arrayrefs here are shared across every Config instance;
+# mutating them in one Config leaks state into every other Config.
+# Use _default_config() instead of dereferencing DEFAULT_CONFIG directly.
 use constant DEFAULT_CONFIG => {
     model_configs => {},  # Per-model scoped config
     model_configs_explicit => {},  # Per-model explicit override flags: { model_id => { key => 1 } }
@@ -154,6 +160,21 @@ use constant DEFAULT_CONFIG => {
     github_api_version => '2025-05-01',  # GitHub API version for requests
 };
 
+=head2 _default_config
+
+Return a deep-cloned copy of DEFAULT_CONFIG so the caller can mutate
+nested hashrefs/arrayrefs (model_configs, model_candidates, model_routes,
+api_keys, api_bases) without polluting the constant for every other
+Config instance. This is mandatory - any code that does
+`my %config = %{DEFAULT_CONFIG()}` and then writes to
+`$config{model_configs}{...}` is leaking into every other Config.
+
+=cut
+
+sub _default_config {
+    return { %{dclone(DEFAULT_CONFIG)} };
+}
+
 sub new {
     my ($class, %args) = @_;
     
@@ -196,14 +217,14 @@ Provider defaults (api_base, model) come from CLIO::Providers dynamically.
 
 sub load {
     my ($self) = @_;
-    
+
     # Check if we have a cached config for the current provider.
     # Only cache when a provider IS configured - no provider = full reload.
     my $cache_key = $self->{config}->{provider};
     
     if ($cache_key && $self->{_provider_cache} && $self->{_provider_cache}{provider} eq $cache_key) {
         # Return cached config merged with user-set values
-        my %config = %{DEFAULT_CONFIG()};
+        my %config = %{_default_config()};
         %config = (%config, %{$self->{_provider_cache}{config}});
         
         # Apply user-set values on top of cached provider defaults
@@ -228,8 +249,8 @@ sub load {
     }
     
     # Start with system defaults
-    my %config = %{DEFAULT_CONFIG()};
-    
+    my %config = %{_default_config()};
+
     # Reset user_set tracking
     $self->{user_set} = {};
     
@@ -595,18 +616,33 @@ sub _save_model_config {
     return unless $model_id;
 
     $self->{config}->{model_configs} ||= {};
-    my $entry = $self->{config}->{model_configs}{$model_id} ||= {};
+    my $entry = $self->{config}->{model_configs}{$model_id};
+    my $had_prior_entry = $entry && %$entry ? 1 : 0;
 
+    # Snapshot current global scoped values into the outgoing model's entry.
+    # Only persist values that differ from the system defaults - those are
+    # the meaningful per-model choices. Writing default values would just
+    # create phantom entries for models the user briefly visited without
+    # customizing, which shadows the cross-provider default-reset fallback
+    # in _restore_model_config.
+    my $wrote = 0;
     for my $key (@{MODEL_SCOPED_KEYS()}) {
         my $val = $self->{config}->{$key};
-        my $default = DEFAULT_CONFIG->{$key};
         next unless defined $val;
-        # Skip default-valued writes. They wouldn't be honored on restore
-        # (explicit flag wouldn't be set), so writing them is dead data.
-        next if defined $default && $val eq $default;
+        my $default = DEFAULT_CONFIG->{$key};
+        next if defined $default && defined $val && $val eq $default;
         $entry->{$key} = $val;
+        $wrote = 1;
     }
-
+    if (!$had_prior_entry && !$wrote) {
+        # No existing entry and nothing worth persisting - do not
+        # materialize an empty entry. This keeps model_configs free of
+        # phantom entries for uncustomized models.
+        delete $self->{config}->{model_configs}{$model_id};
+        log_debug('Config', "Skipped saving model config for '$model_id' (no non-default scoped values)");
+        return;
+    }
+    $entry = $self->{config}->{model_configs}{$model_id} ||= {};
     log_debug('Config', "Saved model config for '$model_id': " . scalar(keys %$entry) . " keys");
 }
 
@@ -627,9 +663,15 @@ sub _restore_model_config {
     my $entry = $self->{config}->{model_configs}{$model_id};
     my $explicit = $self->{config}->{model_configs_explicit}{$model_id} || {};
 
+    # If no entry exists, KEEP current global config values. Do NOT fall
+    # back to DEFAULT_CONFIG here - the global config may have user-set
+    # values (e.g. /api set temperature 0.5) that should persist across
+    # model switches. The model_configs_explicit flag is preserved so a
+    # later set() on this same model can still record explicit overrides.
+
     my $restored_count = 0;
     for my $key (@{MODEL_SCOPED_KEYS()}) {
-        if ($entry && exists $entry->{$key}) {
+        if (exists $entry->{$key}) {
             my $val = $entry->{$key};
             my $default = DEFAULT_CONFIG->{$key};
             # Only restore if either:
@@ -648,8 +690,6 @@ sub _restore_model_config {
             $restored_count++;
         }
         # If no stored value, KEEP current global config value.
-        # Do NOT fall back to DEFAULT_CONFIG here - the global config may have
-        # user-set values that should persist across model switches.
     }
 
     if ($restored_count) {
