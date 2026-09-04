@@ -6,7 +6,7 @@ package CLIO::Core::PromptManager;
 use strict;
 use warnings;
 use utf8;
-use CLIO::Core::Logger qw(log_error log_debug log_warning log_info);
+use CLIO::Core::Logger qw(log_error log_debug log_warning);
 use CLIO::Util::ConfigPath qw(get_config_file);
 use CLIO::Util::TextSanitizer qw(sanitize_text);
 use Carp qw(croak);
@@ -203,7 +203,7 @@ sub get_system_prompt {
             $prompt .= "\n\n<puppeteerTopology>\n";
             $prompt .= $summary;
             $prompt .= "\n</puppeteerTopology>\n";
-            log_info('PromptManager', "Injected puppeteer topology: %d projects", $topology->{count});
+            log_debug('PromptManager', "Injected puppeteer topology: %d projects", $topology->{count});
         }
     };
     log_debug('PromptManager', "Puppeteer topology check: $@") if $@;
