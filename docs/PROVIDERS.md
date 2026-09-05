@@ -684,6 +684,25 @@ Shows: current provider, model, API base URL, and authentication status.
 - Check exact model name with `/api models`
 - Some providers require full path (e.g., `openrouter/deepseek/model-name`)
 
+### HTTP Timeouts
+
+CLIO applies a tiered `--max-time` to provider requests so a slow upstream does not waste the whole 5-minute idle budget on a request that will never finish:
+
+| Tier | `--max-time` | When it applies |
+|------|--------------|------------------|
+| Cloud | **90 s** | Direct provider connections (OpenAI, Anthropic, Google, DeepSeek, NVIDIA, MiniMax, Z.AI, GitHub Copilot, Ollama Cloud, KiloCode) |
+| Route-based | **120 s** | Multi-hop providers that add an intermediate proxy (OpenRouter, OrcaRouter, Vercel AI Gateway) |
+| Local | **600 s** | Inference servers running on this machine (SAM, llama.cpp, LM Studio) |
+
+The tier is selected per provider via two flags propagated through `build_endpoint_config()`:
+
+- `slow_api` -> local tier (600 s)
+- `route_timeout` -> route-based tier (120 s)
+
+Direct cloud providers use the default tier (90 s). The same logic applies to the native streaming path (Anthropic, Google, NVIDIA NIM), which previously used a hardcoded 300 s that ignored `slow_api`.
+
+Curl `--max-time` timeouts (returned as HTTP 599) are classified as `connection_error` in the native streaming path and routed through the same infinite-retry budget used by the OpenAI-compatible path.
+
 ### Environment Variables
 
 You can also configure CLIO via environment variables:

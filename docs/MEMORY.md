@@ -94,18 +94,24 @@ After context trimming, CLIO agents continue working without announcing that con
 
 The recovery injection includes neutral language ("Older conversation history has been summarized") rather than disruption signals, and explicitly instructs the agent to keep working.
 
+### Active Task Tracking
+
+The `# Active task` line in the dynamic userContext is the model's current-focus signal. CLIO derives it from the most recent active session goal (reversed iteration of `session_goals`), with a YaRN fallback to the most recent substantive user message from history when no goals are set. Short acknowledgements like "proceed" or "yes" do not promote into a new goal - the length guard lives upstream in the goal-recording path, so `_active_task_text` can trust that what is in `session_goals` is the current focus.
+
+This is deliberately the **opposite** rule from the trim-preservation anchor (which freezes the first substantive user message to keep long-task history visible). The active task label is meant to track *what the user is working on right now* so the model does not treat a brand-new request as scope creep against the first thing the user asked for.
+
 ### Session Recovery
 
 After aggressive context trimming, the AI might otherwise "forget" what it was working on. YaRN compression plus the recovery injection system means the AI gets:
 
 1. A merged summary of everything dropped (accumulated across trim cycles)
-2. The current task anchor (most recent user message - what was being worked on NOW, not at session start)
+2. The active task label (most recent active goal - what is being worked on NOW)
 3. The current todo/task state
 4. Recent git activity (commits, working tree status)
 
 With YaRN compression plus the recovery injection system, CLIO agents maintain continuity through context trimming. The system provides:
 1. A merged summary of everything dropped (accumulated across trim cycles)
-2. The current task anchor (most recent user message - what was being worked on NOW, not at session start)
+2. The active task label (most recent active goal - what is being worked on NOW)
 3. The current todo/task state
 4. Recent git activity (commits, working tree status)
 
@@ -420,7 +426,7 @@ When messages must be dropped, CLIO prioritizes keeping:
 5. **Recent tool exchanges** — newest first within the recent-turn range.
 6. **Tool call/result pairs** — kept together, never orphaned.
 
-Note on task continuity: the anchor is the FIRST substantive user message, not the most recent one. The most recent user input is protected separately (item 4). Long sessions with multiple task transitions keep the original task visible to the model even when recent turns drift.
+Note on task continuity: the **anchor turn** is the first substantive user message, kept verbatim so long-task history survives trimming. This is independent of the **active task label** above, which tracks the most recent active goal and is meant to be live. The anchor protects history; the active task label signals current focus. The two rules are intentionally different - long sessions with multiple task transitions keep the original task visible in the anchor while the active task label moves to whatever the user is working on right now.
 
 ---
 
