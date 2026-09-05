@@ -1,0 +1,365 @@
+# AGENTS.md
+
+**Version:** 1.0
+**Date:** [DATE]
+**Purpose:** Technical reference for [PROJECT_NAME] development
+
+---
+
+## Project Overview
+
+**[PROJECT_NAME]** is a [BRIEF_DESCRIPTION].
+
+- **Language:** [LANGUAGE] [version if relevant]
+- **Architecture:** [ARCHITECTURE_TYPE - e.g., monolithic, microservices, CLI tool, library]
+- **Purpose:** [PROJECT_PURPOSE]
+
+---
+
+## Quick Setup
+
+```bash
+# Install dependencies
+[INSTALL_COMMAND]
+
+# Build/compile
+[BUILD_COMMAND]
+
+# Run/start
+[RUN_COMMAND]
+
+# Test
+[TEST_COMMAND]
+```
+
+---
+
+## Architecture
+
+[ARCHITECTURE_DESCRIPTION — diagram or prose describing the system architecture,
+key components, data flow, and how they interact. Explain the entry points and
+the major subsystems.]
+
+---
+
+## Directory Structure
+
+| Path | Purpose |
+|------|---------|
+| [path/] | [description] |
+
+---
+
+## Code Style
+
+**[LANGUAGE] Conventions:**
+
+- [Style rule 1 — e.g., indentation, naming, line length]
+- [Style rule 2 — e.g., error handling, encoding]
+- [Module/class patterns]
+
+**File template:**
+```[language]
+// Template for [FILE_TYPE] files
+```
+
+**Debug logging:**
+
+```[language]
+// Use the project's logging facility, not bare print/stderr
+logger.debug('module', 'detailed message');
+logger.info('module', 'informational message');
+logger.warning('module', 'something unexpected');
+logger.error('module', 'something failed');
+```
+
+**Log level conventions:**
+
+- **DEBUG** — implementation details: internal state transitions, token budgets,
+  trim details, dispatch routing. Useful when investigating but invisible in
+  normal operation. If the code handles the condition, log at DEBUG.
+- **INFO** — genuinely notable events the user should see without verbose
+  flags (e.g., model routing switches, provider auto-selection).
+- **WARNING** — something is wrong AND the system does NOT handle it. If the
+  code path stashes an error for retry, falls back to a default, or surfaces a
+  themed error to the user, logging a warning is a smell — use DEBUG instead.
+- **ERROR** — unrecoverable failures where the process cannot continue or the
+  user must intervene.
+
+---
+
+## Module Naming Conventions
+
+| Prefix/Path | Purpose | Examples |
+|-------------|---------|----------|
+| [prefix] | [purpose] | [examples] |
+
+---
+
+## Testing
+
+**Before Committing:**
+
+```bash
+# Syntax check specific module
+[SYNTAX_CHECK_COMMAND]
+
+# Run all tests
+[ALL_TESTS_COMMAND]
+
+# Run a single test
+[RUN_SINGLE_TEST_COMMAND]
+
+# Lint / type check
+[LINT_COMMAND]
+
+# Coverage
+[COVERAGE_COMMAND]
+```
+
+**Test Locations:**
+
+- `tests/unit/` - Single module/unit tests
+- `tests/integration/` - Cross-module / end-to-end tests
+- `tests/manual/` - Manual test scripts (if applicable)
+
+**Test Requirements:**
+
+1. **Syntax must pass** - All changed files must pass the syntax check
+2. **Unit tests must exist** - New features require new tests
+3. **Tests must pass** - Exit code 0 required
+4. **Integration testing** - Complex features need end-to-end verification
+
+**New Feature Checklist:**
+
+1. Create: `tests/unit/test_your_feature`
+2. Run: `[RUN_SINGLE_TEST_COMMAND]`
+3. Verify exit code 0
+4. Include in commit
+
+---
+
+## Commit Format
+
+```
+type(scope): brief description
+
+Problem: What was broken/incomplete
+Solution: How you fixed it
+Testing: How you verified the fix
+```
+
+**Types:** `feat`, `fix`, `refactor`, `docs`, `test`, `chore`
+
+**Example:**
+
+```bash
+git add -A
+git commit -m "fix(session): implement atomic writes
+
+Problem: Session saves could corrupt on process kill
+Solution: Added temp file + atomic rename pattern
+Testing: Syntax checks passed, integration tests verified"
+```
+
+**Pre-Commit Checklist:**
+
+-  Syntax/lint passes on all changed files
+-  Documentation updated if API changed
+-  Commit message explains WHAT and WHY
+-  No `TODO`/`FIXME` comments (finish the work)
+-  Test coverage for new code
+-  No handoff files in working tree
+
+---
+
+## Development Tools
+
+**Common Commands:**
+
+```bash
+# [Command purpose]
+[COMMAND]
+
+# [Command purpose]
+[COMMAND]
+```
+
+---
+
+## Common Patterns
+
+**[Pattern Name]:**
+
+```[language]
+// Example code patterns used in this project
+```
+
+---
+
+## Documentation Standards
+
+### Writing User-Facing Docs
+
+**Tone:** Direct and concise. No corporate fluff.
+
+- **Active voice:** "[Project] reads the file" not "The file will be read by [Project]"
+- **Address user directly:** "Configure your API key" not "Users should configure their API keys"
+- **Code blocks:** Always specify language for syntax highlighting
+- **Examples:** Show both command AND expected output
+
+### Writing Module Documentation
+
+Every module file needs documentation with these sections:
+
+```[language]
+# NAME
+
+[ModuleName] - Brief one-line description
+
+# SYNOPSIS
+
+    [example usage]
+
+# DESCRIPTION
+
+[Detailed description of module purpose and behavior]
+
+# METHODS
+
+[method_name($arg)
+
+What the method does.
+
+Arguments:
+    $arg - Description (required)
+
+Returns:
+    What it returns
+]
+```
+
+**Internal methods** (not part of public API):
+```
+Mark internal methods as such in documentation.
+```
+
+### UI/UX Patterns
+
+**Three-color rule for structured output:**
+- DIM (chrome) - Bullets, arrows, separators
+- [primary color] (names) - Headers, component names
+- DATA (content) - Values, descriptions
+
+**Command headers:**
+```[language]
+// Section headers with visual separators
+```
+
+### What Needs Documentation
+
+| Change Type | Required Documentation |
+|-------------|------------------------|
+| New feature | [docs to update] |
+| API change | [docs to update] |
+| User-facing | [docs to update] |
+| Module rename/move | [docs to update] |
+
+---
+
+## Documentation Files
+
+| File | Purpose |
+|------|---------|
+| `README.md` | Project overview |
+| [docs file] | [purpose] |
+
+### Keeping Documentation Current
+
+When changing code, update docs accordingly:
+
+1. **New tool/feature** - [update relevant docs]
+2. **API behavior change** - [update relevant docs]
+3. **New module** - [update relevant docs]
+4. **UI changes** - [update relevant docs]
+
+**Rule:** Full rewrite, never changelog patches. If a section needs updating, rewrite the entire section completely.
+
+---
+
+## Working Documents
+
+**Purpose:** The `scratch/` directory (gitignored) is your workspace for
+investigation, analysis, and planning documents.
+
+**Use scratch/ for:**
+- Code health assessments
+- Refactoring roadmaps
+- Investigation summaries
+- Analysis documents
+- Working notes
+- Planning documents
+
+**NEVER create these in project root** - they clutter the repository and
+violate project protocols.
+
+**Pattern:**
+```
+Investigation findings -> scratch/ANALYSIS.md (not committed)
+Session handoffs -> [handoff directory] (not committed)
+Permanent knowledge -> Detailed commit message (committed)
+```
+
+---
+
+## Anti-Patterns (What NOT To Do)
+
+| Anti-Pattern | Why It's Wrong | What To Do |
+|--------------|----------------|------------|
+| Skip syntax check before commit | Causes silent failures in production | Run syntax/lint on all changed files |
+| Leave `TODO` comments in code | Creates technical debt, incomplete work | Finish implementation before committing |
+| Assume code behavior | Causes bugs, breaks things | Read the code, investigate first |
+| Create duplicate utility code | Re-implements existing solutions, creates inconsistency | Search codebase for existing implementations before writing new code |
+| Commit without testing | Breaks builds, wastes time | Test syntax, run integration tests |
+| Use bare `die`/`throw` in modules | Crashes the system ungracefully | Use proper error handling, with try/catch for error recovery |
+| Create giant modules (>1000 lines) | Hard to maintain and understand | Split into focused, cohesive modules |
+| Create summary docs in root | Clutters repository, wrong location | Use scratch/ for working documents |
+| Negative framing in user-facing messages | Assumes the user has a mental model we haven't given them | State what IS true and what to do |
+| Changelog-style comments in code | History belongs in git, not comments | Write comments for current state |
+| Surface warnings for handled conditions | Produces noise for errors the system already handles | If the code handles the condition, log at debug level |
+
+---
+
+## Quick Reference
+
+**[LANGUAGE] Syntax Check:**
+```bash
+[command]
+```
+
+**Run Test:**
+```bash
+[command]
+```
+
+**Debug Session:**
+```bash
+[command]
+```
+
+**Search Code:**
+```bash
+[command]
+```
+
+**Git Operations:**
+```bash
+git status
+git diff
+git log --oneline -10
+git add -A && git commit -m "type(scope): description"
+```
+
+---
+
+*For project methodology and workflow, see .clio/instructions.md*
