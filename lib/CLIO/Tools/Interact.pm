@@ -258,15 +258,22 @@ sub request_input {
         if (ref($result) eq 'HASH') {
             $user_response = $result->{input};
             
-            # Build output with agent events context for the AI
-            my $output = $user_response // '';
+            # Build output with agent events context for the AI.
+            # The user-input portion is framed as [USER REPLY]...[/USER REPLY]
+            # so the model unambiguously treats it as a fresh user turn
+            # rather than the bare content of a role='tool' message.
+            # Without this framing, the model has to infer the input's
+            # provenance and can fall into "diagnose what this string is"
+            # instead of "respond to the next user turn."
             my @events = @{$result->{events} || []};
             my $source = $result->{source} || 'user';
-            
-            # When interrupted by agent event, format output for AI awareness
-            if ($source eq 'agent_event') {
-                $output = '';  # No user input - this was an agent interrupt
+
+            my $output = '';
+            if (defined $user_response && length $user_response && $source ne 'agent_event') {
+                $output = "[USER REPLY]\n$user_response\n[END USER REPLY]";
             }
+            # When interrupted by an agent event, $output stays empty
+            # for the user portion; the agent-message loop below fills it.
             
             if (@events) {
                 my @agent_msgs;
@@ -340,7 +347,12 @@ sub request_input {
     
     return {
         success => 1,
-        output => $user_response,
+        # Frame the user text so the model treats the bare content of a
+        # role='tool' message unambiguously as a fresh user turn rather
+        # than a tool artifact to analyze. metadata.user_response below
+        # still carries the raw text for any downstream consumer that
+        # needs it unframed.
+        output => "[USER REPLY]\n$user_response\n[END USER REPLY]",
         # Don't include action_description since we already displayed it
         metadata => {
             message => $message,
@@ -447,7 +459,7 @@ sub _request_via_broker {
     
     return {
         success => 1,
-        output => $response,
+        output => "[USER REPLY]\n$response\n[END USER REPLY]",
         metadata => {
             message => $message,
             context => $user_context,
