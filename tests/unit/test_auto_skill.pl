@@ -163,10 +163,26 @@ ok_test('SkillOperations create path: file contains name',
         $src =~ /auto-skill creation guidance/);
     ok_test('PromptBuilder: has Skill Creation header',
         $src =~ /## Skill Creation/);
-    ok_test('PromptBuilder: references skill_operations create',
-        $src =~ /operation: "create"/);
-    ok_test('PromptBuilder: work-product framing (not framework narration)',
-        $src =~ /summarize that work as a/ && $src !~ /system will create.*at session end/);
+    ok_test('PromptBuilder: LTM-pattern protocol (You MUST framing)',
+        $src =~ /You MUST:/);
+    ok_test('PromptBuilder: has Check the catalog bullet',
+        $src =~ /Check the catalog first/);
+    ok_test('PromptBuilder: has Create on demand bullet',
+        $src =~ /Create on demand/);
+    ok_test('PromptBuilder: has Maintain when stale bullet',
+        $src =~ /Maintain when stale/);
+    ok_test('PromptBuilder: has Disable when noisy bullet',
+        $src =~ /Disable when noisy/);
+    ok_test('PromptBuilder: names interact tool for surfacing candidates',
+        $src =~ /interact tool before\s*\n?\s*writing/);
+    ok_test('PromptBuilder: anti-patterns guidance',
+        $src =~ /Anti-patterns to avoid/);
+    ok_test('PromptBuilder: storage mechanics (files are source of truth)',
+        $src =~ /files are the source of truth/);
+    ok_test('PromptBuilder: no inline JSON syntax (schema lives in tool description)',
+        $src !~ /\{\"operation\": \"create\"/);
+    ok_test('PromptBuilder: no inline parameter list (schema lives in tool description)',
+        $src !~ /name=<kebab-slug>/);
     ok_test('PromptBuilder: respects config flag',
         $src =~ /auto_create_skills/);
     ok_test('PromptBuilder: respects skip_custom (incognito)',

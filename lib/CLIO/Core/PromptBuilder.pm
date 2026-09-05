@@ -409,11 +409,15 @@ sub generate_skills_section {
 =head2 generate_auto_skill_section
 
 Generate the auto-skill creation guidance that goes into the system
-prompt. This tells the agent to summarize substantial completed work
-as a reusable skill, using the C<skill_operations> tool with
-C<operation: "create">. The framing is work-product-only: we tell the
-agent to capture reusable knowledge, not about framework internals
-(the system itself does not narrate).
+prompt. Models the LTM Usage block: standing protocol with bulleted
+MUST/SHOULD actions, trigger conditions, anti-patterns, and a
+disable hint. The agent decides when a task is "substantial" enough
+to warrant a skill.
+
+Schema (parameter shapes, syntax examples, scope semantics) lives in
+the skill_operations tool description and parameter schemas - the
+agent reads those from the tool definition. The prompt stays at the
+protocol level so it doesn't drift when the schema evolves.
 
 Disabled when:
 - auto_create_skills is off in config
@@ -446,23 +450,32 @@ sub generate_auto_skill_section {
 ## Skill Creation
 
 When you complete a substantial task that produces reusable knowledge or a
-workflow that others (or you, in a future session) could benefit from,
-summarize that work as a reusable skill using the C<skill_operations>
-tool with C<operation: "create">.
+workflow that could be useful in a future session, capture it as a skill.
+Skills are reusable prompt templates the agent loads on demand via
+skill_operations. You MUST:
 
-A good skill captures a complete, repeatable procedure: numbered action
-steps, decision points, and constraints. The skill body is a SKILL.md
-file - YAML frontmatter (name, description) followed by markdown
-action steps and constraints. The description should start with "Use
-this skill when..." so the activation heuristic matches.
+- **Check the catalog first** - the installed skills list above shows what's
+  available. Load with skill_operations before creating something that
+  already exists.
+- **Create on demand** when work produces a reusable procedure. The tool
+  description has the parameter schema and a worked example.
+- **Maintain when stale** - if a skill you load is out of date, surface it
+  to the user. They can edit the .md file directly or delete it.
+- **Disable when noisy** - /skills autocreate off turns the auto-create
+  path off but leaves the load/catalog path active.
 
-The agent decides when a task is "substantial" - small edits, simple
-lookups, and one-off answers don't warrant a skill. Multi-step work
-that produced a working procedure does. When in doubt, surface the
-candidate skill to the user before writing it; the user can always
-delete the file at .clio/skills/<name>.md if it's not useful.
+**When this triggers:** multi-step work that produced a working procedure
+(write it). Single edits, simple lookups, one-off answers (skip it). When
+in doubt, surface the candidate to the user using the interact tool before
+writing.
 
-To disable: /skills autocreate off.
+**Storage:** files are the source of truth - the catalog just reflects
+what is on disk. Project scope (default) lives in .clio/skills/, user
+scope in ~/.clio/skills/. Scope is a tool parameter, not a prompt detail.
+
+**Anti-patterns to avoid:** don't create a skill for a one-off answer,
+don't duplicate an existing skill, don't write skills the user didn't
+ask for and didn't review.
 
 AUTO_SKILL
 }
