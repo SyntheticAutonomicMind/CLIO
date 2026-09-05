@@ -53,6 +53,7 @@ sub new {
         enable_tools    => $opts{enable_tools},     # Tool allowlist (for --chat mode)
         enable_subagents => $opts{enable_subagents} // 1,  # Sub-agent spawning feature flag
         auto_discover_skills => $opts{auto_discover_skills} // 1,  # Skill auto-discovery
+        auto_create_skills => $opts{auto_create_skills} // 1,  # Auto-skill creation prompt section
         show_thinking   => $opts{show_thinking} // 0,  # Surface thinking stream and append steering paragraph
         needs_thinking_steering => $opts{needs_thinking_steering} // 0,  # Inject "Reasoning Visibility" paragraph
         # (Anthropic adaptive summarizer only - see generate_thinking_steering_section)
@@ -146,6 +147,15 @@ sub build_system_prompt {
     if ($skills_section) {
         $base_prompt .= "\n\n$skills_section";
         log_debug('PromptBuilder', "Added installed skills section to prompt");
+    }
+
+    # Auto-skill creation guidance. Goes in the system prompt only when
+    # the feature is enabled and not in incognito mode. The agent uses
+    # this to decide when to call skill_operations(operation=create).
+    my $auto_skill_section = $self->generate_auto_skill_section();
+    if ($auto_skill_section) {
+        $base_prompt .= "\n\n$auto_skill_section";
+        log_debug('PromptBuilder', "Added auto-skill creation guidance to prompt");
     }
 
     # Insert user profile section after tools section
@@ -394,6 +404,67 @@ sub generate_skills_section {
     $self->{_skills_section_cache} = $section;
     log_debug('PromptBuilder', "Generated skills section ($count skills)");
     return $section;
+}
+
+=head2 generate_auto_skill_section
+
+Generate the auto-skill creation guidance that goes into the system
+prompt. This tells the agent to summarize substantial completed work
+as a reusable skill, using the C<skill_operations> tool with
+C<operation: "create">. The framing is work-product-only: we tell the
+agent to capture reusable knowledge, not about framework internals
+(the system itself does not narrate).
+
+Disabled when:
+- auto_create_skills is off in config
+- skip_custom is set (incognito / --no-custom-instructions)
+- auto_discover_skills is off (the whole skills feature is gated on this)
+
+Returns:
+- Markdown text for the auto-skill section, or '' when disabled.
+
+=cut
+
+sub generate_auto_skill_section {
+    my ($self) = @_;
+
+    # Gate on the parent skills feature first. If skills aren't being
+    # discovered, the auto-create path can't be useful either.
+    return '' unless $self->{auto_discover_skills};
+
+    # Gate on the auto_create_skills flag. The default is 1; incognito
+    # (skip_custom) disables regardless of the flag.
+    if ($self->{skip_custom}) {
+        return '';
+    }
+    unless ($self->{auto_create_skills}) {
+        return '';
+    }
+
+    return <<'AUTO_SKILL';
+
+## Skill Creation
+
+When you complete a substantial task that produces reusable knowledge or a
+workflow that others (or you, in a future session) could benefit from,
+summarize that work as a reusable skill using the C<skill_operations>
+tool with C<operation: "create">.
+
+A good skill captures a complete, repeatable procedure: numbered action
+steps, decision points, and constraints. The skill body is a SKILL.md
+file - YAML frontmatter (name, description) followed by markdown
+action steps and constraints. The description should start with "Use
+this skill when..." so the activation heuristic matches.
+
+The agent decides when a task is "substantial" - small edits, simple
+lookups, and one-off answers don't warrant a skill. Multi-step work
+that produced a working procedure does. When in doubt, surface the
+candidate skill to the user before writing it; the user can always
+delete the file at .clio/skills/<name>.md if it's not useful.
+
+To disable: /skills autocreate off.
+
+AUTO_SKILL
 }
 
 =head2 generate_profile_section

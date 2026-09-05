@@ -66,6 +66,10 @@ OPERATIONS:
   Use this when you need to re-check what is available.
 - load: Return the full prompt template for a single skill. The result
   includes the variables the skill expects so you know what context to substitute.
+- create: Write a new freeform skill to .clio/skills/<name>.md. Use this
+  to capture a reusable workflow as a skill that future sessions can load.
+  The content must include YAML frontmatter (name, description) followed
+  by a markdown body with action steps and constraints.
 
 The catalog is also visible in the system prompt - prefer reading it from
 there. Use this tool only when you need the full content of a specific skill
@@ -74,11 +78,13 @@ or want a fresh catalog listing.
 Examples:
 {"operation": "list"}
 {"operation": "load", "name": "code-review"}
+{"operation": "create", "name": "deploy-checklist", "description": "Use this skill when deploying to production", "content": "---\nname: deploy-checklist\ndescription: Use this skill when deploying to production\n---\n# Deploy Checklist\n\n1. Run tests\n2. Tag release\n3. Push to registry\n\n* Do not skip the test step"}
 
 Skills are installed by the user via /skills add or by configuring a skill
-repository. You cannot create or modify skills through this tool.
+repository. The create operation writes freeform skills that follow the
+same SKILL.md format the user would write by hand.
 },
-        supported_operations => [qw(list load)],
+        supported_operations => [qw(list load create)],
         %opts,
     );
 }
@@ -93,12 +99,13 @@ sub dispatch_table {
     return {
         list => 'op_list',
         load => 'op_load',
+        create => 'op_create',
     };
 }
 
 =head2 get_additional_parameters
 
-Add name parameter for the load operation.
+Add parameters for load (name) and create (name, description, content, scope).
 
 =cut
 
@@ -107,7 +114,19 @@ sub get_additional_parameters {
     return {
         name => {
             type => 'string',
-            description => '[REQUIRED for load] Skill name to load. Not needed for list. Use the exact name from the catalog (call operation=list first to see available skills).',
+            description => '[REQUIRED for load and create] Skill name. For load: exact name from the catalog. For create: kebab-case slug for the new skill file (call operation=list first to see available names and avoid collisions).',
+        },
+        description => {
+            type => 'string',
+            description => '[REQUIRED for create] Short description for the skill (for catalog display). Start with "Use this skill when..." to match the discovery heuristic.',
+        },
+        content => {
+            type => 'string',
+            description => '[REQUIRED for create] Full SKILL.md body: YAML frontmatter (name, description) followed by markdown body with action steps and constraints.',
+        },
+        scope => {
+            type => 'string',
+            description => '[OPTIONAL for create] Scope: "project" (default, writes to .clio/skills/<name>.md) or "user" (writes to ~/.clio/skills/<name>.md).',
         },
     };
 }
@@ -170,6 +189,61 @@ sub op_load {
     return $self->success_result(
         $skill,
         action_description => "loading skill '$name'",
+    );
+}
+
+=head2 op_create
+
+Create a new freeform skill file. The content is a full SKILL.md body
+(YAML frontmatter + markdown body) that the user could have written
+by hand - the tool writes the file exactly as provided.
+
+The agent uses this after completing substantial work to capture a
+reusable workflow as a skill that future sessions can load.
+
+=cut
+
+sub op_create {
+    my ($self, $params, $context) = @_;
+
+    my $name = $params->{name} || '';
+    my $description = $params->{description} || '';
+    my $content = $params->{content} || '';
+    my $scope = $params->{scope} || 'project';
+
+    unless ($name) {
+        return $self->operation_error("'name' parameter is required for create operation");
+    }
+    unless ($description) {
+        return $self->operation_error("'description' parameter is required for create operation");
+    }
+    unless (length $content) {
+        return $self->operation_error("'content' parameter is required for create operation");
+    }
+    unless ($scope eq 'project' || $scope eq 'user') {
+        return $self->operation_error("Invalid scope '$scope' (use 'project' or 'user')");
+    }
+
+    my $sm = $self->_get_skill_manager();
+    unless ($sm) {
+        return $self->error_result('SkillManager unavailable');
+    }
+
+    my $result = $sm->add_freeform_skill($name, $description, $content, scope => $scope);
+    unless ($result->{success}) {
+        return $self->error_result($result->{error});
+    }
+
+    log_debug('SkillOperations', "Created freeform skill '$name' at $result->{path}");
+
+    return $self->success_result(
+        {
+            name => $name,
+            path => $result->{path},
+            scope => $scope,
+            skill => $result->{skill},
+        },
+        action_description => "creating skill '$name'",
     );
 }
 
