@@ -1218,6 +1218,46 @@ sub file_search {
     return $result;
 }
 
+sub _escape_unescaped_braces {
+    # Escape literal { and } so Perl does not emit
+    # "Unescaped left brace in regex is passed through". Valid quantifiers
+    # ({n}, {n,}, {n,m} with digits) are preserved so user-written regex
+    # like a{3,5} keeps its quantifier semantics.
+    my ($self, $query) = @_;
+    my $out = '';
+    my $i = 0;
+    my $len = length $query;
+    while ($i < $len) {
+        my $ch = substr($query, $i, 1);
+        if ($ch eq '{') {
+            # Try to consume a valid quantifier: {digits}, {digits,}, {digits,digits}
+            my $j = $i + 1;
+            $j++ while ($j < $len && substr($query, $j, 1) =~ /\d/);
+            if ($j < $len && substr($query, $j, 1) eq ',') {
+                $j++;
+                $j++ while ($j < $len && substr($query, $j, 1) =~ /\d/);
+            }
+            if ($j < $len && $j > $i + 1 && substr($query, $j, 1) eq '}') {
+                # {n}, {n,}, or {n,m} with at least one digit - preserve as quantifier
+                $out .= substr($query, $i, $j - $i + 1);
+                $i = $j + 1;
+                next;
+            }
+            # Not a valid quantifier - escape the { so Perl treats it as literal
+            $out .= '\{';
+            $i++;
+        } elsif ($ch eq '}') {
+            # Stray closing brace - escape to literal
+            $out .= '\}';
+            $i++;
+        } else {
+            $out .= $ch;
+            $i++;
+        }
+    }
+    return $out;
+}
+
 sub grep_search {
     my ($self, $params, $context) = @_;
 
@@ -1300,8 +1340,15 @@ sub grep_search {
         # Compile regex safely with error handling
         my $search_regex;
         if ($is_regex) {
-            # User-provided regex - wrap in eval to catch invalid patterns
-            $search_regex = eval { qr/$query/i };
+            # User-provided regex. Escape literal braces so Perl does not emit
+            # "Unescaped left brace in regex is passed through" to STDERR when
+            # the query contains things like Perl hash dereferences ({type}).
+            # Valid quantifiers ({n}, {n,}, {n,m}) are preserved by the helper.
+            my $safe_query = $self->_escape_unescaped_braces($query);
+            # Wrap in eval to catch invalid patterns. Note: eval catches die
+            # but not compile-time regex warnings - the brace escaping above is
+            # what suppresses the noisy "Unescaped left brace" warning.
+            $search_regex = eval { qr/$safe_query/i };
             if ($@) {
                 my $err = $@;
                 $err =~ s/ at .* line \d+.*//;  # Clean up error message
