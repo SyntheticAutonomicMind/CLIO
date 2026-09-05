@@ -3219,11 +3219,18 @@ sub _prepare_api_request {
     my $json = $self->_encode_payload_json($payload, $is_streaming);
     return { error_result => $json } if ref($json) eq 'HASH' && !$json->{success};
 
-    # Create HTTP client with extended timeout for slow local inference (llama.cpp, SAM, LM Studio)
+    # Create HTTP client with appropriate timeout for the provider tier.
+    # Tiered timeouts via curl's --max-time:
+    #   - Local inference (slow_api): 600s — llama.cpp/SAM/LM Studio are CPU-bound
+    #   - Route-based (route_timeout):  120s — OpenRouter/OrcaRouter add upstream hop latency
+    #   - Direct cloud (default):       90s  — OpenAI, Anthropic, Google, Copilot respond fast
     # Use shared client for connection pooling (keep-alive)
-    my $default_timeout = 300;  # Fast API (cloud) default
-    my $slow_timeout = 600;      # Slow API (local inference) default
-    my $ua_timeout = $endpoint_config->{slow_api} ? $slow_timeout : $default_timeout;
+    my $cloud_timeout = 90;
+    my $route_timeout = 120;
+    my $slow_timeout  = 600;
+    my $ua_timeout = $endpoint_config->{slow_api} ? $slow_timeout
+                : $endpoint_config->{route_timeout} ? $route_timeout
+                : $cloud_timeout;
     my $ua = $self->_get_shared_http_client(
         timeout  => $ua_timeout,
         agent    => 'GitHubCopilotChat/0.22.4',
@@ -5627,9 +5634,25 @@ sub _send_native_streaming {
         model => $full_model,
     );
     
-    # Create HTTP client
+    # Create HTTP client with tiered timeout matching the OpenAI-compatible path.
+    # Native providers (Anthropic, Google, NVIDIA NIM) use cloud-tier 90s by default,
+    # but respect slow_api/route_timeout flags for consistency if a native provider
+    # is ever added to a local or route-based tier.
+    my $cloud_timeout = 90;
+    my $route_timeout = 120;
+    my $slow_timeout  = 600;
+    my $ua_timeout;
+    {
+        my ($native_provider_name) = $self->_parse_model_provider($full_model);
+        $native_provider_name //= $self->{provider} // $self->{config}->get('provider');
+        require CLIO::Providers;
+        my $native_provider_def = CLIO::Providers::get_provider($native_provider_name);
+        $ua_timeout = ($native_provider_def && $native_provider_def->{slow_api}) ? $slow_timeout
+                    : ($native_provider_def && $native_provider_def->{route_timeout}) ? $route_timeout
+                    : $cloud_timeout;
+    }
     my $ua = $self->_get_shared_http_client(
-        timeout => 300,
+        timeout => $ua_timeout,
         agent => 'CLIO/1.0',
         ssl_opts => { verify_hostname => 1 },
     );
@@ -5800,12 +5823,26 @@ sub _send_native_streaming {
         my $error_body = $response->decoded_content // '';
         log_debug('APIManager', "Native API error $status: $error_body");
 
-        # Parse the JSON error body to extract structured error info.
-        # Without this, 429 responses from Anthropic proxies return a bare
-        # "HTTP 429" string with no error_type or retry_after, causing
-        # ResponseHandler to treat them as generic server errors (max 3 retries,
-        # 2s delay) instead of rate limits (infinite retries, proper backoff).
-        my $result = { success => 0, error => "HTTP $status", retryable => ($status == 429 || $status >= 500) };
+        # Classify the error. For status 599 (curl exit code 28 = --max-time
+        # fired), use connection_error so the ErrorHandler gives it the same
+        # infinite-retry budget as the OpenAI-compatible path, instead of
+        # falling to the default 3-retry bucket.
+        my $result = {
+            success => 0,
+            error => "HTTP $status" . ($error_body =~ /\S/ ? ": $error_body" : ''),
+            retryable => ($status == 429 || $status >= 500 || $status == 599),
+        };
+        if ($status == 599) {
+            # curl --max-time fired (exit code 28) or connection-level
+            # failure. The reason field from HTTP compat layer contains
+            # the curl error description (e.g. "Connection timed out").
+            my $reason = eval { $response->message } // 'Connection error';
+            $result->{error} = "Connection error: $reason";
+            $result->{retryable} = 1;
+            $result->{retry_after} = 3;
+            $result->{error_type} = 'connection_error';
+            $result->{user_message} = "The connection to the provider timed out. Retrying after a short wait.";
+        }
 
         if ($status == 429) {
            $result->{error_type} = 'rate_limit';
