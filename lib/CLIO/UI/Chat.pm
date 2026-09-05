@@ -825,6 +825,10 @@ Strip <!--session:...--> markers from text. Used as both a class method
 package can drop the markers without depending on the lexical closure
 defined in L</_make_thinking_callback>.
 
+The actual regex lives in L<CLIO::Util::TextSanitizer::strip_session_markers>
+as the single source of truth - this method is a thin wrapper so existing
+callers don't have to change.
+
 =cut
 
 sub _strip_session_markers {
@@ -845,12 +849,8 @@ sub _strip_session_markers {
         $text = $class_or_self;
     }
     return undef unless defined $text;
-    # Strip BOTH structured and simple forms. The structured form
-    # uses {...} for the JSON payload; the simple form is just an
-    # identifier. Either kind must be removed from visible output.
-    $text =~ s/\s*<!--session:\{[^}]*\}-->\s*//sg;
-    $text =~ s/\s*<!--session:[a-z][a-z0-9_-]{2,50}-->\s*//sgi;
-    return $text;
+    require CLIO::Util::TextSanitizer;
+    return CLIO::Util::TextSanitizer::strip_session_markers($text);
 }
 
 sub _make_system_message_callback {
@@ -926,8 +926,7 @@ sub _handle_ai_response {
     }
     
     if ($accumulated_content) {
-        $accumulated_content =~ s/\s*<!--session:\{[^}]*\}-->\s*//sg;  # Structured
-        $accumulated_content =~ s/\s*<!--session:[a-z][a-z0-9_-]{2,50}-->\s*//sgi;  # Simple
+        $accumulated_content = $self->_strip_session_markers($accumulated_content);
         $accumulated_content = $self->_detect_system_warning_references($accumulated_content);
     }
     
@@ -3195,83 +3194,10 @@ sub colorize {
     
     my $color = $self->{theme_mgr}->get_color($mapped_key);
     return $text unless $color;
-    
+
     return $self->{ansi}->parse($color . $text . '@RESET@');
 }
 
-
-=head2 _auto_name_session
-
-Auto-generate a human-friendly session name from the first user message.
-Called after the first successful AI response if no name is set.
-
-Extracts a concise title from the user's first non-system message,
-truncating to ~50 characters at a word boundary.
-
-=cut
-
-sub _auto_name_session {
-    my ($self) = @_;
-    
-    my $session = $self->{session};
-    return unless $session;
-    
-    my $state = $session->state();
-    return unless $state && $state->{history};
-    
-    # Find the first user message in history
-    my $first_user_msg;
-    for my $msg (@{$state->{history}}) {
-        next unless ref($msg) eq 'HASH';
-        next unless ($msg->{role} || '') eq 'user';
-        $first_user_msg = $msg->{content} || '';
-        last;
-    }
-    
-    return unless $first_user_msg && length($first_user_msg) > 0;
-    
-    # Generate a name from the first user message
-    my $name = _generate_session_name($first_user_msg);
-    
-    if ($name && length($name) > 0) {
-        $session->session_name($name);
-        log_debug('Chat', "Auto-generated session name: $name");
-    }
-}
-
-=head2 _generate_session_name($text)
-
-Generate a concise session name from user input text.
-Returns a string of up to 50 characters, truncated at word boundary.
-
-=cut
-
-sub _generate_session_name {
-    my ($text) = @_;
-    
-    return unless defined $text && length($text) > 0;
-    
-    # Clean up the text
-    my $name = $text;
-    
-    # Remove leading/trailing whitespace
-    $name =~ s/^\s+//;
-    $name =~ s/\s+$//;
-    
-    # Collapse multiple whitespace to single space
-    $name =~ s/\s+/ /g;
-    
-    # Remove common filler phrases at the start
-    $name =~ s/^(?:hey|hi|hello|please|can you|could you|i want to|i need to|i'd like to|let's)\s+//i;
-    
-    # Capitalize first letter
-    $name = ucfirst($name);
-    
-    # Final sanity check - must have some meaningful content
-    return undef if length($name) < 3;
-    
-    return $name;
-}
 
 =head1 AUTHOR
 

@@ -32,7 +32,7 @@ call, covering all points where text enters the AI pipeline.
 =cut
 
 use Exporter 'import';
-our @EXPORT_OK = qw(sanitize_text set_sanitize_mode get_sanitize_mode strip_conversation_tags strip_prompt_block_tags);
+our @EXPORT_OK = qw(sanitize_text set_sanitize_mode get_sanitize_mode strip_conversation_tags strip_prompt_block_tags strip_session_markers);
 
 # Sanitize mode: 'strict' (default) warns on HIGH-severity invisible chars.
 # 'relaxed' still filters them but suppresses the warning - useful when working
@@ -223,6 +223,41 @@ sub strip_prompt_block_tags {
     $text =~ s/<recentContext>.*?<\/recentContext>//gs;
     $text =~ s/<gitRecovery>.*?<\/gitRecovery>//gs;
     $text =~ s/<sessionProgress>.*?<\/sessionProgress>//gs;
+    return $text;
+}
+
+=head2 strip_session_markers
+
+Strip `<!--session:...-->` markers from text. Two formats are accepted:
+
+  - Simple: `<!--session:identifier-->` (e.g. `<!--session:fix-auth-bug-->`)
+  - Structured: `<!--session:{"title":"name here"}-->`
+
+Both forms are HTML-comment-shaped to keep them invisible if they ever
+leak to a renderer that doesn't know to strip them.
+
+The simple-form character class includes '.', '_', and '-' because
+date-based version tags (e.g. `doc-sync-20260904.1`) are a legitimate
+CLIO convention documented in AGENTS.md and INSTALLATION.md. The
+trailing `-->` anchor prevents accidental matches in unrelated prose.
+
+This is a single source of truth so Chat's `_strip_session_markers`,
+StreamingController's in-flight strip, and WorkflowOrchestrator's
+`_extract_session_marker` all stay in sync. If the marker shape ever
+changes, change it here.
+
+Arguments:
+    $text - Input string (may be undef)
+
+Returns: String with markers removed, or undef if input was undef.
+
+=cut
+
+sub strip_session_markers {
+    my ($text) = @_;
+    return undef unless defined $text;
+    $text =~ s/\s*<!--session:\{[^}]*\}-->\s*//sg;
+    $text =~ s/\s*<!--session:[a-z][a-z0-9._-]{2,50}-->\s*//sgi;
     return $text;
 }
 

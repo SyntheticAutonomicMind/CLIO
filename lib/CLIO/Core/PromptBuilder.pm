@@ -190,11 +190,6 @@ sub build_system_prompt {
         $base_prompt .= "\n\n" . generate_thinking_steering_section();
     }
 
-    # Session naming instruction - always present for cacheability.
-    # The instruction itself tells the AI to only act on it for the first response.
-    my $naming_section = generate_session_naming_section();
-    $base_prompt .= "\n\n$naming_section";
-
     log_debug('PromptBuilder', "Added dynamic tools section to prompt");
 
     return $base_prompt;
@@ -544,45 +539,6 @@ RIGHT: Call file_operations to create the file, then report success.
 };
 }
 
-
-=head2 generate_session_naming_section
-
-Generate a one-time instruction asking the AI to include a session title
-marker in its first response. The marker uses HTML comment syntax so it's
-invisible if it leaks to markdown rendering.
-
-Only called when the session has no name yet. Once extracted, the
-instruction is never sent again.
-
-Returns:
-- Instruction text for the session naming marker
-
-=cut
-
-sub generate_session_naming_section {
-    return q{## Session Naming
-
-**CRITICAL: Give every session a meaningful name.**
-
-The session name appears in the terminal header and session list, so it MUST be set
-for sessions to be identifiable. Include this HTML comment marker at the END of
-your response:
-
-<!--session:short-name-here-->
-
-**Examples of good session names:**
- - "saturday-morning-checkin"
- - "debug-session-naming"
- - "plan-new-feature"
- - "research-api-ratelimits"
-
-**Important rules:**
- - Title must be 3-6 words, lowercase (except proper nouns)
- - Be specific: "fix-clio-bug" not "help"
- - The session name can be updated later as the conversation evolves
- - Place the marker as the LAST line of your response
-};
-}
 
 =head2 generate_thinking_steering_section
 

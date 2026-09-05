@@ -2,20 +2,26 @@
 # SPDX-License-Identifier: GPL-3.0-only
 # SPDX-FileCopyrightText: Copyright (c) 2026 Andrew Wyatt (Fewtarius)
 #
-# Regression coverage for CLIO::UI::Chat::_strip_session_markers.
+# Regression coverage for session-marker stripping.
 #
-# Bug: `strip_session_markers` was a lexical closure inside
-# _make_thinking_callback. _handle_ai_response called it as a bare
-# `strip_session_markers($x)` (no invocant), producing:
-#   "Undefined subroutine &CLIO::UI::Chat::strip_session_markers called
-#    at lib/CLIO/UI/Chat.pm line 912."
+# The canonical regex lives in CLIO::Util::TextSanitizer::strip_session_markers
+# (the single source of truth). CLIO::UI::Chat::_strip_session_markers is a
+# thin wrapper. StreamingController calls the canonical function directly via
+# lazy require.
 #
-# Fix: promote it to a package-level method `_strip_session_markers`
-# that supports three call shapes:
-#   1. Class method:      CLIO::UI::Chat->_strip_session_markers($text)
-#   2. Instance method:   $self->_strip_session_markers($text)
-#   3. Code-ref closure:  $strip->($payload)  where
-#      $strip = \&CLIO::UI::Chat::_strip_session_markers
+# Bug coverage:
+#   1. Original bug: `strip_session_markers` was a lexical closure inside
+#      _make_thinking_callback. _handle_ai_response called it as a bare
+#      `strip_session_markers($x)` (no invocant), producing:
+#        "Undefined subroutine &CLIO::UI::Chat::strip_session_markers called
+#         at lib/CLIO/UI/Chat.pm line 912."
+#      Fix: promote to package-level method with three call shapes.
+#
+#   2. Dot-in-name bug: simple-format regex `[a-z0-9_-]{2,50}` rejected dots.
+#      Date-version tags like `doc-sync-20260904.1` (documented in AGENTS.md
+#      and INSTALLATION.md as the `YYYYMMDD.N` convention) failed to match and
+#      leaked into visible output.
+#      Fix: include `.` in the character class.
 #
 # Run: perl -I./lib tests/unit/test_strip_session_markers.pl
 
@@ -28,79 +34,125 @@ use FindBin;
 use lib "$FindBin::Bin/../../lib";
 use Test::More;
 use CLIO::UI::Chat;
+use CLIO::Util::TextSanitizer qw(strip_session_markers);
 
-# --- class-method call ---
-subtest 'class-method strips simple marker' => sub {
-    my $r = CLIO::UI::Chat->_strip_session_markers('hello <!--session:foo--> world');
+# --- canonical function (single source of truth) ---
+subtest 'TextSanitizer::strip_session_markers strips simple marker' => sub {
+    my $r = strip_session_markers('hello <!--session:foo--> world');
     is($r, 'helloworld', 'simple marker stripped with surrounding whitespace');
 };
 
-subtest 'class-method strips structured marker' => sub {
-    my $r = CLIO::UI::Chat->_strip_session_markers(qq{hello <!--session:{"title":"x"}--> world});
+subtest 'TextSanitizer::strip_session_markers strips structured marker' => sub {
+    my $r = strip_session_markers(qq{hello <!--session:{"title":"x"}--> world});
     is($r, 'helloworld', 'structured marker stripped with surrounding whitespace');
 };
 
-subtest 'class-method strips multiple markers' => sub {
-    # Marker name regex requires 2-50 chars; use 3+ char names here.
-    my $r = CLIO::UI::Chat->_strip_session_markers('<!--session:abc--> middle <!--session:xyz-->');
+subtest 'TextSanitizer::strip_session_markers strips multiple markers' => sub {
+    my $r = strip_session_markers('<!--session:abc--> middle <!--session:xyz-->');
     is($r, 'middle', 'multiple markers stripped');
 };
 
-subtest 'class-method handles undef as no-op' => sub {
-    my $r = CLIO::UI::Chat->_strip_session_markers(undef);
+subtest 'TextSanitizer::strip_session_markers handles undef as no-op' => sub {
+    my $r = strip_session_markers(undef);
     is($r, undef, 'undef payload returns undef');
 };
 
-subtest 'class-method handles empty string' => sub {
-    my $r = CLIO::UI::Chat->_strip_session_markers('');
+subtest 'TextSanitizer::strip_session_markers handles empty string' => sub {
+    my $r = strip_session_markers('');
     is($r, '', 'empty string returns empty string');
 };
 
-subtest 'class-method leaves text without markers alone' => sub {
-    my $r = CLIO::UI::Chat->_strip_session_markers('nothing to strip here');
+subtest 'TextSanitizer::strip_session_markers leaves plain text alone' => sub {
+    my $r = strip_session_markers('nothing to strip here');
     is($r, 'nothing to strip here', 'plain text unchanged');
 };
 
-# --- instance-method call ---
-subtest 'instance-method strips simple marker' => sub {
+# --- dot-in-name regression coverage ---
+subtest 'dot-in-name regression' => sub {
+    my @cases = (
+        ['<!--session:doc-sync-20260904.1-->',              '', 'date-version tag'],
+        ['hello <!--session:doc-sync-20260904.1--> world',  'helloworld', 'date-version tag with surrounding text'],
+        ['<!--session:v3.2.1-->',                           '', 'semver-like'],
+        ['work <!--session:fix.1.bug--> done',              'workdone', 'dotted tokens mid-name'],
+        ['<!--session:a.b.c.d.e.f.g-->',                    '', 'many dots'],
+    );
+    for my $c (@cases) {
+        is(strip_session_markers($c->[0]), $c->[1], $c->[2]);
+    }
+};
+
+# --- characters that should NOT match ---
+subtest 'rejects non-conforming names' => sub {
+    my @cases = (
+        ['<!--session:A-->',          'uppercase first letter'],
+        ['<!--session:1abc-->',       'starts with digit'],
+        ['<!--session:ab-->',         'too short (2 chars)'],
+        ['<!--session:-->',           'empty name'],
+        ['<!--session:foo bar-->',    'spaces in name'],
+        ['<!--session:foo/bar-->',    'slash in name'],
+        ['look <!-- not a session --> here', 'random HTML comment'],
+    );
+    for my $c (@cases) {
+        is(strip_session_markers($c->[0]), $c->[0], "preserves: $c->[1]");
+    }
+};
+
+# --- Chat wrapper still works (three call shapes) ---
+subtest 'Chat::_strip_session_markers class method' => sub {
+    my $r = CLIO::UI::Chat->_strip_session_markers('hello <!--session:foo--> world');
+    is($r, 'helloworld', 'class-method strips simple marker');
+};
+
+subtest 'Chat::_strip_session_markers structured via class method' => sub {
+    my $r = CLIO::UI::Chat->_strip_session_markers(qq{hello <!--session:{"title":"x"}--> world});
+    is($r, 'helloworld', 'class-method strips structured marker');
+};
+
+subtest 'Chat::_strip_session_markers instance method' => sub {
     my $mock = bless {}, 'CLIO::UI::Chat';
     my $r = $mock->_strip_session_markers('hello <!--session:foo--> world');
-    is($r, 'helloworld', 'simple marker stripped via instance method');
+    is($r, 'helloworld', 'instance method strips simple marker');
 };
 
-subtest 'instance-method handles undef as no-op' => sub {
+subtest 'Chat::_strip_session_markers instance method handles undef' => sub {
     my $mock = bless {}, 'CLIO::UI::Chat';
     my $r = $mock->_strip_session_markers(undef);
-    is($r, undef, 'undef payload returns undef via instance method');
+    is($r, undef, 'undef returns undef via instance method');
 };
 
-# --- code-ref closure call (the path used inside _make_thinking_callback) ---
-subtest 'closure strips simple marker' => sub {
+subtest 'Chat::_strip_session_markers code-ref closure (simple)' => sub {
     my $strip = \&CLIO::UI::Chat::_strip_session_markers;
     my $r = $strip->('Reasoning prose before marker. <!--session:audit-thinking-format-->');
     is($r, 'Reasoning prose before marker.', 'closure strips simple marker');
 };
 
-subtest 'closure strips structured marker' => sub {
+subtest 'Chat::_strip_session_markers code-ref closure (structured)' => sub {
     my $strip = \&CLIO::UI::Chat::_strip_session_markers;
     my $r = $strip->(qq{Plan: yes <!--session:{"title":"audit-thinking-format"}-->});
     is($r, 'Plan: yes', 'closure strips structured marker');
 };
 
-subtest 'closure handles undef as no-op' => sub {
+subtest 'Chat::_strip_session_markers code-ref closure handles undef' => sub {
     my $strip = \&CLIO::UI::Chat::_strip_session_markers;
     my $r = $strip->(undef);
     is($r, undef, 'closure undef returns undef');
 };
 
-# --- the bug we fixed: bare `strip_session_markers(...)` was failing ---
-subtest 'bug regression: bare call no longer reached' => sub {
-    # Before the fix, _handle_ai_response called:
-    #     strip_session_markers($display_response);
-    # which produced "Undefined subroutine &CLIO::UI::Chat::strip_session_markers".
-    # After the fix, that call site uses $self->_strip_session_markers(...).
-    # We don't strictly need to enforce this; just remind future readers.
-    pass('bare call form is removed from production code paths');
+# --- delegation parity: Chat wrapper must produce same output as canonical ---
+subtest 'Chat wrapper delegates identically to TextSanitizer' => sub {
+    my @inputs = (
+        '<!--session:foo-->',
+        '<!--session:doc-sync-20260904.1-->',
+        'hello <!--session:abc--> middle <!--session:{"title":"x"}--> world',
+        'no markers here',
+        '',
+        '<!--session:too.short-->',
+    );
+    for my $input (@inputs) {
+        is(CLIO::UI::Chat->_strip_session_markers($input),
+           strip_session_markers($input),
+           "parity for: $input");
+    }
 };
 
 done_testing();
