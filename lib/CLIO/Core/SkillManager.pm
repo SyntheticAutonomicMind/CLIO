@@ -228,19 +228,20 @@ License selection requires an explicit conversation with the user - never defaul
 
 ## Your Tasks:
 
-### 1. Fetch CLIO's Reference Documents
+### 1. Fetch CLIO's Template Documents
 
-Fetch BOTH of these files to use as templates:
+Fetch BOTH of these template files to use as schemas:
 
 **A) Methodology template:**
-https://raw.githubusercontent.com/SyntheticAutonomicMind/CLIO/main/.clio/instructions.md
+https://raw.githubusercontent.com/SyntheticAutonomicMind/CLIO/main/docs/templates/instructions.md.template
 
-This defines HOW agents work - The Unbroken Method, collaboration checkpoints, workflow protocols. 
+This defines HOW agents work - The Unbroken Method, collaboration checkpoints, workflow protocols.
 
-**B) Technical reference schema:**
-https://raw.githubusercontent.com/SyntheticAutonomicMind/CLIO/main/AGENTS.md
+**B) Technical reference template:**
+https://raw.githubusercontent.com/SyntheticAutonomicMind/CLIO/main/docs/templates/AGENTS.md.template
 
 This defines WHAT technical knowledge agents need - setup commands, code style, testing, architecture.
+The template is a generic schema with [PLACEHOLDER] tokens ready to fill in.
 
 **CRITICAL - Understand the Separation:**
 - `.clio/instructions.md` = Process/methodology (HOW to work)
@@ -262,152 +263,18 @@ Do a thorough analysis of this project:
 
 **A) `.clio/instructions.md`** - Methodology (HOW to work)
 
-**DO:** Use the fetched instructions.md as-is UNLESS this project has specific workflow requirements
+**DO:** Use the fetched instructions.md.template as-is UNLESS this project has specific workflow requirements
 **DO NOT:** Put technical details here (commands, file paths, stack info) - those go in AGENTS.md
-**CUSTOMIZE ONLY IF:** This project needs CLIO-specific methodology adjustments (rare!)
+**CUSTOMIZE ONLY IF:** This project needs methodology adjustments (rare!)
 
-Most projects should use CLIO's instructions.md unchanged.
+Most projects should use the template unchanged.
 
 **B) `AGENTS.md`** - Technical Reference (WHAT to build)
 
-**DO:** Use CLIO's AGENTS.md as the SCHEMA TEMPLATE - copy its structure/sections
-**DO:** Replace CLIO-specific content with this project's technical details
+**DO:** Use the fetched AGENTS.md.template as a fill-in-the-blank schema
+**DO:** Replace all [PLACEHOLDER] tokens with this project's technical details
 **DO NOT:** Include methodology, checkpoints, or workflow protocols (those are in .clio/instructions.md)
-
-**Use this structure from CLIO's AGENTS.md:**
-
-```markdown
-# AGENTS.md
-
-**Version:** 1.0
-**Date:** [today]
-**Purpose:** Technical reference for [Project Name] development
-
----
-
-## Project Overview
-
-[Language, architecture, purpose]
-
----
-
-## Quick Setup
-
-\`\`\`bash
-# Install dependencies
-[command]
-
-# Build/compile
-[command]
-
-# Run/start
-[command]
-
-# Test
-[command]
-\`\`\`
-
----
-
-## Architecture
-
-[Diagram or description of system architecture]
-
----
-
-## Directory Structure
-
-| Path | Purpose |
-|------|---------|
-| [dir/] | [what it contains] |
-
----
-
-## Code Style
-
-**[Language] Conventions:**
-
-- [Style rule 1]
-- [Style rule 2]
-- [Module/class patterns]
-
----
-
-## Module Naming Conventions
-
-[If applicable - how modules/files are named and organized]
-
----
-
-## Testing
-
-**Before Committing:**
-
-\`\`\`bash
-# Run tests
-[command]
-
-# Linting
-[command]
-
-# Coverage
-[command]
-\`\`\`
-
----
-
-## Commit Format
-
-[Project's commit message conventions]
-
----
-
-## Development Tools
-
-**Common Commands:**
-
-\`\`\`bash
-# Useful development commands
-\`\`\`
-
----
-
-## Common Patterns
-
-**[Pattern Name]:**
-
-\`\`\`[language]
-# Example code patterns used in this project
-\`\`\`
-
----
-
-## Documentation
-
-### What Needs Documentation
-
-| Change Type | Required Documentation |
-|-------------|------------------------|
-| [type] | [what to update] |
-
----
-
-## Anti-Patterns (What NOT To Do)
-
-| Anti-Pattern | Why It's Wrong | What To Do |
-|--------------|----------------|------------|
-| [pattern] | [reason] | [alternative] |
-
----
-
-## Quick Reference
-
-[Quick commands/shortcuts for daily development]
-
----
-
-*For project methodology and workflow, see .clio/instructions.md*
-```
+**DO NOT:** Include any CLIO-specific content (modules, packages, provider references) - the template already has it removed
 
 **Anti-Duplication Rules:**
 
@@ -434,8 +301,8 @@ Initialize git if needed, or add/commit the .clio/ directory and AGENTS.md.
 
 Provide a summary of:
 - Project analysis findings
-- What you put in `.clio/instructions.md` (customized or used template as-is?)
-- Key sections of `AGENTS.md` you created
+- What you put in `.clio/instructions.md` (used template as-is or customized?)
+- Key sections of `AGENTS.md` you created (from template, with [PLACEHOLDER] tokens filled in)
 - Setup completed
 
 Begin now - use your tools to complete all these tasks.
@@ -460,19 +327,20 @@ License selection requires an explicit conversation with the user - never defaul
 
 ## Your Tasks:
 
-### 1. Fetch CLIO's Reference Documents
+### 1. Fetch CLIO's Template Documents
 
-Fetch BOTH of these files to use as templates:
+Fetch BOTH of these template files to use as schemas:
 
 **A) Methodology template:**
-https://raw.githubusercontent.com/SyntheticAutonomicMind/CLIO/main/.clio/instructions.md
+https://raw.githubusercontent.com/SyntheticAutonomicMind/CLIO/main/docs/templates/instructions.md.template
 
 This defines HOW agents work - The Unbroken Method, collaboration checkpoints, workflow protocols.
 
-**B) Technical reference schema:**
-https://raw.githubusercontent.com/SyntheticAutonomicMind/CLIO/main/AGENTS.md
+**B) Technical reference template:**
+https://raw.githubusercontent.com/SyntheticAutonomicMind/CLIO/main/docs/templates/AGENTS.md.template
 
 This defines WHAT technical knowledge agents need - setup commands, code style, testing, architecture.
+The template is a generic schema with [PLACEHOLDER] tokens ready to fill in.
 
 **CRITICAL - Understand the Separation:**
 - `.clio/instructions.md` = Process/methodology (HOW to work)
@@ -498,26 +366,23 @@ Do a thorough analysis of this project:
 
 **A) `.clio/instructions.md`** - Methodology (HOW to work)
 
-**DO:** Use the fetched instructions.md as-is UNLESS this project has specific workflow requirements
+**DO:** Use the fetched instructions.md.template as-is UNLESS this project has specific workflow requirements
 **DO NOT:** Put technical details here (commands, file paths, stack info) - those go in AGENTS.md
 **CUSTOMIZE ONLY IF:** PRD specifies unique agent workflow requirements (rare!)
 
-Most projects should use CLIO's instructions.md unchanged.
+Most projects should use the template unchanged.
 
 **B) `AGENTS.md`** - Technical Reference (WHAT to build)
 
-**DO:** Use CLIO's AGENTS.md as the SCHEMA TEMPLATE - copy its structure/sections
-**DO:** Replace CLIO-specific content with this project's technical details
+**DO:** Use the fetched AGENTS.md.template as a fill-in-the-blank schema
+**DO:** Replace all [PLACEHOLDER] tokens with this project's technical details
 **DO:** Incorporate relevant information from the PRD (architecture, design decisions)
 **DO NOT:** Include methodology, checkpoints, or workflow protocols (those are in .clio/instructions.md)
+**DO NOT:** Include any CLIO-specific content (modules, packages, provider references) - the template already has it removed
 
-**Follow the structure from CLIO's AGENTS.md and incorporate PRD information:**
-
+**Incorporate PRD information into the template where relevant:**
 - **Project Overview** - Use description from PRD
 - **Architecture** - Include architecture decisions from PRD
-- **Code Style** - Project's conventions (from codebase analysis)
-- **Testing** - Testing requirements (from PRD + current setup)
-- **Anti-Patterns** - Project-specific anti-patterns based on PRD guidance
 
 **Anti-Duplication Rules:**
 
@@ -545,8 +410,8 @@ Initialize git if needed, or add/commit the .clio/ directory and AGENTS.md.
 Provide a summary of:
 - Project analysis findings
 - Key information from PRD
-- What you put in `.clio/instructions.md` (customized or used template as-is?)
-- Key sections of `AGENTS.md` you created (with PRD integration)
+- What you put in `.clio/instructions.md` (used template as-is or customized?)
+- Key sections of `AGENTS.md` you created (from template, with [PLACEHOLDER] tokens filled in, plus PRD integration)
 - Setup completed
 
 Begin now - use your tools to complete all these tasks.
