@@ -581,9 +581,21 @@ Sessions persist:
 - Todo list state
 - Session metadata (creation time, model used, message count)
 
-### AI Session Naming
+### Auto Session Naming
 
-When you start a conversation, CLIO automatically asks the AI to generate a short descriptive name (3-6 words) for the session based on your first message. This name appears in session lists and makes it easier to find past sessions. You can always rename a session manually with `/session rename <name>`.
+CLIO derives a session name automatically from your first message when the
+session starts. The heuristic strips conversational filler ("please",
+"can you"), trims punctuation, and capitalizes the result. The name shows
+up in the terminal header and in `/session list` so past sessions are easy
+to find.
+
+You can override the auto-generated name at any time:
+
+- `/session rename <name>` - rename through the slash command
+- Type `<!--session:my-new-name-->` anywhere in the conversation to rename via inline marker
+
+The name is purely cosmetic and has no effect on session behavior, resume,
+or context.
 
 ### Session State Repair
 
@@ -1000,7 +1012,26 @@ Skills are reusable prompt templates. Instead of typing the same complex instruc
 /skills loaded                        # Show currently loaded skills
 /skills search [query]                # Search the skills catalog
 /skills install <name> [--scope=]     # Install a skill from the catalog (default: project)
+/skills autocreate [on|off]          # Toggle automatic skill creation by the agent
 ```
+
+`/skills add` writes to a JSON skills file (one of `user`, `project`, `session`). For longer, version-controlled content, drop a `SKILL.md` file in `<project>/.clio/skills/` directly - CLIO picks it up automatically as a freeform skill and surfaces it in `/skills list` under the **freeform** scope.
+
+### Automatic Skill Creation
+
+When `auto_create_skills` is on (the default), the system prompt instructs the agent to call the `skill_operations` tool with `operation=create` after it finishes substantial, reusable work. "Substantial" means a multi-step procedure that produced a working result - not every one-off answer, and not work that is already covered by an existing skill.
+
+The `create` operation writes a freeform skill to `<project>/.clio/skills/<name>.md` (or `~/.clio/skills/<name>.md` with `scope=user`). The file is written atomically so a crash mid-write cannot corrupt the catalog. The name must be a kebab-case slug, must not shadow a built-in skill, and lives next to the code it documents so the team can review it like any other source file.
+
+Tune the behavior with:
+
+```text
+/skills autocreate            # show current state
+/skills autocreate on         # enable (default)
+/skills autocreate off        # disable; the create tool operation still works manually
+```
+
+The setting persists in config as `auto_create_skills` (0/1). Disable it if you would rather not have the agent write new skill files in your project, or if the catalog is noisy.
 
 ### Skill Scopes
 

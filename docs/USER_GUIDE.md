@@ -636,6 +636,7 @@ MCP servers extend CLIO's capabilities with external tools. Tools from MCP serve
 | `/skills loaded` | Show currently loaded skills |
 | `/skills search [query]` | Search the skills catalog |
 | `/skills install <name> [--global\|--project\|--session]` | Install skill from catalog (default: project) |
+| `/skills autocreate [on\|off]` | Toggle automatic skill creation by the agent (default: on) |
 
 ### Execution & Utilities
 
@@ -2177,6 +2178,20 @@ When skills have the same name across sources, the priority order is:
 5. **Repository** skills (from configured Git repos)
 6. **Built-in** skills (lowest - shipped with CLIO)
 
+### Automatic Skill Creation
+
+By default, the agent creates a freeform skill whenever it finishes substantial, reusable work - a multi-step procedure that produced a working result, not a one-off answer. The new file lands in `<project>/.clio/skills/<name>.md` next to the code it documents, so it is reviewable like any other source file.
+
+Tune the behavior with:
+
+```bash
+: /skills autocreate            # show current state
+: /skills autocreate on         # enable (default)
+: /skills autocreate off        # disable; the create tool operation still works manually
+```
+
+The setting persists in config as `auto_create_skills` (0/1). When you disable auto-creation, the agent still has access to the `skill_operations(create)` tool operation, so it can write a skill on demand when you ask.
+
 ### System Prompts
 
 System prompts define CLIO's base behavior and personality. You can customize them per project.
@@ -2376,13 +2391,17 @@ CLIO handles multi-step workflows naturally. Don't break them down unless you ne
 
 ### Using Sessions Effectively
 
-**Name Your Sessions Mentally:**
+**Name Your Sessions:**
+CLIO automatically derives a session name from your first message when the
+session starts - the heuristic strips conversational filler, trims
+punctuation, and capitalizes. The name appears in the terminal header and
+in `/session list`. You can rename at any time with `/session rename <name>`,
+or override inline by typing `<!--session:my-new-name-->` anywhere in the conversation.
+
 As you work, think of each session as having a purpose:
 - "Refactoring auth module session"
 - "Bug investigation session"
 - "Documentation writing session"
-
-While CLIO doesn't have custom session names (they're timestamped), mentally organizing your sessions helps you remember which one to resume.
 
 **Resume Recent Work:**
 ```bash
