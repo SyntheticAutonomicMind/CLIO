@@ -891,10 +891,144 @@ sub add_skill {
     
     $self->{skills}{$name} = $prompt;
     $self->_save_skills();
-    
+
     log_debug('SkillManager', "Added $scope prompt '$name' with variables: " . join(", ", @variables) . "");
-    
+
     return { success => 1, prompt => $prompt };
+}
+
+=head2 add_freeform_skill
+
+Create a new freeform skill file at C<.clio/skills/<name>.md> (project)
+or C<~/.clio/skills/<name>.md> (user). Freeform skills are SKILL.md
+files that the user owns directly - the file is the source of truth,
+and the catalog just reflects what is on disk.
+
+This is the entry point for the auto-skill creation feature: the agent
+calls this after completing substantial work to capture a reusable
+workflow as a skill that future sessions can load.
+
+Arguments:
+- $name: Skill name (kebab-case slug, alphanumeric + hyphens)
+- $description: Short description for the catalog. Should start with
+  "Use this skill when..." to match the discovery heuristic.
+- $content: Full SKILL.md body - YAML frontmatter (name, description)
+  followed by markdown body with action steps and constraints.
+- %opts: Optional parameters
+    - scope: 'project' (default) or 'user'. Freeform skills are never
+      session-scoped (they must persist on disk to be useful).
+
+Returns: { success => 1, path => $path, skill => $hashref } or
+         { success => 0, error => $msg }
+
+=cut
+
+sub add_freeform_skill {
+    my ($self, $name, $description, $content, %opts) = @_;
+
+    # Validate name (kebab-case slug).
+    unless (defined $name && $name =~ /^[a-zA-Z0-9][a-zA-Z0-9_-]*$/) {
+        return {
+            success => 0,
+            error => "Invalid skill name '$name' (use alphanumeric, hyphens, underscores; must start with alphanumeric)"
+        };
+    }
+
+    # Reject content with NUL bytes, but allow all other content.
+    unless (defined $content && length $content) {
+        return {
+            success => 0,
+            error => "Skill content cannot be empty"
+        };
+    }
+    if ($content =~ /\0/) {
+        return {
+            success => 0,
+            error => "Skill content contains NUL bytes"
+        };
+    }
+
+    # Reject builtin shadowing. Builtins have priority and the user can't
+    # override them - this is consistent with add_skill().
+    if ($BUILTIN_PROMPTS{$name}) {
+        return {
+            success => 0,
+            error => "Cannot override builtin skill '$name'"
+        };
+    }
+
+    # Resolve scope. Freeform skills are never session-scoped: the file
+    # must persist on disk or it's not a real skill.
+    my $scope = $opts{scope} // 'project';
+    unless ($scope eq 'project' || $scope eq 'user') {
+        return {
+            success => 0,
+            error => "Invalid scope '$scope' for freeform skill (use 'project' or 'user')"
+        };
+    }
+
+    # Pick the target directory. Project goes to .clio/skills/ relative
+    # to project_skills_file; user goes to ~/.clio/skills/.
+    my $dir = $scope eq 'user' ? $self->{freeform_user_dir} : $self->{freeform_project_dir};
+    unless ($dir) {
+        return {
+            success => 0,
+            error => "No writable directory for $scope scope"
+        };
+    }
+
+    # Ensure the directory exists.
+    unless (-d $dir) {
+        make_path($dir, { mode => 0700 })
+            or return {
+                success => 0,
+                error => "Cannot create skill directory '$dir': $!"
+            };
+    }
+
+    my $path = File::Spec->catfile($dir, "$name.md");
+
+    # If a same-name freeform skill already exists, the create operation
+    # overwrites it. The agent creating the new version is the source of
+    # truth. (For builtin/repo collisions we already returned above.)
+    if (-f $path) {
+        log_debug('SkillManager', "Overwriting existing freeform skill '$name' at $path");
+    }
+
+    # Write atomically so a crash mid-write can't corrupt the catalog.
+    require CLIO::Util::AtomicWrite;
+    CLIO::Util::AtomicWrite::atomic_write($path, $content, encoding => 'UTF-8')
+        or return {
+            success => 0,
+            error => "Failed to write skill file '$path'"
+        };
+
+    # Build the in-memory representation. This mirrors the structure that
+    # _load_freeform_skills produces, so the new skill is immediately
+    # usable without an explicit reload. readonly is true because the file
+    # is the source of truth - edits happen on disk, not through add_skill.
+    my $skill = {
+        name => $name,
+        description => $description || "Custom freeform skill",
+        prompt => $content,
+        variables => [],
+        type => 'freeform',
+        scope => 'freeform',
+        location => $scope,
+        source => $path,
+        _source_file => $path,
+        readonly => 1,  # The file is on disk; user edits it directly.
+    };
+
+    $self->{skills}{$name} = $skill;
+
+    log_debug('SkillManager', "Added freeform skill '$name' ($scope) at $path (" . length($content) . " bytes)");
+
+    return {
+        success => 1,
+        path => $path,
+        skill => $skill,
+    };
 }
 
 =head2 delete_skill

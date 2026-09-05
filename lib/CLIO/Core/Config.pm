@@ -150,6 +150,11 @@ use constant DEFAULT_CONFIG => {
     # Auto-discover installed skills in the system prompt and expose skill_operations tool
     # Off = no skill catalog injected, tool not registered (current behavior)
     auto_discover_skills => 1,
+    # Auto-create skills at session end for substantial completed work.
+    # When enabled, the system prompt includes instructions for the agent to
+    # create a reusable skill when it completes significant, reusable tasks.
+    # Disable with /skills autocreate off or --no-autoskill flag.
+    auto_create_skills => 1,
     # Tool filtering (persistent version of --enable/--disable flags)
     enabled_tools => '',    # Comma-separated allowlist of tools (empty = all)
     disabled_tools => '',   # Comma-separated blocklist of tools (empty = none)

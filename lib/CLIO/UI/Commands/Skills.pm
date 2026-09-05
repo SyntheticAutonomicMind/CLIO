@@ -194,11 +194,14 @@ sub handle_skills_command {
     elsif ($action eq 'help') {
         $self->_show_help();
     }
+    elsif ($action eq 'autocreate') {
+        $self->_handle_autocreate(@args);
+    }
     else {
         $self->display_error_message("Unknown action: $action");
         $self->_show_help();
     }
-    
+
     return;
 }
 
@@ -286,6 +289,7 @@ sub _show_help {
     $self->{chat}->display_command_row("/skills show <name>", "Display skill details (includes scope + source)", 35);
     $self->{chat}->display_command_row("/skills add <name> \"<text>\" [--scope=...]", "Add custom skill (scope: user|project|session)", 35);
     $self->{chat}->display_command_row("/skills delete <name>", "Delete custom skill", 35);
+    $self->{chat}->display_command_row("/skills autocreate [on|off]", "Toggle auto-skill creation on substantial work", 35);
     $self->writeline("", markdown => 0);
 
     $self->display_section_header("SCOPES");
@@ -356,6 +360,65 @@ sub _add_skill {
         }
     } else {
         $self->display_error_message($result->{error});
+    }
+}
+
+=head2 _handle_autocreate(@args)
+
+Toggle the auto-skill creation feature.
+
+When auto_create_skills is on, the system prompt includes guidance for
+the agent to call skill_operations(operation=create) after completing
+substantial reusable work. The agent then writes a SKILL.md file that
+future sessions can load via /skills load.
+
+Usage:
+  /skills autocreate         Show current setting
+  /skills autocreate on      Enable
+  /skills autocreate off     Disable
+
+The setting persists in config as auto_create_skills (0/1).
+
+=cut
+
+sub _handle_autocreate {
+    my ($self, @args) = @_;
+
+    my $config = $self->{chat}->{config};
+    unless ($config) {
+        $self->display_error_message("Config unavailable; cannot toggle auto-create.");
+        return;
+    }
+
+    my $current = $config->get('auto_create_skills');
+    $current //= 1;  # Default mirrors Config.pm DEFAULT_CONFIG.
+
+    my $arg = $args[0];
+
+    # No arg or empty arg: show current state.
+    if (!defined $arg || $arg eq '') {
+        my $state = $current ? 'on' : 'off';
+        $self->display_key_value("Auto-create skills", $state);
+        if ($current) {
+            $self->writeline("Agent will create a reusable skill after substantial work.", markdown => 0);
+        }
+        else {
+            $self->writeline("Agent will not auto-create skills.", markdown => 0);
+        }
+        return;
+    }
+
+    my $lc = lc($arg);
+    if ($lc eq 'on' || $lc eq '1' || $lc eq 'true' || $lc eq 'yes' || $lc eq 'enable') {
+        $config->set('auto_create_skills', 1);
+        $self->display_success_message("Auto-create skills: on");
+    }
+    elsif ($lc eq 'off' || $lc eq '0' || $lc eq 'false' || $lc eq 'no' || $lc eq 'disable') {
+        $config->set('auto_create_skills', 0);
+        $self->display_success_message("Auto-create skills: off");
+    }
+    else {
+        $self->display_error_message("Unknown value: $arg (use 'on' or 'off')");
     }
 }
 
@@ -529,6 +592,7 @@ sub _list_skills {
     $self->{chat}->display_command_row("/skills show <name>", "Display skill details", 35);
     $self->{chat}->display_command_row("/skills add <name> \"<text>\" [--scope=...]", "Add custom skill", 35);
     $self->{chat}->display_command_row("/skills delete <name>", "Delete custom skill", 35);
+    $self->{chat}->display_command_row("/skills autocreate [on|off]", "Toggle auto-skill creation on substantial work", 35);
     $self->writeline("", markdown => 0);
 
     $self->display_section_header("FILTERS");
