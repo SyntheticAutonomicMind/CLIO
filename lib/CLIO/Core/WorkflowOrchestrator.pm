@@ -4046,10 +4046,25 @@ sub _read_ltm_entries_for_projection {
 
 =head2 _active_task_text
 
-Return the active task text for the projection. Reads the first
-substantive session goal title, falling back to the first substantive
-user message from $history if no goals are set. Returns '' when
-neither is available.
+Return the active task text for the projection. Reads the most recent
+active session goal, falling back to the most recent substantive user
+message from $history if no goals are set. Returns '' when neither is
+available.
+
+The "most recent active goal" rule is what makes this function correct
+in long sessions where the user has moved on to a new task. The earlier
+"first active goal" implementation pinned the active task label to the
+user's first request, which caused the model to treat all subsequent
+work as scope creep and revert it (observed in CLIO session
+e45204bf-94ea-45da-99a8-c7d512e54cfb, 2026-09-05). The fix iterates
+the goals array in reverse so the most recent active goal wins.
+
+Why the model can rely on this: the agent records a new active goal
+via todo_operations(session_goals) when it recognises a substantive
+new user request (>=200 chars, not a short acknowledgement like
+"proceed" or "ship it"). The length guard lives upstream in the
+goal-recording path, not here - this function trusts that what is in
+session_goals is the current focus.
 
 =cut
 
@@ -4063,7 +4078,13 @@ sub _active_task_text {
         if (ref($state) && $state->can('session_goals')) {
             my $list = eval { $state->session_goals() };
             if (ref($list) eq 'ARRAY') {
-                for my $g (@$list) {
+                # Iterate REVERSED so the most recent active goal wins.
+                # Session goals are appended in order; the newest
+                # task transition is the last entry. Scanning
+                # newest-first matches the YaRN fallback below and
+                # gives the model a live "current focus" signal
+                # rather than a frozen "first task" anchor.
+                for my $g (reverse @$list) {
                     if (ref($g) eq 'HASH' && ($g->{status} // '') eq 'active') {
                         $goals = $g->{title} || '';
                         if (length $goals) {
@@ -4078,12 +4099,12 @@ sub _active_task_text {
     return $goals if length $goals;
 
     # Fallback: ask YaRN for the substantive task from the session's
-    # durable thread (which is never trimmed by context trimming).
+    # full history. YaRN::find_substantive_task scans newest-first
+    # (>=50 chars), so when no goals are set, the most recent
+    # substantive user message wins - same precedence rule as above.
     require CLIO::Memory::YaRN;
     return '' unless $session->can('get_conversation_history');
     my $history = eval { $session->get_conversation_history() };
-    # Start with empty candidate; YaRN::find_substantive_task scans
-    # the history for a substantive user message (>=50 chars).
     my $candidate = '';
     return CLIO::Memory::YaRN::find_substantive_task($candidate, $history);
 }
