@@ -2882,6 +2882,45 @@ sub _build_request {
     return ($req, $final_endpoint);
 }
 
+=head2 _interruptible_rate_wait($self, $seconds, $label)
+
+Sleep for up to C<$seconds>, checking for a user interrupt (ESC) on every
+1-second chunk. Used by the pre-request rate-limiter wait path so that
+long rate-limit waits remain responsive to user input.
+
+Arguments:
+  $self    - APIManager instance
+  $seconds - Total seconds to sleep (0 or negative = no-op)
+  $label   - Short string for log lines ("rate limit", "model switch", etc.)
+
+Returns: nothing.
+
+=cut
+
+sub _interruptible_rate_wait {
+    my ($self, $seconds, $label) = @_;
+
+    return unless $seconds && $seconds > 0;
+
+    log_debug('APIManager', "Waiting ${seconds}s before $label...");
+    my $remaining = $seconds;
+    while ($remaining > 0) {
+        my $chunk = ($remaining > 1) ? 1 : $remaining;
+        sleep($chunk);
+        $remaining -= $chunk;
+
+        # Check for user interrupt during the wait. The Interrupt module's
+        # ALRM handler sets a flag every 250ms; checking here between 1s
+        # chunks keeps rate-limit waits responsive to ESC.
+        if (eval { CLIO::Core::Interrupt::pending(session => $self->{session}) }
+            || eval { CLIO::Core::Interrupt::check(session => $self->{session}) }) {
+            log_debug('APIManager', "$label wait interrupted by user");
+            last;
+        }
+    }
+    log_debug('APIManager', "$label delay complete");
+}
+
 =head2 _check_connectivity
 
 Check if we can reach the API endpoint after a network error.
@@ -3501,7 +3540,11 @@ sub send_request {
     my $wait = $self->{rate_limiter}->check_and_wait($provider);
     if ($wait > 0) {
         log_debug('APIManager', "Rate limited by $provider, waiting ${wait}s...");
-        sleep($wait);
+        # Use interruptible sleep so ESC works during rate-limit waits.
+        # The bare sleep() previously blocked for up to $wait seconds with
+        # no interrupt check, making long rate-limit waits (e.g. 60s)
+        # unresponsive to user input.
+        _interruptible_rate_wait($self, $wait, 'rate limit');
     }
     
     # Acquire slot in rate limiter
@@ -3712,7 +3755,11 @@ sub send_request_streaming {
     my $wait = $self->{rate_limiter}->check_and_wait($provider);
     if ($wait > 0) {
         log_debug('APIManager', "Rate limited by $provider, waiting ${wait}s...");
-        sleep($wait);
+        # Use interruptible sleep so ESC works during rate-limit waits.
+        # The bare sleep() previously blocked for up to $wait seconds with
+        # no interrupt check, making long rate-limit waits (e.g. 60s)
+        # unresponsive to user input.
+        _interruptible_rate_wait($self, $wait, 'rate limit');
     }
     
     # Acquire slot in rate limiter
