@@ -52,7 +52,7 @@ Users can override any setting via /api commands, but these are the defaults.
 #   - supports_tools: Whether provider supports function calling
 #   - supports_streaming: Whether provider supports streaming responses
 #   - chat_endpoint_suffix: Path to append to api_base for chat (if not already in api_base)
-#   - slow_api: Flag for local inference providers requiring longer HTTP timeouts (default: 300s, slow_api: 600s)
+#   - slow_api: Flag for local inference providers requiring longer HTTP timeouts (cloud: 90s, route-based: 120s, slow_api: 600s)
 
 my %PROVIDERS = (
     sam => {
@@ -242,6 +242,7 @@ my %PROVIDERS = (
         requires_auth => 'apikey',
         supports_tools => 1,
         supports_streaming => 1,
+        route_timeout => 1,  # Routes to upstream providers — extra latency from the intermediate hop
         endpoint => {
             path_suffix => '',
             temperature_range => [0.0, 2.0],
@@ -283,6 +284,7 @@ my %PROVIDERS = (
         supports_streaming => 1,
         supports_reasoning => 1,
         supports_cache_control => 1,  # Passes cache_control through to upstream
+        route_timeout => 1,  # Routes to upstream providers — extra latency from the intermediate hop
         url_detection_patterns => [ qr{api\.orcarouter\.ai}i ],
         endpoint => {
             path_suffix => '',
@@ -690,6 +692,18 @@ sub build_endpoint_config {
     # session_id as llama_user_id for SSD-backed local inference servers.
     if ($provider && $provider->{llama_user_id_supported}) {
         $endpoint->{llama_user_id_supported} = 1;
+    }
+    # Propagate slow_api so APIManager can use extended HTTP timeouts
+    # for local inference providers (llama.cpp, SAM, LM Studio).
+    if ($provider && $provider->{slow_api}) {
+        $endpoint->{slow_api} = 1;
+    }
+    # Propagate route_timeout so APIManager can use a middle-ground timeout
+    # for route-based providers (OpenRouter, OrcaRouter) that add upstream
+    # latency. These are cloud providers but route through an intermediate,
+    # so they need more time than direct cloud providers but less than local.
+    if ($provider && $provider->{route_timeout}) {
+        $endpoint->{route_timeout} = 1;
     }
 
     # Propagate reasoning_schema from provider-defaults JSON so
