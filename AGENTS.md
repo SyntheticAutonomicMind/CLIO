@@ -85,6 +85,7 @@ Terminal Output (with color/theme)
 | `lib/CLIO/Core/` | System core (APIs, workflow, config, prompts, diagnostics) |
 | `lib/CLIO/Core/API/` | APIManager sub-modules (ResponseHandler, MessageValidator, ErrorHandler, PayloadSanitizer) |
 | `lib/CLIO/Core/SkillRepository.pm` | Skill repository configuration and management |
+| `lib/CLIO/Core/SkillManager.pm` | Skill catalog, scopes, and freeform skill creation (`auto_create_skills`) |
 | `lib/CLIO/Core/RepositoryLoader.pm` | Load skills from cached Git repositories |
 | `lib/CLIO/Code/` | Code intelligence primitives (TreeSitter) |
 | `lib/CLIO/Test/` | Test infrastructure (MockAPI) |
@@ -106,6 +107,7 @@ Terminal Output (with color/theme)
 | `lib/CLIO/Spec/` | OpenSpec integration (Manager) |
 | `lib/CLIO/Core/model-data/` | Unified model capability JSON files (models.json, provider-defaults.json, heuristics.json, provider-mapping.json) |
 | `docs/` | User/dev documentation |
+| `docs/templates/` | Generic AGENTS.md / instructions.md templates used by `/init` |
 | `styles/` | Terminal color styles (26 themes: dark, light, retro, cyberpunk, monokai, etc.) |
 | `themes/` | UI themes (compact, console, default, verbose) |
 | `tools/` | Repo-local tooling (assess_codebase.pl, ASSESSMENT_METHODOLOGY.md, cache_health.pl, context_inspector.pl, context_inspector_README.md, lint_size_regression.pl, parse_llama_log.pl, prompt_diff.pl, prompt_layout.pl, session_stats.pl, track_assessment.sh, trim_dryrun.pl) |
@@ -716,6 +718,7 @@ $self->display_error_message("Failed: $error");
 | `docs/FEATURES.md` | Complete feature reference |
 | `docs/ARCHITECTURE.md` | System design |
 | `docs/STYLE_QUICKREF.md` | UI styling quick reference |
+| `docs/templates/` | Fill-in-the-blank AGENTS.md / instructions.md schemas used by `/init` |
 | `.clio/instructions.md` | Project methodology (Unbroken Method) |
 | `AGENTS.md` | This file - technical reference |
 
