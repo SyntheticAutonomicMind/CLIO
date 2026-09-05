@@ -1648,6 +1648,15 @@ sub _build_turn_context {
         }
         $session->add_message('user', $history_content);
         log_debug('WorkflowOrchestrator', "Saved user message to session history (raw input)");
+
+        # Derive a session name from the first user message. This
+        # replaces the older prompt-instructed <!--session:...--> marker
+        # scheme - the model no longer has to remember to emit a marker
+        # for the session to be named. Marker-based renames still work
+        # via _extract_session_marker when a user explicitly emits one.
+        if ($session->can('state') && $session->state()) {
+            $session->state()->auto_name_session();
+        }
     }
 
     # Build tool definitions
@@ -4014,7 +4023,10 @@ sub _extract_session_marker {
     }
     
     # Try simple format: <!--session:simple-name-->
-    if ($content =~ s/\s*<!--session:([a-z][a-z0-9_-]{2,50})-->\s*//si) {
+    # Character class allows '.' for date-version tags (e.g.
+    # "doc-sync-20260904.1"); see CLIO::Util::TextSanitizer for the
+    # matching strip regex used elsewhere.
+    if ($content =~ s/\s*<!--session:([a-z][a-z0-9._-]{2,50})-->\s*//si) {
         my $title = $1;
         $title =~ s/^\s+|\s+$//g;
         if (length($title) >= 3) {

@@ -430,6 +430,85 @@ sub session_name {
     return $self->{session_name};
 }
 
+=head2 auto_name_session
+
+Derive a human-friendly session name from the first user message in
+history and persist it via L</session_name>. Idempotent: only sets a
+name when one is not already set, so user-supplied names and explicit
+marker renames survive intact.
+
+Triggered from L<CLIO::Core::WorkflowOrchestrator> right after the
+first user message is appended to history. Replaces the older
+prompt-instructed marker scheme (see SCRATCH notes for the history)
+which leaked markers into visible output when the model emitted
+non-conforming names.
+
+=cut
+
+sub auto_name_session {
+    my ($self) = @_;
+
+    # Don't overwrite a name that already exists (user rename, explicit
+    # marker rename, or a previous auto-name).
+    if (defined $self->{session_name} && length $self->{session_name}) {
+        return $self->{session_name};
+    }
+
+    my $history = $self->{history} || [];
+    my $first_user_msg;
+    for my $msg (@$history) {
+        next unless ref($msg) eq 'HASH';
+        next unless ($msg->{role} || '') eq 'user';
+        $first_user_msg = $msg->{content} || '';
+        last;
+    }
+
+    return undef unless defined $first_user_msg && length($first_user_msg);
+
+    my $name = _generate_session_name($first_user_msg);
+    if (defined $name && length $name) {
+        $self->session_name($name);
+        log_debug('SessionState', "Auto-generated session name: $name");
+    }
+
+    return $self->{session_name};
+}
+
+=head2 _generate_session_name($text)
+
+Heuristic title extraction. Returns undef for input that yields less
+than 3 meaningful characters after cleanup so empty/garbage input does
+not produce a useless "Untitled"-style placeholder.
+
+Truncation at 50 chars is intentionally generous; the session-list UI
+ellipsizes long names. Word-boundary truncation is not applied here
+because the first user message is typically a short imperative ("fix
+the auth bug") that fits without needing it.
+
+=cut
+
+sub _generate_session_name {
+    my ($text) = @_;
+
+    return undef unless defined $text && length $text;
+
+    my $name = $text;
+    $name =~ s/^\s+//;
+    $name =~ s/\s+$//;
+    $name =~ s/\s+/ /g;
+
+    # Strip common conversational filler so "Hey can you fix the login
+    # bug" -> "Fix the login bug" instead of "Hey can you fix the login".
+    $name =~ s/^(?:hey|hi|hello|please|can you|could you|i want to|i need to|i'd like to|let's)\s+//i;
+
+    # Capitalize the first letter.
+    $name = ucfirst($name);
+
+    return undef if length($name) < 3;
+
+    return $name;
+}
+
 =head2 session_goals / get_session_goals / set_session_goals
 
 Persistent task-tracking goals managed by the model. Goals live in the

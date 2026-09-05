@@ -162,12 +162,13 @@ sub make_on_chunk_callback {
             my $line = substr($self->{line_buffer}, 0, $pos);
             $self->{line_buffer} = substr($self->{line_buffer}, $pos + 1);
 
-            # Strip session naming markers (both formats)
+            # Strip session naming markers (both formats).
+            # TextSanitizer::strip_session_markers is the single source
+            # of truth for the marker regex.
             if ($line =~ /<!--session:/) {
+                require CLIO::Util::TextSanitizer;
                 # Extract content before the marker
-                my $content_before = $line;
-                $content_before =~ s/<!--session:\{[^}]*\}-->\s*//sg;  # Structured
-                $content_before =~ s/<!--session:[a-z][a-z0-9_-]{2,50}-->\s*//sgi;  # Simple
+                my $content_before = CLIO::Util::TextSanitizer::strip_session_markers($line);
                 $content_before =~ s/\s+$//;
                 
                 # If nothing before the marker, skip this line
@@ -239,8 +240,8 @@ sub flush {
 
     # Flush markdown buffer
     if ($self->{markdown_buffer} =~ /\S/) {
-        $self->{markdown_buffer} =~ s/\s*<!--session:\{[^}]*\}-->\s*//sg;  # Structured
-        $self->{markdown_buffer} =~ s/\s*<!--session:[a-z][a-z0-9_-]{2,50}-->\s*//sgi;  # Simple
+        require CLIO::Util::TextSanitizer;
+        $self->{markdown_buffer} = CLIO::Util::TextSanitizer::strip_session_markers($self->{markdown_buffer});
     }
     if ($self->{markdown_buffer} =~ /\S/) {
         log_debug('Chat', "Flushing markdown_buffer (" . length($self->{markdown_buffer}) . " bytes)");
@@ -258,8 +259,8 @@ sub flush {
 
     # Flush line buffer (incomplete final line)
     if ($self->{line_buffer} =~ /\S/) {
-        $self->{line_buffer} =~ s/\s*<!--session:\{[^}]*\}-->\s*//sg;  # Structured
-        $self->{line_buffer} =~ s/\s*<!--session:[a-z][a-z0-9_-]{2,50}-->\s*//sgi;  # Simple
+        require CLIO::Util::TextSanitizer;
+        $self->{line_buffer} = CLIO::Util::TextSanitizer::strip_session_markers($self->{line_buffer});
     }
     if ($self->{line_buffer} =~ /\S/) {
         log_debug('Chat', "Flushing line_buffer (" . length($self->{line_buffer}) . " bytes)");
@@ -294,8 +295,8 @@ sub flush_for_tools {
     my $printed = 0;
 
     if ($self->{markdown_buffer} =~ /\S/) {
-        $self->{markdown_buffer} =~ s/\s*<!--session:\{[^}]*\}-->\s*//sg;  # Structured
-        $self->{markdown_buffer} =~ s/\s*<!--session:[a-z][a-z0-9_-]{2,50}-->\s*//sgi;  # Simple
+        require CLIO::Util::TextSanitizer;
+        $self->{markdown_buffer} = CLIO::Util::TextSanitizer::strip_session_markers($self->{markdown_buffer});
         my $output = $self->{markdown_buffer};
         if ($ui->{enable_markdown}) {
             $output = $ui->render_markdown($self->{markdown_buffer});
@@ -309,8 +310,8 @@ sub flush_for_tools {
     }
 
     if ($self->{line_buffer} =~ /\S/) {
-        $self->{line_buffer} =~ s/\s*<!--session:\{[^}]*\}-->\s*//sg;  # Structured
-        $self->{line_buffer} =~ s/\s*<!--session:[a-z][a-z0-9_-]{2,50}-->\s*//sgi;  # Simple
+        require CLIO::Util::TextSanitizer;
+        $self->{line_buffer} = CLIO::Util::TextSanitizer::strip_session_markers($self->{line_buffer});
     }
     if ($self->{line_buffer} =~ /\S/) {
         my $output = $self->{line_buffer};
