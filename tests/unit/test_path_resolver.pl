@@ -70,10 +70,11 @@ print "\n--- find_clio_dir works in PromptBuilder ---\n";
     require CLIO::Core::PromptBuilder;
     my $pb = CLIO::Core::PromptBuilder->new();
     ok($pb, 'PromptBuilder can be instantiated without find_clio_dir errors');
-
-    # The session goals reader should not error
-    my $goals = $pb->_read_session_goals({});
-    ok(defined $goals, '_read_session_goals does not crash when session is empty');
+    # _read_session_goals / get_user_context (the old <sessionContext>
+    # XML path) were removed in the role-based history refactor; the
+    # live path now renders the environment via the ContextBuilder
+    # projection. The constructor check above still exercises find_clio_dir
+    # avoidance at construction time.
 }
 
 print "\n";

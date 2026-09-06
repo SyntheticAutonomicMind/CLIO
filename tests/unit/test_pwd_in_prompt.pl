@@ -26,33 +26,40 @@ mkdir('.clio') or warn "mkdir .clio: $!";
 my $current_pwd = getcwd();
 print "# Test directory: $current_pwd\n";
 
-# Load required modules
-require CLIO::Core::PromptBuilder;
+# Use the live prose renderer (ContextBuilder projection +
+# MessageHistory::messages_to_prose_dynamic) - the same path
+# WorkflowOrchestrator uses in production. get_user_context (the old
+# <sessionContext> XML builder) was removed in the role-based history
+# refactor; the environment block is now rendered as natural prose.
+require CLIO::Core::ContextBuilder;
+require CLIO::Core::MessageHistory;
 
-# Create PromptBuilder for testing the datetime section
-my $builder = CLIO::Core::PromptBuilder->new(debug => 0);
-my $section = eval { $builder->get_user_context() };
+my $projection = CLIO::Core::ContextBuilder::build_projection(
+    history             => [],
+    user_input          => 'verify cwd',
+    active_task         => 'verify cwd',
+    active_todos        => [],
+    ltm                 => [],
+    unresolved          => [],
+    context_files_block => '',
+);
+my $section = eval { CLIO::Core::MessageHistory::messages_to_prose_dynamic($projection) };
 
-ok(defined $section, "Generated user context section");
+ok(defined $section && length($section), "Generated user context section");
 
 if ($section) {
-    ok($section =~ /Working Directory/i, "Section includes 'Working Directory' heading");
+    ok($section =~ /Working directory:/, "Section includes 'Working directory:'");
     ok($section =~ /\Q$current_pwd\E/, "Section includes actual PWD: $current_pwd");
-    ok($section =~ /sessionContext/i, "Section wrapped in <sessionContext>");
+    unlike($section, qr/sessionContext/, "No <sessionContext> XML tag (prose format)");
 
     print "# Sample from section:\n";
-    my @lines = split /\n/, $section;
-    # grep against @lines[0..15] - some entries are undef when the section
-    # has fewer than 16 lines (e.g. the 5-line sessionContext in the fixture).
-    # Default to '' so the regex doesn't fire on undef under `perl -W`.
-    for my $line (grep { defined $_ && /Working Directory|sessionContext|Language/ } @lines[0..15]) {
+    for my $line (grep { defined $_ && /Working directory|Language|Date/ } (split /\n/, $section)[0..5]) {
         print "#   $line\n";
     }
 } else {
     fail("Could not generate section: $@");
     fail("No section content");
     fail("No PWD found");
-    fail("No sessionContext found");
 }
 
 # Cleanup

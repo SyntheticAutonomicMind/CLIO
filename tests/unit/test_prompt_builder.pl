@@ -11,6 +11,8 @@ use lib './lib';
 use Test::More;
 
 use CLIO::Core::PromptBuilder;
+use CLIO::Core::ContextBuilder;
+use CLIO::Core::MessageHistory qw(messages_to_prose_dynamic);
 
 # Test 1: Constructor
 subtest 'constructor - defaults' => sub {
@@ -35,16 +37,24 @@ subtest 'constructor - custom values' => sub {
     is($builder->{non_interactive}, 1, 'non_interactive set');
 };
 
-# Test 2: get_user_context
-subtest 'get_user_context - content' => sub {
-    my $builder = CLIO::Core::PromptBuilder->new();
-    my $section = $builder->get_user_context();
+# Test 2: user context prose section (live projection path)
+subtest 'user context prose section - content' => sub {
+    my $projection = CLIO::Core::ContextBuilder::build_projection(
+        history             => [],
+        user_input          => 'verify date',
+        active_task         => 'verify date',
+        active_todos        => [],
+        ltm                 => [],
+        unresolved          => [],
+        context_files_block => '',
+    );
+    my $section = CLIO::Core::MessageHistory::messages_to_prose_dynamic($projection);
 
-    ok(defined $section, 'Section generated');
-    like($section, qr/Working Directory/, 'Contains working directory');
-    like($section, qr/Current Date/, 'Contains date header');
+    ok(defined $section && length($section), 'Section generated');
+    like($section, qr/Working directory:/, 'Contains working directory');
+    like($section, qr/Date:/, 'Contains date header');
     like($section, qr/\d{4}-\d{2}-\d{2}/, 'Contains ISO date');
-    like($section, qr/sessionContext/, 'Wrapped in <sessionContext>');
+    unlike($section, qr/sessionContext/, 'No <sessionContext> XML (prose format)');
 };
 
 # Test 3: generate_non_interactive_section (static function)

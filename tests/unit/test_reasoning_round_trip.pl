@@ -16,7 +16,7 @@
 use strict;
 use warnings;
 use lib './lib';
-use Test::More tests => 101;
+use Test::More;
 use JSON::PP qw(encode_json decode_json);
 
 use_ok('CLIO::Providers::Anthropic');
@@ -488,3 +488,4 @@ use_ok('CLIO::Core::APIManager');
 }
 
 print "\nAll reasoning round-trip tests passed!\n";
+done_testing();
