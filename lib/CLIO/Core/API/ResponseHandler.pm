@@ -903,15 +903,21 @@ sub _handle_error_response_impl {
         $retry_info = "Connection error: $reason. Retrying...";
         $error = $retry_info;
     }
-    # Handle token limit exceeded (400)
-    elsif ($status == 400 && $error =~ /model_max_prompt_tokens_exceeded|context_length_exceeded|prompt token count.*exceeds/i) {
+    # Handle token limit exceeded (400). Covers multiple provider formats:
+    # - Anthropic: model_max_prompt_tokens_exceeded
+    # - OpenAI/Ollama/etc: context_length_exceeded, prompt token count exceeds
+    # - OpenRouter/OpenAI-style: "maximum context length is N tokens"
+    # - Generic: "reduce the length of either one" (OpenRouter variant)
+    elsif ($status == 400 && ($error =~ /model_max_prompt_tokens_exceeded|context_length_exceeded|prompt token count.*exceeds/i
+                               || $error =~ /maximum.context.length/i
+                               || $error =~ /reduce.*(?:prompt|input|context|length)/i)) {
         $is_retryable_error = 1;
         $retryable = 1;
         $retry_after = 0;
         $error_type = 'token_limit_exceeded';
         $error = "Token limit exceeded: The conversation history is too long for the model's context window. "
                . "Will attempt to trim conversation history and retry.";
-        log_debug('ResponseHandler', "Token limit exceeded - will retry after trimming");
+        log_debug('ResponseHandler', "Token limit exceeded (context overflow) - will retry after trimming");
     }
     # Handle malformed tool call JSON (400)
     elsif ($status == 400 && ($error =~ /invalid.*json.*tool.*call|tool.*call.*invalid.*json/i ||

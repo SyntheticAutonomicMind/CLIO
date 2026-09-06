@@ -577,27 +577,6 @@ sub _fetch_provider_capabilities {
         }
     }
     
-    # Try heuristics from JSON loader for unknown models
-    if ($loader) {
-        my $heuristic_caps = $loader->match_heuristics($model);
-        if ($heuristic_caps) {
-            log_debug('ModelCapabilitiesManager', "Heuristic match for ${provider}:${model}");
-            my $caps = $self->_build_caps_from_json($heuristic_caps, $provider, $model);
-            
-            # For llama.cpp, query /props for actual runtime context window
-            if ($provider eq 'llama.cpp' || $provider eq 'sam' || $provider eq 'lmstudio') {
-                my $props_ctx = $self->_query_llama_props_for_provider($provider);
-                if ($props_ctx && $props_ctx > 0) {
-                    $caps->{context_window} = $props_ctx;
-                    $caps->{max_prompt_tokens} = $props_ctx;
-                    log_debug('ModelCapabilitiesManager', "${provider} /props n_ctx=$props_ctx for $model (overriding heuristic context)");
-                }
-            }
-            
-            return $caps;
-        }
-    }
-    
     require CLIO::Providers;
     my $provider_def = CLIO::Providers::get_provider($provider);
 
@@ -630,6 +609,18 @@ sub _fetch_provider_capabilities {
         return $self->_fetch_openai_compatible_capabilities($provider, $model);
     }
     
+    # Last-resort: try heuristics from JSON loader for unknown models.
+    # Heuristics are tried AFTER all authoritative sources (JSON database,
+    # provider-specific static maps, and live API fetch) so stale or
+    # inaccurate heuristic data doesn't override correct provider data.
+    if ($loader) {
+        my $heuristic_caps = $loader->match_heuristics($model);
+        if ($heuristic_caps) {
+            log_debug('ModelCapabilitiesManager', "Heuristic fallback for ${provider}:${model}");
+            return $self->_build_caps_from_json($heuristic_caps, $provider, $model);
+        }
+    }
+
     log_debug('ModelCapabilitiesManager', "No capability fetcher for provider: $provider");
     return undef;
 }
@@ -3194,15 +3185,27 @@ sub _fetch_openai_compatible_capabilities {
     if ($m) {
         my $permuted_model = $m->{permuted_model} || undef;
         
-        # Extract context window
-        my $context_window = $m->{context_window}
+        # Extract context window. Different providers use different field
+        # names: OpenAI uses max_tokens/context_window, Google uses
+        # inputTokenLimit, OpenRouter uses context_length (top-level) and
+        # also nests it inside top_provider for per-endpoint limits.
+        my $tp = ref($m->{top_provider}) eq 'HASH' ? $m->{top_provider} : {};
+        my $context_window = $m->{context_length}
+            || $m->{context_window}
             || $m->{max_tokens}
             || $m->{max_context_tokens}
+            || $tp->{context_length}
+            || $tp->{context_window}
             || undef;
         
         # OpenAI-compatible often provides max_tokens as total context
         if (!$context_window && $permuted_model && $permuted_model->{context_window}) {
             $context_window = $permuted_model->{context_window};
+        }
+        # Also check permuted_model's top_provider
+        if (!$context_window && $permuted_model && ref($permuted_model->{top_provider}) eq 'HASH') {
+            $context_window = $permuted_model->{top_provider}{context_length}
+                || $permuted_model->{top_provider}{context_window};
         }
         
         # For local inference servers, /v1/models only exposes the model's
@@ -3226,10 +3229,13 @@ sub _fetch_openai_compatible_capabilities {
             }
         }
         
-        # Get max completion tokens
+        # Get max completion tokens. Check top-level first, then
+        # top_provider (where OpenRouter nests per-endpoint limits).
         my $output_tokens = $m->{max_completion_tokens}
             || $m->{max_output_tokens}
-            || $permuted_model->{max_output_tokens}
+            || $tp->{max_completion_tokens}
+            || $tp->{max_output_tokens}
+            || ($permuted_model ? ($permuted_model->{max_output_tokens}) : undef)
             || undef;
 
         # Parse reasoning metadata (OpenRouter returns a 'reasoning' field)

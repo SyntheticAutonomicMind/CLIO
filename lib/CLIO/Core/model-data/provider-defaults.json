@@ -182,8 +182,8 @@
     },
     "openrouter": {
       "default_model": "meta-llama/llama-3.1-405b-instruct:free",
-      "max_context_tokens": 128000,
-      "max_output_tokens": 16384,
+      "max_context_tokens": 200000,
+      "max_output_tokens": 131072,
       "supports_streaming": 1,
       "supports_tools": 1,
       "reasoning_schema": {

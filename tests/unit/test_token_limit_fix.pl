@@ -5,7 +5,7 @@ use strict;
 use warnings;
 use FindBin;
 use lib "$FindBin::Bin/../lib";
-use Test::More tests => 4;
+use Test::More tests => 5;
 use CLIO::Core::APIManager;
 
 # Mock HTTP response for testing
@@ -52,6 +52,18 @@ package MockResponse {
     my $is_tool_json_error = $error_msg =~ /invalid.*json.*tool.*call|tool.*call.*invalid.*json/i;
     
     ok(!$is_token_limit && !$is_tool_json_error, "Regular 400 error does not match special patterns");
+}
+
+# Test 5: OpenRouter-style "maximum context length" error should match our new pattern
+{
+    my $error_msg = '{"error":{"message":"This endpoint maximum context length is 196608 tokens. However, you requested about 200062 tokens (59082 of text input, 9908 of tool input, 131072 in the output). Please reduce the length of either one, or use the context-compression plugin to compress your prompt automatically.","code":400}}';
+
+    # The ResponseHandler now checks for "maximum context length" and
+    # "reduce ... (prompt|input|context|length)" patterns
+    my $is_token_limit = $error_msg =~ /model_max_prompt_tokens_exceeded|context_length_exceeded|prompt token count.*exceeds/i
+                        || $error_msg =~ /maximum.context.length/i
+                        || $error_msg =~ /reduce.*(?:prompt|input|context|length)/i;
+    ok($is_token_limit, "OpenRouter 'maximum context length' error is classified as token limit");
 }
 
 print "\n✓ All token limit error handling tests passed!\n";

@@ -1100,11 +1100,16 @@ sub adapt_request_for_endpoint {
     # Per-model tool support check (more granular than provider-level)
     if (exists $payload->{tools} && $payload->{model}) {
         my $model = $payload->{model};
+        # Use full model name (with provider prefix) for capability lookup
+        # to avoid prefix-collision bug: a stripped name like
+        # 'minimax/minimax-m2.7:free' would be mis-parsed as the CLIO
+        # 'minimax' provider instead of 'openrouter'.
+        my $full_model = $self->get_current_model() || $model;
         # Use model_supports_tools (goes through get_model_capabilities which
         # applies user overrides from /api set tools).
-        if (!$self->model_supports_tools($model)) {
+        if (!$self->model_supports_tools($full_model)) {
             delete $payload->{tools};
-            log_debug('APIManager', "Removed tools: model '$model' does not support function calling");
+            log_debug('APIManager', "Removed tools: model '$full_model' does not support function calling");
         }
     }
     
@@ -1256,13 +1261,18 @@ sub _inject_reasoning_params {
     my $thinking_mode = $self->{config} ? ($self->{config}->get('thinking_mode') // 'auto') : 'auto';
     my $model = $payload->{model} // '';
 
-    # Determine if the model supports reasoning
-    my $reasoning_mode = $model ? $self->_get_reasoning_mode($model) : undef;
+    # Determine if the model supports reasoning.
+    # Use full model name (with provider prefix) to avoid prefix-collision
+    # bug: stripped 'minimax/minimax-m2.7:free' would be mis-parsed as the
+    # CLIO 'minimax' provider instead of 'openrouter'.
+    my $full_model = $self->get_current_model() || $model;
+
+    my $reasoning_mode = $full_model ? $self->_get_reasoning_mode($full_model) : undef;
     my $model_supports;
     if ($mode eq 'nested') {
         # OpenRouter: endpoint-level supports_reasoning OR model-level
         $model_supports = $endpoint_config->{supports_reasoning}
-            || ($model && $self->_model_supports_reasoning($model));
+            || ($full_model && $self->_model_supports_reasoning($full_model));
     } else {
         # effort / think_object / mixed: check model-level reasoning_mode
         $model_supports = $reasoning_mode ? 1 : 0;
@@ -1796,16 +1806,27 @@ sub _extract_model_capabilities {
         $provider_max_output = $pdef->{max_output_tokens} if $pdef;
     }
 
+    # Some providers (e.g. OpenRouter) nest per-endpoint capability limits
+    # inside a top_provider sub-object rather than at the model root.
+    # Check there as a fallback so we get accurate max_output_tokens and
+    # context_length instead of falling through to DEFAULT_* values.
+    my $tp = ref($info->{top_provider}) eq 'HASH' ? $info->{top_provider} : {};
+    my $tp_ctx = $tp->{context_length} || $tp->{context_window};
+    my $tp_out = $tp->{max_completion_tokens} || $tp->{max_output_tokens};
+
     my $caps = {
         max_prompt_tokens => $info->{max_request_tokens}
             || $limits->{max_prompt_tokens} || $limits->{max_context_window_tokens}
-            || $info->{context_length} || $info->{context_window} || $fallback_ctx,
+            || $info->{context_length} || $info->{context_window}
+            || $tp_ctx || $fallback_ctx,
         max_output_tokens => $info->{max_completion_tokens}
             || $limits->{max_output_tokens} || $limits->{max_completion_tokens}
+            || $tp_out
             || $provider_max_output || CLIO::Core::Defaults::DEFAULT_MAX_OUTPUT_TOKENS(),
         max_context_window_tokens => $info->{context_window}
-            || $limits->{max_context_window_tokens} || $limits->{context_window}
-            || $info->{context_length} || $fallback_ctx,
+            || $limits->{max_context_window_tokens} || $limits->{max_context_window}
+            || $info->{context_length}
+            || $tp_ctx || $fallback_ctx,
     };
 
     # Per-model tool support (GitHub Copilot)
@@ -2322,15 +2343,100 @@ sub _model_uses_responses_api {
     return $result;
 }
 
-# Get max output tokens for a model from capabilities, with sensible fallback
+# Get max output tokens for a model from capabilities, with sensible fallback.
+# NOTE: Uses $self->get_current_model() (full model with provider prefix) to
+# avoid the prefix-collision bug where a stripped model name like
+# "minimax/minimax-m2.7:free" gets mis-parsed as the CLIO "minimax" provider
+# instead of the intended "openrouter" provider. Callers passing a raw
+# $model should use _compute_budget_aware_max_output_tokens instead, which
+# does the right thing.
 sub _get_max_output_tokens {
     my ($self, $model) = @_;
-    my $caps = $self->get_model_capabilities($model);
+    my $full_model = $self->get_current_model() || $model;
+    my $caps = $self->get_model_capabilities($full_model);
     require CLIO::Core::Defaults;
     my $max = ($caps && $caps->{max_output_tokens}) ? $caps->{max_output_tokens} : CLIO::Core::Defaults::DEFAULT_MAX_OUTPUT_TOKENS();
     # Force numeric context with +0 so JSON::XS encodes as integer (not string)
     # when the value came from a JSON-decoded cache file.
     return $max + 0;
+}
+
+# Compute a budget-aware max_tokens/max_output_tokens that accounts for the
+# actual input size, preventing the input_tokens + output_tokens from
+# exceeding the model's context window.
+#
+# Returns: min(model_max_output, context_window - estimated_input_tokens - safety_buffer)
+#
+# This is the safety net for context overflow: even if the trimming
+# (validate_and_truncate) leaves more input than expected, this caps the
+# output budget so input + output <= context_window - buffer.
+#
+# Uses $self->get_current_model() (full model name) for capability lookup
+# to avoid the prefix-collision bug (see _get_max_output_tokens).
+sub _compute_budget_aware_max_output_tokens {
+    my ($self, $messages) = @_;
+
+    my $full_model = $self->get_current_model();
+    return $self->_get_max_output_tokens($full_model) unless $full_model;
+
+    my $caps = $self->get_model_capabilities($full_model);
+    require CLIO::Core::Defaults;
+
+    # If we have no caps at all, fall back to the default (which itself
+    # falls back to DEFAULT_MAX_OUTPUT_TOKENS when caps are missing).
+    my $max_output = ($caps && $caps->{max_output_tokens})
+        ? $caps->{max_output_tokens} : CLIO::Core::Defaults::DEFAULT_MAX_OUTPUT_TOKENS();
+    my $context_window = ($caps && ($caps->{max_context_window_tokens}
+                                 || $caps->{context_window}
+                                 || $caps->{max_prompt_tokens}))
+        || CLIO::Core::Defaults::DEFAULT_CONTEXT_WINDOW();
+
+    return $max_output + 0 unless $context_window > 0 && $max_output > 0;
+
+    # Estimate the actual input token count from the messages we are about
+    # to send. This is the key difference from _get_max_output_tokens: we
+    # reserve space for the actual prompt, not just the model's theoretical
+    # max output.
+    my $input_tokens = 0;
+    eval {
+        require CLIO::Memory::TokenEstimator;
+        $input_tokens = CLIO::Memory::TokenEstimator::estimate_messages_tokens($messages);
+    };
+    if ($@) {
+        log_debug('APIManager',
+            "_compute_budget_aware_max_output_tokens: TokenEstimator failed: $@, falling back to raw max_output");
+        return $max_output + 0;
+    }
+
+    # Estimation buffer: same formula as compute_prompt_budget. Covers token
+    # estimation error, per-message overhead not captured by the char
+    # heuristic, and provider-specific formatting tokens.
+    my $est_buffer = CLIO::Core::Defaults::OUTPUT_ESTIMATION_BUFFER()
+                   + int($context_window * CLIO::Core::Defaults::OUTPUT_ESTIMATION_BUFFER_PCT());
+    my $buffer_cap = CLIO::Core::Defaults::OUTPUT_ESTIMATION_BUFFER_MAX();
+    $est_buffer = $buffer_cap if $est_buffer > $buffer_cap;
+
+    # Available for output = context - input - buffer
+    my $available_for_output = $context_window - $input_tokens - $est_buffer;
+
+    # If the budget is already very tight (input nearly fills context), don't
+    # shrink the output below a reasonable minimum — the trimming path
+    # (validate_and_truncate) should have handled that. Return the raw
+    # max_output so we at least get *some* response.
+    my $budget_aware = $available_for_output < $max_output ? $available_for_output : $max_output;
+
+    if ($budget_aware < 1000) {
+        log_debug('APIManager',
+            sprintf("Budget-aware max_tokens very low ($budget_aware) for %s; input=%d ctx=%d max_out=%d — returning raw max_output",
+                $full_model, $input_tokens, $context_window, $max_output));
+        return $max_output + 0;
+    }
+
+    log_debug('APIManager',
+        sprintf("Budget-aware max_tokens for %s: min(%d, %d - %d - %d) = %d",
+            $full_model, $max_output, $context_window, $input_tokens, $est_buffer, $budget_aware));
+
+    return $budget_aware + 0;
 }
 
 =head2 _build_responses_api_payload($messages, $model, $endpoint_config, %opts)
@@ -2440,12 +2546,19 @@ sub _build_responses_api_payload {
     }
     $flush_tc->() if @pending_tc;
     
-    # Build the Responses API payload
+    # Build the Responses API payload.
+    # Use budget-aware max_output_tokens so input + output never exceeds
+    # the context window. _compute_budget_aware_max_output_tokens uses
+    # get_current_model() internally, avoiding the prefix-collision bug.
+    my $budget_limit = $self->_compute_budget_aware_max_output_tokens($messages);
+    my $max_out = $opts{max_output_tokens} || $budget_limit;
+    $max_out = $budget_limit if $max_out > $budget_limit;
+
     my $payload = {
         model => $model,
         input => \@input,
         stream => $stream ? \1 : \0,
-        max_output_tokens => $opts{max_output_tokens} || $self->_get_max_output_tokens($model),
+        max_output_tokens => $max_out,
         store => \0,
         truncation => 'disabled',
         include => ['reasoning.encrypted_content'],
@@ -2678,8 +2791,12 @@ sub _build_payload {
     # Extract stream parameter (default false for non-streaming)
     my $stream = $opts{stream} || 0;
     
-    # Determine max_tokens from capabilities or provider config
-    my $max_tokens = $opts{max_tokens} || $self->_get_max_output_tokens($model);
+    # Determine max_tokens from capabilities or provider config.
+    # Use budget-aware calculation so input + output never exceeds the
+    # model's context window, even if trimming left more input than expected.
+    my $budget_limit = $self->_compute_budget_aware_max_output_tokens($messages);
+    my $max_tokens = $opts{max_tokens} || $budget_limit;
+    $max_tokens = $budget_limit if $max_tokens > $budget_limit;
     
     # Build base payload
     my $payload = {
@@ -5680,9 +5797,10 @@ sub _send_native_streaming {
     my $full_model = $self->get_current_model();
     # Only pass temperature when explicitly set; native providers already
     # gate on `defined $options->{temperature}` and will omit it otherwise.
+    my $budget_limit = $self->_compute_budget_aware_max_output_tokens($messages);
     my %build_opts = (
         model => $full_model,
-        max_tokens => $opts{max_tokens} // $self->_get_max_output_tokens($full_model),
+        max_tokens => $opts{max_tokens} // $budget_limit,
         ($thinking_opt ? (thinking => $thinking_opt) : ()),
     );
     $build_opts{temperature} = $opts{temperature} if defined $opts{temperature};
@@ -6035,9 +6153,10 @@ sub _send_native_streaming {
                     effort  => $effort,
                     mode    => $correct_mode,
                 };
+                my $budget_limit_retry = $self->_compute_budget_aware_max_output_tokens($messages);
                 my %build_opts_retry = (
                     model      => $full_model,
-                    max_tokens => $opts{max_tokens} // $self->_get_max_output_tokens($full_model),
+                    max_tokens => $opts{max_tokens} // $budget_limit_retry,
                     thinking   => $thinking_opt_corrected,
                 );
                 $build_opts_retry{temperature} = $opts{temperature} if defined $opts{temperature};
