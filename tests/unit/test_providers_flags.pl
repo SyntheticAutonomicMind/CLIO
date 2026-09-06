@@ -103,9 +103,15 @@ for my $name (@LOCAL_NAMES) {
         "default_context_window($name) == DEFAULT_LOCAL_CONTEXT_WINDOW");
 }
 for my $name (@CLOUD_NAMES) {
-    is(default_context_window($name),
-        DEFAULT_CONTEXT_WINDOW(),
-        "default_context_window($name) == DEFAULT_CONTEXT_WINDOW");
+    # anthropic (200000) and minimax (1000000) ship explicit
+    # max_context_tokens in provider-defaults.json, which override the
+    # DEFAULT_CONTEXT_WINDOW (128000) fallback. Every other cloud
+    # provider has no override and falls back to the constant.
+    my $expected = ($name eq 'anthropic') ? 200000
+                : ($name eq 'minimax')    ? 1000000
+                :                           DEFAULT_CONTEXT_WINDOW();
+    is(default_context_window($name), $expected,
+        "default_context_window($name) == $expected");
 }
 
 # Sentinel value: any provider that is_local_inference() should be enough

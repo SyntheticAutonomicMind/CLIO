@@ -115,7 +115,6 @@ $store->write([
     },
 ]);
 # Manually patch the on-disk JSON to use `content` (legacy shape)
-require File::Slurp;
 my $json_file = "$sessions_dir/$session_id/todos.json";
 my $data = {
     session_id => $session_id,

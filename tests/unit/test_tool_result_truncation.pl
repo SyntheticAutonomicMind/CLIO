@@ -4,18 +4,13 @@
 
 # Regression test for tool result truncation.
 #
-# ToolResultStore.processToolResult persists results larger than
-# MAX_INLINE_SIZE (16KB) and returns a marker with preview. Results
-# <= 16KB are returned inline (the marker would be a regression).
-#
-# The truncation must produce a marker that:
-#   1. Contains a [TOOL_RESULT_STORED: ...] marker with toolCallId
-#   2. Includes a preview of the FIRST $PREVIEW_SIZE bytes
-#   3. Tells the model how to read the rest with read_tool_result
-#   4. Does NOT include the full content inline
-#
-# Fallback path: when persistence fails (e.g. disk full), the result
-# is truncated to MAX_INLINE_SIZE inline with a [TRUNCATED: ...] marker.
+# ToolResultStore::processToolResult returns a STRING: small results
+# (<= MAX_INLINE_SIZE, 16KB) are returned inline verbatim; large results
+# are replaced by a [TOOL_RESULT_PREVIEW: ...]\n\n[TOOL_RESULT_STORED: ...]
+# marker that includes a preview and read_tool_result instructions.
+# ToolExecutor assigns the return value directly to $output (used as the
+# tool result content in the message), so the string contract is
+# intentional and tested here.
 
 use strict;
 use warnings;
@@ -37,11 +32,12 @@ subtest 'small results (<= MAX_INLINE_SIZE) returned inline without marker' => s
     );
     my $content = 'x' x 1024;  # 1KB, well under MAX_INLINE_SIZE (16KB)
     my $result = $store->processToolResult('tc_small', $content, $session_id);
-    ok($result, 'result returned');
-    ok(!$result->{persisted}, 'small result NOT persisted');
-    is($result->{content}, $content, 'small result returned inline verbatim');
-    unlike($result->{content}, qr/TOOL_RESULT_STORED/,
+    ok(defined $result && length($result), 'result returned');
+    is($result, $content, 'small result returned inline verbatim');
+    unlike($result, qr/TOOL_RESULT_STORED/,
         'inline content does NOT contain TOOL_RESULT_STORED marker');
+    unlike($result, qr/TOOL_RESULT_PREVIEW/,
+        'inline content does NOT contain preview marker');
 };
 
 subtest 'large results (> MAX_INLINE_SIZE) persisted with preview marker' => sub {
@@ -51,26 +47,22 @@ subtest 'large results (> MAX_INLINE_SIZE) persisted with preview marker' => sub
     );
     my $content = 'y' x 50000;  # 50KB, well over MAX_INLINE_SIZE (16KB)
     my $result = $store->processToolResult('tc_large', $content, $session_id);
-    ok($result, 'result returned');
-    ok($result->{persisted}, 'large result persisted');
-    like($result->{content}, qr/TOOL_RESULT_STORED/,
-        'persisted content contains TOOL_RESULT_STORED marker');
-    like($result->{content}, qr/toolCallId=tc_large/,
+    ok(defined $result && length($result), 'result returned');
+    like($result, qr/TOOL_RESULT_STORED/,
+        'marker contains TOOL_RESULT_STORED');
+    like($result, qr/toolCallId=tc_large/,
         'marker includes toolCallId');
-    like($result->{content}, qr/read_tool_result/,
+    like($result, qr/read_tool_result/,
         'marker tells model how to read the rest');
-    # Preview is the first 16KB. The original content was 'y' * 50000.
-    # The preview shown should be 16384 'y' chars.
-    like($result->{content}, qr/y{1000}/,
+    # Preview is the first PREVIEW_SIZE (16384) bytes -> a 1000-char run
+    # of 'y' is present.
+    like($result, qr/y{1000}/,
         'preview contains the original content (first chunk visible)');
-    # The full content is NOT inline.
-    unlike($result->{content}, qr/y{30000}/,
+    # The full 30000-char run must NOT be inline (only the preview is).
+    unlike($result, qr/y{30000}/,
         'full content NOT inline (only preview)');
-
-    # metadata captured
-    ok($result->{meta}, 'meta captured');
-    is($result->{meta}{tool_call_id}, 'tc_large', 'meta has tool_call_id');
-    is($result->{meta}{total_length}, 50049, 'meta has total_length (includes wrapping)');
+    like($result, qr/totalLength=\d+/,
+        'marker records totalLength');
 };
 
 subtest 'persisted result retrievable via retrieveChunk' => sub {
@@ -80,13 +72,10 @@ subtest 'persisted result retrievable via retrieveChunk' => sub {
     );
     my $content = 'z' x 30000;
     my $result = $store->processToolResult('tc_retrieve', $content, $session_id);
-    ok($result->{persisted}, 'persisted');
+    like($result, qr/TOOL_RESULT_STORED/, 'persisted (marker returned)');
 
     # Retrieve first chunk
     my $chunk = $store->retrieveChunk('tc_retrieve', $session_id, 0, 8192);
-    # retrieveChunk returns a hashref with content/metadata; older API
-    # returned the content string. The metadata includes the actual
-    # chunk size; just verify retrieval succeeded.
     ok(defined $chunk, 'chunk retrieved');
     my $content_field = ref($chunk) eq 'HASH' ? $chunk->{content} : $chunk;
     ok(defined $content_field && length($content_field) > 0,
@@ -102,17 +91,11 @@ subtest 'persisted result with markers and line-wrapping preserved' => sub {
     # Build content with > 2000 char lines (triggers the long-line split)
     my $long_line = 'a' x 3000;
     my $content = "$long_line\nshort line\n";
-    # Bump above MAX_INLINE_SIZE so it's persisted
+    # Bump above MAX_INLINE_SIZE so it is persisted
     $content .= 'b' x 20000;
 
     my $result = $store->processToolResult('tc_lines', $content, $session_id);
-    ok($result->{persisted}, 'persisted with long lines');
-
-    # The preview should show the long line as content but the
-    # persisted file on disk should have the line broken. We don't
-    # inspect the on-disk layout here - that's covered in the existing
-    # ToolResultStore tests. Just verify the marker is correct.
-    like($result->{content}, qr/TOOL_RESULT_STORED/, 'marker present');
+    like($result, qr/TOOL_RESULT_STORED/, 'marker present for long-line content');
 };
 
 done_testing();
