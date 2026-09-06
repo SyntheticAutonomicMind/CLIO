@@ -415,9 +415,11 @@ sub _get_category_guidance {
 
         directory_not_found => sub {
             return "WHAT WENT WRONG: The directory you're trying to access doesn't exist.\n" .
-                   "HOW TO FIX: Check that the path is correct. If the parent directory should exist, " .
-                   "verify your current working directory (terminal_operations: exec with 'pwd'). " .
-                   "If you need to CREATE the directory, call file_operations with operation='create_directory' first.";
+                   "HOW TO FIX: Check the path is correct. If you meant to pass a FILE path (where a " .
+                   "directory was expected), note that grep_search now accepts file paths directly — " .
+                   "pass the file as 'path' or 'directory' and it will search just that file. " .
+                   "If you need to CREATE the directory, call file_operations with operation='create_directory' first.\n" .
+                   "TIP: Verify your current working directory with terminal_operations: exec 'pwd'.";
         },
 
         directory_not_readable => sub {

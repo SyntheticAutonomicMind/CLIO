@@ -225,7 +225,7 @@ sub get_additional_parameters {
         # Common path parameters
         path => {
             type => "string",
-            description => "[REQUIRED for most operations] File or directory path. Used by read_file, list_dir, file_exists, get_file_info, write operations, etc. REQUIRED on EVERY call (including multi_replace_string items) - a missing path returns a parameter validation error, not a graceful fallback. For grep_search, this is a DIRECTORY not a file; combine with `pattern` (e.g. pattern: '*.pm') to scope the search.",
+            description => "[REQUIRED for most operations] File or directory path. Used by read_file, list_dir, file_exists, get_file_info, write operations, etc. REQUIRED on EVERY call (including multi_replace_string items) - a missing path returns a parameter validation error, not a graceful fallback. For grep_search, accepts either a file or a directory; when a file is given, only that file is searched.",
         },
         paths => {
             type => "array",
@@ -260,7 +260,7 @@ sub get_additional_parameters {
         },
         directory => {
             type => "string",
-            description => "[OPTIONAL] Base directory for file_search. Also accepted by grep_search (or pass `path` as an alias) to scope the search. When passed as `path`, must be a DIRECTORY (not a file) - for single-file greps use terminal_operations `grep` instead.",
+            description => "[OPTIONAL] Base directory for file_search. Also accepted by grep_search (or pass `path` as an alias) to scope the search. For grep_search, accepts either a file or a directory; when a file is given, only that file is searched.",
         },
         is_regex => {
             type => "boolean",
@@ -1318,29 +1318,60 @@ sub grep_search {
         my $timed_out = 0;
         my $start_time = time();
         
-        # First, find files matching pattern
-        # Forward the directory scope to file_search so grep is bounded by it.
-        my $file_result = $self->file_search({ pattern => $pattern, directory => $directory }, $context);
-        unless ($file_result->{success}) {
-            $result = $file_result;
+        # Determine whether the search target is a single file, a directory,
+        # or neither. Models naturally pass a file path to grep_search
+        # (Unix grep semantics) — honor that instead of failing.
+        my @files;
+
+        if (-f $directory) {
+            # Single-file mode: user passed a file path instead of a directory.
+            # Run the sandbox check that file_search would normally do.
+            my $sandbox_check = $self->_check_sandbox($directory, $context);
+            unless ($sandbox_check->{allowed}) {
+                $result = $self->error_result($sandbox_check->{error});
+                return;
+            }
+
+            # Resolve to an absolute path so the search loop's abs-path check
+            # skips the catfile reconstruction (which assumes $file->{path}
+            # is relative to $directory — true in directory mode, wrong here).
+            my $resolved = expand_tilde($directory);
+            $resolved = abs_path($resolved) || $resolved;
+
+            push @files, {
+                path      => $resolved,
+                type      => 'file',
+                size      => -s $resolved,
+            };
+
+            log_debug('FileOp', "grep_search: single-file mode, searching $resolved");
+        } elsif (-d $directory) {
+            # Directory mode: find files matching the glob pattern.
+            my $file_result = $self->file_search({ pattern => $pattern, directory => $directory }, $context);
+            unless ($file_result->{success}) {
+                $result = $file_result;
+                return;
+            }
+
+            @files = grep { $_->{type} eq 'file' } @{$file_result->{output}};
+
+            # Sort files to prioritize code files over docs/other files
+            @files = sort {
+                my $a_code = ($a->{path} =~ /\.(pm|pl|t|py|js|ts|rb|go|rs|java|c|h|cpp|hpp)$/i) ? 0 : 1;
+                my $b_code = ($b->{path} =~ /\.(pm|pl|t|py|js|ts|rb|go|rs|java|c|h|cpp|hpp)$/i) ? 0 : 1;
+                $a_code <=> $b_code || $a->{path} cmp $b->{path};
+            } @files;
+
+            # Limit files searched to prevent slowdown with large codebases
+            my $max_files_to_search = 200;
+            if (scalar(@files) > $max_files_to_search) {
+                $search_truncated = 1;
+                @files = @files[0..$max_files_to_search-1];
+            }
+        } else {
+            # Path does not exist at all.
+            $result = $self->error_result("Path not found: $directory");
             return;
-        }
-        
-        my @files = grep { $_->{type} eq 'file' } @{$file_result->{output}};
-        
-        # Sort files to prioritize code files over docs/other files
-        # This ensures important files are searched even with limits
-        @files = sort {
-            my $a_code = ($a->{path} =~ /\.(pm|pl|t|py|js|ts|rb|go|rs|java|c|h|cpp|hpp)$/i) ? 0 : 1;
-            my $b_code = ($b->{path} =~ /\.(pm|pl|t|py|js|ts|rb|go|rs|java|c|h|cpp|hpp)$/i) ? 0 : 1;
-            $a_code <=> $b_code || $a->{path} cmp $b->{path};
-        } @files;
-        
-        # Limit files searched to prevent slowdown with large codebases
-        my $max_files_to_search = 200;  # Increased from 100
-        if (scalar(@files) > $max_files_to_search) {
-            $search_truncated = 1;
-            @files = @files[0..$max_files_to_search-1];
         }
         
         # Search each file
