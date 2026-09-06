@@ -2,21 +2,19 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (c) 2026 Andrew Wyatt (Fewtarius)
 #
-# Regression test: TodoStore mutations must invalidate the
-# PromptBuilder user_context cache so the model sees fresh <activeTodos>
-# state on the very next prompt build, not 60s later when the cache TTL
-# expires.
+# Regression test: TodoStore exposes a set_invalidation_hook and fires it
+# on write/add/update (not read). The live prompt path now refreshes the
+# dynamic userContext per-iteration via the ContextBuilder projection
+# (MessageHistory::messages_to_prose_dynamic), so it no longer depends on
+# this hook - but TodoStore keeps the mechanism as general-purpose
+# infrastructure for any subscriber.
 #
-# Bug: PromptBuilder cached get_user_context() for 60 seconds. A model
-# that called todo_operations(operation: 'add'|'update'|'complete') would
-# have its new state hidden from the next prompt build until the cache
-# TTL expired. The model would re-issue the same mutation (cluttering the
-# conversation) or conclude that its previous mutation had no effect.
-#
-# Fix: TodoStore exposes set_invalidation_hook. PromptBuilder subscribes
-# in _read_active_todos and clears the user_context cache on any
-# mutation. write/add/update all fire the hook after a successful save.
-# read does NOT fire (read is a query, not a mutation).
+# Tests 1-3 + Test 6 verify the hook still exists and fires correctly.
+# Tests 4-5 (unlike) guard against the old PromptBuilder _user_context_cache
+# machinery - which cached get_user_context() for 60s and subscribed to
+# this hook - being re-introduced. That cache was removed in the
+# role-based history refactor: the model now sees fresh todo state every
+# iteration without a 60s stale-cache window.
 
 use strict;
 use warnings;
@@ -71,24 +69,29 @@ use File::Temp qw(tempdir);
     }
 }
 
-# ── Test 4: PromptBuilder subscribes to the hook in _read_active_todos ─
+# ── Test 4: PromptBuilder no longer carries the user_context cache ────
+# The role-based pipeline renders the dynamic userContext via
+# ContextBuilder::build_projection + MessageHistory::messages_to_prose_dynamic
+# per turn, so the old PromptBuilder user_context cache (and its TodoStore
+# invalidation subscription in _read_active_todos) are gone. These unlike
+# assertions guard against the dead cache machinery being re-introduced.
 {
     my $src = do { local $/; open my $fh, '<', 'lib/CLIO/Core/PromptBuilder.pm' or die "open: $!"; <$fh> };
-    like($src, qr/\$store->set_invalidation_hook/,
-         'PromptBuilder subscribes to TodoStore via set_invalidation_hook');
-    like($src, qr/\$self->\{_user_context_cache\}\s*=\s*undef/,
-         'PromptBuilder hook clears _user_context_cache on invalidation');
-    like($src, qr/\$self->\{_user_context_cache_time\}\s*=\s*0/,
-         'PromptBuilder hook resets _user_context_cache_time on invalidation');
+    unlike($src, qr/set_invalidation_hook/,
+         'PromptBuilder no longer subscribes to TodoStore invalidation');
+    unlike($src, qr/_user_context_cache/,
+         'PromptBuilder no longer has _user_context_cache');
+    unlike($src, qr/_user_context_cache_time/,
+         'PromptBuilder no longer has _user_context_cache_time');
 }
 
-# ── Test 5: PromptBuilder cache refresh also checks session change ────
+# ── Test 5: session-scoped cache tracking is gone ─────────────────────
 {
     my $src = do { local $/; open my $fh, '<', 'lib/CLIO/Core/PromptBuilder.pm' or die "open: $!"; <$fh> };
-    like($src, qr/_user_context_cache_session_id/,
-         'PromptBuilder tracks which session the cache belongs to');
-    like($src, qr/cache_mismatch/,
-         'PromptBuilder cache refresh checks for session change');
+    unlike($src, qr/_user_context_cache_session_id/,
+         'PromptBuilder no longer tracks _user_context_cache_session_id');
+    unlike($src, qr/cache_mismatch/,
+         'PromptBuilder no longer has cache_mismatch logic');
 }
 
 # ── Test 6: Functional - end-to-end invalidation through real TodoStore ─
