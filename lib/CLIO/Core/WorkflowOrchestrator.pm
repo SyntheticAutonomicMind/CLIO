@@ -591,7 +591,6 @@ sub process_input {
                 $proj->{active_task},
                 $proj->{unresolved} || [],
             );
-            $proj->{ltm_total_count} = scalar(@$live_ltm);
             # BUG #2 fix: refresh the environment hash so the
             # dynamic userContext shows the current datetime, not the
             # one from when the projection was first built. The env

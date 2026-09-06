@@ -772,19 +772,32 @@ __END__
 
 **Context Recovery via Compression:**
 
-YaRN's C<compress_messages()> is used in two places:
-1. B<MessageValidator> (proactive): Creates summaries when pre-trimming before API calls
-2. B<WorkflowOrchestrator> (reactive): Creates summaries when reactive trimming after
-   token limit exceeded errors
+C<compress_for_context_recovery()> is the unified entry point used by all
+compression paths:
+1. B<MessageValidator> (proactive): C<_role_based_tail_walk> compresses
+   dropped messages before an API call when the projected payload exceeds
+   the token budget.
+2. B<State> (session trim): C<trim_context> compresses the dropped tail
+   when the session exceeds its hard message limit.
+3. B<WorkflowOrchestrator> (reactive): C<_compress_dropped_for_recovery>
+   compresses dropped messages after a token-limit error from the provider.
 
-Both paths produce a C<< <thread_summary> >> block that preserves:
-- User requests (summarized)
+All paths produce a single C<< <thread_summary> >> system message (the
+compression format marker) that preserves:
+- User requests (summarized; the first/original request kept as
+  C<<- [original] >>)
 - Tool operations (deduplicated with counts)
-- Key agent events (last 5)
+- Commits (deduped, most recent kept, capped at 15)
+- Files touched (deduped, capped at 30)
+- Key decisions (last 3)
+- Active discussion turns (last 5 Q/A pairs, if any)
 
-The reactive path additionally injects:
-- Current todo/task state (C<< <task_recovery> >> block)
-- Most recent user requests from dropped messages (C<< <recent_context> >> block)
+Cross-cycle carryover: C<compress_for_context_recovery> extracts the most
+recent C<< <thread_summary> >> block from the message array (via
+C<_extract_thread_summary_from_messages>) and feeds it as C<previous_summary>
+to C<compress_messages>, so accumulated summaries survive successive trim
+cycles instead of being reset each time. Old summary blocks are filtered
+out of the compressed set and replaced by the single new one.
 
 =head1 AUTHOR
 

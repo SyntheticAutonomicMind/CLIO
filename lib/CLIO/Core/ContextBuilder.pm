@@ -211,14 +211,8 @@ sub build_projection {
         @deduped_recent = @$deduped_chain;
     }
 
-    # Score LTM entries against the current request
+    # Score LTM entries against the current request.
     my $relevant = score_ltm($ltm, $user_input, $active_task, $unresolved);
-    # Total entries passed to score_ltm (before relevance filtering).
-    # Used by the prose renderer to surface a "N more available - call
-    # memory_operations(search) to retrieve" hint when relevant entries
-    # are filtered out. The model gets to know LTM exists and is
-    # searchable even when nothing scored high enough.
-    my $ltm_total_count = ref($ltm) eq 'ARRAY' ? scalar(@$ltm) : 0;
 
     # After the role-based history refactor, the structured userContext
     # is rendered by the prose renderer (messages_to_prose_dynamic)
@@ -237,9 +231,11 @@ sub build_projection {
     push @all_messages, @deduped_recent;
     my $token_estimate = estimate_messages_tokens(\@all_messages) + int(length($user_context) / 4);
 
-    # The compressed_tail is rendered by messages_to_xml when the
-    # projection is passed in. Return it as a separate field so the
-    # serializer can splice it in at the right position.
+    # The compressed_tail carries the earlier-work summary. It is rendered
+    # by messages_to_prose_dynamic into the dynamic userContext block, not
+    # by a messages_to_xml call (that serializer was removed in the
+    # role-based history refactor). Return it as a separate field so the
+    # renderer can splice it in at the right position.
     #
     # Also return the structured fields (active_todos, unresolved,
     # environment) directly so non-XML serializers (prose renderer)
@@ -250,7 +246,6 @@ sub build_projection {
         compressed_tail     => $compressed_tail,
         userContext         => $user_context,
         relevant_memory     => $relevant,
-        ltm_total_count      => $ltm_total_count,
         active_task         => $active_task,
         active_todos        => $active_todos,
         unresolved          => $unresolved,

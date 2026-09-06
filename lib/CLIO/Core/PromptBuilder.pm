@@ -74,12 +74,17 @@ sub new {
 Build a comprehensive system prompt with dynamic tools, date/time,
 and mode-specific instructions.
 
-LTM patterns and other dynamic content (loaded skills, OpenSpec) are
-injected into the user message via get_user_context() to preserve
-prompt cache stability across turns.
+LTM patterns and other dynamic content (loaded skills, OpenSpec) are NOT
+injected here. They are delivered per-turn via the ContextBuilder
+projection's dynamic userContext block (rendered by
+MessageHistory::messages_to_prose_dynamic), which sits after the cache-
+stable history so its churn does not invalidate the system-prompt cache
+segment. build_system_prompt only assembles the static system prompt
+(base prompt from PromptManager + tools + skills + profile).
 
 Arguments:
-- $session: Session object (optional, needed for LTM)
+- $session: Session object (optional; used to sync max_tokens/max_output_tokens
+  onto State and to source the tools section)
 
 Returns:
 - Complete system prompt string
@@ -578,37 +583,6 @@ For trivial decisions (e.g. "which tool do I call next?"), a one-line note like
 the trade-off or constraint you're weighing.};
 }
 
-=head2 _get_dynamic_context
-
-Internal: Get dynamic context sections (LTM patterns, loaded skills,
-OpenSpec) from PromptManager for injection into the user message.
-
-These sections change between turns and would invalidate the prompt
-cache if included in the system prompt.
-
-Arguments:
-- $session: Session object
-
-Returns:
-- Dynamic context string, or empty string if nothing to inject
-
-=cut
-
-sub _get_dynamic_context {
-    my ($self, $session) = @_;
-
-    return '' unless $session;
-
-    require CLIO::Core::PromptManager;
-    my $pm = CLIO::Core::PromptManager->new(
-        debug => $self->{debug},
-        skip_custom => $self->{skip_custom},
-        enable_subagents => $self->{enable_subagents},
-    );
-
-    return $pm->get_dynamic_context($session);
-}
-
 =head2 get_user_context
 
 Get the user-context block containing date/time, working directory, language,
@@ -652,17 +626,12 @@ sub get_user_context {
                   . ($cache_mismatch ? " (session changed)" : ""));
     }
 
-    # Dynamic context (LTM, loaded skills, OpenSpec) comes FIRST - it's
-    # injected into the user message after cache breakpoints, so changes
-    # here don't invalidate the prompt cache.
+    # Dynamic context (LTM, loaded skills, OpenSpec) is now delivered via
+    # the ContextBuilder projection's dynamic userContext block
+    # (MessageHistory::messages_to_prose_dynamic), not via get_user_context.
+    # PromptManager::get_dynamic_context was removed in the role-based
+    # history refactor, so the <dynamicContext> injection is gone with it.
     my $context = '';
-    if ($session) {
-        my $dynamic = $self->_get_dynamic_context($session);
-        if ($dynamic) {
-            $context .= "<dynamicContext>\n" . $dynamic . "\n</dynamicContext>\n\n";
-            log_debug('PromptBuilder', "Prepended dynamic context (" . length($dynamic) . " chars)");
-        }
-    }
 
     # Base context (date/time/path/language) - cached per-minute
     $context .= $self->{_user_context_cache};
