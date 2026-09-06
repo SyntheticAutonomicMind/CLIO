@@ -325,7 +325,7 @@ sub handle_api_error {
                     ? $cfg->get_route_wait_for_rate_limits() : 1;
                 my $waited_for_rate_limit = 0;
                 if ($wait_for_rl && $wo->{api_manager} && $wo->{api_manager}->can('provider_for_model')) {
-                    if ($api_response->{error_type} eq 'rate_limit'
+                    if (($api_response->{error_type} // '') eq 'rate_limit'
                         && ($api_response->{retry_after} // 0) > 0) {
                         my $cur_model = $wo->{api_manager}->get_current_model();
                         my $cur_provider = $wo->{api_manager}->provider_for_model($cur_model);
@@ -341,16 +341,20 @@ sub handle_api_error {
                 }
 
                 # ── Phase 2: all-providers rate-limited optimization ──
-                # If every candidate's provider is currently rate-limited,
-                # cycling one-at-a-time would wait for each provider's cooldown
-                # in series (potentially much longer than necessary). Instead,
-                # find the provider that expires soonest, wait only for that
-                # much, and jump the routing index directly to its candidate.
-                # This only applies when the current error is itself a rate
-                # limit — for server errors or timeouts a short provider
-                # cooldown should not block routing to that provider.
+                # When EVERY OTHER candidate's provider is still rate-limited
+                # (the current provider just got a 429, so it's rate-limited
+                # by definition), cycling one-at-a-time would wait for each
+                # provider's cooldown in series. Instead, find the other
+                # provider that expires soonest, wait only for that much,
+                # and jump the routing index directly to its candidate.
+                #
+                # We exclude the current provider from the "all rate-limited"
+                # check because it was just recorded with a fresh cooldown —
+                # the real question is whether the OTHER providers are also
+                # still cooling down. If at least one other is free, regular
+                # cycling + Phase 1 wait handles it correctly.
                 if ($wait_for_rl
-                    && $api_response->{error_type} eq 'rate_limit'
+                    && ($api_response->{error_type} // '') eq 'rate_limit'
                     && $session->{provider_rate_limits}
                     && $wo->{api_manager}->can('provider_for_model')
                     && $cfg->can('get_model_candidates')
@@ -360,15 +364,23 @@ sub handle_api_error {
                         $wo->{api_manager}->provider_for_model($_)
                     } @$candidates_list;
 
-                    # Collect rate-limited candidates with their expiry times
+                    # Determine the current provider (just got 429'd, so
+                    # it's rate-limited by definition). Exclude it from
+                    # the "other providers" analysis.
+                    my $cur_model_for_p2 = $wo->{api_manager}->get_current_model();
+                    my $cur_provider_for_p2 = $wo->{api_manager}->provider_for_model($cur_model_for_p2);
+
+                    # Collect rate-limited candidates (excluding current provider)
+                    # with their expiry times
                     my @rl_candidates;  # { idx, provider, expiry }
-                    my $all_rl = 1;
+                    my $all_others_rl = 1;
                     for my $i (0 .. $#$candidates_list) {
                         my $p = $candidate_providers[$i];
                         next unless $p;
+                        next if defined $cur_provider_for_p2 && $p eq $cur_provider_for_p2;
                         my $expiry = $session->{provider_rate_limits}{$p};
                         if (!defined $expiry || $expiry <= time()) {
-                            $all_rl = 0;
+                            $all_others_rl = 0;
                         } else {
                             push @rl_candidates, {
                                 idx     => $i,
@@ -378,17 +390,18 @@ sub handle_api_error {
                         }
                     }
 
-                    # Only act if every candidate provider is rate-limited
-                    # (and at least one rate-limited entry exists).
-                    if ($all_rl && @rl_candidates) {
+                    # Only fire Phase 2 if all OTHER providers are also
+                    # rate-limited (and at least one is in the RL list).
+                    if ($all_others_rl && @rl_candidates) {
                         my $soonest = (sort { $a->{expiry} <=> $b->{expiry} } @rl_candidates)[0];
                         my $rl_wait = $soonest->{expiry} - time();
                         if ($rl_wait > 0) {
                             delete $session->{provider_rate_limits}{$soonest->{provider}};
                             if ($verbose && $on_system_message) {
                                 my $n = scalar(@$candidates_list);
+                                my $summary = _format_provider_cooldowns($session->{provider_rate_limits});
                                 $on_system_message->("All $n routing targets are rate-limited. Waiting "
-                                    . int($rl_wait) . "s for $soonest->{provider} to recover...");
+                                    . int($rl_wait) . "s for $soonest->{provider} to recover...$summary");
                             }
                             _interruptible_sleep($wo, $session, $rl_wait, $messages, "all-providers rate limit");
 
@@ -407,7 +420,8 @@ sub handle_api_error {
                     }
                 }
 
-                # Cycle to the next model (wraps around at the end)
+                # Fall through to normal cycling (Phase 1 handles per-provider
+                # wait on the target).
                 my ($new_model, $old_model) = $wo->{api_manager}->cycle_model();
                 if ($new_model) {
                     if ($verbose && $on_system_message) {
@@ -433,8 +447,7 @@ sub handle_api_error {
                             delete $session->{provider_rate_limits}{$new_provider};
                             if ($verbose && $on_system_message) {
                                 $on_system_message->("Waiting " . int($rl_wait) . "s for $new_provider rate limit to expire before retrying...");
-                            }
-                            _interruptible_sleep($wo, $session, $rl_wait, $messages, "$new_provider rate limit");
+                            }                            _interruptible_sleep($wo, $session, $rl_wait, $messages, "$new_provider rate limit");
                             $waited_for_rate_limit = 1;
                             log_debug('ErrorHandler',
                                 "Waited ${rl_wait}s for $new_provider rate limit, cleared entry");
@@ -1270,6 +1283,28 @@ sub trim_for_token_limit {
     }
 
     return { system_msg => $system_msg };
+}
+
+# Build a concise per-provider cooldown summary for system messages.
+# Returns a string like " (openrouter: 10s, vercel: 15s)" or "" if no
+# rate-limited providers. This gives the user visibility into the cooldown
+# state of all providers in the route without cluttering single-provider
+# messages.
+sub _format_provider_cooldowns {
+    my ($rl_map) = @_;
+    return '' unless $rl_map && ref($rl_map) eq 'HASH' && keys %$rl_map;
+
+    my $now = time();
+    my @parts;
+    for my $provider (sort keys %$rl_map) {
+        my $expiry = $rl_map->{$provider};
+        if (defined $expiry && $expiry > $now) {
+            my $remaining = int($expiry - $now) + 1;
+            push @parts, "$provider: ${remaining}s";
+        }
+    }
+    return '' unless @parts;
+    return ' (' . join(', ', @parts) . ')';
 }
 
 1;
