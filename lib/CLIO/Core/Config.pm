@@ -581,13 +581,18 @@ Returns: number of model_configs entries the key was removed from
 =cut
 
 sub clear_model_scoped {
-    my ($self, $key) = @_;
+    my ($self, $key, $skip_model) = @_;
 
     return 0 unless grep { $_ eq $key } @{MODEL_SCOPED_KEYS()};
     return 0 unless $self->{config}->{model_configs};
 
     my $cleared = 0;
     for my $model_id (keys %{$self->{config}->{model_configs}}) {
+        # Skip the active model so a freshly-set per-model override (e.g.
+        # from /api set thinking on) is not scrubbed out before save.
+        # handle_set('thinking') passes the current model for this reason;
+        # direct callers (no $skip_model) clear all entries as before.
+        next if $skip_model && $model_id eq $skip_model;
         if (exists $self->{config}->{model_configs}{$model_id}{$key}) {
             delete $self->{config}->{model_configs}{$model_id}{$key};
             $cleared++;
