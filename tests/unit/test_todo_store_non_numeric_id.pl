@@ -34,7 +34,11 @@ use CLIO::Session::TodoStore;
 # Capture warnings so the test fails on any numeric-compare warning.
 my @warnings;
 local $SIG{__WARN__} = sub {
-    push @warnings, $_[0];
+    # Only capture warnings originating in CLIO code. Dependency stacks
+    # (Test::Builder, JSON::PP, File::Spec, ...) emit their own
+    # numeric-context noise on corrupt/unexpected input on some Perl
+    # versions; those are not CLIO bugs and must not fail the assertion.
+    push @warnings, $_[0] if $_[0] =~ m{lib/CLIO/};
 };
 
 subtest 'write/read cycle with corrupt id does not warn or crash' => sub {
