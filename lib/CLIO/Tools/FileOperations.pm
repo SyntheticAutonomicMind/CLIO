@@ -137,14 +137,20 @@ ALIASES: Each operation above also accepts common natural-language aliases
 preferred for clarity; aliases exist so calling code that uses the more
 familiar English form still dispatches correctly.
 },
+        # Canonical operation names ONLY — these populate the JSON schema enum
+        # sent to the LLM. Natural-language aliases are NOT included here so the
+        # model isn't tempted to use them (which creates the read-vs-read_file
+        # confusion where the tool-call layer strips the operation from the
+        # args and uses the alias as the tool name). Aliases are silently
+        # accepted at dispatch time via operation_aliases + dispatch_table.
         supported_operations => [qw(
-            read_file read
-            list_dir list_directory
-            file_exists exists
-            get_file_info stat_file
+            read_file
+            list_dir
+            file_exists
+            get_file_info
             get_errors
-            file_search find_files
-            grep_search search
+            file_search
+            grep_search
             semantic_search
             read_tool_result
             write_file
@@ -155,10 +161,11 @@ familiar English form still dispatches correctly.
             rename_file
             create_directory
         )],
-        # Short, natural-language aliases. These are silently accepted as
-        # operation values (via validate_operation + dispatch_table) but are
-        # NOT included in the schema enum sent to the LLM, preventing the
-        # LLM from confusing them with tool names.
+        # Natural-language aliases. These are silently accepted as operation
+        # values (via validate_operation + dispatch_table keys) but are NOT
+        # included in the schema enum sent to the LLM, preventing the LLM from
+        # confusing them with tool names. Every alias listed here must also
+        # have an entry in dispatch_table() below.
         operation_aliases => [qw(
             read list_directory exists stat_file find_files search
             read_result create write append replace edit bulk_replace

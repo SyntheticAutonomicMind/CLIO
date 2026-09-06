@@ -2301,148 +2301,130 @@ sub _prepare_tool_round {
         my $tool_name = $tool_call->{function}->{name} || 'unknown';
 
         # Resolve tool aliases
+        my $params = {};
+
         my $alias_info = $self->{tool_registry}->get_alias_info($tool_name);
         if ($alias_info) {
             log_debug('WorkflowOrchestrator', "Alias detected: '$tool_name' -> '$alias_info->{tool}' with operation='$alias_info->{operation}'");
             $tool_call->{function}->{name} = $alias_info->{tool};
             $tool_name = $alias_info->{tool};
 
-            # Build a list of any extra params the alias wants to inject into
-            # the call. Currently used for 'append_file' -> write_file with
-            # append=1, but designed to be extensible for any future alias
-            # that needs to pre-populate a parameter without forcing the
-            # caller to set it. The injected key is only added when the
-            # caller hasn't already supplied it (preserves caller intent).
+            # Inject operation + alias defaults DIRECTLY into _parsed_args.
+            # Phase 1 already repaired and parsed the JSON, so re-parsing from
+            # the raw string (and re-running repair_malformed_json) is both
+            # wasteful and dangerous: the decimal regex s/:(\s*)\.(\d)/:0.$2/g
+            # matches inside string values and can corrupt already-valid JSON
+            # like {"query":"error: .500 status"} -> {"query":"error: 0.500 status"}.
             my @inject_keys = grep { $_ ne 'tool' && $_ ne 'operation' } keys %$alias_info;
             my @inject_pairs = map { $_ => $alias_info->{$_} } @inject_keys;
 
-            my $args_str = $tool_call->{function}->{arguments};
-            if ($args_str) {
-                eval {
-                    my $args = decode_json($args_str);
-                    unless (exists $args->{operation}) {
-                        $args->{operation} = $alias_info->{operation};
-                        $tool_call->{function}->{arguments} = encode_json($args);
-                        log_debug('WorkflowOrchestrator', "Injected operation='$alias_info->{operation}' into args");
-                    }
-                    # Inject any extra alias defaults. Only set keys the caller
-                    # didn't explicitly provide (e.g. caller can override
-                    # append=true with append=false if they really want to).
-                    for my $pair (@inject_pairs) {
-                        my ($k, $v) = @$pair;
-                        unless (exists $args->{$k}) {
-                            $args->{$k} = $v;
-                            $tool_call->{function}->{arguments} = encode_json($args);
-                            log_debug('WorkflowOrchestrator', "Injected $k=$v into args (alias default)");
-                        }
-                    }
-                };
-            } else {
-                my %new_args = (operation => $alias_info->{operation});
+            if ($tool_call->{_parsed_args} && ref($tool_call->{_parsed_args}) eq 'HASH') {
+                # Fast path: Phase 1 already parsed the args. Inject into the
+                # hash directly — NO re-parse, NO re-repair.
+                $params = $tool_call->{_parsed_args};
+                unless (exists $params->{operation}) {
+                    $params->{operation} = $alias_info->{operation};
+                }
                 for my $pair (@inject_pairs) {
                     my ($k, $v) = @$pair;
-                    $new_args{$k} = $v;
+                    $params->{$k} = $v unless exists $params->{$k};
                 }
-                $tool_call->{function}->{arguments} = encode_json(\%new_args);
-                log_debug('WorkflowOrchestrator', "Created args with operation='$alias_info->{operation}'" . (@inject_pairs ? " + extras" : ""));
+                log_debug('WorkflowOrchestrator', "Injected operation + extras into _parsed_args (no re-parse)");
+            } else {
+                # Fallback: _parsed_args was not set (defensive — Phase 1 should
+                # always set it for validated tool calls). Parse once.
+                $params = safe_decode_json($tool_call->{function}->{arguments} || '{}') || {};
+                unless (exists $params->{operation}) {
+                    $params->{operation} = $alias_info->{operation};
+                }
+                for my $pair (@inject_pairs) {
+                    my ($k, $v) = @$pair;
+                    $params->{$k} = $v unless exists $params->{$k};
+                }
+                $tool_call->{function}->{arguments} = encode_json($params);
+                log_debug('WorkflowOrchestrator', "Injected operation + extras via string re-encode (fallback)");
             }
+            # Sync _parsed_args so ToolExecutor (which prefers it) sees the
+            # augmented params, not the stale pre-injection copy.
+            $tool_call->{_parsed_args} = $params;
         }
 
         my $tool = $self->{tool_registry}->get_tool($tool_name);
 
         # Parse arguments for classification (reuse Phase 1 result when available)
-        my $params = {};
-        if ($tool_call->{_parsed_args} && !$alias_info) {
-            # Reuse pre-parsed args from Phase 1 validation (avoids redundant JSON decode)
-            $params = $tool_call->{_parsed_args};
-        } elsif ($tool_call->{function}->{arguments}) {
-            # We enter this branch when either: (a) _parsed_args was never set
-            # (shouldn't happen for validated tool calls, but defensive), or
-            # (b) $alias_info is truthy — meaning alias resolution above modified
-            # function.arguments to inject the operation param. In case (b) we
-            # MUST re-parse from the modified string, and we MUST also update
-            # _parsed_args so that ToolExecutor (which prefers _parsed_args) sees
-            # the same augmented arguments instead of the stale pre-injection copy.
-            eval {
-                my $json_str = $tool_call->{function}->{arguments};
+        unless ($params && ref($params) eq 'HASH') {
+            $params = {};
+            if ($tool_call->{_parsed_args} && ref($tool_call->{_parsed_args}) eq 'HASH') {
+                # Reuse pre-parsed args from Phase 1 validation (avoids redundant
+                # JSON decode AND avoids re-running repair_malformed_json on
+                # already-valid JSON, which is not idempotent).
+                $params = $tool_call->{_parsed_args};
+            } elsif ($tool_call->{function}->{arguments}) {
+                # Fallback: _parsed_args was never set (shouldn't happen for
+                # validated tool calls, but defensive). This is the ONLY path
+                # that runs repair_malformed_json in Phase 3.
+                eval {
+                    my $json_str = $tool_call->{function}->{arguments};
 
-                if ($self->{debug}) {
-                    my $preview = substr($json_str, 0, 300);
-                    log_debug('WorkflowOrchestrator', "Original arguments (first 300 chars): $preview");
-                }
-
-                if (is_anthropic_xml_format($json_str)) {
-                    log_debug('WorkflowOrchestrator', "Detected Anthropic XML format, converting to JSON");
-                    $json_str = parse_anthropic_xml_to_json($json_str, $self->{debug});
-                    log_debug('WorkflowOrchestrator', "Converted XML to JSON: " . substr($json_str, 0, 300));
-                } else {
-                    $json_str = repair_malformed_json($json_str, $self->{debug});
-                    if ($self->{debug}) {
-                        my $preview = substr($json_str, 0, 300);
-                        log_debug('WorkflowOrchestrator', "Repaired JSON arguments (first 300 chars): $preview");
-                    }
-                }
-
-                # decode_json expects BYTES (not Perl's internal UTF-8 character strings).
-                # Only encode to bytes if the string has the UTF-8 flag set; if it's
-                # already a byte string (no flag), pass through directly. Without this
-                # guard, encode_utf8 on a byte string containing raw UTF-8 bytes is a
-                # no-op (correct), but the double-decode pattern in callers can
-                # produce surprising behavior when the string has been round-tripped
-                # through encode/decode cycles already.
-                my $json_bytes = utf8::is_utf8($json_str) ? encode_utf8($json_str) : $json_str;
-                $params = decode_json($json_bytes);
-            };
-            if ($@) {
-                my $error = $@;
-                my $args_full = $tool_call->{function}->{arguments} || '';
-
-                log_error('WorkflowOrchestrator', "Failed to parse arguments for tool '$tool_name': $error");
-                log_error('WorkflowOrchestrator', "Full arguments:\n$args_full");
-
-                my $error_message = "JSON parsing failed for tool '$tool_name': $error\nArguments received:\n$args_full";
-
-                push @$messages, {
-                    role => 'tool',
-                    tool_call_id => $tool_call->{id},
-                    name => $tool_name,
-                    content => $error_message
-                };
-
-                if ($session && $session->can('add_message')) {
-                    eval {
-                        if ($assistant_msg_pending) {
-                            $session->add_message(
-                                'assistant',
-                                $assistant_msg_pending->{content},
-                                { tool_calls => $assistant_msg_pending->{tool_calls} }
-                            );
-                            log_debug('WorkflowOrchestrator', "Saved assistant message with tool_calls to session (on error result)");
-                            $assistant_msg_pending = undef;
+                    if (is_anthropic_xml_format($json_str)) {
+                        log_debug('WorkflowOrchestrator', "Detected Anthropic XML format, converting to JSON");
+                        $json_str = parse_anthropic_xml_to_json($json_str, $self->{debug});
+                        log_debug('WorkflowOrchestrator', "Converted XML to JSON: " . substr($json_str, 0, 300));
+                    } else {
+                        $json_str = repair_malformed_json($json_str, $self->{debug});
+                        if ($self->{debug}) {
+                            my $preview = substr($json_str, 0, 300);
+                            log_debug('WorkflowOrchestrator', "Repaired JSON arguments (first 300 chars): $preview");
                         }
-                        $session->add_message(
-                            'tool',
-                            $error_message,
-                            { tool_call_id => $tool_call->{id} }
-                        );
-                        log_debug('WorkflowOrchestrator', "Saved error tool result to session");
-                    };
-                    if ($@) {
-                        log_debug('WorkflowOrchestrator', "Session save error (non-critical): $@");
                     }
-                }
-                next;
-            }
 
-            # BUG FIX: When alias resolution modified function.arguments (injected
-            # operation + alias defaults), update _parsed_args so ToolExecutor
-            # (which prefers _parsed_args) sees the augmented params instead of
-            # the stale pre-injection copy. This was the root cause of
-            # "Missing 'operation' parameter" errors for aliased tool calls
-            # (e.g. grep_search as tool name) where ToolExecutor used the old
-            # _parsed_args that lacked the injected operation field.
-            $tool_call->{_parsed_args} = $params if $alias_info;
+                    # decode_json expects BYTES (not Perl's internal UTF-8 character strings).
+                    my $json_bytes = utf8::is_utf8($json_str) ? encode_utf8($json_str) : $json_str;
+                    $params = decode_json($json_bytes);
+                };
+                if ($@) {
+                    my $error = $@;
+                    my $args_full = $tool_call->{function}->{arguments} || '';
+
+                    log_error('WorkflowOrchestrator', "Failed to parse arguments for tool '$tool_name': $error");
+                    log_error('WorkflowOrchestrator', "Full arguments:\n$args_full");
+
+                    my $error_message = "JSON parsing failed for tool '$tool_name': $error\nArguments received:\n$args_full";
+
+                    push @$messages, {
+                        role => 'tool',
+                        tool_call_id => $tool_call->{id},
+                        name => $tool_name,
+                        content => $error_message
+                    };
+
+                    if ($session && $session->can('add_message')) {
+                        eval {
+                            if ($assistant_msg_pending) {
+                                $session->add_message(
+                                    'assistant',
+                                    $assistant_msg_pending->{content},
+                                    { tool_calls => $assistant_msg_pending->{tool_calls} }
+                                );
+                                log_debug('WorkflowOrchestrator', "Saved assistant message with tool_calls to session (on error result)");
+                                $assistant_msg_pending = undef;
+                            }
+                            $session->add_message(
+                                'tool',
+                                $error_message,
+                                { tool_call_id => $tool_call->{id} }
+                            );
+                            log_debug('WorkflowOrchestrator', "Saved error tool result to session");
+                        };
+                        if ($@) {
+                            log_debug('WorkflowOrchestrator', "Session save error (non-critical): $@");
+                        }
+                    }
+                    next;
+                }
+            }
         }
+
 
         # Determine interactive status (parameter overrides metadata)
         my $is_interactive = 0;

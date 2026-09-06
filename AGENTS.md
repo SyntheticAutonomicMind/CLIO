@@ -398,14 +398,30 @@ To add an alias to a tool:
 Example (in `lib/CLIO/Tools/FileOperations.pm`):
 
 ```perl
-# supported_operations
+# supported_operations — CANONICAL NAMES ONLY.
+# These populate the JSON schema enum sent to the LLM. Do NOT include
+# natural-language aliases here (e.g. 'read', 'mkdir') — they are silently
+# accepted via operation_aliases + dispatch_table, but exposing them in the
+# enum causes the tool-call layer to strip the operation and use the alias
+# as the tool name, producing "Unknown tool" errors.
 supported_operations => [qw(
-    read_file read          # read is an alias for read_file
-    list_dir list_directory  # list_directory is an alias for list_dir
+    read_file
+    list_dir
     ...
 )],
 
-# dispatch_table
+# operation_aliases — natural-language aliases NOT sent in the schema enum.
+# These are silently accepted as operation values via validate_operation
+# (which checks supported_operations + operation_aliases + dispatch_table
+# keys) and dispatched via dispatch_table.
+operation_aliases => [qw(
+    read list_directory
+    ...
+)],
+
+# dispatch_table — maps every accepted operation name (canonical + alias)
+# to its handler method. Must include entries for all names in
+# supported_operations AND operation_aliases.
 sub dispatch_table {
     return {
         read_file      => 'read_file',
@@ -424,7 +440,13 @@ Guidelines for choosing aliases:
 - Prefer unambiguous mappings: a single alias should point to one operation.
 - Skip aliases that could be confused with another operation (e.g. `read` could mean `read_file` or `read_tool_result`; pick the most common).
 - Short Unix-style names (`mv`, `mkdir`, `rm`) are good aliases when the canonical name is verbose.
-- Adding to `supported_operations` puts the alias in the JSON schema enum, so well-behaved LLMs learn about it from the system prompt. The `_suggest_operation` helper in `Tool.pm:161` also uses this list to produce "Did you mean" hints.
+- Do NOT add aliases to `supported_operations` — that field populates the JSON
+  schema `enum` sent to the LLM. Exposing aliases in the enum causes the
+  tool-call layer to strip the `operation` parameter and use the alias name as
+  the tool name (e.g. `read` instead of `file_operations` + `operation: read_file`),
+  producing "Unknown tool" errors. Put aliases in `operation_aliases` and
+  `dispatch_table` only. The `_suggest_operation` helper in `Tool.pm` uses both
+  `supported_operations` and `operation_aliases` to produce "Did you mean" hints.
 
 
 ---
