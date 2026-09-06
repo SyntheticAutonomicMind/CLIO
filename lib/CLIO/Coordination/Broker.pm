@@ -99,6 +99,11 @@ sub new {
             retry_after => undef,  # retry-after header value
             retry_until => 0,      # Don't send requests until this time
 
+            # Per-provider rate limits (for multi-provider routing)
+            # Keyed by provider name (lowercased), value is epoch timestamp
+            # until which the provider is rate-limited.
+            provider_rate_limits => {},
+
             # Quota tracking
             quota_used => undef,   # x-github-total-quota-used percentage
             quota_timestamp => 0,
@@ -924,14 +929,30 @@ sub handle_request_api_slot {
     # RPM-style delay (min delay between requests, x-ratelimit-remaining).
     my $rpm_delay = $self->_calculate_api_delay();
 
+    # Per-provider rate limit cooldown (for multi-provider routing).
+    # If this agent is requesting a specific provider, check that
+    # provider's cooldown. This is separate from the global retry_until
+    # so that a 429 on one provider doesn't block requests to a different
+    # provider in the same routing storm.
+    my $provider = $msg->{provider};
+    my $provider_rl_delay = 0;
+    if ($provider && exists $rl->{provider_rate_limits}{$provider}) {
+        if ($rl->{provider_rate_limits}{$provider} > $now) {
+            $provider_rl_delay = $rl->{provider_rate_limits}{$provider} - $now;
+        }
+    }
+
     # ITPM delay (per-model aggregate across all connected agents).
     # Only computed if the caller provided a model - sub-agents always
     # do; legacy clients that don't are still gated on RPM.
     my $model         = $msg->{model};
     my $pending       = $msg->{pending_tokens};
     my $token_delay   = $model ? $self->_calculate_api_token_delay($model, $pending) : 0;
-    my $delay         = $rpm_delay > $token_delay ? $rpm_delay : $token_delay;
-    my $wait_reason   = $rpm_delay > $token_delay ? 'rate_limit' : 'token_rate';
+    # Per-provider cooldown takes precedence over RPM and token delays —
+    # the provider explicitly told us to stop sending for N seconds.
+    my $delay         = $provider_rl_delay > $rpm_delay ? $provider_rl_delay : $rpm_delay;
+    $delay            = $delay > $token_delay ? $delay : $token_delay;
+    my $wait_reason   = $provider_rl_delay > 0 ? 'provider_rate_limit' : ($rpm_delay > $token_delay ? 'rate_limit' : 'token_rate');
 
     # Check if we can grant immediately
     if ($rl->{in_flight} < $rl->{max_parallel} && $delay <= 0) {
@@ -1028,8 +1049,21 @@ sub handle_release_api_slot {
     if ($msg->{status} && $msg->{status} == 429) {
         # Rate limited - set retry_until from retry-after or default 60s
         my $retry_delay = $msg->{retry_after} || 60;
-        $rl->{retry_until} = time() + $retry_delay;
-        $self->log_debug("Rate limit hit by $agent_id, blocking requests for ${retry_delay}s");
+        $self->log_debug("Rate limit hit by $agent_id, blocking for ${retry_delay}s");
+
+        # Per-provider rate limit. When a provider is known (multi-provider
+        # routing), record the cooldown per-provider so other providers in
+        # the route are NOT blocked — only the offending provider is gated.
+        my $provider = $msg->{provider};
+        if ($provider) {
+            $rl->{provider_rate_limits}{$provider} = time() + $retry_delay;
+            $self->log_debug("Recorded per-provider rate limit: $provider blocked for ${retry_delay}s");
+        } else {
+            # Legacy path: no provider context. Fall back to the global
+            # retry_until that blocks all requests (preserves prior behavior
+            # for clients that don't send a provider field).
+            $rl->{retry_until} = time() + $retry_delay;
+        }
     }
 
     $self->log_debug("API slot released by $agent_id (in_flight: $rl->{in_flight})");
@@ -1054,6 +1088,7 @@ sub handle_get_rate_limit_status {
         reset_at => $rl->{reset_at},
         retry_until => $rl->{retry_until},
         quota_used => $rl->{quota_used},
+        provider_rate_limits => $rl->{provider_rate_limits},
         can_request => ($rl->{in_flight} < $rl->{max_parallel} && $now >= $rl->{retry_until}),
     });
 }

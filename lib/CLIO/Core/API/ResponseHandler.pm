@@ -1941,6 +1941,12 @@ sub release_broker_slot {
 
     my $request_id = $self->{_current_broker_request_id};
     my $model      = $self->{_last_request_model};
+    # Derive the provider from the model so the broker can track
+    # per-provider rate limit cooldowns for multi-provider routing.
+    my $provider;
+    if ($self->{_apimanager} && $model && $self->{_apimanager}->can('provider_for_model')) {
+        $provider = $self->{_apimanager}->provider_for_model($model);
+    }
     my $anthropic_rl_info;
     if ($resp && $resp->can('headers')) {
         my $rl = $self->process_rate_limit_headers($resp->headers);
@@ -1956,11 +1962,12 @@ sub release_broker_slot {
             status                    => $status,
             headers                   => \%headers,
             model                     => $model,
+            provider                  => $provider,
             ($anthropic_rl_info
                 ? (anthropic_rate_limit_info => $anthropic_rl_info)
                 : ()),
         );
-        log_debug('ResponseHandler', "Released broker slot (request_id=$request_id, status=$status, model=" . ($model // '?') . ")");
+        log_debug('ResponseHandler', "Released broker slot (request_id=$request_id, status=$status, model=" . ($model // '?') . ", provider=" . ($provider // 'none') . ")");
     };
     if ($@) {
         log_debug('ResponseHandler', "Failed to release broker slot: $@");

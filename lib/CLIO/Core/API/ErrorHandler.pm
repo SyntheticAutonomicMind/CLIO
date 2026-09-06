@@ -319,6 +319,94 @@ sub handle_api_error {
                     };
                 }
 
+                # Record per-provider rate limit from this error before cycling,
+                # so we remember the cooldown window when the cycle wraps back.
+                my $wait_for_rl = $cfg && $cfg->can('get_route_wait_for_rate_limits')
+                    ? $cfg->get_route_wait_for_rate_limits() : 1;
+                my $waited_for_rate_limit = 0;
+                if ($wait_for_rl && $wo->{api_manager} && $wo->{api_manager}->can('provider_for_model')) {
+                    if ($api_response->{error_type} eq 'rate_limit'
+                        && ($api_response->{retry_after} // 0) > 0) {
+                        my $cur_model = $wo->{api_manager}->get_current_model();
+                        my $cur_provider = $wo->{api_manager}->provider_for_model($cur_model);
+                        if ($cur_provider) {
+                            $session->{provider_rate_limits} //= {};
+                            $session->{provider_rate_limits}{$cur_provider} =
+                                time() + $api_response->{retry_after};
+                            log_debug('ErrorHandler',
+                                "Recorded rate limit: $cur_provider rate-limited for "
+                                . $api_response->{retry_after} . "s");
+                        }
+                    }
+                }
+
+                # ── Phase 2: all-providers rate-limited optimization ──
+                # If every candidate's provider is currently rate-limited,
+                # cycling one-at-a-time would wait for each provider's cooldown
+                # in series (potentially much longer than necessary). Instead,
+                # find the provider that expires soonest, wait only for that
+                # much, and jump the routing index directly to its candidate.
+                # This only applies when the current error is itself a rate
+                # limit — for server errors or timeouts a short provider
+                # cooldown should not block routing to that provider.
+                if ($wait_for_rl
+                    && $api_response->{error_type} eq 'rate_limit'
+                    && $session->{provider_rate_limits}
+                    && $wo->{api_manager}->can('provider_for_model')
+                    && $cfg->can('get_model_candidates')
+                    && $cfg->can('set_model_routing_index')) {
+                    my $candidates_list = $cfg->get_model_candidates();
+                    my @candidate_providers = map {
+                        $wo->{api_manager}->provider_for_model($_)
+                    } @$candidates_list;
+
+                    # Collect rate-limited candidates with their expiry times
+                    my @rl_candidates;  # { idx, provider, expiry }
+                    my $all_rl = 1;
+                    for my $i (0 .. $#$candidates_list) {
+                        my $p = $candidate_providers[$i];
+                        next unless $p;
+                        my $expiry = $session->{provider_rate_limits}{$p};
+                        if (!defined $expiry || $expiry <= time()) {
+                            $all_rl = 0;
+                        } else {
+                            push @rl_candidates, {
+                                idx     => $i,
+                                provider => $p,
+                                expiry  => $expiry,
+                            };
+                        }
+                    }
+
+                    # Only act if every candidate provider is rate-limited
+                    # (and at least one rate-limited entry exists).
+                    if ($all_rl && @rl_candidates) {
+                        my $soonest = (sort { $a->{expiry} <=> $b->{expiry} } @rl_candidates)[0];
+                        my $rl_wait = $soonest->{expiry} - time();
+                        if ($rl_wait > 0) {
+                            delete $session->{provider_rate_limits}{$soonest->{provider}};
+                            if ($verbose && $on_system_message) {
+                                my $n = scalar(@$candidates_list);
+                                $on_system_message->("All $n routing targets are rate-limited. Waiting "
+                                    . int($rl_wait) . "s for $soonest->{provider} to recover...");
+                            }
+                            _interruptible_sleep($wo, $session, $rl_wait, $messages, "all-providers rate limit");
+
+                            # Jump routing index to the soonest-expiring candidate
+                            my $target_model = $candidates_list->[$soonest->{idx}];
+                            $cfg->set_model_routing_index($soonest->{idx});
+                            $cfg->set('model', $target_model, 0);
+                            $wo->{api_manager}->{model} = $target_model;
+                            $wo->{api_manager}->{_model_capabilities_cache} = undef;
+
+                            $$retry_count_ref = 0;
+                            $wo->{consecutive_errors} = 0 if $wo;
+                            log_debug('ErrorHandler', "All providers rate-limited: jumped to $target_model ($soonest->{provider}), waited ${rl_wait}s");
+                            return 'retry';
+                        }
+                    }
+                }
+
                 # Cycle to the next model (wraps around at the end)
                 my ($new_model, $old_model) = $wo->{api_manager}->cycle_model();
                 if ($new_model) {
@@ -330,11 +418,35 @@ sub handle_api_error {
                     $wo->{consecutive_errors} = 0 if $wo;
                     log_debug('ErrorHandler', "Model routing: switched from '$old_model' to '$new_model' (attempt $routing_attempts/$max_total total)");
 
-                    # Pause before sending the next request. Without this the
-                    # router cycles models as fast as the API rejects them,
-                    # which makes a rate-limited route look like a hang and
-                    # also doesn't give the upstream provider time to recover.
-                    _interruptible_sleep($wo, $session, $delay, $messages, 'model switch');
+                    # Check if the target provider is still rate-limited from a
+                    # previous 429 in this routing storm. If so, wait for its
+                    # cooldown to expire before sending the request — hammering
+                    # a provider that's already told us to slow down is
+                    # API-unfriendly and can escalate the rate limit.
+                    if ($wait_for_rl && $session->{provider_rate_limits}
+                        && $wo->{api_manager}->can('provider_for_model')) {
+                        my $new_provider = $wo->{api_manager}->provider_for_model($new_model);
+                        if ($new_provider
+                            && defined $session->{provider_rate_limits}{$new_provider}
+                            && $session->{provider_rate_limits}{$new_provider} > time()) {
+                            my $rl_wait = $session->{provider_rate_limits}{$new_provider} - time();
+                            delete $session->{provider_rate_limits}{$new_provider};
+                            if ($verbose && $on_system_message) {
+                                $on_system_message->("Waiting " . int($rl_wait) . "s for $new_provider rate limit to expire before retrying...");
+                            }
+                            _interruptible_sleep($wo, $session, $rl_wait, $messages, "$new_provider rate limit");
+                            $waited_for_rate_limit = 1;
+                            log_debug('ErrorHandler',
+                                "Waited ${rl_wait}s for $new_provider rate limit, cleared entry");
+                        }
+                    }
+
+                    # Pause before sending the next request. Skip this if we
+                    # already waited for a rate limit — the rate-limit wait is
+                    # a longer, more meaningful delay than route_retry_delay.
+                    if (!$waited_for_rate_limit) {
+                        _interruptible_sleep($wo, $session, $delay, $messages, 'model switch');
+                    }
                 }
                 return 'retry';
             }

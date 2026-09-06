@@ -79,6 +79,7 @@ use constant DEFAULT_CONFIG => {
     route_verbose => 1,  # Show rerouting system messages (1=on, 0=quiet)
     route_retry_delay => 1.0,  # Seconds to wait between model switches when routing
     route_max_attempts => 15,  # Max total routing attempts before giving up
+    route_wait_for_rate_limits => 1,  # Honor per-provider rate limits during routing: wait for cooldowns to expire before routing to a rate-limited provider (1=on, 0=off)
     api_key => '',
     api_keys => {},  # Per-provider API keys: { google => 'AIza...', minimax => '...' }
     api_bases => {},  # Per-provider API base URLs: { 'llama.cpp' => 'http://localhost:9090/...' }
@@ -1181,6 +1182,42 @@ sub set_route_max_attempts {
     my ($self, $n) = @_;
     $self->{config}->{route_max_attempts} = ($n && $n =~ /^\d+$/ && $n >= 1) ? $n : 15;
     $self->{user_set}->{route_max_attempts} = 1;
+    return 1;
+}
+
+=head2 get_route_wait_for_rate_limits()
+
+Whether the model router should wait for per-provider rate-limit
+cooldowns to expire before routing to a rate-limited provider. When on
+(default), a provider that returned 429 is remembered and the router
+waits for its cooldown to expire before trying it again. When off, the
+router cycles providers immediately (original behavior).
+
+Returns: 0 or 1.
+
+=cut
+
+sub get_route_wait_for_rate_limits {
+    my ($self) = @_;
+    return $self->{config}->{route_wait_for_rate_limits} // 1 ? 1 : 0;
+}
+
+=head2 set_route_wait_for_rate_limits($on)
+
+Toggle whether the model router waits for per-provider rate-limit
+cooldowns before routing to a rate-limited provider.
+
+Arguments:
+  $on - Truthy to enable, falsy to disable.
+
+Returns: 1 on success.
+
+=cut
+
+sub set_route_wait_for_rate_limits {
+    my ($self, $on) = @_;
+    $self->{config}->{route_wait_for_rate_limits} = $on ? 1 : 0;
+    $self->{user_set}->{route_wait_for_rate_limits} = 1;
     return 1;
 }
 

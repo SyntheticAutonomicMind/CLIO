@@ -379,6 +379,10 @@ sub request_api_slot {
     # connected agents) and may delay the slot beyond pure RPM gates.
     $msg->{model}          = $opts{model}          if defined $opts{model};
     $msg->{pending_tokens} = $opts{pending_tokens} if defined $opts{pending_tokens};
+    # Per-provider rate limit context. When provided, the broker checks
+    # the requesting provider's cooldown so a 429 on one provider
+    # doesn't block requests to a different provider in the route.
+    $msg->{provider}       = $opts{provider}        if defined $opts{provider};
 
     my $result = $self->send_and_wait($msg, 10);  # Longer timeout for rate limit waits
 
@@ -439,6 +443,7 @@ sub release_api_slot {
         request_id => $args{request_id} || 0,
         status => $args{status},
         retry_after => $args{retry_after},
+        provider => $args{provider},
     };
 
     # Include raw HTTP response headers so the broker can refresh its

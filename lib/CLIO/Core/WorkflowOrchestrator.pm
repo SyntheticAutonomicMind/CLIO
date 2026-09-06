@@ -913,6 +913,7 @@ sub process_input {
         $session_error_count = 0;  # Reset on success to allow future errors
         delete $session->{_error_count} if $session;
         delete $session->{routing_attempts} if $session;  # Reset model routing counter on success
+        delete $session->{provider_rate_limits} if $session;  # Clear per-provider rate limit cooldowns on success
 
         # Snapshot capture happens at the success-path return below, not here.
         # At this point @messages still reflects only what was sent to the API

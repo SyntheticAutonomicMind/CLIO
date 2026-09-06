@@ -251,6 +251,7 @@ Commands:
   /api route verbose [on|off]
   /api route set delay <seconds>
   /api route set max_attempts <N>
+  /api route set wait_for_rate_limits [on|off]
 
 =cut
 
@@ -389,9 +390,10 @@ sub _route_show_settings {
 
     $self->writeline("", markdown => 0);
     $self->display_command_header("ROUTING SETTINGS");
-    $self->display_key_value('verbose',      $cfg->get_route_verbose() ? 'on' : 'off');
-    $self->display_key_value('delay',        "${delay_str}s");
-    $self->display_key_value('max_attempts', $cfg->get_route_max_attempts());
+    $self->display_key_value('verbose',               $cfg->get_route_verbose() ? 'on' : 'off');
+    $self->display_key_value('delay',                 "${delay_str}s");
+    $self->display_key_value('max_attempts',          $cfg->get_route_max_attempts());
+    $self->display_key_value('wait_for_rate_limits',  $cfg->get_route_wait_for_rate_limits() ? 'on' : 'off');
 }
 
 =head2 _route_use($name)
@@ -517,8 +519,9 @@ sub _route_verbose {
 
 Set a routing parameter. Currently supports:
 
-  /api route set delay <seconds>      - inter-cycle delay (default 1.0)
-  /api route set max_attempts <N>     - max total attempts (default 15)
+  /api route set delay <seconds>             - inter-cycle delay (default 1.0)
+  /api route set max_attempts <N>            - max total attempts (default 15)
+  /api route set wait_for_rate_limits <on|off>  - wait for per-provider rate-limit cooldowns (default on)
 
 =cut
 
@@ -526,9 +529,10 @@ sub _route_set {
     my ($self, $key, $value) = @_;
 
     unless ($key && length($key)) {
-        $self->display_error_message("Usage: /api route set <delay|max_attempts> <value>");
+        $self->display_error_message("Usage: /api route set <delay|max_attempts|wait_for_rate_limits> <value>");
         $self->writeline("  /api route set delay 1.5", markdown => 0);
         $self->writeline("  /api route set max_attempts 20", markdown => 0);
+        $self->writeline("  /api route set wait_for_rate_limits off", markdown => 0);
         return;
     }
 
@@ -552,9 +556,26 @@ sub _route_set {
         $cfg->save();
         $self->display_system_message("Route max attempts set to $value");
     }
+    elsif ($key eq 'wait_for_rate_limits' || $key eq 'wait_rl') {
+        my $v = lc($value // '');
+        my $on;
+        if ($v eq 'on' || $v eq '1' || $v eq 'true' || $v eq 'yes') {
+            $on = 1;
+        }
+        elsif ($v eq 'off' || $v eq '0' || $v eq 'false' || $v eq 'no') {
+            $on = 0;
+        }
+        else {
+            $self->display_error_message("Usage: /api route set wait_for_rate_limits <on|off>");
+            return;
+        }
+        $cfg->set_route_wait_for_rate_limits($on);
+        $cfg->save();
+        $self->display_system_message("Route wait_for_rate_limits " . ($on ? 'on (will wait for provider cooldowns)' : 'off (cycling ignores rate limits)'));
+    }
     else {
         $self->display_error_message("Unknown route setting: $key");
-        $self->writeline("Valid settings: delay, max_attempts", markdown => 0);
+        $self->writeline("Valid settings: delay, max_attempts, wait_for_rate_limits", markdown => 0);
     }
 }
 
