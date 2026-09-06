@@ -15,7 +15,7 @@ use Test::More;
 use CLIO::Memory::LongTerm ();
 use CLIO::Memory::YaRN ();
 use CLIO::Core::ContextBuilder ();
-use CLIO::Core::MessageHistory qw(messages_to_prose);
+use CLIO::Core::MessageHistory qw(messages_to_prose_dynamic);
 
 # ===========================================================================
 # 1. LTM body sanitization
@@ -427,7 +427,7 @@ subtest 'unresolved state: no tool_error prefix' => sub {
         active_todos => [], ltm => [], unresolved => $unresolved,
         budget_tokens => 8000,
     );
-    my $prose = messages_to_prose($proj);
+    my $prose = messages_to_prose_dynamic($proj);
     unlike($prose, qr/tool_error:/, 'prose has no tool_error: prefix');
     unlike($prose, qr/nudge:/, 'prose has no nudge: prefix');
     unlike($prose, qr/ERROR: file not found/, 'prose does not surface tool errors in dynamic userContext (Unresolved section removed)');
@@ -448,7 +448,7 @@ subtest 'unresolved state: [SYSTEM: ...] user nudges are not surfaced' => sub {
         active_todos => [], ltm => [], unresolved => [],
         budget_tokens => 8000,
     );
-    my $prose = messages_to_prose($proj);
+    my $prose = messages_to_prose_dynamic($proj);
     # The unresolved-state section should not contain nudge material
     # (or any framework narration), but the anchor IS allowed to
     # contain it if that's what the user originally said.
@@ -534,7 +534,7 @@ subtest 'active todos: no internal id exposed' => sub {
         ltm => [], unresolved => [],
         budget_tokens => 8000,
     );
-    my $prose = messages_to_prose($proj);
+    my $prose = messages_to_prose_dynamic($proj);
     unlike($prose, qr/\(id=42\)/, 'prose has no (id=42)');
     unlike($prose, qr/\(id=43\)/, 'prose has no (id=43)');
     like($prose, qr/- \[in_progress\] verify output/, 'todo content rendered with status only');

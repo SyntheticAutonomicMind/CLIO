@@ -226,13 +226,13 @@ sub make_history {
     );
 
     require CLIO::Core::MessageHistory;
-    my $combined = CLIO::Core::MessageHistory::messages_to_prose($proj);
-    # messages_to_prose is now an alias for messages_to_prose_dynamic
+    my $combined = CLIO::Core::MessageHistory::messages_to_prose_dynamic($proj);
+    # messages_to_prose_dynamic is the sole renderer
     # (the stable prose path was deleted when role-based history was
     # introduced). Verify the alias returns the same content.
     my $dynamic = messages_to_prose_dynamic($proj);
     is($combined, $dynamic,
-        "messages_to_prose is an alias for messages_to_prose_dynamic");
+        "messages_to_prose_dynamic renders consistently");
 }
 
 # ---------------------------------------------------------------------------

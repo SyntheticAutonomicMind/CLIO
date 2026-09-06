@@ -17,7 +17,7 @@ use lib "$Bin/../../lib";
 
 use Test::More;
 use CLIO::Core::ContextBuilder;
-use CLIO::Core::MessageHistory qw(messages_to_prose);
+use CLIO::Core::MessageHistory qw(messages_to_prose_dynamic);
 use CLIO::Memory::TokenEstimator qw(estimate_messages_tokens);
 
 *build_projection = \&CLIO::Core::ContextBuilder::build_projection;
@@ -72,7 +72,7 @@ sub make_long_history {
     push @proj_messages, @{$proj->{anchor}} if $proj->{anchor};
     push @proj_messages, @{$_} for @{$proj->{turns} || []};
     my $proj_history_tokens = estimate_messages_tokens(\@proj_messages);
-    my $dynamic_usercontext = messages_to_prose($proj);
+    my $dynamic_usercontext = messages_to_prose_dynamic($proj);
     my $dynamic_tokens = int(length($dynamic_usercontext) / 4);
     my $proj_tokens = $proj_history_tokens + $dynamic_tokens;
 
@@ -148,7 +148,7 @@ sub make_long_history {
 # The role-based history refactor pushed the stable content (anchor +
 # recent turns) as role-based messages, not as prose. The active
 # renderer is messages_to_prose_dynamic (the system userContext).
-# messages_to_prose is now an alias for messages_to_prose_dynamic.
+# messages_to_prose_dynamic is the sole renderer.
 {
     my $history = make_long_history(turns => 50);
     my $proj = build_projection(
@@ -156,7 +156,7 @@ sub make_long_history {
         user_input => 'continue',
     );
 
-    my $combined = messages_to_prose($proj);
+    my $combined = messages_to_prose_dynamic($proj);
     my $dynamic = CLIO::Core::MessageHistory::messages_to_prose_dynamic($proj);
 
     # Dynamic prose contains the dynamic sections.
@@ -166,8 +166,8 @@ sub make_long_history {
     unlike($combined, qr/# Task\b/, "Prose renderer omits # Task (now role-based)");
     unlike($combined, qr/# Recent work/, "Prose renderer omits # Recent work (now role-based)");
 
-    # messages_to_prose is the dynamic renderer.
-    is($combined, $dynamic, "messages_to_prose is messages_to_prose_dynamic");
+    # messages_to_prose_dynamic is the dynamic renderer.
+    is($combined, $dynamic, "messages_to_prose_dynamic renders consistently");
 }
 
 # ---------------------------------------------------------------------------

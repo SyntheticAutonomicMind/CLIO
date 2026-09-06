@@ -2,22 +2,20 @@
 # SPDX-License-Identifier: GPL-3.0-only
 # SPDX-FileCopyrightText: Copyright (c) 2026 Andrew Wyatt (Fewtarius)
 #
-# Regression test: dynamic userContext must sit at the recency anchor
-# (last message) before each API call, not at its initial index.
+# Regression test: the dynamic userContext must sit at the recency
+# anchor (tail) before each API call, not at its initial position.
 #
-# Bug: the dynamic userContext was pushed at [N+1] right after history
-# in _build_turn_context. After iteration 1, tool/assistant messages
-# were appended after user_input, displacing the dynamic userContext
-# from the recency position. The per-iteration refresh updated content
-# at the original index, but that index was no longer at the tail.
+# Old bug: the UC was pushed before user_input and tracked via an
+# index. After tool execution appended assistant/tool messages, the
+# UC was displaced from the tail. The fix moved it via splice+push,
+# but that relied on fragile _dynamic_usercontext_idx tracking that
+# could get stale after trims.
 #
-# Fix: in process_input, before each API call, splice the dynamic
-# userContext to the very end of the messages array. Cache stability
-# is unchanged (content is refreshed anyway, so the cache segment
-# invalidates regardless of position).
-#
-# This test simulates the array shape after iteration 1 and asserts
-# that the move logic places the dynamic userContext at the tail.
+# New approach: _build_turn_context pushes user_input first, then
+# the UC at the tail. On each subsequent iteration, the per-iteration
+# refresh calls _replace_dynamic_usercontext which removes the old UC
+# (by content: system msg that's not [0] and not <thread_summary>)
+# and appends a fresh one at the tail. No index tracking needed.
 
 use strict;
 use warnings;
@@ -26,78 +24,123 @@ use lib './lib';
 
 use Test::More;
 use CLIO::Core::WorkflowOrchestrator;
+use CLIO::Core::MessageHistory qw(messages_to_prose_dynamic);
 
-# Simulate the messages array shape after _build_turn_context has
-# pushed the dynamic userContext, and iteration 1 has appended tool
-# calls + tool results.
-my @messages = (
-    { role => 'system', content => 'STATIC_SYSTEM_PROMPT' },
-    { role => 'user',    content => 'TURN_0_USER_INPUT' },
-    { role => 'assistant', content => 'TURN_0_ASSISTANT', tool_calls => [{ id => 'tc_1', function => { name => 'foo' } }] },
-    { role => 'tool',    content => 'tool result 1', tool_call_id => 'tc_1' },
-    { role => 'tool',    content => 'tool result 2', tool_call_id => 'tc_1' },
-    # Dynamic userContext was pushed at [5] by _build_turn_context.
-    { role => 'system', content => 'DYNAMIC_USERCONTENT_v1' },
-    # user_input for current turn.
-    { role => 'user', content => 'CURRENT_USER_INPUT' },
-);
-
-# Simulate the per-iteration refresh path pushing assistant + tool result
-# from the model's response (iteration 1 finished). These get appended
-# AFTER the dynamic userContext in the buggy version, displacing it.
-push @messages, { role => 'assistant', content => '', tool_calls => [{ id => 'tc_2', function => { name => 'bar' } }] };
-push @messages, { role => 'tool',    content => 'tool result 3', tool_call_id => 'tc_2' };
-
-# Sanity check the buggy setup.
-is($messages[-1]{content}, 'tool result 3', 'tail is tool result after iteration 1 (buggy pre-fix layout)');
-is($messages[5]{content}, 'DYNAMIC_USERCONTENT_v1', 'dynamic userContext is at [5], not the tail');
-
-# Now apply the fix: the WorkflowOrchestrator's process_input loop
-# moves the dynamic userContext to the tail before each API call.
-# We test the move logic in isolation by calling a helper that
-# exercises the same splice.
-sub move_dynamic_usercontext_to_tail {
-    my ($msgs_ref, $idx_ref) = @_;
-    my $dyn_idx = $$idx_ref;
-    return unless $dyn_idx >= 0 && $dyn_idx < @$msgs_ref;
-    my $tail_idx = $#$msgs_ref;
-    return if $dyn_idx == $tail_idx;
-    my $dyn_msg = splice(@$msgs_ref, $dyn_idx, 1);
-    push @$msgs_ref, $dyn_msg;
-    $$idx_ref = $#$msgs_ref;
+# Build a minimal projection that produces non-empty prose.
+sub make_proj {
+    return {
+        active_task => 'Fix bug X',
+        environment => {
+            working_directory => '/tmp',
+            language          => 'English',
+            datetime_iso      => '2026-09-06T12:00:00',
+        },
+    };
 }
 
-my $dyn_idx = 5;  # dynamic userContext is at [5]
-move_dynamic_usercontext_to_tail(\@messages, \$dyn_idx);
+# --- Test 1: _replace_dynamic_usercontext removes old UC and appends at tail ---
+subtest '_replace_dynamic_usercontext removes old UC and appends at tail' => sub {
+    my @messages = (
+        { role => 'system', content => 'STATIC_SYSTEM_PROMPT' },
+        { role => 'user',    content => 'TURN_0_USER' },
+        { role => 'assistant', content => 'Turn 0 response', tool_calls => [{ id => 'tc_1', function => { name => 'foo' } }] },
+        { role => 'tool',    content => 'tool result 1', tool_call_id => 'tc_1' },
+        # Old dynamic UC in the middle (simulating post-trim position).
+        { role => 'system', content => 'OLD_DYNAMIC_UC' },
+        { role => 'user',    content => 'CURRENT_USER_INPUT' },
+    );
 
-# After the move, dynamic userContext should be at the tail.
-is($messages[-1]{content}, 'DYNAMIC_USERCONTENT_v1', 'dynamic userContext moved to tail position');
-is($dyn_idx, $#messages, '_dynamic_usercontext_idx updated to tail index');
-isnt($messages[5]{role}, 'system', 'index [5] is no longer a system message');
-ok($messages[5]{role} eq 'user' || $messages[5]{role} eq 'tool' || $messages[5]{role} eq 'assistant',
-    'index [5] is now a non-system message');
+    my $wo = bless {}, 'CLIO::Core::WorkflowOrchestrator';
+    $wo->{_current_projection} = make_proj();
+    my $refreshed = messages_to_prose_dynamic($wo->{_current_projection});
+    ok(length($refreshed) > 0, 'rendered UC is non-empty');
 
-# After the move, the message array should still be valid for alternation.
-# System messages are skipped by enforce_message_alternation so this is OK.
-my @roles = map { $_->{role} } @messages;
-ok(1, 'array integrity preserved (system messages skipped by alternation)');
+    $wo->_replace_dynamic_usercontext(\@messages, $refreshed);
 
-# Refresh content simulates the per-iteration re-render. The
-# _dynamic_usercontext_idx stays at the tail after refresh.
-$messages[-1]{content} = 'DYNAMIC_USERCONTENT_v2_REFRESHED';
-is($messages[-1]{content}, 'DYNAMIC_USERCONTENT_v2_REFRESHED',
-    'content refresh at tail index works correctly');
+    # The old UC should be gone.
+    my $old_count = grep { $_->{role} eq 'system' && $_->{content} eq 'OLD_DYNAMIC_UC' } @messages;
+    is($old_count, 0, 'old dynamic UC was removed');
 
-# Test idempotence: if the dynamic userContext is already at the tail,
-# the move logic is a no-op.
-my @small = (
-    { role => 'system', content => 'A' },
-    { role => 'user',   content => 'B' },
-    { role => 'system', content => 'C' },  # dynamic at tail
-);
-my $small_idx = 2;
-move_dynamic_usercontext_to_tail(\@small, \$small_idx);
-is($#small, 2, 'idempotent: tail stays at tail when already there');
-is($small[-1]{content}, 'C', 'idempotent: content unchanged');
+    # The system_prompt at [0] should be preserved.
+    is($messages[0]{content}, 'STATIC_SYSTEM_PROMPT', 'system_prompt preserved at index 0');
+
+    # The fresh UC should be at the tail.
+    is($messages[-1]{role}, 'system', 'UC is at the tail (recency anchor)');
+    like($messages[-1]{content}, qr/Working directory/, 'UC content is the fresh render');
+
+    # Thread_summary messages should also be preserved (not treated as UC).
+    my @with_summary = (
+        { role => 'system', content => 'STATIC_SYSTEM_PROMPT' },
+        { role => 'user',    content => 'hi' },
+        { role => 'system', content => '<thread_summary>Summary of old turns</thread_summary>' },
+        { role => 'system', content => 'OLD_UC' },
+    );
+    $wo->_replace_dynamic_usercontext(\@with_summary, $refreshed);
+    my $summary_count = grep { $_->{content} =~ /<thread_summary>/ } @with_summary;
+    is($summary_count, 1, 'thread_summary system message preserved');
+    is($with_summary[0]{content}, 'STATIC_SYSTEM_PROMPT', 'system_prompt preserved with thread_summary present');
+    my $uc_count = grep { $_->{role} eq 'system' && $_->{content} !~ /<thread_summary>/ && $_->{content} ne 'STATIC_SYSTEM_PROMPT' } @with_summary;
+    is($uc_count, 1, 'exactly one dynamic UC after replace');
+};
+
+# --- Test 2: _replace_dynamic_usercontext with empty content just removes ---
+subtest '_replace_dynamic_usercontext with empty content removes old UC' => sub {
+    my @messages = (
+        { role => 'system', content => 'STATIC_SYSTEM_PROMPT' },
+        { role => 'user',    content => 'hi' },
+        { role => 'system', content => 'OLD_UC' },
+    );
+    my $wo = bless {}, 'CLIO::Core::WorkflowOrchestrator';
+    $wo->_replace_dynamic_usercontext(\@messages, '');
+    my $uc_count = grep { $_->{role} eq 'system' && $_->{content} eq 'OLD_UC' } @messages;
+    is($uc_count, 0, 'old UC removed when content is empty');
+    is(scalar(@messages), 2, 'only system_prompt and user remain');
+};
+
+# --- Test 3: _ensure_dynamic_usercontext_at_tail is a no-op when UC exists ---
+subtest '_ensure_dynamic_usercontext_at_tail is no-op when UC present' => sub {
+    my @messages = (
+        { role => 'system', content => 'STATIC_SYSTEM_PROMPT' },
+        { role => 'user',    content => 'hi' },
+        { role => 'system', content => 'Dynamic UC content' },
+    );
+    my $wo = bless {}, 'CLIO::Core::WorkflowOrchestrator';
+    $wo->{_current_projection} = make_proj();
+    my $before = scalar(@messages);
+    $wo->_ensure_dynamic_usercontext_at_tail(\@messages);
+    is(scalar(@messages), $before, 'no new UC added when one already exists');
+};
+
+# --- Test 4: _ensure_dynamic_usercontext_at_tail restores missing UC ---
+subtest '_ensure_dynamic_usercontext_at_tail restores missing UC' => sub {
+    my @messages = (
+        { role => 'system', content => 'STATIC_SYSTEM_PROMPT' },
+        { role => 'user',    content => 'hi' },
+        { role => 'tool',    content => 'result', tool_call_id => 'tc_1' },
+    );
+    my $wo = bless {}, 'CLIO::Core::WorkflowOrchestrator';
+    $wo->{_current_projection} = make_proj();
+    my $before = scalar(@messages);
+    $wo->_ensure_dynamic_usercontext_at_tail(\@messages);
+    is(scalar(@messages), $before + 1, 'UC added when missing');
+    like($messages[-1]{content}, qr/Working directory/, 'restored UC at tail has environment content');
+};
+
+# --- Test 5: idempotency — calling replace twice doesn't duplicate UC ---
+subtest 'idempotent: calling replace twice does not duplicate UC' => sub {
+    my @messages = (
+        { role => 'system', content => 'STATIC_SYSTEM_PROMPT' },
+        { role => 'user',    content => 'hi' },
+    );
+    my $wo = bless {}, 'CLIO::Core::WorkflowOrchestrator';
+    $wo->{_current_projection} = make_proj();
+    my $refreshed = messages_to_prose_dynamic($wo->{_current_projection});
+    $wo->_replace_dynamic_usercontext(\@messages, $refreshed);
+    my $uc_count_1 = grep { $_->{role} eq 'system' && $_->{content} !~ /<thread_summary>/ && $_ ne $messages[0] } @messages;
+    is($uc_count_1, 1, 'one UC after first replace');
+    $wo->_replace_dynamic_usercontext(\@messages, $refreshed);
+    my $uc_count_2 = grep { $_->{role} eq 'system' && $_->{content} !~ /<thread_summary>/ && $_ ne $messages[0] } @messages;
+    is($uc_count_2, 1, 'still one UC after second replace (idempotent)');
+};
 
 done_testing();

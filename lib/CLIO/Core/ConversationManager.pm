@@ -189,8 +189,19 @@ sub load_conversation_history {
                 ", has_tool_calls=$has_tool_calls, count=$tc_count");
         }
 
-        # Skip system messages - we build fresh system prompt in process_input
-        next if $msg->{role} eq 'system';
+        # Skip system messages - we build fresh system prompt in process_input.
+        # EXCEPTION: preserve <thread_summary> system messages — these carry
+        # the YaRN compressed summary from prior trim cycles and must survive
+        # reload so the model doesn't lose cross-cycle carryover. Without this
+        # exception, every session reload drops the compressed tail, and the
+        # next trim cycle can only summarize the raw messages that survived
+        # reload — losing the aggregated summary of everything trimmed in prior
+        # cycles across prior sessions.
+        # NOTE: this does NOT re-add stale system prompts or dynamic UC —
+        # those are rebuilt fresh by WorkflowOrchestrator each turn. Only
+        # thread_summary summaries are preserved.
+        next if $msg->{role} eq 'system'
+                && (($msg->{content} // '') !~ /<thread_summary>/);
 
         # Skip tool result messages without tool_call_id
         # GitHub Copilot API REQUIRES tool_call_id for role=tool messages

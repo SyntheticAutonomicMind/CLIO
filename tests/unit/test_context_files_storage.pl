@@ -48,7 +48,7 @@ package main;
 # Simulate what /context add command does: writes to session->{context_files}.
 my $session = FakeSession->new(context_files => [$filename]);
 
-my $wo = bless { _tools_cache => 1 }, 'CLIO::Core::WorkflowOrchestrator';
+my $wo = bless {}, 'CLIO::Core::WorkflowOrchestrator';
 
 my $block = $wo->_render_context_files_for_user_context($session);
 
