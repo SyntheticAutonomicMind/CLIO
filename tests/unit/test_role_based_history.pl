@@ -107,11 +107,11 @@ sub make_history {
 
     my $dynamic = messages_to_prose_dynamic($proj);
 
-    like($dynamic, qr/# Active task/, "Active task section present");
+    like($dynamic, qr/Active task:/, "Active task section present (natural prose)");
     like($dynamic, qr/investigate trim_xml_history bug/, "Active task content present");
-    like($dynamic, qr/# Active todos/, "Active todos section present");
+    like($dynamic, qr/Active todos:/, "Active todos section present (natural prose)");
     like($dynamic, qr/- \[in-progress\] Read ContextBuilder\.pm/, "Todo rendered with status");
-    like($dynamic, qr/# Environment/, "Environment section present");
+    like($dynamic, qr/Working directory:/, "Environment section present (natural prose)");
     unlike($dynamic, qr/# Task\b/, "Dynamic prose omits # Task (that's stable)");
     unlike($dynamic, qr/# Recent work/, "Dynamic prose omits # Recent work (that's stable)");
 }
@@ -128,7 +128,7 @@ sub make_history {
 # Test 4: Projection produces role-based anchor + turns (no XML wrapping)
 # ---------------------------------------------------------------------------
 {
-    my $history = make_history(turns => 3);
+    my $history = make_history(turns => 10);
     my $proj = build_projection(
         history      => $history,
         user_input   => 'continue',
@@ -140,10 +140,10 @@ sub make_history {
         session      => undef,
     );
 
-    # Anchor should be an arrayref of role-based message hashes
-    ok(ref($proj->{anchor}) eq 'ARRAY', "Anchor is an arrayref");
-    ok(@{$proj->{anchor}} > 0, "Anchor has at least one message");
-    is($proj->{anchor}[0]{role}, 'user', "Anchor starts with user message");
+    # No separate anchor — active task is in dynamic userContext.
+    # The original task is preserved in compressed_tail.
+    ok(!defined $proj->{anchor}, "No separate anchor (task via dynamic userContext)");
+    ok(length($proj->{compressed_tail}) > 0, "Compressed tail preserves dropped turns");
 
     # Recent turns should be arrayrefs of arrayrefs
     ok(ref($proj->{turns}) eq 'ARRAY', "turns is an arrayref");
@@ -191,7 +191,7 @@ sub make_history {
 # Test 6: dynamic userContext can carry context files block
 # ---------------------------------------------------------------------------
 {
-    my $history = make_history(turns => 3);
+    my $history = make_history(turns => 10);
     my $cf_block = "[CONTEXT FILES]\nTest file content here\n";
     my $proj = build_projection(
         history             => $history,
@@ -239,7 +239,7 @@ sub make_history {
 # Test 8: History messages contain tool_calls (used by APIs) - structure preserved
 # ---------------------------------------------------------------------------
 {
-    my $history = make_history(turns => 3);
+    my $history = make_history(turns => 10);
     my $proj = build_projection(
         history    => $history,
         user_input => 'continue',

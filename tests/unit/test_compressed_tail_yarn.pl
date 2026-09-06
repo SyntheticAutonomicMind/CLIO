@@ -77,8 +77,11 @@ ok(length($tail) > 0, 'compressed tail is non-empty for substantive dropped turn
 ok(length($tail) < 900, 'compressed tail is under 900-char cap')
     or diag("Got " . length($tail) . " chars:\n$tail");
 
-# 2. YaRN output is identifiable by its header.
-like($tail, qr/YaRN-compressed/, 'YaRN-compressed header is present (new path was taken)');
+# 2. YaRN output is identifiable by its structured section markers.
+#    (The old "YaRN-compressed" narration was removed in the context
+#    pipeline redesign — compress_for_context_recovery returns clean
+#    thread_summary content without framework framing.)
+like($tail, qr/Current task:|Files:|Tools:|Commits:/, 'YaRN compression output is present (structured sections found)');
 
 # 3. The "Current task" section is surfaced (YaRN picks the most
 # substantive user message from the dropped turns; the active_task

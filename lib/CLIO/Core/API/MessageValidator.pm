@@ -177,12 +177,13 @@ Preserves the first user message (original task anchor) and keeps
 tool_call/tool_result pairs together (never leaves a tool_result
 without its call, or vice versa).
 
-This is the role-based fallback trim path used when the messageHistory
-XML trim is not applicable. It is intentionally simple: tail-walk only,
-no YaRN compression (that lives in WorkflowOrchestrator's
-_compress_dropped_for_recovery for the reactive-trim path). The goal is
-to keep validate_and_truncate from falling off the end when called
-with non-XML messages.
+This is the proactive trim path. When messages are dropped to fit the
+budget, they are compressed with CLIO::Memory::YaRN's
+compress_for_context_recovery (with cross-cycle carryover) and the
+resulting thread_summary is injected as a system message at the base
+of the kept set. The reactive-trim recovery path
+(WorkflowOrchestrator::_compress_dropped_for_recovery) does the same
+for token-limit-error recovery.
 
 Arguments:
 - $messages:  ArrayRef of message hashes
@@ -386,6 +387,57 @@ sub _role_based_tail_walk {
     }
 
     my @trimmed = @{$messages}[@kept_indices];
+
+    # Proactive compression: if any messages were dropped during the walk,
+    # compress them with YaRN so their content survives as a thread_summary
+    # system message at the base of the kept set. Previously dropped messages
+    # were permanently lost — the model had no summary to work from.
+    my %kept_idx_set = map { $_ => 1 } @kept_indices;
+    my @dropped;
+    for my $i (0 .. $#$messages) {
+        push @dropped, $messages->[$i] unless $kept_idx_set{$i};
+    }
+
+    if (@dropped) {
+        my $compressed = eval {
+            require CLIO::Memory::YaRN;
+            my $yarn = CLIO::Memory::YaRN->new();
+            # Extract previous_summary from the full message array —
+            # the old thread_summary may have been kept (pinned), not dropped.
+            my $prev = $yarn->_extract_thread_summary_from_messages($messages);
+            $yarn->compress_for_context_recovery(\@dropped,
+                previous_summary => $prev,
+            );
+        };
+        if ($@) {
+            log_debug('MessageValidator', "Proactive YaRN compression failed: $@");
+        }
+        if ($compressed && ref($compressed) eq 'HASH'
+            && defined $compressed->{content} && length($compressed->{content})) {
+            # Remove any old thread_summary system messages from the kept
+            # set to avoid duplication. The new one is injected at the base.
+            @trimmed = grep {
+                my $c = $_->{content} // '';
+                $c !~ /<thread_summary>/;
+            } @trimmed;
+
+            # Inject the compressed summary as a system message at the base
+            # (index 1, right after the system prompt at index 0).
+            my $summary_msg = {
+                role    => 'system',
+                content => $compressed->{content},
+                _importance => 0.5,
+            };
+            if (@trimmed && ($trimmed[0]{role} // '') eq 'system') {
+                splice(@trimmed, 1, 0, $summary_msg);
+            } else {
+                unshift @trimmed, $summary_msg;
+            }
+            log_debug('MessageValidator',
+                "role-based tail walk: compressed " . scalar(@dropped) .
+                " dropped messages into thread_summary at base");
+        }
+    }
 
     # Filter continuation-only user prompts that survived trim.
     # Without this, sequences like:

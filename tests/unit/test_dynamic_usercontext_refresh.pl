@@ -26,7 +26,7 @@ use CLIO::Core::MessageHistory qw(messages_to_prose_dynamic);
 # H3: on-demand LTM search affordance
 # ===========================================================================
 
-subtest 'H3: empty relevant_memory surfaces on-demand search affordance' => sub {
+subtest 'H3: empty relevant_memory → no Relevant memory section' => sub {
     my $ltm = CLIO::Memory::LongTerm->new();
     $ltm->add_discovery('Model-facing prompt paths must NEVER tell the model about framework internals.', 0.9);
     $ltm->add_discovery('Cache stability requires structural separation of stable vs dynamic content.', 0.7);
@@ -40,16 +40,15 @@ subtest 'H3: empty relevant_memory surfaces on-demand search affordance' => sub 
     );
 
     my $prose = messages_to_prose_dynamic($proj);
-    like($prose, qr/# Relevant memory/, 'Relevant memory section is present');
-    like($prose, qr/no memories met the relevance threshold/,
-        'surfaces that threshold filtering happened');
-    like($prose, qr/memory_operations\(operation: "search"/,
-        'surfaces on-demand memory_operations(search) affordance (NOT sanitized)');
-    like($prose, qr/2 available/,
-        'reports the total count of available LTM entries');
+    # Design: no "Relevant memory" section when nothing passes threshold,
+    # and no framework instructions ("call memory_operations...").
+    unlike($prose, qr/Relevant memory:/, 'No Relevant memory section when nothing passes threshold');
+    unlike($prose, qr/no memories met the relevance threshold/, 'No threshold-hint narration');
+    unlike($prose, qr/memory_operations\(operation: "search"/, 'No on-demand search affordance (no framework instructions)');
+    unlike($prose, qr/\(0\.90\)|\(0\.70\)/, 'No confidence scores in prose');
 };
 
-subtest 'H3: relevant_memory + extras shows count of available more' => sub {
+subtest 'H3: relevant_memory surfaces entries without narration' => sub {
     my $ltm = CLIO::Memory::LongTerm->new();
     # 5 LTM entries; some relevant, some not
     $ltm->add_discovery('Model-facing prompt paths must NEVER tell the model about framework internals.', 0.9);
@@ -67,9 +66,12 @@ subtest 'H3: relevant_memory + extras shows count of available more' => sub {
     );
 
     my $prose = messages_to_prose_dynamic($proj);
-    like($prose, qr/# Relevant memory/, 'Relevant memory section present');
-    like($prose, qr/more memories available.+memory_operations\(operation: "search"/s,
-        'shows count of extras available + memory_operations(search) affordance');
+    like($prose, qr/Relevant memory:\n/, 'Relevant memory section present (natural prose)');
+    # Design: no "N more available" count, no framework instructions,
+    # no confidence scores.
+    unlike($prose, qr/more memories available/, 'No "more available" count');
+    unlike($prose, qr/memory_operations\(operation: "search"/, 'No search affordance (no framework instructions)');
+    unlike($prose, qr/\(0\.\d+\)/, 'No confidence scores in prose');
 };
 
 subtest 'H3: no LTM -> no relevant memory section' => sub {
@@ -80,10 +82,10 @@ subtest 'H3: no LTM -> no relevant memory section' => sub {
     );
 
     my $prose = messages_to_prose_dynamic($proj);
-    unlike($prose, qr/# Relevant memory/, 'No relevant memory section when LTM is empty');
+    unlike($prose, qr/Relevant memory:/, 'No relevant memory section when LTM is empty');
 };
 
-subtest 'H3: hint uses literal tool name (not sanitized)' => sub {
+subtest 'H3: no framework instructions in dynamic userContext' => sub {
     my $ltm = CLIO::Memory::LongTerm->new();
     $ltm->add_discovery('Framework internals protection', 0.9);
     my $entries = $ltm->get_entries_for_projection();
@@ -95,14 +97,13 @@ subtest 'H3: hint uses literal tool name (not sanitized)' => sub {
     );
 
     my $prose = messages_to_prose_dynamic($proj);
-    # The hint uses the literal tool name. The sanitizer would rewrite
-    # memory_operations -> long-term memory, which the model can't
-    # act on. The hint MUST be hard-coded, not run through the
-    # sanitizer.
-    like($prose, qr/memory_operations\(operation: "search"/,
-        'hint uses literal memory_operations tool name (not sanitized to long-term memory)');
+    # Design: no framework narration, no tool-call instructions.
+    unlike($prose, qr/memory_operations\(operation: "search"/,
+        'No on-demand search affordance (framework instructions removed)');
     unlike($prose, qr/long-term memory\(operation: "search"/,
-        'hint is NOT passed through sanitize_narration');
+        'No sanitized variant either');
+    unlike($prose, qr/more memories available/,
+        'No "more available" count');
 };
 
 # ===========================================================================

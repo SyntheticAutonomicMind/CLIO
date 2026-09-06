@@ -61,12 +61,8 @@ my $proj = CLIO::Core::ContextBuilder::build_projection(
 ok(defined $proj, 'build_projection completes without fatal error (BUG #2 regression guard)');
 ok(ref($proj) eq 'HASH', 'projection is a hashref');
 
-# The last-resort fallback picks the first user message even if it's a
-# continuation prompt - that's better than no anchor.
-ok(defined $proj->{anchor}, 'anchor is defined (last-resort fallback used)');
-if (ref($proj->{anchor}) eq 'ARRAY') {
-    is($proj->{anchor}[0]{content}, 'continue',
-        'anchor is the first user message even when it is a continuation prompt');
-}
+# No separate anchor — active task is in dynamic userContext.
+# The original task is preserved in compressed_tail or dynamic userContext.
+ok(!defined $proj->{anchor}, 'no anchor (active task via dynamic userContext)');
 
 done_testing();
