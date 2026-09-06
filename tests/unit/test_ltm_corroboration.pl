@@ -177,29 +177,25 @@ subtest 'same source key does not double-count' => sub {
         "source recorded exactly once");
 };
 
-# ----- Test 6: Render badge matches tier --------------------------------------
-# Render output must reflect the current tier. Until the fix lands, every
-# entry would render as [UNVERIFIED]; after, the same entry can render as
-# [TRUSTED] once promoted.
-subtest 'render badge reflects tier ([UNVERIFIED] vs [TRUSTED])' => sub {
+# ----- Test 6: Tier field matches corroboration state --------------------------
+# The tier field on the entry must reflect corroboration state. Entries
+# start as 'unverified' and promote to 'trusted' after 2 distinct sources.
+subtest 'tier field reflects corroboration state' => sub {
     my $ltm = CLIO::Memory::LongTerm->new();
     $ltm->add_discovery("Render badge test", 0.9);
-    $ltm->add_problem_solution("render test error", "render test solution", []);
 
-    my ($section, $included, $total) = $ltm->render_budgeted_section(max_chars => 5000);
-    like($section, qr/\[UNVERIFIED\]/,
-        "unverified entry renders [UNVERIFIED] badge");
-    unlike($section, qr/\[TRUSTED\]/,
-        "unverified entry does NOT render [TRUSTED] badge");
+    # After add_discovery, the entry is unverified.
+    my @discs = @{$ltm->{patterns}{discoveries}};
+    is($discs[0]{tier}, 'unverified', "new discovery has tier=unverified");
+    is($discs[0]{corroboration_count}, 0, "new discovery has 0 corroborations");
 
-    # Promote and re-render.
+    # Promote via two distinct sources.
     $ltm->add_corroboration("Render badge test", "agent_a", "session_a");
+    is($discs[0]{tier}, 'unverified', "after 1 source: still unverified");
+
     $ltm->add_corroboration("Render badge test", "agent_b", "session_b");
-    ($section, $included, $total) = $ltm->render_budgeted_section(max_chars => 5000);
-    like($section, qr/\[TRUSTED\]/,
-        "promoted entry renders [TRUSTED] badge");
-    like($section, qr/\(corroborated x2\)/,
-        "promoted entry shows corroboration count");
+    is($discs[0]{tier}, 'trusted', "after 2 sources: tier=trusted");
+    is($discs[0]{corroboration_count}, 2, "after 2 sources: corroboration_count=2");
 };
 
 # ----- Test 7: Manual promote is unconditional ---------------------------------

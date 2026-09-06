@@ -61,83 +61,14 @@ my $disc_score = $ltm->score_entry($disc, 'discovery', $now);
 ok_test($sol_score > $disc_score, "score_entry: solution scores higher than discovery at same confidence ($sol_score vs $disc_score)");
 
 # ============================================================
-# Test 2: get_scored_entries
+# Test 2: get_scored_entries (REMOVED - dead code, no production caller)
+# The render_budgeted_section/get_scored_entries/_extract_keywords
+# rendering path was deleted in the LTM cleanup. Scoring is handled
+# inline by ContextBuilder::score_ltm.
 # ============================================================
 
-$ltm = CLIO::Memory::LongTerm->new();
-$ltm->{patterns}{discoveries} = [
-    { fact => "Fact 1", confidence => 0.9, verified => 1, timestamp => $now },
-    { fact => "Fact 2", confidence => 0.5, verified => 0, timestamp => $now - 60 * 86400 },
-];
-$ltm->{patterns}{problem_solutions} = [
-    { error => "Err 1", solution => "Fix 1", confidence => 0.8, solved_count => 5, timestamp => $now },
-];
-
-my $scored = $ltm->get_scored_entries($now);
-ok_test(scalar(@$scored) == 3, "get_scored_entries: returns all entries (got " . scalar(@$scored) . ")");
-ok_test($scored->[0]{score} >= $scored->[1]{score}, "get_scored_entries: sorted by score descending");
-
 # ============================================================
-# Test 3: render_budgeted_section - basic rendering
-# ============================================================
-
-$ltm = CLIO::Memory::LongTerm->new();
-for my $i (1..10) {
-    push @{$ltm->{patterns}{discoveries}}, {
-        fact => "Discovery number $i with some detail about topic $i",
-        confidence => 0.9 - ($i * 0.05),
-        verified => 1,
-        timestamp => $now - ($i * 86400),
-        updated => $now - ($i * 86400),
-    };
-}
-for my $i (1..10) {
-    push @{$ltm->{patterns}{problem_solutions}}, {
-        error => "Error pattern $i that occurs in module $i",
-        solution => "Solution for error $i: apply fix number $i to the codebase",
-        confidence => 0.8,
-        solved_count => $i,
-        timestamp => $now - ($i * 86400),
-        updated => $now - ($i * 86400),
-    };
-}
-
-my ($section, $included, $total) = $ltm->render_budgeted_section(max_chars => 12000);
-ok_test($included > 0, "render_budgeted: included $included entries");
-ok_test($total == 20, "render_budgeted: total is 20 (got $total)");
-ok_test(length($section) <= 12000, "render_budgeted: within budget (" . length($section) . " chars)");
-ok_test($section =~ /Key Discoveries/, "render_budgeted: has discoveries section");
-ok_test($section =~ /Problem Solutions/, "render_budgeted: has solutions section");
-ok_test($section =~ /highest-priority patterns/, "render_budgeted: has updated header");
-
-# ============================================================
-# Test 4: render_budgeted_section - tight budget forces exclusions
-# ============================================================
-
-my ($section_tight, $inc_tight, $tot_tight) = $ltm->render_budgeted_section(max_chars => 2000);
-ok_test($inc_tight < $total, "render_budgeted tight: excluded some entries ($inc_tight < $tot_tight)");
-ok_test(length($section_tight) <= 2000, "render_budgeted tight: within tight budget (" . length($section_tight) . " chars)");
-
-# Check for index footer
-ok_test($section_tight =~ /Additional memories available/, "render_budgeted tight: has index footer");
-ok_test($section_tight =~ /memory_operations/, "render_budgeted tight: index footer has search hint");
-
-# ============================================================
-# Test 5: _extract_keywords
-# ============================================================
-
-my @test_entries = (
-    { entry => { fact => "Terminal corruption when spawning sub-agents" }, type => 'discovery' },
-    { entry => { fact => "Terminal state after fork requires ReadMode reset" }, type => 'discovery' },
-    { entry => { error => "SSH connection timeout handling" }, type => 'solution' },
-);
-
-my $keywords = $ltm->_extract_keywords(\@test_entries, 3);
-ok_test(defined $keywords && length($keywords) > 0, "_extract_keywords: returns keywords");
-ok_test($keywords =~ /terminal/i, "_extract_keywords: found 'terminal' keyword ($keywords)");
-
-# ============================================================
-# Test 6: Jaccard similarity
+# Test 3: render_budgeted_section (REMOVED - dead rendering path)
 # ============================================================
 
 my $sim1 = $ltm->_jaccard_similarity(
@@ -283,15 +214,6 @@ $ltm->{metadata}{last_consolidated} = $now;
 my $ltm_stats = $ltm->get_stats();
 ok_test(defined $ltm_stats->{last_consolidated}, "get_stats: includes last_consolidated");
 ok_test($ltm_stats->{last_consolidated} == $now, "get_stats: correct last_consolidated value");
-
-# ============================================================
-# Test 13: render_budgeted_section - empty LTM
-# ============================================================
-
-$ltm = CLIO::Memory::LongTerm->new();
-my ($empty_section, $empty_inc, $empty_tot) = $ltm->render_budgeted_section();
-ok_test($empty_section eq '', "render_budgeted: empty for empty LTM");
-ok_test($empty_inc == 0, "render_budgeted: 0 included for empty LTM");
 
 # ============================================================
 # 8. search_entries

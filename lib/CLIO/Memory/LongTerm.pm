@@ -794,31 +794,7 @@ sub search_solutions {
     return \@matches;
 }
 
-=head2 get_all_patterns
 
-Get all patterns for display
-
-    my $all = $ltm->get_all_patterns();
-
-=cut
-
-sub get_all_patterns {
-    my ($self) = @_;
-    return $self->{patterns};
-}
-
-=head2 get_summary
-
-Get a summary of stored patterns (delegates to get_stats)
-
-    my $summary = $ltm->get_summary();
-
-=cut
-
-sub get_summary {
-    my ($self) = @_;
-    return $self->get_stats();
-}
 
 =head2 search_entries
 
@@ -976,122 +952,7 @@ sub score_entry {
     return $confidence * $recency * $type_weight * $usage * $tier_weight;
 }
 
-=head2 get_scored_entries
 
-Get all entries scored and sorted, grouped by type.
-
-Returns: ArrayRef of { entry => $entry, type => $type, score => $score }
-
-=cut
-
-sub get_scored_entries {
-    my ($self, $now) = @_;
-
-    $now //= time();
-    my @scored;
-
-    for my $d (@{$self->{patterns}{discoveries} || []}) {
-        push @scored, { entry => $d, type => 'discovery', score => $self->score_entry($d, 'discovery', $now) };
-    }
-    for my $s (@{$self->{patterns}{problem_solutions} || []}) {
-        push @scored, { entry => $s, type => 'solution', score => $self->score_entry($s, 'solution', $now) };
-    }
-    for my $p (@{$self->{patterns}{code_patterns} || []}) {
-        push @scored, { entry => $p, type => 'pattern', score => $self->score_entry($p, 'pattern', $now) };
-    }
-    for my $w (@{$self->{patterns}{workflows} || []}) {
-        push @scored, { entry => $w, type => 'workflow', score => $self->score_entry($w, 'workflow', $now) };
-    }
-    for my $f (@{$self->{patterns}{failures} || []}) {
-        push @scored, { entry => $f, type => 'failure', score => $self->score_entry($f, 'failure', $now) };
-    }
-
-    @scored = sort { $b->{score} <=> $a->{score} } @scored;
-    return \@scored;
-}
-
-=head2 render_budgeted_section
-
-Render an LTM section for system prompt injection within a token budget.
-
-Arguments:
-- max_chars: Maximum characters for the section (default: 12000, ~3000 tokens)
-
-Returns: ($rendered_text, $included_count, $total_count)
-
-=cut
-
-sub render_budgeted_section {
-    my ($self, %args) = @_;
-
-    my $max_chars = $args{max_chars} // 12000;
-    my $now = time();
-
-    my $scored = $self->get_scored_entries($now);
-    my $total_count = scalar @$scored;
-    return ('', 0, 0) if $total_count == 0;
-
-    # Render entries by score, accumulating into budget
-    my @included;
-    my @excluded;
-    my $chars_used = 0;
-
-    # Reserve space for header + footer (~600 chars)
-    my $budget = $max_chars - 600;
-
-    for my $item (@$scored) {
-        my $rendered = $self->_render_entry($item->{entry}, $item->{type});
-        my $len = length($rendered);
-
-        if ($chars_used + $len <= $budget) {
-            push @included, $item;
-            $chars_used += $len;
-        } else {
-            push @excluded, $item;
-        }
-    }
-
-    # Build the section
-    my $section = "## Long-Term Memory Patterns\n\n";
-    $section .= "The following are the highest-priority patterns from previous sessions. ";
-    $section .= "Additional memories exist - use `memory_operations(operation: \"search\", query: \"keyword\")` to find specific topics.\n\n";
-
-    # Group included entries by type for rendering
-    my %by_type;
-    for my $item (@included) {
-        push @{$by_type{$item->{type}}}, $item;
-    }
-
-    # Render in standard order
-    my @type_order = (
-        ['discovery', 'Key Discoveries'],
-        ['solution',  'Problem Solutions'],
-        ['pattern',   'Code Patterns'],
-        ['workflow',  'Successful Workflows'],
-        ['failure',   'Known Failures (Avoid These)'],
-    );
-
-    for my $pair (@type_order) {
-        my ($type, $heading) = @$pair;
-        next unless $by_type{$type} && @{$by_type{$type}};
-
-        $section .= "### $heading\n";
-        for my $item (@{$by_type{$type}}) {
-            $section .= $self->_render_entry($item->{entry}, $type);
-        }
-        $section .= "\n";
-    }
-
-    $section .= "_These patterns are project-specific and should inform your approach to similar tasks._\n";
-
-    # Add index footer for excluded entries
-    if (@excluded) {
-        my $footer = $self->_render_index_footer(\@excluded, scalar(@included), $total_count);
-        $section .= "\n$footer";
-    }
-
-    return ($section, scalar(@included), $total_count);
-}
 
 =head2 get_entries_for_projection
 
@@ -1162,172 +1023,8 @@ sub get_entries_for_projection {
     return \@out;
 }
 
-=head2 _render_entry
 
-Render a single LTM entry as markdown text.
 
-=cut
-
-sub _render_entry {
-    my ($self, $entry, $type) = @_;
-
-    # Tier badge for display
-    my $tier = $entry->{tier} // 'unverified';
-    my $tier_badge = $tier eq 'trusted' ? ' [TRUSTED]' : ' [UNVERIFIED]';
-    my $corroboration_info = '';
-    if ($entry->{corroboration_count} && $entry->{corroboration_count} > 0) {
-        $corroboration_info = " (corroborated x$entry->{corroboration_count})";
-    }
-
-    if ($type eq 'discovery') {
-        my $fact = $entry->{fact} || 'Unknown';
-        my $confidence = $entry->{confidence} || 0;
-        my $verified = $entry->{verified} ? 'Verified' : 'Unverified';
-        return "- **$fact**$tier_badge$corroboration_info (Confidence: " . sprintf("%.0f%%", $confidence * 100) . ", $verified)\n";
-    }
-    elsif ($type eq 'solution') {
-        my $error = $entry->{error} || 'Unknown error';
-        my $solution = $entry->{solution} || 'No solution';
-        my $solved_count = $entry->{solved_count} || 0;
-        my $text = "**Problem:** $error\n**Solution:** $solution\n";
-        if ($entry->{examples} && @{$entry->{examples}}) {
-            $text .= "  Examples: " . join(", ", @{$entry->{examples}}) . "\n";
-        }
-        $text .= "_Applied successfully $solved_count time" . ($solved_count == 1 ? '' : 's') . "$tier_badge$corroboration_info\n\n";
-        return $text;
-    }
-    elsif ($type eq 'pattern') {
-        my $pattern = $entry->{pattern} || 'Unknown pattern';
-        my $confidence = $entry->{confidence} || 0;
-        my $examples = $entry->{examples} || [];
-        my $text = "- **$pattern**$tier_badge$corroboration_info (Confidence: " . sprintf("%.0f%%", $confidence * 100) . ")\n";
-        if (@$examples) {
-            $text .= "  Examples: " . join(", ", @$examples) . "\n";
-        }
-        return $text;
-    }
-    elsif ($type eq 'workflow') {
-        my $sequence = $entry->{sequence} || [];
-        my $success_rate = $entry->{success_rate} || 0;
-        my $count = $entry->{count} || 0;
-        return '' unless @$sequence;
-        return "- " . join(" -> ", @$sequence) . "$tier_badge$corroboration_info\n" .
-               "  _Success rate: " . sprintf("%.0f%%", $success_rate * 100) . " ($count attempts)_\n";
-    }
-    elsif ($type eq 'failure') {
-        my $what = $entry->{what} || 'Unknown failure';
-        my $impact = $entry->{impact} || 'Unknown impact';
-        my $prevention = $entry->{prevention} || 'No prevention documented';
-        return "- **$what**$tier_badge$corroboration_info: $impact\n  _Prevention: ${prevention}_\n";
-    }
-
-    return '';
-}
-
-=head2 _render_index_footer
-
-Render a compact footer showing what additional memories exist.
-
-Arguments:
-- $excluded: ArrayRef of excluded scored entries
-- $included_count: Number of included entries
-- $total_count: Total number of entries
-
-Returns: Footer text string
-
-=cut
-
-sub _render_index_footer {
-    my ($self, $excluded, $included_count, $total_count) = @_;
-
-    # Group excluded by type and extract keywords
-    my %by_type;
-    for my $item (@$excluded) {
-        push @{$by_type{$item->{type}}}, $item;
-    }
-
-    my @lines;
-    push @lines, "_Showing $included_count of $total_count memories (highest-scored). Additional memories available:_";
-
-    my %type_labels = (
-        solution  => 'solutions',
-        discovery => 'discoveries',
-        pattern   => 'patterns',
-        workflow  => 'workflows',
-        failure   => 'failure records',
-    );
-
-    for my $type (qw(solution discovery pattern workflow failure)) {
-        next unless $by_type{$type} && @{$by_type{$type}};
-        my $count = scalar @{$by_type{$type}};
-        my $label = $type_labels{$type};
-        my $keywords = $self->_extract_keywords($by_type{$type}, 5);
-        push @lines, "_- $count more $label (topics: $keywords)_";
-    }
-
-    push @lines, '_Use `memory_operations(operation: "search", query: "keyword")` to retrieve specific memories._';
-    push @lines, '';
-
-    return join("\n", @lines);
-}
-
-=head2 _extract_keywords
-
-Extract top N keywords from a set of LTM entries for the index footer.
-
-Arguments:
-- $entries: ArrayRef of scored entry hashes
-- $n: Number of keywords to return (default: 5)
-
-Returns: Comma-separated keyword string
-
-=cut
-
-sub _extract_keywords {
-    my ($self, $entries, $n) = @_;
-
-    $n //= 5;
-
-    # Stop words to exclude
-    my %stop = map { $_ => 1 } qw(
-        the a an is are was were be been being have has had do does did
-        will would shall should may might can could must need to of in
-        for on at by with from and or but not no nor so yet both either
-        neither each every all any few more most other some such than
-        too very just also back again still already always never often
-        sometimes this that these those it its they them their he she
-        him her his we us our you your if when then how what which who
-        where why because since while after before during until unless
-        about above below between through into onto upon as use used
-        using make sure before after don dont doesn like got into set
-    );
-
-    # Collect text from all entries
-    my %word_freq;
-    for my $item (@$entries) {
-        my $e = $item->{entry};
-        my $text = '';
-        $text .= ($e->{fact} // '') . ' ';
-        $text .= ($e->{error} // '') . ' ';
-        $text .= ($e->{solution} // '') . ' ';
-        $text .= ($e->{pattern} // '') . ' ';
-        $text .= ($e->{what} // '') . ' ';
-
-        # Tokenize: split on non-word chars, lowercase, filter
-        my @words = map { lc($_) } ($text =~ /([A-Za-z][A-Za-z_-]{2})/g);
-        for my $w (@words) {
-            next if $stop{$w};
-            next if length($w) < 4;  # skip very short words
-            $word_freq{$w}++;
-        }
-    }
-
-    # Sort by frequency, take top N
-    my @sorted = sort { $word_freq{$b} <=> $word_freq{$a} || $a cmp $b } keys %word_freq;
-    my @top = @sorted[0 .. ($n - 1 < $#sorted ? $n - 1 : $#sorted)];
-
-    return join(', ', @top) || 'various';
-}
 
 =head2 consolidate
 
@@ -1567,8 +1264,8 @@ sub _entry_text {
         # corroboration silently never matches workflow entries.
         return join(' ', @{$entry->{sequence} || []});
     } elsif ($category eq 'failures') {
-        # Mirror _render_entry's failure block so search hits the same
-        # surface text the AI sees in the rendered output.
+        # Mirror the failure-entry text so search hits the same surface
+        # text the AI sees in rendered output.
         return join(' ', $entry->{what} // '', $entry->{impact} // '', $entry->{prevention} // '');
     }
     return '';
