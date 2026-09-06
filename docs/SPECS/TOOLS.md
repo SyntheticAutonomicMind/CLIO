@@ -35,17 +35,22 @@ CLIO provides comprehensive tooling across multiple categories. Every tool opera
 
 #### grep_search
 
-**Description:** Search file contents for a pattern (text or regex).
+**Description:** Search file contents for a pattern (text or regex). Accepts either a file or a directory as the search target — when a file is given, only that file is searched.
 
 **Parameters:**
 - `query` (string, **required**) - Search term to find in files
-- `pattern` (string, optional) - Glob pattern to filter which files to search (e.g., `*.pm`, `**/*.pl`)
-- `path` (string, optional) - Directory to search (default: current directory)
+- `pattern` (string, optional) - Glob pattern to filter which files to search (e.g., `*.pm`, `**/*.pl`); only applies in directory mode
+- `path` (string, optional) - File or directory to search (default: current directory). When a file path is given, only that file is searched.
 - `is_regex` (boolean, optional) - Whether `query` is a regex pattern (default: false)
 
 **Example Call:**
 ```json
 {"operation": "grep_search", "query": "TODO", "path": "lib", "pattern": "**/*.pm"}
+```
+
+Search a single file:
+```json
+{"operation": "grep_search", "query": "TODO", "path": "lib/CLIO/Tools/FileOperations.pm"}
 ```
 
 #### file_search
