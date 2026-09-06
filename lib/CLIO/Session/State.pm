@@ -1111,20 +1111,17 @@ sub trim_context {
         log_debug('SessionState', "YaRN compression in trim_context failed: $@");
     }
 
-    # Build the trim notice — clean thread_summary only, no narration.
+    # Build the trim notice - YaRN thread_summary only, no narration.
+    # The YaRN <thread_summary> is the only recovery signal the model
+    # should see. If compression failed, no narrated fallback is injected
+    # - the model simply sees a smaller context window without being
+    # told "your context was trimmed."
     my $trim_content;
     if ($compressed && $compressed->{content}) {
         $trim_content = $compressed->{content};
     } else {
-        $trim_content = "[CONTEXT TRIM: $dropped_count messages archived]\n"
-            . "Older messages summarized below. Recent $keep_recent messages preserved.";
+        $trim_content = '';
     }
-
-    my $trim_notice = {
-        role => 'system',
-        content => $trim_content,
-        _importance => 0.5,
-    };
 
     # Filter out old thread_summary system messages (from prior trim cycles)
     # so they don't accumulate. The new thread_summary carries all their
@@ -1134,8 +1131,18 @@ sub trim_context {
         $c !~ /<thread_summary>/;
     } @system;
 
-    # Reconstruct: system messages (minus old summaries) + new summary + recent tail
-    my @trimmed = (@system, $trim_notice, @recent);
+    # Reconstruct: system messages (minus old summaries) + new summary
+    # (if YaRN produced content) + recent tail. Skip the trim notice
+    # when compression failed - no narrated fallback.
+    my @trimmed = @system;
+    if (length $trim_content) {
+        push @trimmed, {
+            role => 'system',
+            content => $trim_content,
+            _importance => 0.5,
+        };
+    }
+    push @trimmed, @recent;
 
     my $after = scalar(@trimmed);
     if ($ENV{CLIO_DEBUG} || $self->{debug}) {

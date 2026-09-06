@@ -48,7 +48,7 @@ subtest 'H3: empty relevant_memory → no Relevant memory section' => sub {
     unlike($prose, qr/\(0\.90\)|\(0\.70\)/, 'No confidence scores in prose');
 };
 
-subtest 'H3: relevant_memory surfaces entries without narration' => sub {
+subtest 'H3: relevant_memory NOT in dynamic userContext (metadata-leak fix)' => sub {
     my $ltm = CLIO::Memory::LongTerm->new();
     # 5 LTM entries; some relevant, some not
     $ltm->add_discovery('Model-facing prompt paths must NEVER tell the model about framework internals.', 0.9);
@@ -66,7 +66,14 @@ subtest 'H3: relevant_memory surfaces entries without narration' => sub {
     );
 
     my $prose = messages_to_prose_dynamic($proj);
-    like($prose, qr/Relevant memory:\n/, 'Relevant memory section present (natural prose)');
+    # Post-metadata-leak fix: the Relevant memory section is removed
+    # entirely. LTM entries are not injected into the dynamic
+    # userContext — the model can search LTM on demand via
+    # memory_operations(search).
+    unlike($prose, qr/Relevant memory:/, 'No Relevant memory label in prose');
+    unlike($prose, qr/Model-facing prompt paths/, 'No LTM content leaked into dynamic userContext');
+    unlike($prose, qr/Cache stability requires/, 'No LTM content leaked into dynamic userContext');
+    unlike($prose, qr/Always run perl/, 'No LTM content leaked into dynamic userContext');
     # Design: no "N more available" count, no framework instructions,
     # no confidence scores.
     unlike($prose, qr/more memories available/, 'No "more available" count');

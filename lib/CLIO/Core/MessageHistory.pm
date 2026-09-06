@@ -25,21 +25,20 @@ Renders a C<ContextProjection> (built by L<CLIO::Core::ContextBuilder>)
 as markdown sections suitable for inclusion as system message content.
 The history is now pushed directly into the @messages array as
 role-based messages (user, assistant, tool) rather than being
-collapsed into a single XML block. The dynamic userContext (active
-task, active todos, unresolved state, relevant memory, environment,
+collapsed into a single XML block. The dynamic userContext (active task, active todos, environment,
 context files) is rendered separately by L</messages_to_prose_dynamic>
 and pushed as one system message after the history, sitting at the
-recency anchor.
+recency anchor. The unresolved state and relevant memory fields are
+computed by ContextBuilder (for LTM scoring) but are NOT rendered into
+the prose — see the metadata-leak fix in C<messages_to_prose_dynamic>.
 
 The renderer produces markdown with the dynamic sections only. The
 stable parts (anchor + recent turns) are pushed by WorkflowOrchestrator
 as role-based messages, not as prose:
 
     # Earlier work      (compressed summary of dropped turns, dynamic)
-    # Active task       (dynamic)
+    # Active task       (dynamic, no label scaffolding)
     # Active todos      (dynamic)
-    # Unresolved state  (dynamic)
-    # Relevant memory   (dynamic)
     # Environment       (dynamic - working dir, language, date/time)
     [CONTEXT FILES]     (dynamic - pre-rendered block from caller)
 
@@ -176,20 +175,23 @@ sub messages_to_prose {
 =head2 messages_to_prose_dynamic
 
 Render only the dynamic portions of a projection as natural prose:
-active task, active todos, unresolved state, relevant memory (without
-confidence scores), environment (working directory first), and context
-files. No C<//> section headers, no confidence scores, no framework
-instructions (e.g. "call memory_operations...").
+active task (as plain text, no label), active todos as a checklist,
+environment (working directory first), and context files.
+
+Removed in the metadata-leak fix: the C<Unresolved:> section
+(recycled tool errors) and the C<Relevant memory:> section (LTM
+entries) are no longer rendered. LTM relevance scoring still runs
+in ContextBuilder but these sections are not injected into the prose.
 
 The compressed tail (YaRN summary of dropped turns) is rendered as-is
 — it already contains its own section labels (Commits, Files, etc.)
 from YaRN.
 
 Returns content that churns between turns (datetime_iso, todo
-mutations, LTM rescore, environment changes). WorkflowOrchestrator
-uses this as a single system message that sits AFTER the role-based
-history in the messages array, so its churn does not invalidate the
-cache-stable prefix.
+mutations, environment changes). WorkflowOrchestrator uses this as a
+single system message that sits AFTER the role-based history in the
+messages array, so its churn does not invalidate the cache-stable
+prefix.
 
 Arguments:
 - $projection: Hashref from L<CLIO::Core::ContextBuilder/build_projection>
@@ -209,10 +211,6 @@ sub messages_to_prose_dynamic {
     # chars used to produce ~22K tokens of dynamic UC content.
     my $MAX_TODOS = 10;
     my $MAX_TODO_CHARS = 200;
-    my $MAX_LTM_ENTRIES = 5;
-    my $MAX_LTM_CHARS = 500;
-    my $MAX_UNRESOLVED = 5;
-    my $MAX_UNRESOLVED_CHARS = 200;
 
     my $out = '';
 
@@ -225,9 +223,12 @@ sub messages_to_prose_dynamic {
         }
     }
 
-    # Active task.
+    # Active task as work product - emit as plain text without
+    # the "Active task:" label scaffolding that tells the model
+    # this is framework-managed metadata. The task is already in
+    # the user's message; this is a secondary reminder.
     if (my $task = $projection->{active_task}) {
-        $out .= "Active task: " . _truncate_dynamic_uc($task, 300) . "\n\n";
+        $out .= _truncate_dynamic_uc($task, 300) . "\n\n";
     }
 
     # Active todos: checklist with status.
@@ -249,41 +250,6 @@ sub messages_to_prose_dynamic {
                 $out .= sprintf("...and %d more (use todo_operations to read full list)\n\n",
                     scalar(@$todos) - $todo_count);
             }
-        }
-    }
-
-    # Unresolved state: failures, blocked todos, test failures.
-    if (my $unresolved = $projection->{unresolved}) {
-        my @rendered;
-        my $unres_count = 0;
-        for my $item (@$unresolved) {
-            next unless defined $item && length $item;
-            last if $unres_count >= $MAX_UNRESOLVED;
-            push @rendered, "- " . _truncate_dynamic_uc($item, $MAX_UNRESOLVED_CHARS);
-            $unres_count++;
-        }
-        if (@rendered) {
-            $out .= "Unresolved:\n" . join("\n", @rendered) . "\n\n";
-        }
-    }
-
-    # Relevant memory: top-scored LTM entries. NO confidence scores,
-    # NO framework instructions ("call memory_operations..."). The
-    # model just sees the facts — it knows from the system prompt
-    # that memory_operations exists.
-    my $relevant = $projection->{relevant_memory};
-    if ($relevant && @$relevant) {
-        my @rendered;
-        my $mem_count = 0;
-        for my $mem (@$relevant) {
-            last if $mem_count >= $MAX_LTM_ENTRIES;
-            my $content = $mem->{content} // '';
-            $content = _truncate_dynamic_uc($content, $MAX_LTM_CHARS);
-            push @rendered, "- $content";
-            $mem_count++;
-        }
-        if (@rendered) {
-            $out .= "Relevant memory:\n" . join("\n", @rendered) . "\n\n";
         }
     }
 
@@ -322,8 +288,8 @@ sub _truncate_dynamic_uc {
     return '' unless defined $text;
     return $text unless length($text) > $max;
     my $truncated = substr($text, 0, $max);
-    # Strip the trailing partial word so the model doesn't see a
-    # half-word at the cut point (which it would try to "fix").
+    # Strip the trailing partial word so the model does not see a
+    # half-word at the cut point (which it would try to fix).
     $truncated =~ s/\s+\S*$//;
     return $truncated . '...';
 }

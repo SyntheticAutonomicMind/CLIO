@@ -107,8 +107,8 @@ sub make_history {
 
     my $dynamic = messages_to_prose_dynamic($proj);
 
-    like($dynamic, qr/Active task:/, "Active task section present (natural prose)");
-    like($dynamic, qr/investigate trim_xml_history bug/, "Active task content present");
+    unlike($dynamic, qr/Active task:/, "No 'Active task:' label scaffolding in prose (metadata-leak fix)");
+    like($dynamic, qr/investigate trim_xml_history bug/, "Active task content still present (unlabeled)");
     like($dynamic, qr/Active todos:/, "Active todos section present (natural prose)");
     like($dynamic, qr/- \[in-progress\] Read ContextBuilder\.pm/, "Todo rendered with status");
     like($dynamic, qr/Working directory:/, "Environment section present (natural prose)");

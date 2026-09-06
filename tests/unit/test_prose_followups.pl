@@ -430,7 +430,7 @@ subtest 'unresolved state: no tool_error prefix' => sub {
     my $prose = messages_to_prose($proj);
     unlike($prose, qr/tool_error:/, 'prose has no tool_error: prefix');
     unlike($prose, qr/nudge:/, 'prose has no nudge: prefix');
-    like($prose, qr/ERROR: file not found/, 'prose has the error text directly');
+    unlike($prose, qr/ERROR: file not found/, 'prose does not surface tool errors in dynamic userContext (Unresolved section removed)');
 };
 
 subtest 'unresolved state: [SYSTEM: ...] user nudges are not surfaced' => sub {
@@ -455,7 +455,9 @@ subtest 'unresolved state: [SYSTEM: ...] user nudges are not surfaced' => sub {
     unlike($prose, qr/nudge:/, 'prose does not surface nudges via nudge: prefix');
     # The '# Unresolved state' header is only emitted when there are
     # actual unresolved items. With no real errors, it should be absent.
-    unlike($prose, qr/# Unresolved state/, 'no # Unresolved state section when no real errors');
+    # Post-metadata-leak fix: the Unresolved section is removed entirely,
+    # so the label should never appear regardless of content.
+    unlike($prose, qr/Unresolved:/, 'no Unresolved: label in dynamic userContext');
 };
 
 # ===========================================================================
