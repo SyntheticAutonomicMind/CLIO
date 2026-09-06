@@ -101,11 +101,12 @@ sub make_long_history {
         user_input => 'continue',
     );
 
-    ok(defined $proj->{anchor}, "Projection has anchor");
-    ok(@{$proj->{anchor}} >= 1, "Anchor has messages");
-    is($proj->{anchor}[0]{role}, 'user', "Anchor starts with user message");
-    like($proj->{anchor}[0]{content}, qr/Original substantive task/,
-        "Anchor contains original task text");
+    # No separate anchor — active task is in dynamic userContext.
+    # Original task preserved in compressed_tail via YaRN [original] marker.
+    ok(!defined $proj->{anchor} || !defined $proj->{anchor}, "No separate anchor (task via dynamic userContext)");
+    ok(length($proj->{compressed_tail}) > 0, "Compressed tail is non-empty");
+    like($proj->{compressed_tail}, qr/Original substantive task/,
+        "Original task preserved in compressed tail");
 }
 
 # ---------------------------------------------------------------------------
@@ -159,7 +160,7 @@ sub make_long_history {
     my $dynamic = CLIO::Core::MessageHistory::messages_to_prose_dynamic($proj);
 
     # Dynamic prose contains the dynamic sections.
-    like($combined, qr/# Environment/, "Prose renderer emits # Environment section");
+    like($combined, qr/Working directory:/, "Prose renderer emits environment section");
     # No # Task or # Recent work sections in prose (those are now
     # pushed as role-based messages by WorkflowOrchestrator).
     unlike($combined, qr/# Task\b/, "Prose renderer omits # Task (now role-based)");
@@ -180,17 +181,17 @@ sub make_long_history {
     my $proj = build_projection(history => $history, user_input => 'continue');
 
     is(scalar @$history, $before_count, "Raw history count unchanged ($before_count)");
-    # Anchor + recent turn messages must be the SAME refs (not clones).
-    # If ContextBuilder were cloning, the hashrefs would differ.
-    my $first_anchor_msg = $proj->{anchor}[0];
+    # Recent turn messages must be the SAME refs (not clones). If
+    # ContextBuilder were cloning, the hashrefs would differ.
+    my $first_recent_msg = $proj->{turns}[-1][0];
     my $found_in_history = 0;
     for my $msg (@$history) {
-        if ($msg == $first_anchor_msg) {
+        if ($msg == $first_recent_msg) {
             $found_in_history = 1;
             last;
         }
     }
-    ok($found_in_history, "Anchor messages are the SAME hashrefs as in raw history (no cloning)");
+    ok($found_in_history, "Recent turn messages are the SAME hashrefs as in raw history (no cloning)");
 }
 
 # ---------------------------------------------------------------------------

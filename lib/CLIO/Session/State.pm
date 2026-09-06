@@ -324,6 +324,25 @@ sub load {
         log_debug('State::load', "Migrated $corruption_migrated corrupted message(s) "
             . "(hash/array content -> string marker). Session will be re-saved to persist fix.");
     }
+
+    # Strip persisted system prompt messages to prevent the double-system-prompt
+    # bug: the system prompt (PromptBuilder output) is saved in history at
+    # index 0, and on session resume PromptBuilder builds a FRESH system prompt
+    # which is also pushed at index 0 — yielding 152K chars / ~76K tokens of
+    # duplicated system prompt every turn.
+    #
+    # We strip ALL system messages EXCEPT those containing a <thread_summary>
+    # block (which carries cross-cycle carryover from prior trim cycles).
+    # The system prompt and dynamic userContext are rebuilt fresh per turn
+    # by PromptBuilder and ContextBuilder respectively, so persisting them
+    # is pure waste.
+    $data->{history} = [
+        grep {
+            my $m = $_;
+            !($m->{role} eq 'system'
+              && ($m->{content} // '') !~ /<thread_summary>/);
+        } @cleaned_history
+    ];
     my $yarn = CLIO::Memory::YaRN->new(threads => $data->{yarn} // {}, debug => $args{debug});
     my $self = {
         session_id => $session_id,
@@ -1030,43 +1049,31 @@ and how to recover the context.
 
 sub trim_context {
     my ($self) = @_;
-    
+
     my @messages = @{$self->{history}};
     return unless @messages > 15;  # Don't trim very short conversations
-    
-    # Scale keep_recent based on model context window.
-    # Default 128k context: 10 messages. 1M context: ~78 messages.
-    # This ensures large-context models retain proportionally more history.
+
     my $max_tokens = $self->{max_tokens} // 128000;
     my $keep_recent = int(10 * ($max_tokens / 128000));
     $keep_recent = 10 if $keep_recent < 10;     # Minimum 10 messages
     $keep_recent = 100 if $keep_recent > 100;    # Cap at 100 messages
-    
-    # Simple tail-preserving trim strategy:
-    # Keep system messages + last N non-system messages.
-    # The proactive trim in MessageValidator handles sophisticated compression
-    # (thread_summary, user message preservation, budget-based walk).
-    # This trim just ensures Session::State history stays bounded.
-    
+
     # Separate system messages (prompt, previous trim notices) from conversation
     my @system = grep { defined $_->{role} && $_->{role} eq 'system' } @messages;
     my @non_system = grep { defined $_->{role} && $_->{role} ne 'system' } @messages;
 
-    # Keep the most recent non-system messages (the tail of the conversation)
-    my @recent = @non_system >= $keep_recent 
-        ? @non_system[-$keep_recent .. -1] 
+    my @recent = @non_system >= $keep_recent
+        ? @non_system[-$keep_recent .. -1]
         : @non_system;
-    
+
     my $before = scalar(@messages);
     my $dropped_count = scalar(@non_system) - scalar(@recent);
-    
-    # Nothing to trim
+
     return if $dropped_count <= 0;
-    
-    # Collect dropped messages for YaRN compression
+
     my $keep_start = scalar(@non_system) - scalar(@recent);
     my @dropped = @non_system[0 .. ($keep_start - 1)];
-    
+
     # Find the most recent user message for task context
     my $last_user_msg;
     for my $msg (reverse @dropped) {
@@ -1075,56 +1082,61 @@ sub trim_context {
             last;
         }
     }
-    
-    # Compress dropped messages with YaRN for context recovery
-    my $compressed_summary = '';
+
+    # Extract previous_summary from existing <thread_summary> blocks across
+    # the full history (including system messages that were already kept).
+    # This enables cross-cycle carryover: the new summary includes
+    # the prior one's content rather than starting fresh.
+    my $previous_summary = '';
     eval {
         require CLIO::Memory::YaRN;
         my $yarn = CLIO::Memory::YaRN->new();
-        my $compressed = $yarn->compress_messages(\@dropped,
-            original_task => $last_user_msg ? ($last_user_msg->{content} || '') : '',
+        $previous_summary = $yarn->_extract_thread_summary_from_messages(\@messages);
+    };
+    if ($@) {
+        log_debug('SessionState', "YaRN previous_summary extraction failed: $@");
+    }
+
+    # Compress dropped messages via the unified recovery path.
+    my $compressed;
+    eval {
+        require CLIO::Memory::YaRN;
+        my $yarn = CLIO::Memory::YaRN->new();
+        $compressed = $yarn->compress_for_context_recovery(\@dropped,
+            original_task    => $last_user_msg ? ($last_user_msg->{content} || '') : '',
+            previous_summary => $previous_summary,
         );
-        if ($compressed && $compressed->{content}) {
-            $compressed_summary = $compressed->{content};
-        }
     };
     if ($@) {
         log_debug('SessionState', "YaRN compression in trim_context failed: $@");
     }
-    
-    # Build trim notification - include compressed summary if available
+
+    # Build the trim notice — clean thread_summary only, no narration.
     my $trim_content;
-    if ($compressed_summary) {
-        $trim_content = "[CONTEXT TRIM: $dropped_count messages compressed]\n" .
-            "Older messages summarized below. Recent $keep_recent messages preserved in full.\n\n" .
-            $compressed_summary . "\n\n" .
-            "To recover more context:\n" .
-            "1. memory_operations(operation: 'retrieve', key: 'session_goals') for session goals\n" .
-            "2. memory_operations(operation: 'recall_sessions', query: '<keywords>') for session history\n" .
-            "3. git log and todo_operations(operation: 'read') to verify current state\n" .
-            "DO NOT read handoff documents in ai-assisted/ - use the tools above instead.";
+    if ($compressed && $compressed->{content}) {
+        $trim_content = $compressed->{content};
     } else {
-        $trim_content = "[CONTEXT TRIM: $dropped_count messages archived]\n" .
-            "Token limit approached. Older messages moved to YaRN archive.\n" .
-            "Recent $keep_recent messages preserved.\n\n" .
-            "To recover context, use these in order:\n" .
-            "1. Your LTM patterns (already in system prompt) have project knowledge\n" .
-            "2. memory_operations(operation: 'retrieve', key: 'session_progress') for recent progress\n" .
-            "3. memory_operations(operation: 'recall_sessions', query: '<keywords>') for session history\n" .
-            "4. git log and todo_operations(operation: 'read') to verify current state\n" .
-            "DO NOT read handoff documents in ai-assisted/ - use the tools above instead.";
+        $trim_content = "[CONTEXT TRIM: $dropped_count messages archived]\n"
+            . "Older messages summarized below. Recent $keep_recent messages preserved.";
     }
-    
+
     my $trim_notice = {
         role => 'system',
         content => $trim_content,
         _importance => 0.5,
     };
-    
-    # Reconstruct: system messages + trim notice + recent tail
+
+    # Filter out old thread_summary system messages (from prior trim cycles)
+    # so they don't accumulate. The new thread_summary carries all their
+    # content via cross-cycle carryover.
+    @system = grep {
+        my $c = $_->{content} // '';
+        $c !~ /<thread_summary>/;
+    } @system;
+
+    # Reconstruct: system messages (minus old summaries) + new summary + recent tail
     my @trimmed = (@system, $trim_notice, @recent);
-    
-    # Log trimming
+
     my $after = scalar(@trimmed);
     if ($ENV{CLIO_DEBUG} || $self->{debug}) {
         use CLIO::Memory::TokenEstimator;
@@ -1132,10 +1144,9 @@ sub trim_context {
         my $after_tokens = CLIO::Memory::TokenEstimator::estimate_messages_tokens(\@trimmed);
         log_debug('SessionState', "Context trim: $before -> $after messages ($before_tokens -> $after_tokens tokens, " .
                      int(($after_tokens / $before_tokens) * 100) . "% retained)");
-        log_debug('SessionState', "[STATE] Trim notification injected - agent notified of archived context");
+        log_debug('SessionState', "[STATE] Trim notification injected - archived context summarized");
     }
-    
-    # Update history (trimmed messages already in YaRN from add_message)
+
     $self->{history} = \@trimmed;
 }
 

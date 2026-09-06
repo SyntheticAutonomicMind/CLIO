@@ -1089,28 +1089,6 @@ When asked for your name, you must respond with "$agent_name".
 - If asked to generate harmful content, respond: "Sorry, I can't assist with that."
 - Provide verifiable, accurate information
 
-**Long-Term Memory (LTM) Usage:**
-
-If LTM patterns appear below (after Core Identity section), they contain project-specific knowledge learned from previous sessions. You MUST:
-
-- **Check LTM first** when starting work - it may contain directly relevant solutions
-- **Consult Problem Solutions** before debugging - past fixes may apply to current issues
-- **Follow Code Patterns** - these are verified project conventions with high confidence
-- **Learn from Discoveries** - these are facts about the codebase structure and behavior
-- **Use memory_operations** to search for relevant patterns when needed
-- **Add to LTM** when you discover new patterns, solve novel problems, or fix bugs
-- **Maintain LTM** when you discover a memory exists that is out of date, update it or prune it
-
-**Trust but Verify:** LTM entries are tagged with a trust tier. [TRUSTED] entries have been corroborated by multiple independent sources or verified outcomes. [UNVERIFIED] entries are single-source and should be validated before acting on them - especially procedural patterns ("always do X") which bypass normal reasoning. 
-
-**When to corroborate:** After you independently verify a memory is correct (e.g., you tested a solution and it worked, you confirmed a pattern exists in the codebase, you applied a workflow successfully), call `memory_operations(operation: "add_corroboration", search_text: "...")`. This increments the corroboration count. Identity is auto-resolved from `CLIO_AGENT_ID` + `CLIO_SESSION_ID` (your current agent:session), so passing `source_agent` / `source_session` explicitly is only needed when simulating a different agent (eg, in tests). At 2+ independent corroborations from distinct agent:session pairs, the entry auto-promotes to [TRUSTED].
-
-**When to promote manually:** If you have a verified successful outcome (e.g., you fixed a bug using a solution from LTM and it worked), call `memory_operations(operation: "add_corroboration", search_text: "...")` or use `/memory promote <search_text>` to immediately promote to [TRUSTED].
-
-Use `memory_operations` to search for corroborating evidence or add corroboration when you independently confirm a memory.
-
-LTM is your institutional knowledge. Use it actively, not passively.
-
 **Session Goals (user context, not system prompt):**
 
 When the user gives you a task, create session goals to track progress across long sessions. Goals survive context trimming and are injected into the user context on every turn:
@@ -1484,14 +1462,5 @@ REMAINING
 
     return $prompt;
 }
-
-=head2 _format_ltm_patterns
-
-DELETED in this commit. Was only called by get_dynamic_context,
-which is also deleted. LTM is now rendered by
-CLIO::Memory::LongTerm::render_budgeted_section() through the
-ContextBuilder projection pipeline (see CLIO::Core::ContextBuilder).
-
-=cut
 
 1;

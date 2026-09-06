@@ -58,16 +58,21 @@ sub make_history {
 }
 
 # ---------------------------------------------------------------------------
-# Test 1: anchor survival
+# Test 1: original task survival (in compressed_tail, not anchor)
 # ---------------------------------------------------------------------------
 
 {
     my $history = make_history(turns => 10);
     my $proj = build_projection(history => $history, user_input => 'continue');
-    ok(defined $proj->{anchor}, "Anchor is set");
-    ok(@{$proj->{anchor}} >= 1, "Anchor has at least one message");
-    is($proj->{anchor}[0]{role}, 'user', "Anchor starts with a user message");
-    like($proj->{anchor}[0]{content}, qr/Original substantive task/, "Anchor preserves original task content");
+    # Anchor concept removed — active task is in dynamic userContext.
+    # The original task is preserved in the compressed_tail via YaRN's
+    # [original] marker, which carries the first user request across
+    # trim cycles.
+    ok(!defined $proj->{anchor} || $proj->{anchor} == 0 || !defined $proj->{anchor},
+        "No separate anchor (task is in dynamic userContext)");
+    ok(length($proj->{compressed_tail}) > 0, "Compressed tail is non-empty");
+    like($proj->{compressed_tail}, qr/Original substantive task/,
+        "Original task preserved in compressed tail via [original] marker");
 }
 
 # ---------------------------------------------------------------------------
@@ -144,7 +149,7 @@ sub make_history {
         { confidence => 0.85, content => 'apply YaRN compression only when >200 chars dropped', type => 'pattern' },
         { confidence => 0.78, content => 'use rindex not regex for embedded tag safety', type => 'pattern' },
         { confidence => 0.6, content => 'ModelBudget enforcement is wired but disabled', type => 'discovery' },
-        { confidence => 0.55, content => 'AGENTS.md gaps for ModelBudget', type => 'discovery' },
+        { confidence => 0.55, content => 'AGENTS.md gaps for memory budgeting', type => 'discovery' },
         { confidence => 0.55, content => 'AGENTS.md gaps for cache health', type => 'discovery' };
 
     my $scored2 = score_ltm(\@ltm, 'fix the cache-collapse regex bug', 'qa-messageHistory-fix', []);
@@ -202,9 +207,9 @@ sub make_history {
     );
     my $proj = build_projection(history => \@messages, user_input => 'second user message');
 
-    # The anchor is the FIRST user message
-    is($proj->{anchor}[0]{content}, 'Original task that the model must always see.',
-        "Anchor is the FIRST user message");
+    # No separate anchor — the first user message is in the dropped set
+    # and preserved in the compressed_tail.
+    ok(!defined $proj->{anchor}, "No anchor (task via dynamic userContext + compressed tail)");
 
     # The "current" user input (last user message) is in recent turns,
     # not in anchor. This is by design: the projection shows past turns

@@ -3253,373 +3253,71 @@ sub _handle_interrupt {
 Creates a compressed summary of dropped messages for context recovery after
 reactive trimming due to token limit exceeded errors.
 
-This prevents the AI from losing context of what it was working on when
-aggressive trimming is needed. It uses YaRN compression to create a
-thread_summary, extracts the current conversation topic, and optionally
-includes current task state from todos.
+Uses the unified CLIO::Memory::YaRN::compress_for_context_recovery which
+extracts previous thread_summary blocks for cross-cycle carryover. The
+output is a clean system message containing only the thread_summary block —
+no XML tags, no framework narration, no separate topic/todo/git sections
+(those are already in the dynamic userContext system message).
 
 Arguments:
 - $dropped_messages: Arrayref of message hashes that were dropped
-- $last_user_msg: The most recent user message (for current task context)
-- $session: Session object (optional, for todo state)
-- $all_messages: Arrayref of ALL messages before trimming (for topic extraction)
+- $last_user_msg:    The most recent user message (for current task context)
+- $session:          Session object (unused — kept for API compatibility)
+- $all_messages:     Arrayref of ALL messages before trimming (for
+                     previous_summary extraction when the old summary
+                     was kept, not dropped)
+- $prompt_builder:   Unused — kept for API compatibility
 
-Returns: Message hashref with role 'system' containing compressed summary,
-         or undef if compression fails
+Returns: Message hashref with role 'system' containing the thread_summary,
+         or undef if compression fails or produces empty content.
 
 =cut
 
 sub _compress_dropped_for_recovery {
     my ($dropped_messages, $last_user_msg, $session, $all_messages, $prompt_builder) = @_;
-    
+
     return undef unless $dropped_messages && @$dropped_messages;
-    
-    # Extract previous thread_summary from dropped messages (system-role messages
-    # containing <thread_summary> tags). These are ignored by YaRN's role-based
-    # extraction, so we pass them explicitly to preserve accumulated history.
-    my $previous_summary = '';
-    my @actual_messages;
-    for my $msg (@$dropped_messages) {
-        my $content = $msg->{content} || '';
-        if ($msg->{role} && $msg->{role} eq 'system' && $content =~ /\A<thread_summary>/) {
-            $previous_summary = $content;
-        } else {
-            push @actual_messages, $msg;
-        }
+
+    my $original_task = '';
+    if ($last_user_msg && ref($last_user_msg) eq 'HASH') {
+        $original_task = $last_user_msg->{content} || '';
     }
-    
-    # Use filtered messages (without old summary) for extraction
-    my $messages_to_compress = @actual_messages ? \@actual_messages : $dropped_messages;
 
     my $compressed;
     eval {
         require CLIO::Memory::YaRN;
         my $yarn = CLIO::Memory::YaRN->new();
 
-        # Get task context from most recent user message, falling back to
-        # a substantive message from the dropped set if it's too short.
-        my $original_task = '';
-        if ($last_user_msg && ref($last_user_msg) eq 'HASH') {
-            $original_task = $last_user_msg->{content} || '';
+        # Extract previous_summary from the full message array — the
+        # old thread_summary may have been kept (pinned) rather than
+        # dropped, so scanning @dropped_messages alone may miss it.
+        my $prev = '';
+        if ($all_messages && ref($all_messages) eq 'ARRAY') {
+            $prev = $yarn->_extract_thread_summary_from_messages($all_messages);
         }
-        $original_task = CLIO::Memory::YaRN::find_substantive_task($original_task, $messages_to_compress);
 
-        $compressed = $yarn->compress_messages($messages_to_compress,
+        $compressed = $yarn->compress_for_context_recovery($dropped_messages,
             original_task    => $original_task,
-            previous_summary => $previous_summary,
+            previous_summary => $prev,
         );
     };
     if ($@) {
         log_warning('WorkflowOrchestrator', "YaRN compression failed: $@");
     }
-    
-    # Build recovery context
-    my @recovery_parts = ();
 
-    # FIRST: Extract and inject the current conversation topic
-    # This is the most critical piece - tells the agent exactly what was being discussed
-    my $topic = _extract_conversation_topic($all_messages || $dropped_messages);
-    if ($topic) {
-        push @recovery_parts, "<current_topic>";
-        push @recovery_parts, $topic;
-        push @recovery_parts, "</current_topic>";
-        push @recovery_parts, "";
-    }
-    
-    if ($compressed && $compressed->{content}) {
-        push @recovery_parts, $compressed->{content};
-    }
-    
-    # Add current todo/task state if session is available
-    if ($session) {
-        my $todo_context = _get_todo_recovery_context($session);
-        if ($todo_context) {
-            push @recovery_parts, "";
-            push @recovery_parts, "<task_recovery>";
-            push @recovery_parts, $todo_context;
-            push @recovery_parts, "</task_recovery>";
-        }
-    }
-    
-    # Extract recent user messages from dropped messages. These provide
-    # additional context beyond what YaRN compression captures. We filter
-    # out ultra-short messages (length < 20) such as "yes", "go ahead",
-    # "continue" that carry no task context, and we mark truncated bodies
-    # with an explicit ellipsis so the model knows the original was longer.
-    # We also limit each entry to 600 chars to bound the recovery block
-    # size and prevent a single long paste from crowding out other signals.
-    my @recent_user_msgs = ();
-    for my $msg (reverse @$dropped_messages) {
-        last if @recent_user_msgs >= 5;
-        next unless ref($msg) eq 'HASH';
-        next unless ($msg->{role} // '') eq 'user';
-        my $content = $msg->{content} // '';
-        next unless length($content) >= 20;
-        my $summary = substr($content, 0, 600);
-        $summary .= '...[truncated]' if length($content) > 600;
-        unshift @recent_user_msgs, $summary;
-    }
-    if (@recent_user_msgs) {
-        push @recovery_parts, "";
-        push @recovery_parts, "<recent_context>";
-        push @recovery_parts, "Most recent user messages before trimming:";
-        for my $i (0..$#recent_user_msgs) {
-            push @recovery_parts, ($i + 1) . ". " . $recent_user_msgs[$i];
-        }
-        push @recovery_parts, "</recent_context>";
-    }
+    return undef unless $compressed && ref($compressed) eq 'HASH';
+    return undef unless defined $compressed->{content} && length($compressed->{content});
 
-    # Add lightweight git context so agent knows what was committed/modified
-    # without needing to read handoff documentation
-    my $git_context = _get_git_recovery_context($session);
-    if ($git_context) {
-        push @recovery_parts, "";
-        push @recovery_parts, "<git_recovery>";
-        push @recovery_parts, $git_context;
-        push @recovery_parts, "</git_recovery>";
-    }
+    log_debug('WorkflowOrchestrator',
+        "Recovery context created: " . length($compressed->{content}) .
+        " chars from " . scalar(@$dropped_messages) . " dropped messages");
 
-    # Add recovery session progress if stored in memory
-    my $progress_context = _get_memory_recovery_context($session);
-    if ($progress_context) {
-        push @recovery_parts, "";
-        push @recovery_parts, "<session_progress>";
-        push @recovery_parts, $progress_context;
-        push @recovery_parts, "</session_progress>";
-    }
-
-    return undef unless @recovery_parts;
-
-    # Build the recovery content as a user message so it won't get merged into
-    # the system prompt by enforce_message_alternation (which merges consecutive
-    # system messages). As a user message, the agent MUST respond to it.
-    my @final_parts = ();
-    push @final_parts, "Older conversation history has been summarized below to free context space.";
-    push @final_parts, "Continue your current work - do not announce or acknowledge this summary.";
-    push @final_parts, "";
-    push @final_parts, @recovery_parts;
-    push @final_parts, "";
-    push @final_parts, "IMPORTANT: Continue working on whatever you were doing. Do NOT say things like";
-    push @final_parts, "'I've recovered context' or 'Let me review what happened'. Just keep working";
-    push @final_parts, "as if nothing changed. If you had a task in progress, continue it. If the user";
-    push @final_parts, "asked a question, answer it. Use todo_operations and git tools for details.";
-
-    my $user_context = $prompt_builder ? $prompt_builder->get_user_context($session) : '';
-    my $recovery_content = join("\n", @final_parts);
-
-    log_debug('WorkflowOrchestrator', "Recovery context created: " . length($recovery_content) . " chars from " . scalar(@$dropped_messages) . " dropped messages");
-
-    # Prepend user context for accurate time during recovery work.
-    # Note: this returns a single user message (not the [user_context, user]
-    # pair used elsewhere in the pipeline). Recovery is an exceptional path
-    # where we're rebuilding context after aggressive trimming, so the LCP
-    # benefits of the pipeline protocol don't apply. Callers push this as
-    # a single user message.
-    $recovery_content = $user_context . $recovery_content;
-
+    # Return a clean system message with just the thread_summary content.
+    # No XML tags, no narration, no framework instructions.
     return {
-        role => 'user',
-        content => $recovery_content,
+        role => 'system',
+        content => $compressed->{content},
     };
-}
-
-=head2 _get_todo_recovery_context
-
-Extracts current task/todo state from session for context recovery.
-This allows the AI to resume its current task after aggressive trimming.
-
-Arguments:
-- $session: Session object
-
-Returns: String with todo context, or undef if no todos
-
-=cut
-
-=head2 _extract_conversation_topic
-
-Extracts the current conversation topic from the last N messages in the
-message array. This captures what the agent and user were actively discussing
-right before context trimming occurred.
-
-Looks for:
-- Collaboration exchanges (highest priority - active design discussions)
-- Recent assistant content (what the agent was saying/presenting)
-- Recent user content (what the user was asking/responding)
-
-Arguments:
-- $messages: Arrayref of messages (the full message list before trimming)
-- $max_messages: How many messages to look back (default: 20)
-
-Returns: String describing the current conversation topic, or undef
-
-=cut
-
-sub _extract_conversation_topic {
-    my ($messages, $max_messages) = @_;
-
-    return undef unless $messages && @$messages;
-    $max_messages ||= 20;
-
-    my $start = @$messages > $max_messages ? @$messages - $max_messages : 0;
-    my @recent = @{$messages}[$start .. $#$messages];
-
-    # Look for collaboration exchanges in the last messages
-    my @collab_questions;
-    my @collab_responses;
-    my @user_messages;
-    my @assistant_snippets;
-
-    # Track tool_call IDs for interact
-    my %pending_collab_ids;
-
-    for my $msg (@recent) {
-        my $role = $msg->{role} || '';
-        my $content = $msg->{content} || '';
-
-        if ($role eq 'assistant') {
-            # Check for collaboration tool calls
-            if ($msg->{tool_calls} && ref($msg->{tool_calls}) eq 'ARRAY') {
-                for my $tc (@{$msg->{tool_calls}}) {
-                    my $name = $tc->{function}{name} || '';
-                    if ($name eq 'interact' && $tc->{id}) {
-                        my $args_str = $tc->{function}{arguments} || '{}';
-                        if ($args_str =~ /"message"\s*:\s*"((?:[^"\\]|\\.)*)"/s) {
-                            my $q = $1;
-                            $q =~ s/\\n/\n/g;
-                            $q =~ s/\\"/"/g;
-                            $q =~ s/\\\\/\\/g;
-                            $pending_collab_ids{$tc->{id}} = $q;
-                            # Keep up to 2000 chars to capture design discussions
-                            my $truncated = substr($q, 0, 2000);
-                            $truncated .= '...' if length($q) > 2000;
-                            push @collab_questions, $truncated;
-                        }
-                    }
-                }
-            }
-
-            # Check for collaboration metadata (forced interrupts, etc.)
-            if ($msg->{metadata} && $msg->{metadata}{collaboration}) {
-                my $truncated = substr($content, 0, 2000);
-                $truncated .= '...' if length($content) > 2000;
-                push @collab_questions, $truncated;
-            }
-
-            # Non-empty assistant content (could be mid-conversation text)
-            if ($content && length($content) > 10) {
-                my $snippet = substr($content, 0, 1500);
-                $snippet .= '...' if length($content) > 1500;
-                push @assistant_snippets, $snippet;
-            }
-        }
-        elsif ($role eq 'tool') {
-            # Match collaboration responses
-            if ($msg->{tool_call_id} && exists $pending_collab_ids{$msg->{tool_call_id}}) {
-                my $truncated = substr($content, 0, 2000);
-                $truncated .= '...' if length($content) > 2000;
-                push @collab_responses, $truncated;
-                delete $pending_collab_ids{$msg->{tool_call_id}};
-            }
-        }
-        elsif ($role eq 'user') {
-            my $truncated = substr($content, 0, 1000);
-            $truncated .= '...' if length($content) > 1000;
-            push @user_messages, $truncated if $content;
-        }
-    }
-
-    my @topic_parts;
-
-    # Collaboration is highest priority - it represents active discussion
-    if (@collab_questions || @collab_responses) {
-        push @topic_parts, "Active discussion:";
-        # Show last 5 exchanges to capture full design discussions
-        my $q_start = @collab_questions > 5 ? @collab_questions - 5 : 0;
-
-        for my $i ($q_start .. $#collab_questions) {
-            push @topic_parts, "Agent asked: " . $collab_questions[$i];
-            if ($collab_responses[$i]) {
-                push @topic_parts, "User replied: " . $collab_responses[$i];
-            }
-        }
-    }
-
-    # Always include recent user messages (even if we have collaboration)
-    if (@user_messages) {
-        my $start_at = @user_messages > 3 ? @user_messages - 3 : 0;
-        if (@collab_questions || @collab_responses) {
-            # Separate section when we also have collaboration
-            push @topic_parts, "";
-            push @topic_parts, "Recent user messages:";
-        } else {
-            push @topic_parts, "Recent user messages:";
-        }
-        for my $i ($start_at .. $#user_messages) {
-            push @topic_parts, "- " . $user_messages[$i];
-        }
-    }
-
-    # Also show what the agent was doing/saying
-    if (@assistant_snippets && @assistant_snippets > 0) {
-        my $last_snippet = $assistant_snippets[-1];
-        push @topic_parts, "";
-        push @topic_parts, "Agent's last message: " . $last_snippet;
-    }
-
-    return undef unless @topic_parts;
-    return join("\n", @topic_parts);
-}
-
-sub _get_todo_recovery_context {
-    my ($session) = @_;
-    
-    return undef unless $session;
-    
-    my $todo_context;
-    eval {
-        require CLIO::Session::TodoStore;
-        my $session_id = $session->can('session_id') ? $session->session_id() : undef;
-        return undef unless $session_id;
-        
-        my $store = CLIO::Session::TodoStore->new(session_id => $session_id);
-        my $todos = $store->read();
-        
-        return undef unless $todos && ref($todos) eq 'HASH' && $todos->{todoList} && @{$todos->{todoList}};
-        
-        my @parts = ("Current task list:");
-        my $in_progress;
-        
-        for my $todo (@{$todos->{todoList}}) {
-            my $status = $todo->{status} || 'not-started';
-            my $title = $todo->{title} || 'Untitled';
-            my $desc = $todo->{description} || '';
-            
-            my $marker = $status eq 'completed' ? '[x]' :
-                         $status eq 'in-progress' ? '[>]' :
-                         $status eq 'blocked' ? '[!]' : '[ ]';
-            
-            push @parts, "$marker #$todo->{id}: $title" . ($desc ? " - $desc" : "");
-            
-            if ($status eq 'in-progress') {
-                $in_progress = $todo;
-            }
-        }
-        
-        if ($in_progress) {
-            push @parts, "";
-            push @parts, "CURRENTLY WORKING ON: #$in_progress->{id} - $in_progress->{title}";
-            if ($in_progress->{description}) {
-                push @parts, "Details: $in_progress->{description}";
-            }
-        }
-        
-        $todo_context = join("\n", @parts);
-    };
-    if ($@) {
-        log_debug('WorkflowOrchestrator', "Could not retrieve todo state for recovery: $@");
-    }
-    
-    return $todo_context;
 }
 
 =head2 _checkpoint_session_progress
@@ -3681,31 +3379,26 @@ sub _checkpoint_session_progress {
             }
         }
 
-        # Include todo state
-        my $todo_ctx = _get_todo_recovery_context($session);
-        if ($todo_ctx) {
-            push @parts, "## Task State";
-            push @parts, $todo_ctx;
-            push @parts, "";
-        }
-
-        # Include git state
-        my $git_ctx = _get_git_recovery_context($session);
-        if ($git_ctx) {
-            push @parts, "## Git State";
-            push @parts, $git_ctx;
-            push @parts, "";
-        }
-
-        # Include current conversation topic
-        if ($messages && @$messages) {
-            my $topic = _extract_conversation_topic($messages);
-            if ($topic) {
-                push @parts, "## Current Discussion";
-                push @parts, $topic;
+        # Include todo state (inline — _get_todo_recovery_context deleted)
+        if ($session && ref($session) && $session->can('state')) {
+            my $session_state = $session->state();
+            my $todos = $session_state->{session_goals} || [];
+            if ($todos && ref($todos) eq 'ARRAY' && @$todos) {
+                push @parts, "## Task State";
+                for my $todo (@$todos) {
+                    next unless ref($todo) eq 'HASH';
+                    my $status = $todo->{status} // 'pending';
+                    my $title  = $todo->{title}  // 'Untitled';
+                    push @parts, "- [$status] $title";
+                }
                 push @parts, "";
             }
         }
+
+        # Git state and conversation topic omitted — the helpers are deleted
+        # and their data is already surfaced via the dynamic userContext
+        # system message, which survives trimming. The checkpoint file is
+        # for out-of-band inspection only.
 
         my $content = join("\n", @parts);
 
@@ -3717,8 +3410,6 @@ sub _checkpoint_session_progress {
         log_debug('WorkflowOrchestrator', "Failed to checkpoint session progress: $@");
     }
 }
-
-=head2 _record_turn_metrics($api_response, $session)
 
 =head2 _render_context_files_for_user_context
 
@@ -3791,110 +3482,6 @@ sub _render_context_files_for_user_context {
         . "Reference these files when relevant to the conversation.\n"
         . "Total estimated tokens: ~$total_tokens\n"
         . $context_content;
-}
-
-=head2 _get_memory_recovery_context
-
-Retrieves stored session progress from memory for context recovery.
-If the orchestrator has been checkpointing progress to session memory,
-this returns the most recent checkpoint.
-
-Arguments:
-- $session: Session object
-
-Returns: String with progress context, or undef if none stored
-
-=cut
-
-sub _get_memory_recovery_context {
-    my ($session) = @_;
-
-    return undef unless $session;
-
-    my $content;
-    eval {
-        my $memory_dir = '.clio/memory';
-        my $progress_file = "$memory_dir/session_progress.md";
-        if (-f $progress_file) {
-            open my $fh, '<:encoding(UTF-8)', $progress_file or return undef;
-            local $/;
-            $content = <$fh>;
-            close $fh;
-            # Only return if not stale (within last 2 hours)
-            my $mtime = (stat($progress_file))[9];
-            if (time() - $mtime > 7200) {
-                log_debug('WorkflowOrchestrator', "Session progress file is stale (> 2h old), skipping");
-                $content = undef;
-            }
-        }
-    };
-    if ($@) {
-        log_debug('WorkflowOrchestrator', "Could not read session progress for recovery: $@");
-    }
-
-    return $content;
-}
-
-=head2 _get_git_recovery_context
-
-Gets lightweight git state for recovery injection: recent commits and current
-working tree status. This prevents the agent from needing to read handoff
-documentation after a context trim to understand what was already committed.
-
-Arguments:
-- $session: Session object (used to find working directory)
-
-Returns: String with git context, or undef if not a git repo or git unavailable
-
-=cut
-
-sub _get_git_recovery_context {
-    my ($session) = @_;
-
-    my $working_dir;
-    eval {
-        $working_dir = $session->{working_directory} if ref($session);
-    };
-    $working_dir ||= '.';
-
-    my @parts = ();
-
-    # Recent commits (last 5) - tells agent what was completed
-    my $log = eval {
-        my $out = '';
-        my $nulldev = $^O eq 'MSWin32' ? 'nul' : '/dev/null';
-        open my $fh, '-|', "git -C \Q$working_dir\E log --oneline -5 2>$nulldev"
-            or return undef;
-        while (<$fh>) { $out .= $_ }
-        close $fh;
-        $out;
-    };
-    if ($log && length($log) > 5) {
-        push @parts, "Recent commits:";
-        push @parts, $log;
-    }
-
-    # Working tree status - tells agent what's modified/staged
-    my $status = eval {
-        my $out = '';
-        my $nulldev = $^O eq 'MSWin32' ? 'nul' : '/dev/null';
-        open my $fh, '-|', "git -C \Q$working_dir\E status --short 2>$nulldev"
-            or return undef;
-        while (<$fh>) { $out .= $_ }
-        close $fh;
-        $out;
-    };
-    if (defined $status) {
-        if (length($status) > 2) {
-            push @parts, "Modified/staged files:";
-            push @parts, $status;
-        } else {
-            push @parts, "Working tree: clean";
-        }
-    }
-
-    return undef unless @parts;
-    return join("\n", @parts);
 }
 
 =head2 _record_turn_metrics($api_response, $session)

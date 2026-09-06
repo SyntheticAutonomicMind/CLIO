@@ -90,25 +90,31 @@ our $VERSION = '1.0.0';
 our $RELEVANCE_THRESHOLD = 5;
 our $MAX_RELEVANT_MEMORIES = 5;
 our $MIN_MEMORY_CONFIDENCE = 0.5;
-our $RECENT_FULL_TURNS = 1;   # always include the latest N turns in full
-our $RECENT_FULL_TURNS_IF_BUDGET = 2;  # include one extra if budget allows
+our $RECENT_FULL_TURNS = 5;   # always include the latest N turns in full
+our $RECENT_FULL_TURNS_IF_BUDGET = 10;  # include up to N extra if budget allows
+
+# Package-level cache for lazy compressed_tail regeneration.
+# Keyed on _compressed_tail_sig($dropped_turns, $active_task).
+my %_compressed_tail_cache;
 
 # Session-length-aware scaling for the recent window. Long sessions
 # benefit from a wider recent window (more cache churn per turn,
-# but better trajectory recall) while short sessions are unchanged
-# (preserve the current 1/2 default). Bands picked empirically from
-# the 2024-message session (2b80d82f) where RECENT=1 leaves the
-# model with 7% of history; RECENT=4 gives 25% before trim.
-# Final word on what the model sees is the proactive trim
-# (MessageValidator::_role_based_tail_walk), which respects the
-# actual context window. These are *targets* the trim works back
-# from, not guarantees.
+# but better trajectory recall) while short sessions keep a minimal
+# window. Bands align with the design spec of "5-10 recent turns":
+#   short (0-30):   3 recent (min_recent floor)
+#   medium (31-100): 5 recent (design default)
+#   long (101-300):  8 recent
+#   very long (301+): 10 recent (hard cap)
+# _select_turns applies a min_recent=3 floor so very short sessions
+# don't get starved of context. The proactive trim
+# (MessageValidator::_role_based_tail_walk) is the final word on
+# what fits the model's context window.
 our $RECENT_SCALING_BANDS = [
     # [max_total_turns, recent_count]
-    [30,   1],   # short sessions: original behavior
-    [100,  2],   # medium: still compact
-    [300,  4],   # long: enough to span a few tasks
-    [1e9,  8],   # very long: hard cap at 8 recent turns
+    [30,   3],   # short sessions: min_recent floor
+    [100,  5],   # medium: design default
+    [300,  8],   # long: wider window for trajectory recall
+    [1e9,  10],  # very long: hard cap at 10
 ];
 
 our $DEFAULT_HISTORY_BUDGET_TOKENS = 8000;
@@ -715,164 +721,47 @@ sub _recent_count_for_turns {
 
 =head2 _select_turns
 
-Pick the anchor turn (first substantive user message), the recent
-turns (latest 1 or 2 full turns), and return the remaining turns as
-dropped for compression.
+Pick the most recent N turns (5 by default, scaling up for long sessions)
+and return the remaining turns as dropped for compression.
 
-Returns ($anchor_arrayref_or_undef, \@recent_turns, \@dropped_turns).
-A "turn" here is the message arrayref produced by L<_split_into_turns>.
+The original task is surfaced via the dynamic userContext (active_task from
+session goals), not via a special anchor turn in the message history. The
+YaRN thread_summary (in the compressed tail) preserves the original request
+via the C<[original]> marker for cross-cycle carryover.
+
+Returns (undef, \@recent_turns, \@dropped_turns). The first element (anchor)
+is always undef in the new pipeline — the active task lives in the dynamic
+userContext.
 
 =cut
 
 sub _select_turns {
     my ($turns, $session, $history, $active_task) = @_;
 
-    # Compute the effective recent-window target from session length.
-    # Short sessions keep the original 1/2 defaults; long sessions
-    # scale up to 4 or 8 recent turns for better trajectory recall.
-    # The proactive trim (MessageValidator) is the final word on
-    # what fits the model's context window.
     my $total_turns = scalar(@$turns);
+    return (undef, [], []) if $total_turns == 0;
+
     my $recent_target = _recent_count_for_turns($total_turns);
-    my $recent_if_budget = $recent_target + 1;
-
-    # Anchor selection: first user message with >=50 chars content
-    # (matches YaRN::find_substantive_task threshold). Fall back to
-    # the first user message if none meets the threshold. Fall back
-    # to YaRN's find_substantive_task if the source history has no
-    # substantive user message.
-    my $anchor_idx;
-    for my $i (0 .. $#$turns) {
-        my $turn = $turns->[$i];
-        for my $msg (@$turn) {
-            if (($msg->{role} // '') eq 'user') {
-                my $content = $msg->{content} // '';
-                if (length($content) >= 50) {
-                    $anchor_idx = $i;
-                    last;
-                }
-            }
-        }
-        last if defined $anchor_idx;
-    }
-
-    # If no turn had a substantive (>=50 char) user message, the
-    # anchor would be a continuation prompt like "continue" or "go on".
-    # That's not a useful task anchor. Recover the original task from
-    # YaRN's durable thread (which is never trimmed by context trimming)
-    # and synthesize a one-message anchor turn from it. If YaRN also
-    # can't recover, fall back to the first user message we have -
-    # even a short continuation prompt is better than no anchor.
-    if (!defined $anchor_idx && $session) {
-        my $recovered = CLIO::Memory::YaRN::recover_substantive_task($session);
-        if (length $recovered) {
-            my $sanitized = $recovered;
-            if (eval { require CLIO::Util::TextSanitizer; 1 }) {
-                $sanitized = CLIO::Util::TextSanitizer::sanitize_text($recovered, mode => 'model_safe');
-                $sanitized //= $recovered;
-            }
-            push @$turns, [ { role => 'user', content => $sanitized } ];
-            $anchor_idx = scalar(@$turns) - 1;
-        }
-    }
-
-    # Last-resort anchor: pick the first user message we have, even if
-    # it is a short continuation prompt. Without this, the projection
-    # would have no anchor and the dynamic userContext would be the
-    # only sense of "what are we doing" - bad when the model has lost
-    # its place.
-    if (!defined $anchor_idx) {
-        for my $i (0 .. $#$turns) {
-            my $turn = $turns->[$i];
-            for my $msg (@$turn) {
-                if (($msg->{role} // '') eq 'user') {
-                    $anchor_idx = $i;
-                    last;
-                }
-            }
-            last if defined $anchor_idx;
-        }
-    }
-
-    my $anchor = defined $anchor_idx ? [ @{$turns->[$anchor_idx]} ] : undef;
-
-    # Cap the anchor turn size and preserve the trimmed portion in
-    # the compressed_tail instead of silently dropping it (BUG #1
-    # fix from QA review 2026-09-02).
-    #
-    # Threshold: cap at MAX_ANCHOR_MESSAGES messages. 8 is enough
-    # to carry the original user + first assistant + first tool
-    # call + first tool result + a few follow-up assistant turns.
-    my $anchor_trimmed_tail;  # synthetic turn for compressed_tail
-    my $MAX_ANCHOR_MESSAGES = 8;
-    if (ref($anchor) eq 'ARRAY' && @$anchor > $MAX_ANCHOR_MESSAGES) {
-        my @trimmed_anchor;
-        for my $i (0 .. $#$anchor) {
-            last if @trimmed_anchor >= $MAX_ANCHOR_MESSAGES;
-            push @trimmed_anchor, $anchor->[$i];
-        }
-        # Capture the trimmed portion as a synthetic turn. We don't
-        # push it onto @$turns (that would confuse the recent/dropped
-        # index bookkeeping below); instead we append it to @dropped
-        # directly after @dropped is assembled.
-        $anchor_trimmed_tail = [@{$anchor}[$MAX_ANCHOR_MESSAGES .. $#$anchor]];
-
-        my $orig_count = scalar @$anchor;
-        $anchor = \@trimmed_anchor;
-        log_debug('ContextBuilder',
-            "Capped anchor turn: $orig_count -> " . scalar(@$anchor)
-            . " messages (trimmed portion queued for compressed_tail)");
-    }
-
-    # Recent turns: latest $RECENT_FULL_TURNS turns, plus optionally one
-    # extra if budget allows. We don't budget-check here - the caller
-    # passes a soft budget, MessageValidator::_role_based_tail_walk is
-    # the safety net for actual over-budget situations.
-    my @recent = ();
     my $recent_count = $recent_target;
-    for my $i (reverse 0 .. $#$turns) {
-        next if defined $anchor_idx && $i == $anchor_idx;
-        last if @recent >= $recent_count;
-        unshift @recent, $turns->[$i];
-    }
 
-    # Optionally include the second-to-last turn if there is room.
-    # Earlier versions took a $budget_tokens hint here but it was
-    # never used (the budget check lives in MessageValidator's
-    # _role_based_tail_walk). Drop the dead positional argument.
-    if ($recent_count == $recent_target
-        && @$turns > 1
-        && @recent < $recent_if_budget) {
-        # Pick the second-to-last turn that isn't anchor
-        for my $i (reverse 0 .. $#$turns) {
-            next if defined $anchor_idx && $i == $anchor_idx;
-            next if grep { $_ == $turns->[$i] } @recent;
-            unshift @recent, $turns->[$i];
-            last;
-        }
-    }
+    # Keep at most $recent_target recent turns (min 3 to preserve some history).
+    # The proactive trim (_role_based_tail_walk) is the final word on what
+    # fits the model's context window.
+    my $min_recent = 3;
+    $recent_count = $min_recent if $recent_count < $min_recent;
+    $recent_count = $total_turns if $recent_count > $total_turns;
 
-    # Everything else is "dropped" for compression
+    # Select the last $recent_count turns as "recent" (cache-stable prefix).
+    my $start_idx = $total_turns - $recent_count;
+    my @recent = @$turns[$start_idx .. $#$turns];
+
+    # Everything before the recent window is "dropped" for compression.
     my @dropped;
-    my %kept_idx;
-    for my $t (@recent) {
-        # Find the index of $t in @$turns so we can mark it kept.
-        for my $i (0 .. $#$turns) {
-            if ($turns->[$i] == $t) { $kept_idx{$i} = 1; last; }
-        }
+    if ($start_idx > 0) {
+        @dropped = @{$turns}[0 .. ($start_idx - 1)];
     }
-    $kept_idx{$anchor_idx} = 1 if defined $anchor_idx;
-    for my $i (0 .. $#$turns) {
-        push @dropped, $turns->[$i] unless $kept_idx{$i};
-    }
-    # BUG #1 fix: append the anchor's trimmed portion (if any) to
-    # the dropped list so _build_compressed_tail surfaces it in the
-    # "Earlier work" section. Without this, the messages past the
-    # anchor cap silently disappear - a 95-message anchor turn loses
-    # messages 9..95 (the model's final summary on the original task).
-    push @dropped, $anchor_trimmed_tail if $anchor_trimmed_tail;
 
-    return ($anchor, \@recent, \@dropped);
+    return (undef, \@recent, \@dropped);
 }
 
 =head2 _build_compressed_tail
@@ -906,13 +795,18 @@ sub _build_compressed_tail {
 
     return '' unless $dropped_turns && @$dropped_turns;
 
+    # Lazy regeneration: cache the compressed tail keyed on a signature
+    # of the dropped turns + active_task. If the inputs are unchanged,
+    # reuse the cached result (deterministic — same inputs produce same
+    # output from compress_for_context_recovery).
+    my $sig = _compressed_tail_sig($dropped_turns, $active_task);
+    if (exists $_compressed_tail_cache{$sig}) {
+        log_debug('ContextBuilder', "Reusing cached compressed_tail (sig=$sig)");
+        return $_compressed_tail_cache{$sig};
+    }
+
     # Pre-filter: drop the obvious continuation prompts ("continue",
-    # "ok", "y", etc.) before handing to YaRN. YaRN doesn't filter
-    # these by default, but the test_compressed_tail_filter test
-    # expects the dropped-tail section to be free of pure-continuation
-    # noise (long sessions used to render as "User: continue. |
-    # continue. | continue. ..." which is useless to the model and
-    # wastes budget).
+    # "ok", "y", etc.) before handing to YaRN.
     my @flat_msgs;
     for my $turn (@$dropped_turns) {
         for my $msg (@$turn) {
@@ -928,50 +822,61 @@ sub _build_compressed_tail {
     # Try YaRN compression first.
     my $yarn_out = _yarn_compress_dropped(\@flat_msgs, $active_task);
 
-    # Cap parameters. These bound the worst-case size of the
-    # # Earlier work section regardless of how many turns were
-    # dropped. The anchor + recent turns already carry the most
-    # important content.
-    my $MAX_USER_MESSAGES = 3;
-    my $MAX_ASSISTANT_MESSAGES = 3;
-    my $MAX_USER_CHARS = 120;     # per user message
-    my $MAX_ASSISTANT_CHARS = 120; # per assistant message
-    my $OVERALL_CAP = 900;        # hard cap on the whole section
+    # Cap parameters so the compressed tail cannot balloon the dynamic
+    # userContext budget on a session with hundreds of dropped turns.
+    my $OVERALL_CAP = 900;
 
     my $tail;
     if (defined $yarn_out && length $yarn_out) {
-        # YaRN path: use the compressed output as-is (with a safety
-        # cap so a session with hundreds of dropped turns doesn't
-        # blow the dynamic UC budget).
         $tail = $yarn_out;
         if (length($tail) > $OVERALL_CAP) {
             $tail = _truncate($tail, $OVERALL_CAP);
             $tail .= '...';
         }
     } else {
-        # Fallback: template-based joiner. Used when YaRN is
-        # unavailable (it shouldn't be - the module is always
-        # loaded) or returns empty (the pre-filter ate everything).
+        # Fallback: template-based joiner (when YaRN unavailable or
+        # pre-filter ate everything).
         $tail = _build_compressed_tail_template(
-            $dropped_turns, $MAX_USER_MESSAGES, $MAX_ASSISTANT_MESSAGES,
-            $MAX_USER_CHARS, $MAX_ASSISTANT_CHARS, $OVERALL_CAP,
+            $dropped_turns, 3, 3, 120, 120, $OVERALL_CAP,
         );
     }
+
+    # Cache the result for lazy regeneration.
+    $_compressed_tail_cache{$sig} = $tail;
 
     return $tail;
 }
 
+# Compute a cache signature from the dropped turns + active_task.
+# Uses truncated content to keep the key short.
+sub _compressed_tail_sig {
+    my ($dropped_turns, $active_task) = @_;
+    my $sig = 't' . scalar(@$dropped_turns) . ':';
+    for my $turn (@$dropped_turns) {
+        next unless ref($turn) eq 'ARRAY';
+        $sig .= scalar(@$turn) . '|' if @$turn;
+        for my $msg (@$turn) {
+            next unless ref($msg) eq 'HASH';
+            $sig .= substr($msg->{content} // '', 0, 40);
+        }
+        $sig .= ',';
+    }
+    $sig .= ':' . substr($active_task // '', 0, 40);
+    return $sig;
+}
+
 # YaRN-backed compression. Takes a flat message array (the same
 # shape YaRN::compress_messages expects) and an optional task hint,
-# returns a thread_summary string with the XML wrapper tags stripped,
-# or undef if the result is empty / YaRN is unavailable.
+# calls compress_for_context_recovery (which extracts previous_summary
+# from any <thread_summary> blocks in the array for cross-cycle carryover),
+# and returns a thread_summary string with the XML wrapper tags stripped
+# and NO framework narration. Returns undef if the result is empty /
+# YaRN is unavailable.
 sub _yarn_compress_dropped {
     my ($flat_msgs, $active_task) = @_;
 
     return undef unless $flat_msgs && @$flat_msgs;
 
-    # YaRN expects a class instance or the package name. Use the
-    # package method form to avoid storing an instance on $self.
     my $yarn;
     eval {
         require CLIO::Memory::YaRN;
@@ -980,7 +885,9 @@ sub _yarn_compress_dropped {
     return undef if $@ || !$yarn;
 
     my $compressed = eval {
-        $yarn->compress_messages($flat_msgs, original_task => ($active_task // ''));
+        $yarn->compress_for_context_recovery($flat_msgs,
+            original_task => ($active_task // ''),
+        );
     };
     return undef if $@ || !$compressed || !ref($compressed);
 
@@ -993,7 +900,7 @@ sub _yarn_compress_dropped {
     $content =~ s/\s+$//;
     return undef unless length $content;
 
-    return "Earlier work in this session (YaRN-compressed; anchor + recent turns above carry the active work):\n$content";
+    return $content;
 }
 
 # Legacy template-based fallback. Preserved for the case where YaRN

@@ -159,7 +159,7 @@ subtest 'YaRN::recover_substantive_task: handles missing session' => sub {
     is($recovered, '', 'returns empty string for undef session');
 };
 
-subtest 'ContextBuilder: anchor recovery when history is empty' => sub {
+subtest 'ContextBuilder: empty history with session (no anchor, task via active_task)' => sub {
     my $yarn = MockYaRNForAnchor->new(
         threads => {
             'sess-rec' => [
@@ -173,7 +173,7 @@ subtest 'ContextBuilder: anchor recovery when history is empty' => sub {
     my $proj = CLIO::Core::ContextBuilder::build_projection(
         history       => [],
         user_input    => 'how is it going?',
-        active_task   => '',
+        active_task   => 'Build a new feature X that does Y and Z for the customer use case',
         active_todos  => [],
         ltm           => [],
         unresolved    => [],
@@ -181,11 +181,9 @@ subtest 'ContextBuilder: anchor recovery when history is empty' => sub {
         session       => $sess,
     );
 
-    ok(defined $proj->{anchor}, 'anchor was recovered from YaRN thread');
-    is(ref($proj->{anchor}), 'ARRAY', 'anchor is an arrayref');
-    is(scalar(@{ $proj->{anchor} }), 1, 'synthetic anchor has one message');
-    like($proj->{anchor}[0]{content}, qr/Build a new feature/,
-        'synthetic anchor contains the recovered task text');
+    # No separate anchor — active task is in the dynamic userContext.
+    is($proj->{anchor}, undef, 'no anchor (active task via dynamic userContext)');
+    ok(scalar(@{$proj->{turns}}) == 0, 'no recent turns for empty history');
 };
 
 subtest 'ContextBuilder: no session means no anchor recovery' => sub {
@@ -233,24 +231,22 @@ subtest 'cross-turn dedup: identical tool + continuation prompt' => sub {
     );
 
     # Cross-turn dedup collapses the second (continuation-prompt) turn
-    # into the first (anchor) turn. Both are identical-tool-call turns.
-    # The dedup's chain is [anchor_turn, recent_turn]; after dedup it's
-    # [anchor_turn] with the anchor's tool message marked _repeats=2.
-    # Then build_projection splits chain[1..] as recent turns, which
-    # is now empty. So $proj->{turns} is empty; the dedup marker lives
-    # on the anchor's tool message instead.
-    is(scalar(@{$proj->{turns}}), 0,
-        'cross-turn dedup collapses identical tool calls into the anchor (recent becomes empty)');
+    # into the first. Both are identical-tool-call turns. With no
+    # anchor concept, both turns are "recent" and the dedup chain is
+    # [turn1, turn2]; after dedup it's [turn1] with the tool message
+    # marked _repeats=2. build_projection splits the deduped chain
+    # as recent turns, so $proj->{turns} has 1 turn with _repeats.
+    is(scalar(@{$proj->{turns}}), 1,
+        'cross-turn dedup collapses identical tool calls (1 recent turn with _repeats)');
 
-    # The anchor's tool message should have _repeats=2.
-    my $anchor = $proj->{anchor};
+    # The collapsed tool message should have _repeats=2.
     my $tool_msg;
-    for my $m (@$anchor) {
+    for my $m (@{$proj->{turns}[0]}) {
         $tool_msg = $m if ($m->{role} // '') eq 'tool';
     }
-    ok($tool_msg, 'anchor has a tool message');
+    ok($tool_msg, 'recent turn has a tool message');
     is($tool_msg->{_repeats} // 1, 2,
-        'anchor tool message has _repeats=2 marking the dedup');
+        'tool message has _repeats=2 marking the dedup');
 };
 
 subtest 'cross-turn dedup: non-continuation user message preserves both' => sub {
@@ -282,12 +278,10 @@ subtest 'cross-turn dedup: non-continuation user message preserves both' => sub 
 
     # "What other files are in there?" is a real question (contains
     # "what"), so the second turn's user message is NOT a continuation
-    # prompt. The dedup should NOT collapse the second turn into the
-    # anchor. With RECENT_FULL_TURNS=1 the recent array has at most
-    # 1 turn, so we expect 1 (the latest, non-anchor turn) - the test
-    # verifies the dedup didn't EMPTY the recent array by collapsing.
-    is(scalar(@{$proj->{turns}}), 1,
-        'non-continuation user message preserves recent turn (no false dedup)');
+    # prompt. The dedup should NOT collapse. With no anchor concept,
+    # both turns are recent and both survive.
+    is(scalar(@{$proj->{turns}}), 2,
+        'non-continuation user message preserves both turns (no false dedup)');
 };
 
 subtest 'cross-turn dedup: different result keeps both' => sub {
@@ -318,10 +312,9 @@ subtest 'cross-turn dedup: different result keeps both' => sub {
     );
 
     # Different result content means the dedup signature differs and
-    # the recent turn survives. With RECENT_FULL_TURNS=1 we expect
-    # 1 turn in recent (the latest non-anchor turn).
-    is(scalar(@{$proj->{turns}}), 1,
-        'different result keeps recent turn (no false dedup)');
+    # the turn survives. With no anchor concept, both turns are recent.
+    is(scalar(@{$proj->{turns}}), 2,
+        'different result keeps both turns (no false dedup)');
 };
 
 subtest 'cross-turn dedup: different tool name keeps both' => sub {
@@ -351,10 +344,10 @@ subtest 'cross-turn dedup: different tool name keeps both' => sub {
         budget_tokens => 8000,
     );
 
-    # Different tool name = different signature = no dedup. The recent
-    # turn survives.
-    is(scalar(@{$proj->{turns}}), 1,
-        'different tool name keeps recent turn');
+    # Different tool name = different signature = no dedup. Both turns
+    # survive (no anchor concept — all turns are recent).
+    is(scalar(@{$proj->{turns}}), 2,
+        'different tool name keeps both turns');
 };
 
 subtest 'cross-turn dedup: 3 identical continuation prompts collapse to 1' => sub {
@@ -391,19 +384,21 @@ subtest 'cross-turn dedup: 3 identical continuation prompts collapse to 1' => su
         budget_tokens => 8000,
     );
 
-    # 3 continuation retries collapse into the anchor (which is the
-    # only turn). The anchor's tool message gets _repeats=3.
-    is(scalar(@{$proj->{turns}}), 0,
-        '3 continuation retries collapsed into anchor (recent becomes empty)');
+    # 3 continuation retries collapse into 1. With no anchor concept,
+    # all 3 turns are recent and the chain is [turn1, turn2, turn3].
+    # Dedup collapses turns 2 and 3 into turn 1 (same signature +
+    # continuation prompt), leaving 1 recent turn with _repeats=3.
+    is(scalar(@{$proj->{turns}}), 1,
+        '3 continuation retries collapsed to 1 turn');
 
-    my $anchor = $proj->{anchor};
+    # The surviving tool message should have _repeats=3.
     my $tool_msg;
-    for my $m (@$anchor) {
+    for my $m (@{$proj->{turns}[0]}) {
         $tool_msg = $m if ($m->{role} // '') eq 'tool';
     }
-    ok($tool_msg, 'anchor has a tool message');
+    ok($tool_msg, 'recent turn has a tool message');
     is($tool_msg->{_repeats} // 1, 3,
-        'anchor tool message has _repeats=3 (three retries collapsed)');
+        'tool message has _repeats=3 (three retries collapsed)');
 };
 
 # ===========================================================================

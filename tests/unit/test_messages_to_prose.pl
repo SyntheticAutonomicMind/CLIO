@@ -76,7 +76,7 @@ ok(defined $prose && length($prose), 'messages_to_prose returns non-empty string
 # dynamic-only test ensures we don't accidentally regress to
 # rendering stable content as prose (which would invalidate the
 # cache-stable prefix design).
-like($prose, qr/# Environment\n/, 'starts with # Environment (dynamic-only renderer)');
+like($prose, qr/Working directory:/, 'starts with working directory (dynamic-only renderer, no # headers)');
 
 # ---------------------------------------------------------------------------
 # 2. No XML tags
@@ -146,9 +146,9 @@ unlike($prose, qr/^# Task\n/, 'does NOT render # Task (stable content pushed as 
 unlike($prose, qr/# Recent work/, 'does NOT render # Recent work (stable content pushed as role-based messages)');
 unlike($prose, qr/## Turn 1\n/, 'does NOT render per-turn prose blocks (role-based messages do this)');
 unlike($prose, qr/User: Fix the qa-messageHistory-fix bug/, 'does NOT render anchor user content as prose');
-like($prose, qr/# Active todos\n/, '# Active todos section present');
+like($prose, qr/Active todos:\n/, 'Active todos section present (natural prose, no # header)');
 like($prose, qr/- \[in_progress\] verify prose rendering\b/, 'todo rendered with status only (no internal id)');
-like($prose, qr/# Environment\n/, '# Environment section present');
+like($prose, qr/Working directory:/, '# Environment section present (natural prose, no # header)');
 like($prose, qr/Working directory: /, 'environment has working directory');
 like($prose, qr/Language: /, 'environment has language');
 like($prose, qr/Date: \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/, 'environment has ISO timestamp');
@@ -179,7 +179,7 @@ unlike($p1, qr/^# Task\b/m, 'Prose renderer does NOT emit # Task (now role-based
 unlike($p1, qr/^# Recent work\b/m, 'Prose renderer does NOT emit # Recent work (now role-based)');
 unlike($p1, qr/Tool call:/, 'Prose renderer does NOT render tool calls (now role-based)');
 unlike($p1, qr/Args: /, 'Prose renderer does NOT render tool args (now role-based)');
-like($p1, qr/# Environment/, 'Prose renderer still emits # Environment');
+like($p1, qr/Working directory:/, 'Prose renderer emits environment as natural prose (no # header)');
 
 # ---------------------------------------------------------------------------
 # 8. Tool result truncation

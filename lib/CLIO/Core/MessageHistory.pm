@@ -175,14 +175,21 @@ sub messages_to_prose {
 
 =head2 messages_to_prose_dynamic
 
-Render only the dynamic portions of a projection: # Earlier work
-(compressed tail), # Active task, # Active todos, # Unresolved state,
-# Relevant memory, # Environment, and the [CONTEXT FILES] block.
+Render only the dynamic portions of a projection as natural prose:
+active task, active todos, unresolved state, relevant memory (without
+confidence scores), environment (working directory first), and context
+files. No C<//> section headers, no confidence scores, no framework
+instructions (e.g. "call memory_operations...").
+
+The compressed tail (YaRN summary of dropped turns) is rendered as-is
+— it already contains its own section labels (Commits, Files, etc.)
+from YaRN.
+
 Returns content that churns between turns (datetime_iso, todo
 mutations, LTM rescore, environment changes). WorkflowOrchestrator
-uses this as a single system message that sits AFTER the
-role-based history in the messages array, so its churn does not
-invalidate the cache-stable prefix.
+uses this as a single system message that sits AFTER the role-based
+history in the messages array, so its churn does not invalidate the
+cache-stable prefix.
 
 Arguments:
 - $projection: Hashref from L<CLIO::Core::ContextBuilder/build_projection>
@@ -200,40 +207,30 @@ sub messages_to_prose_dynamic {
     # dynamic userContext cannot balloon the prompt budget on
     # iteration 1 (where no proactive trim runs). 200 todos x 500
     # chars used to produce ~22K tokens of dynamic UC content.
-    #
-    # Tunables chosen so the model still sees enough context to keep
-    # its place but the worst-case dynamic UC stays bounded:
-    #   - 10 todos x 200 chars   = 2K chars (~500 tokens)
-    #   - 5 LTM x 500 chars each = 2.5K chars (~625 tokens)
-    #   - 5 unresolved x 200 chars = 1K chars (~250 tokens)
-    # All caps are inclusive - the Nth entry IS rendered, the
-    # (N+1)th is dropped. The "and N more" hint preserves awareness
-    # of items beyond the cap.
     my $MAX_TODOS = 10;
     my $MAX_TODO_CHARS = 200;
-    my $MAX_LTM_ENTRIES = 5;       # also capped upstream by MAX_RELEVANT_MEMORIES
+    my $MAX_LTM_ENTRIES = 5;
     my $MAX_LTM_CHARS = 500;
-    my $MAX_UNRESOLVED = 5;        # also capped upstream at 10
+    my $MAX_UNRESOLVED = 5;
     my $MAX_UNRESOLVED_CHARS = 200;
 
     my $out = '';
 
-    # Compressed tail: the YaRN-compressed summary of dropped turns.
-    # Only present when budget pressure caused older turns to be
-    # collapsed. Considered dynamic for cache purposes because it
-    # changes whenever budget pressure triggers new compression.
-    if (my $tail = $projection->{compressed_tail}) {
-        $out .= "# Earlier work\n" . $tail . "\n\n";
+    # Lead with operationally-critical fields (working directory first).
+    if (my $env = $projection->{environment}) {
+        if (ref($env) eq 'HASH' && %$env) {
+            $out .= "Working directory: " . ($env->{working_directory} // 'unknown') . "\n";
+            $out .= "Language: " . ($env->{language} // 'English') . "\n";
+            $out .= "Date: " . ($env->{datetime_iso} // scalar(localtime)) . "\n\n";
+        }
     }
 
-    # Active task: from session_goals (the first substantive user
-    # message is already shown above under # Task; this adds the
-    # active session goal description if different).
+    # Active task.
     if (my $task = $projection->{active_task}) {
-        $out .= "# Active task\n" . $task . "\n\n";
+        $out .= "Active task: " . _truncate_dynamic_uc($task, 300) . "\n\n";
     }
 
-    # Active todos: structured checklist with status.
+    # Active todos: checklist with status.
     if (my $todos = $projection->{active_todos}) {
         my @rendered;
         my $todo_count = 0;
@@ -243,15 +240,11 @@ sub messages_to_prose_dynamic {
             my $status = $todo->{status} // 'pending';
             my $content = $todo->{content} // '';
             $content = _truncate_dynamic_uc($content, $MAX_TODO_CHARS);
-            # Drop the internal todo id from the prose - it is
-            # framework bookkeeping for the todo_operations tool,
-            # not something the model needs to read or remember.
-            # The model only needs to see status + content.
             push @rendered, "- [$status] $content";
             $todo_count++;
         }
         if (@rendered) {
-            $out .= "# Active todos\n" . join("\n", @rendered) . "\n\n";
+            $out .= "Active todos:\n" . join("\n", @rendered) . "\n\n";
             if (scalar(@$todos) > $todo_count) {
                 $out .= sprintf("...and %d more (use todo_operations to read full list)\n\n",
                     scalar(@$todos) - $todo_count);
@@ -270,69 +263,41 @@ sub messages_to_prose_dynamic {
             $unres_count++;
         }
         if (@rendered) {
-            $out .= "# Unresolved state\n" . join("\n", @rendered) . "\n\n";
+            $out .= "Unresolved:\n" . join("\n", @rendered) . "\n\n";
         }
     }
 
-    # Relevant memory: top-scored LTM entries with confidence in parens.
-    # When LTMs exist but none passed the relevance threshold, render
-    # an explicit "no auto-surfaced memories" hint + the on-demand
-    # search affordance so the model knows it can still query.
+    # Relevant memory: top-scored LTM entries. NO confidence scores,
+    # NO framework instructions ("call memory_operations..."). The
+    # model just sees the facts — it knows from the system prompt
+    # that memory_operations exists.
     my $relevant = $projection->{relevant_memory};
-    my $ltm_total = $projection->{ltm_total_count};
     if ($relevant && @$relevant) {
         my @rendered;
         my $mem_count = 0;
         for my $mem (@$relevant) {
             last if $mem_count >= $MAX_LTM_ENTRIES;
-            my $conf = $mem->{confidence} // 0;
             my $content = $mem->{content} // '';
             $content = _truncate_dynamic_uc($content, $MAX_LTM_CHARS);
-            push @rendered, sprintf("- (%.2f) %s", $conf, $content);
+            push @rendered, "- $content";
             $mem_count++;
         }
-        $out .= "# Relevant memory\n" . join("\n", @rendered) . "\n";
-        # On-demand search affordance. The literal tool name is hard-
-        # coded here (NOT run through sanitize_narration) so the model
-        # sees the real tool name and can use it. Uses [keyword]
-        # placeholder instead of <keyword> so the prose doesn't
-        # contain XML-like delimiters that the prose-vs-XML assertions
-        # confuse with real XML.
-        if (defined $ltm_total && $ltm_total > $mem_count) {
-            $out .= sprintf(
-                "(%d more memories available - call memory_operations(operation: \"search\", query: \"[keyword]\") to retrieve)\n\n",
-                $ltm_total - $mem_count);
-        } else {
-            $out .= "\n";
+        if (@rendered) {
+            $out .= "Relevant memory:\n" . join("\n", @rendered) . "\n\n";
         }
-    } elsif (defined $ltm_total && $ltm_total > 0) {
-        # No memories met the threshold but LTM is non-empty. Tell the
-        # model how to query on demand so it doesn't assume LTM is empty.
-        $out .= "# Relevant memory\n";
-        $out .= sprintf("(no memories met the relevance threshold; %d available - call memory_operations(operation: \"search\", query: \"[keyword]\") to retrieve)\n\n",
-            $ltm_total);
     }
 
-    # Environment: working directory, language, date/time.
-    # The timestamp moves every minute; this section is NOT part of
-    # the cache-stable prefix. It sits at the end so its churn doesn't
-    # invalidate earlier blocks.
-    if (my $env = $projection->{environment}) {
-        if (ref($env) eq 'HASH' && %$env) {
-            $out .= "# Environment\n";
-            $out .= "Working directory: " . ($env->{working_directory} // 'unknown') . "\n";
-            $out .= "Language: " . ($env->{language} // 'English') . "\n";
-            $out .= "Date: " . ($env->{datetime_iso} // scalar(localtime)) . "\n\n";
-        }
+    # Compressed tail: the YaRN-compressed summary of dropped turns.
+    # Only present when budget pressure caused older turns to be
+    # collapsed. Rendered as-is (YaRN output has its own section
+    # labels). No framing narration.
+    if (my $tail = $projection->{compressed_tail}) {
+        $out .= $tail . "\n\n";
     }
 
     # Context files: pre-rendered block of file contents added via
-    # /context add. The caller (WorkflowOrchestrator) renders the
-    # block once per turn via _render_context_files_for_user_context
-    # and passes it through the projection as context_files_block.
-    # Placed after Environment so its content churn (file contents
-    # changing) does not invalidate the cache-stable prefix blocks
-    # above.
+    # /context add. Placed last so its content churn (file contents
+    # changing) does not invalidate the cache-stable blocks above.
     if (my $cf_block = $projection->{context_files_block}) {
         if (length $cf_block) {
             $out .= $cf_block;
@@ -342,22 +307,6 @@ sub messages_to_prose_dynamic {
 
     return $out;
 }
-
-=head2 _render_prose_turn_messages
-
-Render a single turn's worth of messages as prose. A turn is an
-arrayref of role-based messages starting with a user message.
-
-Tool calls become a delimited block:
-
-    Tool call: <name> (called <K> times, identical args and results)
-      Args: <json>
-      Result: <text>
-
-When the projection carries collapse metadata (a C<_repeats> field on
-the tool result), the count is rendered in the prose header.
-
-=cut
 
 =head2 _truncate_dynamic_uc
 
@@ -375,27 +324,6 @@ sub _truncate_dynamic_uc {
     my $truncated = substr($text, 0, $max);
     # Strip the trailing partial word so the model doesn't see a
     # half-word at the cut point (which it would try to "fix").
-    $truncated =~ s/\s+\S*$//;
-    return $truncated . '...';
-}
-
-sub _render_prose_turn_messages {
-    # DELETED in this commit. The role-based history refactor
-    # pushed anchor + recent turns as role-based messages instead of
-    # as prose, so this renderer has no callers. If you need to
-    # inspect the rendered form of a role-based turn for debugging,
-    # use WorkflowOrchestrator's actual message array (see
-    # _build_turn_context) rather than re-deriving it from scratch.
-    return '';
-}
-
-sub _truncate_prose {
-    # DELETED in this commit alongside _render_prose_turn_messages.
-    # No callers remain.
-    my ($text, $max) = @_;
-    return '' unless defined $text;
-    return $text unless length($text) > $max;
-    my $truncated = substr($text, 0, $max);
     $truncated =~ s/\s+\S*$//;
     return $truncated . '...';
 }

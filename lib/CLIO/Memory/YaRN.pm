@@ -648,7 +648,7 @@ sub _parse_previous_summary {
         }
     }
     
-    if ($summary_text =~ /(?:^|\n)Tool usage:\n((?:- [^\n]+\n)+)/) {
+    if ($summary_text =~ /(?:^|\n)(?:Tool usage|Tools):\n((?:- [^\n]+\n)+)/) {
         my $block = $1;
         while ($block =~ /^- ([^:]+):\s*(\d+)\s*calls?$/mg) {
             $tool_counts->{$1} = ($tool_counts->{$1} || 0) + $2;
@@ -676,6 +676,92 @@ sub _parse_previous_summary {
                      + scalar(keys %$tool_counts) + scalar(@$user_requests)
                      + scalar(@$collaboration_exchanges);
     log_debug('YaRN', "Parsed $parsed_items items from previous summary") if $parsed_items;
+}
+
+=head2 compress_for_context_recovery
+
+Unified entry point for all context compression paths (proactive trim,
+session trim, recovery, projection). Extracts the most recent
+C<< <thread_summary> >> block from the message array — if present —
+and passes it as C<previous_summary> to L</compress_messages>, enabling
+cross-cycle carryover.
+
+The caller should pass the messages that are being compressed (the
+"dropped" set). If those messages include a prior thread_summary
+system message, its content is harvested for carryover and the message
+itself is filtered out before compression so it is not double-counted.
+
+Arguments:
+- C<$messages> : ArrayRef of message hashes to compress
+- C<%opts>      : Optional parameters
+  * C<original_task>   : Most recent user message text (for current task context)
+  * C<previous_summary>: Pre-extracted summary text. When provided,
+    overrides the internal scan. Callers use this when the summary
+    lives in the *kept* (non-dropped) set.
+
+Returns: Hashref as from L</compress_messages>
+
+    my $result = $yarn->compress_for_context_recovery(\@dropped, original_task => $task);
+
+=cut
+
+sub compress_for_context_recovery {
+    my ($self, $messages, %opts) = @_;
+
+    return unless $messages && ref($messages) eq 'ARRAY' && @$messages;
+
+    # Extract previous_summary — prefer an explicit opt, otherwise
+    # scan the message array for system messages containing a
+    # <thread_summary> block.
+    my $previous_summary = $opts{previous_summary};
+    unless (defined $previous_summary && length $previous_summary) {
+        $previous_summary = $self->_extract_thread_summary_from_messages($messages);
+    }
+
+    # Filter out old thread_summary system messages so they are not
+    # processed as regular content during compression (system messages
+    # are skipped by compress_messages' role loop anyway, but filtering
+    # avoids inflating the compressed_count / token estimate).
+    my @compress_msgs = grep {
+        my $m = $_;
+        !(ref($m) eq 'HASH'
+          && ($m->{role} // '') eq 'system'
+          && ($m->{content} // '') =~ /<thread_summary>/);
+    } @$messages;
+
+    return $self->compress_messages(\@compress_msgs,
+        previous_summary => $previous_summary,
+        original_task    => $opts{original_task} || '',
+    );
+}
+
+=head2 _extract_thread_summary_from_messages (Internal)
+
+Scan a message array (newest-last) in reverse for system messages
+whose content contains a C<< <thread_summary> >> block. Returns the
+content of the most recent such block (including the tags), or an
+empty string when none is found.
+
+This is the carryover mechanism that lets C<compress_for_context_recovery>
+find a summary injected by a previous trim cycle — even when the
+summary lives in the "dropped" set that was passed in for compression.
+
+=cut
+
+sub _extract_thread_summary_from_messages {
+    my ($self, $messages) = @_;
+
+    return '' unless $messages && ref($messages) eq 'ARRAY';
+
+    for my $msg (reverse @$messages) {
+        next unless ref($msg) eq 'HASH';
+        next unless ($msg->{role} // '') eq 'system';
+        my $content = $msg->{content} || '';
+        if ($content =~ /<thread_summary>.*?<\/thread_summary>/s) {
+            return $content;
+        }
+    }
+    return '';
 }
 
 1;
