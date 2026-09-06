@@ -573,7 +573,7 @@ subtest 'non-actionable errors skip routing entirely' => sub {
 # Phase 2: all-providers rate-limited optimization
 # =============================================================================
 
-subtest 'all-providers rate-limited jumps to soonest-expiring' => sub {
+subtest 'all-providers rate-limited jumps to soonest-expiring (excludes current)' => sub {
     my $dir = "/tmp/clio-test-rl-allproviders";
     `rm -rf $dir`;
 
@@ -594,19 +594,19 @@ subtest 'all-providers rate-limited jumps to soonest-expiring' => sub {
     my $session = { routing_attempts => 0 };
     my $on_system_message = sub { push @sys_msgs, $_[0]; };
 
-    # Pre-populate ALL three providers as rate-limited, with kilo expiring
-    # soonest (1s), openrouter next (2s), vercel last (3s).
+    # Pre-populate kilo and vercel with rate limit cooldowns.
+    # Current model is openrouter (about to get a 429). When the 429 fires,
+    # openrouter gets recorded fresh, and Phase 2 sees kilo (1s) and
+    # vercel (3s) are both rate-limited — picks kilo (soonest) and jumps.
     $session->{provider_rate_limits} = {
-        openrouter => time() + 2,
-        kilo       => time() + 1,  # soonest
-        vercel     => time() + 3,
+        kilo   => time() + 1,  # soonest
+        vercel => time() + 3,  # later
     };
 
-    # 429 from openrouter (current model). The all-providers check should
-    # fire, wait ~1s for kilo, and jump the routing index to kilo's position.
+    # 429 from openrouter (current model) with retry_after=60.
     my $api_response = {
         success => 0, error => "429",
-        retryable => 1, error_type => "rate_limit", retry_after => 30,
+        retryable => 1, error_type => "rate_limit", retry_after => 60,
     };
     my $ctx = {
         messages => [], retry_count => \my $rc, session_error_count => \my $sec,
@@ -620,22 +620,23 @@ subtest 'all-providers rate-limited jumps to soonest-expiring' => sub {
     my $elapsed = Time::HiRes::time() - $start;
 
     is($result, 'retry', 'returns retry');
-    cmp_ok($elapsed, '>=', 1, "waited for soonest provider (took ${elapsed}s)");
-    cmp_ok($elapsed, '<', 2, "did not wait for the longer providers (took ${elapsed}s)");
+    cmp_ok($elapsed, '>=', 1, "waited for soonest other provider (took ${elapsed}s)");
+    cmp_ok($elapsed, '<', 2, "did not wait for the longer provider (took ${elapsed}s)");
     is($config->get_model_routing_index(), 1, 'routing index jumped to kilo (index 1)');
     is($api->get_current_model(), 'kilo/bar:free', 'current model is kilo (soonest)');
     ok(!exists $session->{provider_rate_limits}{kilo}, 'kilo rate limit cleared after waiting');
-    ok(exists $session->{provider_rate_limits}{openrouter}, 'openrouter rate limit preserved (not the one we waited for)');
-    ok(exists $session->{provider_rate_limits}{vercel}, 'vercel rate limit preserved');
+    ok(exists $session->{provider_rate_limits}{vercel}, 'vercel rate limit preserved (not the one we waited for)');
+    ok(exists $session->{provider_rate_limits}{openrouter}, 'openrouter rate limit still recorded (was not waited on)');
     my $all_msg = join("\n", @sys_msgs);
     like($all_msg, qr/All 3 routing targets are rate-limited/, 'all-providers message shown');
-    like($all_msg, qr/Waiting .*?s for kilo to recover/, 'waits for kilo (soonest)');
+    like($all_msg, qr/Waiting .*?s for kilo to recover/, 'waits for kilo (soonest of the OTHER providers)');
+    like($all_msg, qr/openrouter: \d+s, vercel: \d+s/, 'cooldown summary shows all rate-limited providers');
 
     `rm -rf $dir`;
 };
 
-subtest 'all-providers optimization only triggers when ALL are rate-limited' => sub {
-    my $dir = "/tmp/clio-test-rl-partial";
+subtest 'Phase 2 does not trigger when another provider is free' => sub {
+    my $dir = "/tmp/clio-test-rl-partial2";
     `rm -rf $dir`;
 
     my $config = CLIO::Core::Config->new(config_dir => $dir);
@@ -651,22 +652,22 @@ subtest 'all-providers optimization only triggers when ALL are rate-limited' => 
     $config->set("model", 'openrouter/foo:free', 0);
 
     my $wo = bless { api_manager => $api }, "CLIO::Core::WorkflowOrchestrator";
-    my $session = { routing_attempts => 0 };
-    # Only openrouter and kilo are rate-limited; vercel is NOT.
-    # Use expired entries so the Phase 1 check on the target (kilo) is
-    # also instant — we're only verifying the all-providers guard doesn't fire.
-    $session->{provider_rate_limits} = {
-        openrouter => time() - 1,
-        kilo       => time() - 1,
+    # Only kilo is rate-limited; vercel is NOT -> Phase 2 should not fire.
+    # Use a short cooldown so Phase 1's wait is testable without a long block.
+    my $session = {
+        routing_attempts => 0,
+        provider_rate_limits => { kilo => time() + 2 },
     };
     my @sys_msgs;
     my $on_system_message = sub { push @sys_msgs, $_[0]; };
 
-    # 429 from openrouter -> should NOT trigger all-providers (vercel is free)
-    # Instead: record openrouter, cycle to kilo, kilo IS rate-limited -> wait
+    # 429 from openrouter -> record openrouter, check other providers:
+    # kilo is RL (2s), vercel is NOT -> free_count=1 -> Phase 2 skipped.
+    # Falls through to normal cycle -> goes to kilo -> kilo IS rate-limited
+    # -> Phase 1 wait fires for ~2s.
     my $api_response = {
         success => 0, error => "429",
-        retryable => 1, error_type => "rate_limit", retry_after => 30,
+        retryable => 1, error_type => "rate_limit", retry_after => 60,
     };
     my $ctx = {
         messages => [], retry_count => \my $rc, session_error_count => \my $sec,
@@ -680,24 +681,17 @@ subtest 'all-providers optimization only triggers when ALL are rate-limited' => 
     my $elapsed = Time::HiRes::time() - $start;
 
     is($result, 'retry', 'returns retry');
-    # kilo is rate-limited for 30s, but the pre-populated value was time()+30
-    # and the recording step overwrites openrouter with time()+30. So kilo
-    # should still have ~30s remaining. We don't want to wait 30s in a test!
-    #
-    # Instead of waiting, let's verify the behavior differently: the all-
-    # providers message should NOT appear.
+    cmp_ok($elapsed, '>=', 2, "waited for kilo rate limit via Phase 1 (took ${elapsed}s)");
+    cmp_ok($elapsed, '<', 3, "did not over-wait (took ${elapsed}s)");
     my $all_msg = join("\n", @sys_msgs);
     unlike($all_msg, qr/All.*routing targets are rate-limited/,
-        'all-providers message NOT shown (vercel is not rate-limited)');
-
-    # Clean up: kill the kilo rate limit so we don't block
-    delete $session->{provider_rate_limits}{kilo};
+        'all-providers message NOT shown (vercel is free)');
 
     `rm -rf $dir`;
 };
 
-subtest 'all-providers optimization does not trigger for non-rate-limit errors' => sub {
-    my $dir = "/tmp/clio-test-rl-nonrlall";
+subtest 'Phase 2 does not trigger for non-rate-limit errors' => sub {
+    my $dir = "/tmp/clio-test-rl-nonrlall2";
     `rm -rf $dir`;
 
     my $config = CLIO::Core::Config->new(config_dir => $dir);
@@ -713,24 +707,18 @@ subtest 'all-providers optimization does not trigger for non-rate-limit errors' 
     $config->set("model", 'openrouter/foo:free', 0);
 
     my $wo = bless { api_manager => $api }, "CLIO::Core::WorkflowOrchestrator";
-    # All providers have stale rate limits from previous storms.
-    # Use expired entries so the Phase 1 check on the target (kilo) is
-    # instant — we're only verifying the all-providers guard doesn't fire
-    # for non-rate-limit errors.
+    # All OTHER providers have stale rate limits, but the error is a 500
+    # (not rate_limit), so Phase 2 should not fire.
     my $session = {
         routing_attempts => 0,
         provider_rate_limits => {
-            openrouter => time() - 1,
-            kilo       => time() - 1,
-            vercel     => time() - 1,
+            kilo   => time() - 1,
+            vercel => time() - 1,
         },
     };
     my @sys_msgs;
     my $on_system_message = sub { push @sys_msgs, $_[0]; };
 
-    # Server error (not rate_limit) - should NOT trigger all-providers
-    # optimization even though all providers have stale rate limits.
-    # Should cycle normally and then wait on kilo (the target).
     my $api_response = {
         success => 0, error => "500 Internal Server Error",
         retryable => 1, error_type => "server_error", retry_after => 2,
