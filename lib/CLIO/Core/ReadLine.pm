@@ -524,16 +524,20 @@ sub redraw_line {
     }
 
     # Move to (row 0, col 1) of the input area.
-    # last_cursor_row is the current SCREEN row (clamped by _emit_text
-    # to the terminal height). Moving up by last_cursor_row rows brings
-    # us to screen row 0, which is the top of the visible input area.
+    # Use display_lines (number of terminal rows the input occupies)
+    # rather than last_cursor_row to determine how far to move up.
+    # last_cursor_row can be stale after cursor movement across a wrap
+    # boundary (the wrap-model in _emit_text vs _cursor_at_codepoint can
+    # disagree by a row), causing redraw_line to not move far enough and
+    # re-emit the prompt on the wrong row. display_lines is always
+    # recomputed from actual content, so it is reliable.
     print "\r";
     $self->{last_cursor_col} = 1;
-    my $current_row = $self->{last_cursor_row};
-    if ($current_row > 0) {
-        print "\e[${current_row}A";
-        $self->{last_cursor_row} = 0;
+    my $rows_to_top = ($old_display_lines > 1) ? ($old_display_lines - 1) : 0;
+    if ($rows_to_top > 0) {
+        print "\e[${rows_to_top}A";
     }
+    $self->{last_cursor_row} = 0;
 
     # Clear from here to end of screen, then redraw prompt + input
     print "\e[J";
@@ -985,8 +989,16 @@ sub readline {
                     $self->{display_lines} = $self->{last_cursor_row} + 1;
                 }
             } else {
-                $self->_emit_text($char);
-                $self->_redraw_from_cursor(\$input, \$cursor_pos, $prompt);
+                # Mid-input insert: use a full redraw instead of
+                # _redraw_from_cursor.  _redraw_from_cursor relies on the
+                # last_cursor_* tracking state, which is stale after
+                # cursor movement (arrow keys) across a wrap boundary —
+                # it positions the cursor on the wrong row and leaves the
+                # line unpainted until the next keystroke.  redraw_line
+                # recomputes all positions from input state via
+                # _cursor_at_codepoint, so it is correct regardless of
+                # where the cursor came from.
+                $self->redraw_line(\$input, \$cursor_pos, $prompt);
             }
         }
     }
@@ -1282,10 +1294,23 @@ sub reposition_cursor {
         print "\e[" . ($new_col - 1) . "C" if $new_col > 1;
     }
 
-    # Update tracking for redraw_line's vertical movement.
+    # Update tracking.
     $self->{last_cursor_row} = $new_row;
     $self->{last_cursor_col} = $new_col;
     $self->{last_cursor_disp} = $new_row * $term_width + ($new_col - 1);
+
+    # display_lines must also be updated here so redraw_line's
+    # "move to top" step (which uses display_lines - 1) moves the
+    # correct number of rows after cursor movement.
+    my $prompt_disp = $self->_get_prompt_disp($prompt);
+    my $total_disp  = $prompt_disp + _display_width($$input_ref);
+    # Number of terminal rows the content occupies. When total_disp is
+    # an exact multiple of term_width, the last char fills the row exactly
+    # and the cursor autowraps to the next row — so count one extra row.
+    $self->{display_lines} = $total_disp > 0
+        ? (int(($total_disp - 1) / $term_width) + 1
+           + (($total_disp % $term_width == 0) ? 1 : 0))
+        : 1;
 
     if (should_log('DEBUG')) {
         log_debug('ReadLine', "reposition_cursor: tracking set to ($new_row,$new_col)");
