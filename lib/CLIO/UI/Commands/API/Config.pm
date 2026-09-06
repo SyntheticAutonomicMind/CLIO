@@ -95,11 +95,24 @@ sub handle_set {
         if ($session_only) {
             $self->_write_session_override($thinking_key, $enabled);
         } else {
-            $self->{config}->set($thinking_key, $enabled);
+            my $current_model = $self->{config}->get('model') || '';
             # show_thinking is model-scoped; clear stale per-model
             # entries so a switch back to a model that previously had
             # the opposite value does not resurrect the old setting.
-            $self->{config}->clear_model_scoped($thinking_key);
+            # set() above set the global show_thinking and (for the
+            # active model) wrote it into model_configs too - but the
+            # clear walks every entry including the active one, so we
+            # re-pin the active model's value afterwards.
+            $self->{config}->set($thinking_key, $enabled);
+            $self->{config}->clear_model_scoped($thinking_key, $current_model);
+            if ($current_model && $current_model =~ m{/}) {
+                $self->{config}->{model_configs} ||= {};
+                $self->{config}->{model_configs}{$current_model} ||= {};
+                $self->{config}->{model_configs}{$current_model}{$thinking_key} = $enabled;
+                $self->{config}->{model_configs_explicit} ||= {};
+                $self->{config}->{model_configs_explicit}{$current_model} ||= {};
+                $self->{config}->{model_configs_explicit}{$current_model}{$thinking_key} = 1;
+            }
             $self->{config}->save();
         }
         my $state_label = $enabled ? "enabled" : "disabled";
