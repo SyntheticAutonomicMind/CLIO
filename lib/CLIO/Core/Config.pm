@@ -529,7 +529,7 @@ sub set {
 
         $self->{config}->{$key} = $value;
        # Restore new model config if it is resolved (has "/")
-       $self->_restore_model_config($value) if $value =~ m{/};
+       $self->_restore_model_config($value, $old_model) if $value =~ m{/};
         # Persist scoped config immediately to avoid data loss on exit
         $self->save() if $old_model =~ m{/} && (!defined $mark_user_set || $mark_user_set);
    } else {
@@ -660,7 +660,7 @@ Called automatically when switching models via set('model', ...).
 =cut
 
 sub _restore_model_config {
-    my ($self, $model_id) = @_;
+    my ($self, $model_id, $old_model) = @_;
     return unless $model_id;
 
     $self->{config}->{model_configs} ||= {};
@@ -668,33 +668,59 @@ sub _restore_model_config {
     my $entry = $self->{config}->{model_configs}{$model_id};
     my $explicit = $self->{config}->{model_configs_explicit}{$model_id} || {};
 
-    # If no entry exists, KEEP current global config values. Do NOT fall
-    # back to DEFAULT_CONFIG here - the global config may have user-set
-    # values (e.g. /api set temperature 0.5) that should persist across
-    # model switches. The model_configs_explicit flag is preserved so a
-    # later set() on this same model can still record explicit overrides.
+    # Thinking-scoped keys reset to defaults when switching to a
+    # DIFFERENT PROVIDER's model that has no stored entry. Reasoning
+    # display settings are user-intent about how to view output, not
+    # model-character tuning, so a fresh provider/model gets a clean
+    # slate (show_thinking=0, thinking_mode='auto'). Sampling params
+    # (temperature, top_p, ...) are NOT in this set: they persist across
+    # provider switches so a user global "/api set temperature 0.7" is
+    # not silently lost (see test D: sampling_temperature survives a
+    # 3-way provider round-trip). Within the same provider, same-provider
+    # seeding in set() already carries the old model's entry forward.
+    my %reset_on_cross_provider = map { $_ => 1 }
+                                  qw(show_thinking thinking_effort thinking_mode);
 
+    # A switch is cross-provider only when set() hands us the outgoing
+    # model. On load() (initial restore) there is no switch - we just
+    # restore the saved entry (or keep globals) as before.
+    my $cross_provider = defined $old_model
+                       && _same_provider($old_model, $model_id) ? 0 : 1;
+
+    # If no entry exists, the behavior depends on whether this is a
+    # cross-provider switch. Within a provider we KEEP current globals
+    # (set() seeds same-provider entries). Across providers, thinking
+    # keys reset to their system defaults; sampling/other keys keep
+    # their current global value.
     my $restored_count = 0;
     for my $key (@{MODEL_SCOPED_KEYS()}) {
         if (exists $entry->{$key}) {
             my $val = $entry->{$key};
             my $default = DEFAULT_CONFIG->{$key};
-            # Only restore if either:
+            # Only restore stored per-model values if either:
             #   (a) the value differs from DEFAULT_CONFIG (it's a real override), or
             #   (b) the user explicitly set this per-model key (tracked in
             #       model_configs_explicit). Without (b), a stale default-value
             #       entry from old migrations would silently override the user's
             #       newer global setting on every load.
-            # The explicit flag also lets users pin a single model to a value
-            # that happens to match the default (e.g. show_thinking=0 for
-            # model A while model B is at 1) - the per-model override is
-            # honored regardless of whether it equals the default.
+            # The explicit flag also lets users pin a single model to a
+            # value that happens to match the default - the per-model
+            # override is honored regardless of whether it equals the default.
             my $is_default_value = defined $default && defined $val && $val eq $default;
             next if $is_default_value && !$explicit->{$key};
             $self->{config}->{$key} = $val;
             $restored_count++;
+        } elsif ($cross_provider && $reset_on_cross_provider{$key}) {
+            # Cross-provider model switch with no stored entry: reset
+            # this thinking key to its system default so the user is
+            # not surprised by another provider's leftover show_thinking.
+            my $default = DEFAULT_CONFIG->{$key};
+            $self->{config}->{$key} = $default if defined $default;
+            $restored_count++;
+            log_debug('Config', "Reset '$key' to default on cross-provider switch to '$model_id'");
         }
-        # If no stored value, KEEP current global config value.
+        # Otherwise (same provider, or non-thinking key across providers):
+        # KEEP current global config value.
     }
 
     if ($restored_count) {
@@ -702,6 +728,30 @@ sub _restore_model_config {
     } else {
         log_debug('Config', "No model config for '$model_id' - keeping global values");
     }
+}
+
+=head3 _same_provider
+
+Internal: determine whether two resolved model IDs (provider/model) belong
+to the same provider.
+
+Arguments:
+- $a, $b: model IDs, each expected in "provider/model" form.
+
+Returns:
+- 1 if both share the same provider prefix; 0 otherwise. Either argument
+  without a "/" is considered unresolvable and returns 0 (the caller
+  treats that as the no-reset path).
+
+=cut
+
+sub _same_provider {
+    my ($a, $b) = @_;
+    return 0 unless defined $a && defined $b && $a ne '' && $b ne '';
+    my ($pa) = $a =~ m{^([^/]+)/};
+    my ($pb) = $b =~ m{^([^/]+)/};
+    return 0 unless defined $pa && defined $pb;
+    return $pa eq $pb ? 1 : 0;
 }
 
 =head2 set_provider
