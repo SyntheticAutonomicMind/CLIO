@@ -160,7 +160,22 @@ sub run_scenario {
         eval {
             local $SIG{ALRM} = sub { die "TIMEOUT\n" };
             alarm 3;
+            # Override the width/height this subprocess assumes to match the
+            # VirtualTerminal cols/rows. The in-process _emit_text subtest
+            # rebinds CLIO::Compat::Terminal::GetTerminalSize to 80 cols in
+            # the parent and requires ReadLine while that binding is active,
+            # so the import resolves to the 80-col binding and leaks into
+            # this forked child. _get_term_width calls GetTerminalSize()
+            # resolved in the ReadLine namespace, so override THAT directly
+            # to bypass the leaked 80-col binding and make cursor tracking
+            # agree with the VT simulation.
+            my $scenario_cols = $args{cols} || 20;
+            my $scenario_rows = $args{rows} || 24;
             require CLIO::Core::ReadLine;
+            # Override AFTER require so the import can't clobber our binding.
+            # _get_term_width resolves GetTerminalSize in the ReadLine
+            # namespace, so this override is authoritative for the child.
+            *CLIO::Core::ReadLine::GetTerminalSize = sub { return ($scenario_cols, $scenario_rows) };
             my $rl = CLIO::Core::ReadLine->new(prompt => $args{prompt} || '> ');
             my $line = $rl->readline($args{prompt} || undef);
             alarm 0;

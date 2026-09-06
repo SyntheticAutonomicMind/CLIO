@@ -35,6 +35,7 @@ my $proj = CLIO::Core::ContextBuilder::build_projection(
 my $initial_render = messages_to_prose_dynamic($proj);
 like($initial_render, qr/Initial task A/, 'initial render contains initial todo');
 unlike($initial_render, qr/New task B/, 'initial render does NOT contain new todo (not yet added)');
+unlike($initial_render, qr/Refactor guidance/, 'initial render does NOT contain new LTM (not yet scored)');
 
 my $live_todos = [
     { id => 2, status => 'in-progress', content => 'New task B' },
@@ -42,17 +43,16 @@ my $live_todos = [
 ];
 my $live_ltm = [
     { content => 'Old memory about something unrelated', confidence => 0.9 },
-    { content => 'New memory about refactoring the message history serialization', confidence => 0.95 },
+    { content => 'Refactor guidance: verify keyword overlap uses exact word matching in the scorer', confidence => 0.95 },
 ];
 
 $proj->{active_todos} = $live_todos;
 $proj->{relevant_memory} = CLIO::Core::ContextBuilder::score_ltm(
     $live_ltm, $proj->{user_input}, $proj->{active_task}, $proj->{unresolved} || [],
 );
-$proj->{ltm_total_count} = scalar(@$live_ltm);
-
 my $refreshed_render = messages_to_prose_dynamic($proj);
 like($refreshed_render, qr/New task B/, 'refreshed render contains the NEW todo (live state)');
-like($refreshed_render, qr/2 available/, 'refreshed render reflects updated LTM total count (live)');
+like($refreshed_render, qr/Refactor guidance/, 'refreshed render reflects updated LTM content (live)');
+unlike($refreshed_render, qr/2 available/, 'no stale "N available" framework narration after removal');
 
 done_testing();
