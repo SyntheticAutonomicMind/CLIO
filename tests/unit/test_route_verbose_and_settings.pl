@@ -1,10 +1,12 @@
 #!/usr/bin/env perl
 # Test /api route verbose, /api route set delay, /api route set max_attempts.
 #
-# Covers the new knobs that control model-routing behavior:
+# Covers the knobs that control model-routing behavior:
 #   - route_verbose (0/1) suppresses the per-cycle "rerouting to X" system message
 #   - route_retry_delay (seconds) inserts a pause between model switches
 #   - route_max_attempts (int) caps total routing attempts before giving up
+#   - route_wait_for_rate_limits (0/1) waits for per-provider 429 cooldowns
+#     instead of hammering rate-limited providers during routing storms
 
 use strict;
 use warnings;
@@ -193,6 +195,44 @@ subtest '/api route set max_attempts' => sub {
 };
 
 # =============================================================================
+# /api route set wait_for_rate_limits
+# =============================================================================
+
+subtest '/api route set wait_for_rate_limits' => sub {
+    my ($cfg, $dir) = fresh_config('wfrl-set');
+    my $cmd = make_cmd($cfg);
+
+    is($cfg->get_route_wait_for_rate_limits(), 1, 'defaults to 1 (on)');
+
+    $cmd->handle_route('set', 'wait_for_rate_limits', 'off');
+    is($cfg->get_route_wait_for_rate_limits(), 0, 'set to off');
+
+    $cmd->handle_route('set', 'wait_for_rate_limits', 'on');
+    is($cfg->get_route_wait_for_rate_limits(), 1, 'set back to on');
+
+    # Aliases
+    $cmd->handle_route('set', 'wait_for_rate_limits', '0');
+    is($cfg->get_route_wait_for_rate_limits(), 0, '0 accepted');
+
+    $cmd->handle_route('set', 'wait_for_rate_limits', '1');
+    is($cfg->get_route_wait_for_rate_limits(), 1, '1 accepted');
+
+    $cmd->handle_route('set', 'wait_for_rate_limits', 'bogus');
+    like($cmd->{_display}[-1], qr/Usage:.*wait_for_rate_limits/, 'bogus value prints usage');
+
+    remove_tree($dir);
+};
+
+subtest '/api route set wait_for_rate_limits persists' => sub {
+    my ($cfg, $dir) = fresh_config('wfrl-persist');
+    $cfg->set_route_wait_for_rate_limits(0);
+    $cfg->save();
+    my $cfg2 = CLIO::Core::Config->new(config_dir => $dir);
+    is($cfg2->get_route_wait_for_rate_limits(), 0, 'wait_for_rate_limits=0 survives save/reload');
+    remove_tree($dir);
+};
+
+# =============================================================================
 # /api route list shows settings footer
 # =============================================================================
 
@@ -201,6 +241,7 @@ subtest '/api route list shows ROUTING SETTINGS footer' => sub {
     $cfg->set_route_verbose(0);
     $cfg->set_route_retry_delay(0.5);
     $cfg->set_route_max_attempts(20);
+    $cfg->set_route_wait_for_rate_limits(0);
 
     my $cmd = make_cmd($cfg);
     $cmd->handle_route('list');
@@ -212,6 +253,7 @@ subtest '/api route list shows ROUTING SETTINGS footer' => sub {
     is($kv{verbose}, 'off', 'footer shows verbose=off');
     is($kv{delay}, '0.5s', 'footer shows delay=0.5s');
     is($kv{max_attempts}, 20, 'footer shows max_attempts=20');
+    is($kv{wait_for_rate_limits}, 'off', 'footer shows wait_for_rate_limits=off');
 
     remove_tree($dir);
 };

@@ -767,6 +767,28 @@ sub get_current_provider {
     return 'openai';
 }
 
+=head2 provider_for_model($model)
+
+Resolve the provider name from a specific model string by checking its
+prefix against the known provider list. This is the per-model analogue
+of get_current_provider(), which reads from config — useful for the model
+router which needs to know the provider for an arbitrary candidate without
+mutating config state.
+
+Arguments:
+  $model - Model string (e.g. "openrouter/foo:free", "kilo/bar")
+
+Returns: Provider name (lowercased), or undef if the model has no known
+provider prefix.
+
+=cut
+
+sub provider_for_model {
+    my ($self, $model) = @_;
+    my ($provider) = $self->_parse_model_provider($model);
+    return $provider ? lc($provider) : undef;
+}
+
 # Endpoint-specific configuration
 sub get_endpoint_config {
     my ($self) = @_;
@@ -3013,6 +3035,7 @@ sub _apply_rate_limiting {
         my %slot_opts;
         $slot_opts{model}          = $model_for_broker if defined $model_for_broker;
         $slot_opts{pending_tokens} = $pending_for_broker if $pending_for_broker > 0;
+        $slot_opts{provider}       = $self->{_pending_provider_for_broker} if defined $self->{_pending_provider_for_broker};
         my $slot_result = $self->{broker_client}->wait_for_api_slot(120, %slot_opts);
         $broker_request_id = $slot_result->{request_id};
 
@@ -3094,6 +3117,11 @@ sub _prepare_api_request {
     # UserByModelByMinuteUncachedInputTokens).
     $self->{_pending_messages_for_broker} = $messages;
     $self->{_pending_model_for_broker}    = $model;
+    # Pass the target provider so the broker can check per-provider rate
+    # limit cooldowns (for multi-provider routing scenarios).
+    $self->{_pending_provider_for_broker} = $target_provider
+        ? lc($target_provider)
+        : (defined $model ? ($self->provider_for_model($model) // undef) : undef);
 
     eval { $self->_apply_rate_limiting(); };
     if ($@) {

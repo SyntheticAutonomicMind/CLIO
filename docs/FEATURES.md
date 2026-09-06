@@ -459,9 +459,12 @@ Save a model list as a named, reusable profile. Profiles are stored in config un
 /api route verbose on|off          # Show or hide "rerouting to X" system messages (default: on)
 /api route set delay 0.5          # Seconds to wait between model switches (default: 1.0)
 /api route set max_attempts 30     # Max total routing attempts before giving up (default: 15)
+/api route set wait_for_rate_limits on|off  # Wait for per-provider rate-limit cooldowns (default: on)
 ```
 
 The current settings are shown at the bottom of `/api route list` and persist across sessions. Set `delay 0` to cycle as fast as possible (useful for testing); raise `max_attempts` to ride out longer provider outages. Non-actionable errors (model not found, billing error, auth failure, weekly/monthly usage caps) skip routing entirely and surface the error directly - no point burning attempts on a problem the next model in the route can't fix.
+
+When `wait_for_rate_limits` is on (default), CLIO tracks per-provider 429 cooldowns during routing. Each provider that returns a 429 is remembered with its `Retry-After` window. When the router cycles back to a provider that's still cooling down, it waits for the cooldown to expire before sending the request - rather than hammering a rate-limited provider over and over. If every provider in the route is rate-limited at once, the router finds the one that recovers soonest and jumps directly to it instead of cycling through each with a series of waits. The routing retry budget (`routing_attempts`) resets to zero after every successful API call, so a recovered provider gets a fresh start.
 
 Start a session using a saved profile:
 

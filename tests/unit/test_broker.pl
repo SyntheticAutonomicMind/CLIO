@@ -822,6 +822,136 @@ subtest 'handle_release_api_slot forwards anthropic_rate_limit_info' => sub {
         'Anthropic headers forwarded via release_api_slot seed broker snapshot');
 };
 
+# =============================================================================
+# Phase 3: Per-provider rate limit coordination
+# =============================================================================
+
+subtest 'broker tracks per-provider rate limits on 429' => sub {
+    my $broker = fresh_broker();
+    register_agent($broker, 40, 'agent-relay', 'test');
+
+    # Release a 429 with provider=openrouter and retry_after=30
+    $broker->handle_release_api_slot(40, {
+        agent_id     => 'agent-relay',
+        request_id   => 7,
+        provider      => 'openrouter',
+        status        => 429,
+        retry_after   => 30,
+    });
+
+    my $rl = $broker->{api_rate_limit};
+    ok(exists $rl->{provider_rate_limits}{openrouter},
+        'broker recorded per-provider rate limit for openrouter');
+    cmp_ok($rl->{provider_rate_limits}{openrouter}, '>', time(),
+        'openrouter rate limit is in the future');
+    cmp_ok($rl->{provider_rate_limits}{openrouter} - time(), '>=', 28,
+        'openrouter rate limit is ~30s in the future');
+    ok(!exists $rl->{provider_rate_limits}{kilo},
+        'other providers not affected by openrouter 429');
+};
+
+subtest 'broker blocks per-provider requests during cooldown' => sub {
+    my $broker = fresh_broker();
+    register_agent($broker, 40, 'agent-relay', 'test');
+    my $sock = $broker->{clients}{40}{socket};
+
+    # Release a 429 for openrouter with retry_after=30
+    $broker->handle_release_api_slot(40, {
+        agent_id     => 'agent-relay',
+        request_id   => 7,
+        provider      => 'openrouter',
+        status        => 429,
+        retry_after   => 30,
+    });
+
+    # Request a slot for openrouter — should be delayed by the provider cooldown
+    $broker->handle_request_api_slot(40, {
+        agent_id    => 'agent-relay',
+        request_id  => 8,
+        provider    => 'openrouter',
+        model       => 'foo:free',
+    });
+
+    my $resp = $sock->last_message;
+    is($resp->{type}, 'api_slot_wait', 'openrouter request is delayed');
+    cmp_ok($resp->{delay}, '>=', 25, 'delay is ~30s (provider cooldown)');
+    is($resp->{reason}, 'provider_rate_limit', 'reason is provider_rate_limit');
+
+    # Request a slot for kilo — should be granted immediately (no cooldown)
+    $sock->clear();
+    $broker->handle_request_api_slot(40, {
+        agent_id    => 'agent-relay',
+        request_id  => 9,
+        provider    => 'kilo',
+        model       => 'bar:free',
+    });
+
+    $resp = $sock->last_message;
+    is($resp->{type}, 'api_slot_granted', 'kilo request is granted immediately');
+    is($resp->{delay}, 0, 'kilo has no delay (not rate-limited)');
+};
+
+subtest 'broker clears per-provider rate limit after cooldown expires' => sub {
+    my $broker = fresh_broker();
+    register_agent($broker, 40, 'agent-relay', 'test');
+    my $sock = $broker->{clients}{40}{socket};
+
+    # Release a 429 for openrouter with retry_after=1 (very short)
+    $broker->handle_release_api_slot(40, {
+        agent_id     => 'agent-relay',
+        request_id   => 7,
+        provider      => 'openrouter',
+        status        => 429,
+        retry_after   => 1,
+    });
+
+    # Wait for the cooldown to expire
+    sleep(2);
+
+    # Request a slot for openrouter — should be granted (cooldown expired)
+    $broker->handle_request_api_slot(40, {
+        agent_id    => 'agent-relay',
+        request_id  => 8,
+        provider    => 'openrouter',
+        model       => 'foo:free',
+    });
+
+    my $resp_new = $sock->last_message;
+    is($resp_new->{type}, 'api_slot_granted', 'openrouter request granted after cooldown expired');
+    is($resp_new->{delay}, 0, 'no delay after cooldown expired');
+};
+
+subtest 'broker per-provider status appears in rate_limit_status' => sub {
+    my $broker = fresh_broker();
+    register_agent($broker, 40, 'agent-relay', 'test');
+    my $sock = $broker->{clients}{40}{socket};
+
+    # Set up per-provider rate limits for two providers
+    $broker->handle_release_api_slot(40, {
+        agent_id     => 'agent-relay',
+        request_id   => 7,
+        provider      => 'openrouter',
+        status        => 429,
+        retry_after   => 30,
+    });
+    $broker->handle_release_api_slot(40, {
+        agent_id     => 'agent-relay',
+        request_id   => 8,
+        provider      => 'vercel',
+        status        => 429,
+        retry_after   => 60,
+    });
+
+    $broker->handle_get_rate_limit_status(40);
+
+    my $resp = $sock->last_message;
+    ok(exists $resp->{provider_rate_limits}, 'status includes provider_rate_limits');
+    cmp_ok($resp->{provider_rate_limits}{openrouter}, '>', time(), 'openrouter RL in future');
+    cmp_ok($resp->{provider_rate_limits}{vercel}, '>', time(), 'vercel RL in future');
+    cmp_ok($resp->{provider_rate_limits}{vercel}, '>', $resp->{provider_rate_limits}{openrouter},
+        'vercel expiry is later than openrouter (60 vs 30)');
+};
+
 done_testing();
 
 print "\n Broker behavioral tests PASSED\n";
