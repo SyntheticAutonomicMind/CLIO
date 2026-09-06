@@ -10,9 +10,12 @@
 # produced ~22K tokens of dynamic UC content. For a 128K-context
 # model that's ~17% of budget; for smaller models it's catastrophic.
 #
-# Fix: cap each component (active_todos, relevant_memory,
-# unresolved) in messages_to_prose_dynamic. Show an "...and N more"
+# Fix: cap active_todos at 10 entries. Show an "...and N more"
 # hint when items exceed the cap.
+#
+# Note: The Unresolved: and Relevant memory: sections were removed
+# entirely in the 2026-09-06 metadata-leak fix, so they no longer
+# contribute to the dynamic UC budget regardless of cap.
 
 use strict;
 use warnings;
@@ -58,9 +61,9 @@ ok($len < 15000, "dynamic UC bounded (was ~88K before caps, now $len chars)");
 my $todos_in_output = () = $prose =~ /^- \[/gm;
 ok($todos_in_output <= 10, "active todos capped at 10 (rendered: $todos_in_output)");
 
-# LTM capped at 5
+# LTM not rendered (metadata-leak fix removed the Relevant memory: section)
 my $ltm_in_output = () = $prose =~ /^- \(\d+\.\d+\)/gm;
-ok($ltm_in_output <= 5, "relevant memory capped at 5 (rendered: $ltm_in_output)");
+ok($ltm_in_output == 0, "no LTM entries in prose (Relevant memory section removed, rendered: $ltm_in_output)");
 
 # Overflow hint
 like($prose, qr/...and \d+ more/, "overflow hint shown when items exceed cap");

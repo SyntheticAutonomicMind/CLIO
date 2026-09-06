@@ -52,7 +52,7 @@ $proj->{relevant_memory} = CLIO::Core::ContextBuilder::score_ltm(
 );
 my $refreshed_render = messages_to_prose_dynamic($proj);
 like($refreshed_render, qr/New task B/, 'refreshed render contains the NEW todo (live state)');
-like($refreshed_render, qr/Refactor guidance/, 'refreshed render reflects updated LTM content (live)');
+unlike($refreshed_render, qr/Refactor guidance/, 'LTM not injected into dynamic userContext (metadata-leak fix)');
 unlike($refreshed_render, qr/2 available/, 'no stale "N available" framework narration after removal');
 
 done_testing();

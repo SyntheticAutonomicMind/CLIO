@@ -214,14 +214,14 @@ sub make_long_history {
         user_input => 'continue',
         unresolved => ['tool_error: undefined variable in file_x'],
     );
-    # After the role-based history refactor, unresolved state is
-    # surfaced via the prose renderer's dynamic userContext
-    # (messages_to_prose_dynamic). The userContext XML field is
-    # unused but kept as an empty string for backwards compatibility.
+    # After the role-based history refactor + metadata-leak fix,
+    # unresolved state is NOT surfaced via the prose renderer's
+    # dynamic userContext. The Unresolved: section was removed to
+    # prevent recycling tool errors into the model's context.
     require CLIO::Core::MessageHistory;
     my $dynamic = CLIO::Core::MessageHistory::messages_to_prose_dynamic($proj2);
-    like($dynamic, qr/unresolved state|tool_error: undefined variable in file_x/,
-        "unresolved state surfaces when unresolved arg is provided");
+    unlike($dynamic, qr/unresolved state|tool_error: undefined variable in file_x/,
+        "unresolved state NOT surfaced in dynamic userContext (metadata-leak fix)");
 }
 
 done_testing();
