@@ -12,6 +12,7 @@ my $fail = 0;
 
 sub ok {
     my ($cond, $desc) = @_;
+    $desc //= '';
     if ($cond) {
         print "ok - $desc\n";
         $pass++;

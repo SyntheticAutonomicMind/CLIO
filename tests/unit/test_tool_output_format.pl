@@ -23,12 +23,14 @@ my ($pass, $fail) = (0, 0);
 
 sub ok {
     my ($cond, $desc) = @_;
+    $desc //= '';
     if ($cond) { print "PASS: $desc\n"; $pass++; }
     else { print "FAIL: $desc\n"; $fail++; }
 }
 
 sub is {
     my ($got, $expected, $desc) = @_;
+    $desc //= '';
     if (defined($got) && defined($expected) && $got eq $expected) {
         print "PASS: $desc\n"; $pass++;
     } else {
