@@ -18,6 +18,7 @@ our @EXPORT_OK = qw(
     load_conversation_history
     trim_conversation_for_api
     trim_with_noise_dropping
+    strip_messages_noise
     _strip_message_noise
     enforce_message_alternation
     filter_continuation_prompts
@@ -567,6 +568,40 @@ sub trim_with_noise_dropping {
 
     # Phase 2: Standard trim walk on the noise-reduced history.
     return trim_conversation_for_api(\@stripped, $system_prompt, %opts);
+}
+
+=head2 strip_messages_noise
+
+Strip high-volume low-signal content (assistant reasoning_content /
+reasoning_blocks) from a history array WITHOUT dropping any messages.
+This is the "Phase 1" of trim_with_noise_dropping, isolated so callers
+that defer token-budget enforcement to a later compression stage (the
+projection's C<_build_compressed_tail> + the proactive
+C<_role_based_tail_walk>) can still recover the token savings of
+noise-stripping without losing messages that the compressor would have
+summarized.
+
+When called from WorkflowOrchestrator::_build_turn_context, the full
+(noise-stripped) history reaches ContextBuilder, which selects the
+recent window and compresses the rest into a compressed_tail via YaRN.
+Without this isolation, the tail-walk in trim_with_noise_dropping would
+drop old messages before the projection sees them — permanently lost
+with no summary. The proactive _role_based_tail_walk remains the
+authoritative token-budget enforcer and does its own compression.
+
+Arguments:
+- $history: ArrayRef of message hashes (not mutated)
+- %opts: C<debug => 1> for per-message strip log lines
+
+Returns: ArrayRef of noise-stripped message copies (same length as input).
+
+=cut
+
+sub strip_messages_noise {
+    my ($history, %opts) = @_;
+    return [] unless $history && @$history;
+    my $debug = $opts{debug} // 0;
+    return [ map { _strip_message_noise($_, $debug) } @$history ];
 }
 
 =head2 _strip_message_noise

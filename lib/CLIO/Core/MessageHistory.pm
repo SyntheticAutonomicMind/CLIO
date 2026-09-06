@@ -30,7 +30,8 @@ context files) is rendered separately by L</messages_to_prose_dynamic>
 and pushed as one system message after the history, sitting at the
 recency anchor. The unresolved state and relevant memory fields are
 computed by ContextBuilder (for LTM scoring) but are NOT rendered into
-the prose — see the metadata-leak fix in C<messages_to_prose_dynamic>.
+the prose -- see the metadata-leak fix in C<messages_to_prose_dynamic>.
+LTM remains accessible on demand via memory_operations(search).
 
 The renderer produces markdown with the dynamic sections only. The
 stable parts (anchor + recent turns) are pushed by WorkflowOrchestrator
@@ -176,7 +177,9 @@ sub messages_to_prose {
 
 Render only the dynamic portions of a projection as natural prose:
 active task (as plain text, no label), active todos as a checklist,
-environment (working directory first), and context files.
+relevant memory (LTM) is NOT rendered — it is accessible on demand via
+memory_operations(search), environment (working directory first), and
+context files.
 
 Removed in the metadata-leak fix: the C<Unresolved:> section
 (recycled tool errors) and the C<Relevant memory:> section (LTM

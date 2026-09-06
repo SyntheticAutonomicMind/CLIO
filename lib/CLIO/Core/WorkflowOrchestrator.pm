@@ -17,7 +17,7 @@ use CLIO::UI::ToolOutputFormatter;
 use CLIO::Core::ToolErrorGuidance;
 use CLIO::Core::ConversationManager qw(
     load_conversation_history
-    trim_with_noise_dropping
+    strip_messages_noise
     enforce_message_alternation
     generate_tool_call_id
     repair_tool_call_json
@@ -646,12 +646,13 @@ sub process_input {
         # reactive trim had to drop hundreds of messages at once (e.g., 434).
         # Now @messages stays trim every iteration, so reactive trims are small.
         # SMELL #6 fix (QA review 2026-09-02): the `&& $iteration > 1`
-        # guard was wrong. trim_with_noise_dropping already ran in
-        # _build_turn_context, but it operates on the history array
-        # (which doesn't include the dynamic UC) and uses a softer
-        # budget. If the projection emits a huge dynamic UC (large
-        # todo list, big LTM, big context files), iteration 1 sends
-        # an over-budget array and the API rejects. Remove the guard
+        # guard was wrong. strip_messages_noise already ran in
+        # _build_turn_context (noise-stripping only, no drop), but it
+        # operates on the history array (which doesn't include the
+        # dynamic UC) and does not enforce a token budget. If the
+        # projection emits a huge dynamic UC (large todo list, LTM,
+        # big context files), iteration 1 sends an over-budget array
+        # and the API rejects. Remove the guard
         # so every iteration (including iteration 1) gets the
         # proactive trim safety net.
         if ($self->{api_manager}) {
@@ -1293,11 +1294,16 @@ sub _build_turn_context {
             # reusing the stale cached payload verbatim.
             my $history = load_conversation_history($session, debug => $self->{debug});
             if ($history && @$history) {
-                $history = trim_with_noise_dropping(
+                # Noise-strip only (no tail-walk drop) so the full
+                # history reaches ContextBuilder, which selects the
+                # recent window and compresses the rest into a
+                # compressed_tail via YaRN. A pre-trim tail walk here
+                # would drop old messages before the projection can
+                # summarize them — permanent data loss. The proactive
+                # _role_based_tail_walk is the authoritative
+                # token-budget enforcer and does its own compression.
+                $history = strip_messages_noise(
                     $history,
-                    '',
-                    model_context_window => $model_caps->{max_context_window_tokens} // CLIO::Core::Defaults::DEFAULT_CONTEXT_WINDOW,
-                    max_response_tokens  => $model_caps->{max_output_tokens} // CLIO::Core::Defaults::DEFAULT_MAX_RESPONSE_TOKENS,
                     debug => $self->{debug},
                 );
             }
@@ -1421,18 +1427,18 @@ sub _build_turn_context {
     my $history = load_conversation_history($session, debug => $self->{debug});
 
     if ($history && @$history) {
-        # messageHistory feature: use trim_with_noise_dropping which
-        # strips reasoning_content from old assistant messages BEFORE
-        # the standard trim walk. This preserves more of the actual
-        # conversation (user/assistant text + tool results) at the
-        # same token cost. The noise drop is non-destructive - the
-        # original messages are preserved in session state, only the
-        # serialized history is reduced.
-        $history = trim_with_noise_dropping(
+        # messageHistory feature: noise-strip reasoning_content from
+        # old assistant messages before the projection. This preserves
+        # more of the actual conversation (user/assistant text + tool
+        # results) at the same token cost. NO tail-walk drop here —
+        # the full noise-stripped history reaches ContextBuilder, which
+        # selects the recent window and compresses the rest via YaRN.
+        # A pre-trim tail walk would drop old messages before the
+        # projection can summarize them (permanent data loss). The
+        # proactive _role_based_tail_walk enforces the token budget
+        # with its own compression.
+        $history = strip_messages_noise(
             $history,
-            $system_prompt,
-            model_context_window => $model_caps->{max_context_window_tokens} // CLIO::Core::Defaults::DEFAULT_CONTEXT_WINDOW,
-            max_response_tokens  => $model_caps->{max_output_tokens} // CLIO::Core::Defaults::DEFAULT_MAX_RESPONSE_TOKENS,
             debug => $self->{debug},
         );
     }
