@@ -441,10 +441,15 @@ sub _parse_patch {
                     next;
                 }
                 
-                # Unrecognized line - this may indicate malformed patch
-                # Instead of silently treating as context, warn and skip
-                log_debug('ApplyPatch', "Unrecognized line in patch chunk (not +, -, space, or @@): '$cl'");
-                log_debug('ApplyPatch', "This line will be ignored. Check patch format for missing +/-/space prefixes.");
+                # Unrecognized line — likely missing the leading space on a
+                # context line (a common apply_patch formatting mistake).
+                # Treat it as a context line (added to both old_lines and
+                # new_lines). This is safe: if the line doesn't actually
+                # appear in the file, chunk matching will still fail and
+                # the fuzzy matcher will catch whitespace-only differences.
+                log_debug('ApplyPatch', "Unrecognized line in patch chunk (no +/- prefix): '$cl' - treating as context");
+                push @{$current_chunk->{old_lines}}, $cl;
+                push @{$current_chunk->{new_lines}}, $cl;
                 $i++;
             }
             
@@ -651,8 +656,8 @@ sub _apply_update {
             # guidance (read the file, find real text, retry with correct
             # old_lines that exactly match the file).
             return $self->error_result(
-                "Cannot find match position for chunk" .
-                ($context ? " (context: '$context')" : '') .
+                "Cannot find match position for chunk. " .
+                ($context ? "(context: '$context') " : '') .
                 "Read the file to see its actual content before retrying.",
                 type => 'update',
                 path => $rel_path,
@@ -853,30 +858,35 @@ Fuzzy variant that ignores whitespace differences.
 
 sub _find_chunk_position_fuzzy {
     my ($self, $lines, $context, $old_lines, $start_offset) = @_;
-    
+
     $start_offset //= 0;
     return undef unless $old_lines && @$old_lines;
-    
+
     my $pattern_len = scalar @$old_lines;
-    
+
+    # Search from start_offset forward using consistent _lines_match_fuzzy
+    # (which trims AND collapses multiple spaces - the previous inline code
+    # only trimmed, missing a class of whitespace mismatches).
     for my $i ($start_offset .. ($#$lines - $pattern_len + 1)) {
-        my $match = 1;
-        for my $j (0 .. $#$old_lines) {
-            my $file_line = $lines->[$i + $j] // '';
-            my $patch_line = $old_lines->[$j] // '';
-            
-            # Normalize whitespace
-            $file_line =~ s/^\s+|\s+$//g;
-            $patch_line =~ s/^\s+|\s+$//g;
-            
-            unless ($file_line eq $patch_line) {
-                $match = 0;
-                last;
+        if ($self->_lines_match_fuzzy($lines, $i, $old_lines)) {
+            log_debug('ApplyPatch', "Fuzzy match found at line $i");
+            return $i;
+        }
+    }
+
+    # Retry from beginning of file if we started with an offset.
+    # This mirrors _find_chunk_position's retry logic: when a context
+    # anchor pushed search_start past the actual match location, we need
+    # to fall back to scanning the whole file.
+    if ($start_offset > 0) {
+        for my $i (0 .. ($start_offset - 1)) {
+            if ($self->_lines_match_fuzzy($lines, $i, $old_lines)) {
+                log_debug('ApplyPatch', "Fuzzy match found at line $i (retry from start)");
+                return $i;
             }
         }
-        return $i if $match;
     }
-    
+
     return undef;
 }
 

@@ -505,7 +505,7 @@ sub get_tool_definition {
                 operation => {
                     type => "string",
                     enum => $self->{supported_operations},
-                    description => "Operation to perform",
+                    description => "REQUIRED. Selects which operation to invoke. Must be one of: " . join(', ', @{$self->{supported_operations}}),
                 },
                 # Subclass can add more parameters via get_additional_parameters()
                 %{$self->get_additional_parameters() || {}},
