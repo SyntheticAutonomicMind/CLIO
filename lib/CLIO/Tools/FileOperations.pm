@@ -2047,7 +2047,14 @@ sub replace_string {
         
         if ($count == 0) {
             $result = $self->error_result(
-                "String not found in '$path'. Read the file to see its actual content before retrying."
+                "String not found in '$path' (searched " . length($old_string) . " chars). " .
+                "The match is literal (no regex).\n" .
+                "Common causes:\n" .
+                "  - Whitespace difference (trailing spaces, tabs vs spaces)\n" .
+                "  - The old_string was copied from formatted output (line numbers, code-block markers)\n" .
+                "  - The file changed since you last read it\n" .
+                "  - Encoding difference (UTF-8 vs Latin-1)\n" .
+                "Read the file again to verify the exact content before retrying."
             );
             return;
         }

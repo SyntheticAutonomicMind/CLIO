@@ -313,21 +313,43 @@ sub execute_tool {
     
     my $tool = $tool_registry->get_tool($tool_name);
     unless ($tool) {
-        # Log unknown tool error
-        $self->_log_tool_operation({
-            tool_call_id => $tool_call_id,
-            tool_name => $original_tool_name,
-            operation => 'unknown',
-            parameters => $arguments,
-            output => {},
-            action_description => "Unknown tool: $tool_name",
-            sent_to_ai => "ERROR: Unknown tool: $tool_name",
-            success => 0,
-            error => "Unknown tool: $tool_name",
-            execution_time_ms => int((time() - $start_time) * 1000)
-        });
-        
-        return $self->_error_result("Unknown tool: $tool_name");
+        # Fallback: tool_name might be an operation alias (e.g. "read"
+        # instead of "file_operations" + operation="read_file"). Some
+        # execution layers extract the operation name and use it as the
+        # tool name. The Registry alias table only covers tool-level aliases
+        # (like "read_file" -> file_operations), not per-tool operation aliases
+        # (like "read" -> read_file in FileOperations.operation_aliases).
+        # Scan all registered tools for a matching operation.
+        my $resolved_op = $tool_name;
+        if (my $all_tools = $tool_registry->get_all_tools()) {
+            for my $candidate (@$all_tools) {
+                if ($candidate->validate_operation($tool_name)) {
+                    $tool = $candidate;
+                    $tool_name = $candidate->{name};
+                    $arguments->{operation} //= $resolved_op;
+                    log_debug('ToolExecutor',
+                        "Resolved operation alias '$resolved_op' as tool '$tool_name'");
+                    last;
+                }
+            }
+        }
+        unless ($tool) {
+            # Log unknown tool error
+            $self->_log_tool_operation({
+                tool_call_id => $tool_call_id,
+                tool_name => $original_tool_name,
+                operation => 'unknown',
+                parameters => $arguments,
+                output => {},
+                action_description => "Unknown tool: $tool_name",
+                sent_to_ai => "ERROR: Unknown tool: $tool_name",
+                success => 0,
+                error => "Unknown tool: $tool_name",
+                execution_time_ms => int((time() - $start_time) * 1000)
+            });
+
+            return $self->_error_result("Unknown tool: $tool_name");
+        }
     }
     
     # Execute tool with operation from arguments
