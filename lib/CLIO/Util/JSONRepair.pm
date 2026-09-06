@@ -33,7 +33,7 @@ and ToolExecutor.
 =cut
 
 use Exporter 'import';
-use CLIO::Util::JSON qw(encode_json);
+use CLIO::Util::JSON qw(encode_json decode_json);
 our @EXPORT_OK = qw(repair_malformed_json);
 
 =head2 repair_malformed_json($json_str, $debug)
@@ -61,6 +61,28 @@ sub repair_malformed_json {
     $debug //= 0;
     
     my $original = $json_str;
+
+    # Early validity check: if the JSON already parses, return it unchanged.
+    # This is critical for idempotency — the repair regexes below (especially
+    # the decimal-fix s/:(\s*)\.(\d)/:0.$2/g) match inside string values and
+    # will corrupt valid JSON like {"query":"error: .500 status"} into
+    # {"query":"error: 0.500 status"}. Previously, Phase 1 (repair_tool_call_json)
+    # repaired the JSON and stored _parsed_args; then Phase 3 re-ran
+    # repair_malformed_json on the already-valid result, corrupting string values.
+    # By short-circuiting on valid JSON, a single pass is both necessary AND
+    # sufficient: repair_malformed_json becomes idempotent by construction.
+    {
+        my $test = $json_str;
+        if (utf8::is_utf8($test)) {
+            utf8::encode($test);
+        }
+        local $@;
+        eval { decode_json($test) };
+        if (!$@) {
+            log_debug('JSONRepair', "Input is already valid JSON — returning unchanged") if $debug;
+            return $json_str;
+        }
+    }
 
     # Strip embedded XML parameter tags
     if ($json_str =~ /<\/?parameter/) {

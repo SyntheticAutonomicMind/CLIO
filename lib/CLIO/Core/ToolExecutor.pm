@@ -200,15 +200,20 @@ sub execute_tool {
         return $self->_error_result("Tool registry not available");
     }
     
-    # Resolve tool aliases via the registry (single source of truth)
-    my $alias_info = $tool_registry->get_alias_info($tool_name);
-    if ($alias_info) {
-        log_debug('ToolExecutor', "Aliasing '$tool_name' -> '$alias_info->{tool}' with operation='$alias_info->{operation}'");
-        $tool_name = $alias_info->{tool};
-        $arguments->{operation} = $alias_info->{operation};
-    }
-    
+    # Fallback alias resolution: Phase 3 in _prepare_tool_round already resolves
+    # aliases and injects operation into _parsed_args. This block only runs when
+    # ToolExecutor is called directly (bypassing Phase 3 - e.g. from tests or
+    # direct tool invocation). When _parsed_args already has operation set by
+    # Phase 3, we skip the redundant resolution.
     my $original_tool_name = $tool_name;
+    if (!$arguments->{operation}) {
+        my $alias_info = $tool_registry->get_alias_info($tool_name);
+        if ($alias_info) {
+            log_debug('ToolExecutor', "Alias fallback: '$tool_name' -> '$alias_info->{tool}' with operation='$alias_info->{operation}'");
+            $tool_name = $alias_info->{tool};
+            $arguments->{operation} = $alias_info->{operation};
+        }
+    }
     
     # Check if this is an MCP tool (prefixed with mcp_)
     if ($tool_name =~ /^mcp_/ && $self->{mcp_manager}) {
