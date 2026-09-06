@@ -62,7 +62,7 @@ The projection is deterministic given the same inputs.
 =head1 SYNOPSIS
 
     use CLIO::Core::ContextBuilder;
-    use CLIO::Core::MessageHistory qw(messages_to_prose messages_to_prose_dynamic);
+    use CLIO::Core::MessageHistory qw(messages_to_prose_dynamic);
 
     my $projection = CLIO::Core::ContextBuilder::build_projection(
         history       => $session->get_conversation_history(),

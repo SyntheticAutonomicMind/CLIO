@@ -2,20 +2,11 @@
 # SPDX-License-Identifier: GPL-3.0-only
 # SPDX-FileCopyrightText: Copyright (c) 2026 Andrew Wyatt (Fewtarius)
 #
-# Regression test: when messages_to_prose_dynamic returns empty,
-# _dynamic_usercontext_idx must NOT point to user_input (BUG #3 in
-# QA review 2026-09-02).
-#
-# Bug: WorkflowOrchestrator::process_input guarded the dynamic UC
-# push with `if (length $dynamic_usercontext)` but assigned
-# `_dynamic_usercontext_idx = scalar(@messages) - 1` unconditionally.
-# When the prose renderer returns empty, no UC is pushed but the
-# idx still points to user_input. On iteration 2+, the per-iteration
-# refresh would overwrite the user's question with dynamic UC
-# content (clobbering the model's question).
-#
-# Fix: set idx to -1 when no UC was pushed; per-iteration refresh
-# also checks >= 0.
+# Regression test: with the remove-and-rebuild approach, an empty
+# projection produces empty prose (no UC pushed at tail), so the
+# model's user_input is not clobbered. The new _replace_dynamic_
+# usercontext filters old UC by content (not index) and only
+# appends when non-empty.
 
 use strict;
 use warnings;

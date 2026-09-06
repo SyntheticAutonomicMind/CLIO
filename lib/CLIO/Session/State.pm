@@ -33,7 +33,6 @@ Handles atomic file saves, state migration from older formats, and session clean
 use strict;
 use warnings;
 use utf8;
-use Carp qw(croak);
 use CLIO::Core::Logger qw(log_error log_warning log_debug);
 use CLIO::Util::UUID qw(uuid_v4);
 use CLIO::Util::PathResolver;
@@ -90,24 +89,14 @@ sub new {
             requests => [],  # Array of individual request billing records
         },
         # Context files
-        context_files => [],
-        # Context management configuration
-        max_tokens => $args{max_tokens} // 128000,           # Model context window (updated at runtime)
-        # Cached API payload (the exact @messages array last sent to the provider)
-        # On session resume this is loaded verbatim - no rebuild from history needed.
-        last_api_payload => [],       # Arrayref of message hashes
-        last_api_metadata => {        # Snapshot at save time, drives reuse decisions
-            model          => undef,  # Model ID at save time
-            provider       => undef,  # Provider name at save time
-            context_window => 0,      # Model context window at save time
-            tools_signature => undef, # Digest of tools array (MCP/plugin drift detection)
-            saved_at       => 0,      # Unix timestamp of save
-        },
-        # Session goals: persistent task-tracking goals managed by the model.
-        # Stored as an arrayref of {id, title, description, status, created_at}.
-        # Always injected into user_context by PromptBuilder (no loading step
-        # required) so the agent has its goals in view every turn. Survives
-        # context trims because the storage is the session file, not memory.
+       context_files => [],
+       # Context management configuration
+       max_tokens => $args{max_tokens} // 128000,           # Model context window (updated at runtime)
+       # Session goals: persistent task-tracking goals managed by the model.
+       # Stored as an arrayref of {id, title, description, status, created_at}.
+       # Always injected into user_context by PromptBuilder (no loading step
+       # required) so the agent has its goals in view every turn. Survives
+       # context trims because the storage is the session file, not memory.
         session_goals => [],  # Arrayref of goal hashes
     };
     bless $self, $class;
@@ -162,16 +151,9 @@ my $data = {
         theme => $self->{theme},  # Save current output theme
         session_name => $self->{session_name},  # Human-friendly session name
         loaded_skills => $self->{loaded_skills} || [],  # Skills merged into system prompt
-        input_history => $self->{input_history} || [],  # User input readline history
-        last_api_payload => $self->{last_api_payload} || [],  # Exact @messages last sent to the API
-        last_api_metadata => $self->{last_api_metadata} || {   # Snapshot for reuse decisions
-            model          => undef,
-            provider       => undef,
-            context_window => 0,
-            tools_signature => undef,
-            saved_at       => 0,
-        },
-        session_goals => $self->{session_goals} || [],  # Persistent task goals (injected into user_context)
+       input_history => $self->{input_history} || [],  # User input readline history
+       # last_api_payload / last_api_metadata fields removed — see new() above.
+       session_goals => $self->{session_goals} || [],  # Persistent task goals (injected into user_context)
     };
     if ($ENV{CLIO_DEBUG} || $self->{debug}) {
         require Data::Dumper;
@@ -230,6 +212,12 @@ sub load {
     require CLIO::Util::PathResolver;
     my $ltm_file = CLIO::Util::PathResolver::find_ltm_path($working_dir);
     my $ltm = CLIO::Memory::LongTerm->load($ltm_file, debug => $args{debug});
+    
+    # Run LTM consolidation on session load (same as Manager::new).
+    # The gates in maybe_consolidate (age, entry count) ensure this
+    # is a no-op unless consolidation is actually due.
+    eval { $ltm->maybe_consolidate() };
+    log_debug('State', "LTM consolidation: $@") if $@;
     
     # Fallback: If old session has ltm->{store} data, migrate it
     if (!-e $ltm_file && $data->{ltm} && ref($data->{ltm}) eq 'HASH') {
@@ -386,21 +374,11 @@ sub load {
         session_name => $data->{session_name} // undef,
         # Loaded skills (merged into system prompt)
         loaded_skills => $data->{loaded_skills} || [],
-        # User input readline history (persisted across sessions)
-        input_history => $data->{input_history} || [],
-        # Cached API payload (last @messages sent to the provider) - drives the
-        # "reload current state" fast path on resume. Both fields are absent in
-        # sessions created before this feature shipped; the rebuild path runs
-        # until the next API call writes them.
-        last_api_payload => $data->{last_api_payload} || [],
-        last_api_metadata => $data->{last_api_metadata} || {
-            model          => undef,
-            provider       => undef,
-            context_window => 0,
-            tools_signature => undef,
-            saved_at       => 0,
-        },
-        # Session goals: persistent task goals managed by the model. Always
+       # User input readline history (persisted across sessions)
+       input_history => $data->{input_history} || [],
+        # last_api_payload / last_api_metadata removed — session resume now
+        # always rebuilds from load_conversation_history.
+       # Session goals: persistent task goals managed by the model. Always
         # present in user_context every turn (no loading step). Survives
         # context trims because storage is the session file.
         session_goals => $data->{session_goals} || [],
@@ -559,123 +537,9 @@ sub set_session_goals {
     return $self->{session_goals};
 }
 
-=head2 last_api_payload / last_api_metadata / section_signatures
-
-Cache the conversation state at end of turn so a resumed session can pick
-up with byte-identical context instead of rebuilding from scratch.
-
-The snapshot is captured by WorkflowOrchestrator::process_input AFTER tool
-execution completes (so it includes the assistant response, tool_calls, and
-tool_results persisted during the turn). The resume fast path consumes this
-in CLIO::Core::WorkflowOrchestrator::_try_resume_from_payload.
-
-Contract: snapshot must equal what load_conversation_history would return
-after rebuilding from session history. Otherwise the resume fast path and
-the rebuild path produce different prompts, breaking llama.cpp LCP cache
-stability (CachyLLama bug reported 2026-08-18).
-
-=cut
-
-sub last_api_payload  { $_[0]->{last_api_payload} }
-sub last_api_metadata { $_[0]->{last_api_metadata} }
-
-sub set_last_api_payload {
-    my ($self, $payload, %opts) = @_;
-    croak "payload must be an arrayref" unless ref($payload) eq 'ARRAY';
-
-    # Deep-clone so later in-process mutation of the caller's @messages
-    # array cannot corrupt the cached copy. Shallow copy of the top-level
-    # array isn't enough because message hashes contain nested arrayrefs
-    # (tool_calls) and hashrefs (tool_calls[i].function.arguments) that
-    # are mutable in practice - the WorkflowOrchestrator mutates
-    # assistant message tool_calls between API iterations.
-    my $copy = _deep_clone_messages($payload);
-
-    $self->{last_api_payload} = $copy;
-    $self->{last_api_metadata} = {
-        model          => $opts{model}          // $self->{last_api_metadata}{model}          // undef,
-        provider       => $opts{provider}       // $self->{last_api_metadata}{provider}       // undef,
-        context_window => $opts{context_window} // $self->{last_api_metadata}{context_window} // 0,
-        tools_signature => $opts{tools_signature} // $self->{last_api_metadata}{tools_signature} // undef,
-        saved_at       => time(),
-    };
-
-    return $copy;
-}
-
-sub _deep_clone_messages {
-    my ($messages) = @_;
-    my $copy = [];
-    for my $msg (@$messages) {
-        if (ref($msg) eq 'HASH') {
-            my %m = %$msg;
-            # Recurse into known nested structures that may be mutated.
-            $m{tool_calls} = _deep_clone_messages_list($m{tool_calls}) if ref($m{tool_calls}) eq 'ARRAY';
-            $m{content}    = _deep_clone_content($m{content}) if ref($m{content});
-            push @$copy, \%m;
-        } else {
-            push @$copy, $msg;
-        }
-    }
-    return $copy;
-}
-
-sub _deep_clone_messages_list {
-    my ($items) = @_;
-    return [] unless ref($items) eq 'ARRAY';
-    my $copy = [];
-    for my $item (@$items) {
-        if (ref($item) eq 'HASH') {
-            my %h = %$item;
-            # tool_calls entries have function.arguments (hashref) - clone it.
-            if (ref($h{function}) eq 'HASH') {
-                my %fn = %{$h{function}};
-                $fn{arguments} = _deep_clone_json_value($fn{arguments}) if ref($fn{arguments});
-                $h{function} = \%fn;
-            }
-            push @$copy, \%h;
-        } else {
-            push @$copy, $item;
-        }
-    }
-    return $copy;
-}
-
-# Clone a tool message content value: in OpenAI format this is a string,
-# but in Anthropic it can be an arrayref of typed blocks (text, tool_use,
-# image). We preserve the structure but copy any nested hashes/arrays.
-sub _deep_clone_content {
-    my ($content) = @_;
-    return _deep_clone_json_value($content);
-}
-
-sub _deep_clone_json_value {
-    my ($v) = @_;
-    return $v unless ref($v);
-    if (ref($v) eq 'HASH') {
-        my %h = %$v;
-        for my $k (keys %h) { $h{$k} = _deep_clone_json_value($h{$k}); }
-        return \%h;
-    }
-    if (ref($v) eq 'ARRAY') {
-        return [ map { _deep_clone_json_value($_) } @$v ];
-    }
-    # Blessed or otherwise - leave alone, callers shouldn't mutate these.
-    return $v;
-}
-
-sub clear_last_api_payload {
-    my ($self) = @_;
-    $self->{last_api_payload} = [];
-    $self->{last_api_metadata} = {
-        model          => undef,
-        provider       => undef,
-        context_window => 0,
-        tools_signature => undef,
-        saved_at       => 0,
-    };
-    return 1;
-}
+# last_api_payload / last_api_metadata removed: session resume now always
+# rebuilds from load_conversation_history — single source of truth. No more
+# stale cached payload contamination on resume.
 
 =head2 _validate_and_repair_history
 

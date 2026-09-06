@@ -9,7 +9,6 @@ use utf8;
 
 use Exporter 'import';
 our @EXPORT_OK = qw(
-    messages_to_prose
     messages_to_prose_dynamic
 );
 
@@ -69,8 +68,6 @@ verified end-to-end.
 Public API:
 - L</messages_to_prose_dynamic> - the only renderer used in
   production. Returns the dynamic prose block.
-- L</messages_to_prose> - alias for messages_to_prose_dynamic,
-  kept for tests and debug inspection.
 
 The earlier `messages_to_prose_stable` renderer and the
 `_render_prose_turn_messages` helper were deleted in this commit -
@@ -96,7 +93,7 @@ existed before the XML experiment was introduced.
 
 =cut
 
-=head2 messages_to_prose
+=head2 messages_to_prose_dynamic
 
 Serialize a ContextBuilder projection (and its source history) into a
 single prose string suitable for inclusion as one system message content.
@@ -161,17 +158,6 @@ Returns:
 - Prose string suitable for use as a single system message content
 
 =cut
-
-sub messages_to_prose {
-    # Convenience alias for messages_to_prose_dynamic. The "stable"
-    # prose sections were deleted along with _render_prose_turn_messages
-    # - the cache-stable prefix (anchor + recent turns) is now pushed
-    # by WorkflowOrchestrator as role-based messages, not as prose.
-    # This wrapper exists so tests and debug tools can keep using
-    # messages_to_prose() to render the dynamic userContext.
-    my ($projection, %opts) = @_;
-    return messages_to_prose_dynamic($projection, %opts);
-}
 
 =head2 messages_to_prose_dynamic
 

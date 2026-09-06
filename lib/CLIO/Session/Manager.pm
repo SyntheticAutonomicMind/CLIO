@@ -198,7 +198,15 @@ sub new {
     require CLIO::Util::PathResolver;
     my $ltm_file = CLIO::Util::PathResolver::find_ltm_path($working_dir);
     my $ltm = CLIO::Memory::LongTerm->load($ltm_file, debug => $self->{debug});
-    
+
+    # Run LTM consolidation at session start. This prunes stale entries,
+    # promotes high-confidence discoveries, and prevents the indefinite
+    # accumulation of low-quality entries that get scored into the
+    # dynamic userContext. maybe_consolidate gates on age (24h) and
+    # entry count (20+), so it's a no-op for new/small sessions.
+    eval { $ltm->maybe_consolidate() };
+    log_debug('SessionManager', "LTM consolidation: $@") if $@;
+
     my $stm  = CLIO::Memory::ShortTerm->new(debug => $self->{debug});
     my $yarn = CLIO::Memory::YaRN->new(debug => $self->{debug});
     $self->{stm}  = $stm;

@@ -1511,7 +1511,7 @@ Returns: Text with framework narration stripped
     'in_flight_budget_exhausted'   => 'budget exhausted',
     # Project-internal class/file names
     'messageHistory'               => 'message history',
-    'messages_to_prose'            => 'prose serializer',
+    'messages_to_prose_dynamic'    => 'prose serializer',
     'ContextBuilder'               => 'context builder',
     'MessageHistory.pm'            => 'message history module',
     'PromptBuilder.pm'             => 'prompt builder module',

@@ -213,6 +213,8 @@ sub _role_based_tail_walk {
     # Identify "pinned" indices - messages that must survive trimming
     # regardless of budget pressure:
     #  - system_prompt at index 0 (cache-stable prefix anchor)
+    #  - ALL <thread_summary> system messages (YaRN compressed summaries
+    #    from prior trim cycles — dropping them loses cross-cycle carryover)
     #  - the LAST system message that follows a user message
     #    (dynamic userContext - carries active task, todos, memory)
     #  - the LAST user message (current turn's user_input)
@@ -226,6 +228,21 @@ sub _role_based_tail_walk {
         && ($messages->[0]{role} // '') eq 'system'
         && 0 != $first_user_idx) {
         unshift @pinned, 0;
+    }
+    # Pin all <thread_summary> system messages so YaRN compressed
+    # summaries survive trimming. Without this, a large context that
+    # has been trimmed multiple times loses its cross-cycle carryover
+    # and the model can't see the task history its summaries describe.
+    # The system_prompt (idx 0) is NOT a thread_summary — the regex
+    # check avoids pinning it twice.
+    for my $i (0 .. $#$messages) {
+        my $msg = $messages->[$i];
+        next unless ref($msg) eq 'HASH';
+        next unless ($msg->{role} // '') eq 'system';
+        my $content = $msg->{content} // '';
+        if ($content =~ /<thread_summary>/) {
+            push @pinned, $i unless grep { $_ == $i } @pinned;
+        }
     }
     my $last_system_after_user;
     my $last_user_idx;

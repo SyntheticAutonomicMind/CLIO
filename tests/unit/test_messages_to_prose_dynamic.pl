@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: GPL-3.0-only
 # SPDX-FileCopyrightText: Copyright (c) 2026 Andrew Wyatt (Fewtarius)
 #
-# Tests for CLIO::Core::MessageHistory::messages_to_prose
+# Tests for CLIO::Core::MessageHistory::messages_to_prose_dynamic
 #
 # Verifies the prose renderer:
 # - Consumes the ContextBuilder projection structure correctly
@@ -18,7 +18,7 @@ use utf8;
 
 use Test::More;
 use CLIO::Core::ContextBuilder ();
-use CLIO::Core::MessageHistory qw(messages_to_prose);
+use CLIO::Core::MessageHistory qw(messages_to_prose_dynamic);
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -67,10 +67,10 @@ sub build_projection {
 # ---------------------------------------------------------------------------
 
 my $projection = build_projection();
-my $prose = messages_to_prose($projection);
+my $prose = messages_to_prose_dynamic($projection);
 
-ok(defined $prose && length($prose), 'messages_to_prose returns non-empty string');
-# messages_to_prose is now an alias for messages_to_prose_dynamic -
+ok(defined $prose && length($prose), 'messages_to_prose_dynamic returns non-empty string');
+# messages_to_prose_dynamic is now an alias for messages_to_prose_dynamic -
 # the "stable" prose sections (Task, Recent work) are pushed as
 # role-based messages by WorkflowOrchestrator, not as prose. So the
 # dynamic-only test ensures we don't accidentally regress to
@@ -139,7 +139,7 @@ for my $forbidden (
 # ---------------------------------------------------------------------------
 
 # The # Task and # Recent work sections are no longer rendered by
-# messages_to_prose (the role-based history path pushes them as
+# messages_to_prose_dynamic (the role-based history path pushes them as
 # individual messages). The dynamic-only renderer is what's tested
 # below.
 unlike($prose, qr/^# Task\n/, 'does NOT render # Task (stable content pushed as role-based messages)');
@@ -164,9 +164,9 @@ like($prose, qr/Date: \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/, 'environment has ISO
 # 6. Determinism: same input -> same output
 # ---------------------------------------------------------------------------
 
-my $p1 = messages_to_prose(build_projection());
-my $p2 = messages_to_prose(build_projection());
-is($p1, $p2, 'messages_to_prose is deterministic across runs');
+my $p1 = messages_to_prose_dynamic(build_projection());
+my $p2 = messages_to_prose_dynamic(build_projection());
+is($p1, $p2, 'messages_to_prose_dynamic is deterministic across runs');
 
 # ---------------------------------------------------------------------------
 # 7. Dynamic-only rendering: no # Task or # Recent work sections
@@ -192,7 +192,7 @@ like($p1, qr/Working directory:/, 'Prose renderer emits environment as natural p
 # 9. Empty projection is safe
 # ---------------------------------------------------------------------------
 
-my $empty = messages_to_prose({});
+my $empty = messages_to_prose_dynamic({});
 ok(defined $empty, 'empty projection returns defined output');
 is(length($empty), 0, 'empty projection returns empty string');
 
@@ -201,21 +201,21 @@ is(length($empty), 0, 'empty projection returns empty string');
 # ---------------------------------------------------------------------------
 
 # Minimal projection: only the dynamic userContext fields. Anchor and
-# turns are now role-based, so passing them to messages_to_prose has
+# turns are now role-based, so passing them to messages_to_prose_dynamic has
 # no effect (the renderer is dynamic-only). The result is an empty
 # string (no dynamic sections either).
 my $minimal_proj = {
     anchor => [ { role => 'user', content => 'just a task' } ],
 };
-my $minimal = messages_to_prose($minimal_proj);
+my $minimal = messages_to_prose_dynamic($minimal_proj);
 is(length($minimal), 0, 'minimal projection (no dynamic fields) renders empty');
 
 # ---------------------------------------------------------------------------
-# 11. messages_to_prose is an alias for messages_to_prose_dynamic
+# 11. messages_to_prose_dynamic is an alias for messages_to_prose_dynamic
 # ---------------------------------------------------------------------------
 # The split (stable + dynamic) was deleted when role-based history
-# was introduced. messages_to_prose is now a thin alias.
+# was introduced. messages_to_prose_dynamic is now a thin alias.
 my $dynamic_only = CLIO::Core::MessageHistory::messages_to_prose_dynamic($projection);
-is($prose, $dynamic_only, 'messages_to_prose == messages_to_prose_dynamic');
+is($prose, $dynamic_only, 'messages_to_prose_dynamic == messages_to_prose_dynamic');
 
 done_testing();
