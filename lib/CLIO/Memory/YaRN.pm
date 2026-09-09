@@ -249,7 +249,6 @@ sub compress_messages {
     my @files_touched;
     my @decisions;
     my @collaboration_exchanges;  # Agent question + user response pairs
-    my %tool_counts;
 
     # Track collaboration tool_call IDs so we can pair them with responses
     my %collab_tool_calls;  # tool_call_id => agent's question text
@@ -260,7 +259,6 @@ sub compress_messages {
             commits                 => \@commits,
             files_touched           => \@files_touched,
             decisions               => \@decisions,
-            tool_counts             => \%tool_counts,
             user_requests           => \@user_requests,
             collaboration_exchanges => \@collaboration_exchanges,
         });
@@ -321,7 +319,6 @@ sub compress_messages {
                 for my $tc (@{$msg->{tool_calls}}) {
                     my $name     = $tc->{function}{name}      || 'unknown';
                     my $args_str = $tc->{function}{arguments} || '{}';
-                    $tool_counts{$name}++;
 
                     # Track interact calls to pair with responses
                     if ($name eq 'interact' && $tc->{id}) {
@@ -411,27 +408,19 @@ sub compress_messages {
         \@all_requests
     );
 
-    # Build summary
+    # Build summary — minimal, byte-stable, and useful.
+    # Only the original task and recent user requests are preserved.
+    # NO commits, files, decisions, or collaboration exchanges: these
+    # are statistical noise that changes every turn and busts KV cache
+    # of the stable message prefix. The compressed_tail lives in the
+    # dynamic UC system message (which is non-stable by design), so
+    # any per-turn content is acceptable there — but we keep it lean.
     my @parts;
     push @parts, "<thread_summary>";
     push @parts, "";
 
     if ($effective_task) {
         push @parts, "Current task: " . substr($effective_task, 0, 300);
-        push @parts, "";
-    }
-
-    # Collaboration exchanges go FIRST - they represent active design discussions.
-    # Section header is "Discussion:" (matching the parser's accepted
-    # headers) so cross-cycle summaries stay format-consistent.
-    if (@collaboration_exchanges) {
-        push @parts, "Discussion:";
-        for my $i (0..$#collaboration_exchanges) {
-            my $ex = $collaboration_exchanges[$i];
-            push @parts, "  Agent asked: " . $ex->{question};
-            push @parts, "  User replied: " . $ex->{response};
-            push @parts, "" if $i < $#collaboration_exchanges;
-        }
         push @parts, "";
     }
 
@@ -442,32 +431,6 @@ sub compress_messages {
             push @parts, "- [original] $first_user_request";
         }
         push @parts, "- $_" for @user_requests;
-        push @parts, "";
-    }
-
-    if (@commits) {
-        push @parts, "Commits:";
-        push @parts, "- $_" for @commits;
-        push @parts, "";
-    }
-
-    if (@files_touched) {
-        push @parts, "Files:";
-        push @parts, "- $_" for @files_touched;
-        push @parts, "";
-    }
-
-    if (@decisions) {
-        push @parts, "Decisions:";
-        push @parts, "- $_" for @decisions;
-        push @parts, "";
-    }
-
-    if (%tool_counts) {
-        push @parts, "Tools:";
-        for my $t (sort { $tool_counts{$b} <=> $tool_counts{$a} } keys %tool_counts) {
-            push @parts, "- $t: $tool_counts{$t} calls";
-        }
         push @parts, "";
     }
 
@@ -614,46 +577,7 @@ sub _parse_previous_summary {
     # Strip thread_summary tags
     $summary_text =~ s/<\/?thread_summary>//g;
     
-    my $commits                 = $buckets->{commits}                 || [];
-    my $files_touched           = $buckets->{files_touched}           || [];
-    my $decisions               = $buckets->{decisions}               || [];
-    my $tool_counts             = $buckets->{tool_counts}             || {};
-    my $user_requests           = $buckets->{user_requests}           || [];
-    my $collaboration_exchanges = $buckets->{collaboration_exchanges} || [];
-    
-    # Parse git commits: lines starting with "- " under "Commits" section.
-    # Headers accept either the new short label ("Commits:") or the legacy
-    # "Git commits made during compressed period:" so cross-cycle summaries
-    # produced by either render path parse back. The bullet bodies are
-    # intentionally one-line ([^\n]+ with no /s flag) so a stray "- "
-    # in a commit message body cannot bleed into the next section.
-    if ($summary_text =~ /(?:^|\n)(?:Git commits made during compressed period|Commits):\n((?:- [^\n]+\n)+)/) {
-        my $block = $1;
-        while ($block =~ /^- ([^\n]+)$/mg) {
-            push @$commits, $1;
-        }
-    }
-    
-    if ($summary_text =~ /(?:^|\n)(?:Files created\/modified|Files):\n((?:- [^\n]+\n)+)/) {
-        my $block = $1;
-        while ($block =~ /^- ([^\n]+)$/mg) {
-            push @$files_touched, $1;
-        }
-    }
-    
-    if ($summary_text =~ /(?:^|\n)(?:Key decisions|Decisions):\n((?:- [^\n]+\n)+)/) {
-        my $block = $1;
-        while ($block =~ /^- ([^\n]+)$/mg) {
-            push @$decisions, $1;
-        }
-    }
-    
-    if ($summary_text =~ /(?:^|\n)(?:Tool usage|Tools):\n((?:- [^\n]+\n)+)/) {
-        my $block = $1;
-        while ($block =~ /^- ([^:]+):\s*(\d+)\s*calls?$/mg) {
-            $tool_counts->{$1} = ($tool_counts->{$1} || 0) + $2;
-        }
-    }
+    my $user_requests = $buckets->{user_requests} || [];
     
     if ($summary_text =~ /(?:^|\n)Recent user requests:\n((?:- [^\n]+\n)+)/) {
         my $block = $1;
@@ -661,21 +585,6 @@ sub _parse_previous_summary {
             push @$user_requests, $1;
         }
     }
-    
-    if ($summary_text =~ /(?:^|\n)(?:Active discussion[^\n]*|Discussion):\n((?:  Agent asked:[^\n]+\n(?:  User replied:[^\n]+\n)?)+)/) {
-        my $block = $1;
-        while ($block =~ /  Agent asked:\s*([^\n]{1,1000})\n(?:  User replied:\s*([^\n]{1,1000})\n)?/g) {
-            push @$collaboration_exchanges, {
-                question => $1,
-                response => $2 // '',
-            };
-        }
-    }
-    
-    my $parsed_items = scalar(@$commits) + scalar(@$files_touched) + scalar(@$decisions)
-                     + scalar(keys %$tool_counts) + scalar(@$user_requests)
-                     + scalar(@$collaboration_exchanges);
-    log_debug('YaRN', "Parsed $parsed_items items from previous summary") if $parsed_items;
 }
 
 =head2 compress_for_context_recovery

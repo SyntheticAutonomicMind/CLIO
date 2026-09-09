@@ -18,11 +18,9 @@ use CLIO::Core::Logger qw(log_debug log_warning);
 use CLIO::UI::Terminal qw(box_char ui_char);
 
 # Class-level cache of disk-loaded styles and themes. Theme objects are
-# created in several places (Chat, CommandHandler, plugin code, etc.), and
-# each previously re-read every .style / .theme file. Parsing is cheap but
-# the file IO adds up under heavy command dispatch. Cache invalidates
-# automatically when files change (mtime check) or when the cache is
-# explicitly cleared via Theme->clear_cache().
+# created in several places (Chat, CommandHandler, plugin code, etc.).
+# The cache invalidates automatically when files change (mtime check)
+# or when explicitly cleared via Theme->clear_cache().
 my %_CACHE = (
     styles      => undef,   # hashref { name => $style }
     styles_mtime => 0,      # last full load time (epoch seconds)
@@ -665,9 +663,8 @@ sub render {
     return '' unless $template;
 
     # Per-render char resolution cache. Templates with many `{char.X}`
-    # substitutions (e.g., long horizontal dividers) used to re-resolve
-    # the same character dozens of times. Memoise on the regex match
-    # variable - same lookup, cached result.
+    # substitutions (e.g., long horizontal dividers) resolve the same
+    # character dozens of times. Memoise on the regex match variable.
     my %char_cache;
 
     # Substitute {style.key} with actual style colors

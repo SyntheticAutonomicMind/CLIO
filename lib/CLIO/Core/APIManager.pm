@@ -48,6 +48,14 @@ use CLIO::Util::TextSanitizer qw(sanitize_text);
 use CLIO::UI::Terminal qw(ui_char);
 use CLIO::Core::RateLimiter;
 use CLIO::Util::CABundle;
+use CLIO::Util::UUID qw(uuid_v4);
+# GitHub Copilot editor identification headers (matches vscode-copilot-chat reference)
+use CLIO::Core::Defaults qw(
+    COPILOT_EDITOR_VERSION
+    COPILOT_PLUGIN_VERSION
+    COPILOT_LS_VERSION
+    COPILOT_API_VERSION
+);
 use CLIO::Core::Defaults qw(DEFAULT_MAX_OUTPUT_TOKENS DEFAULT_CONTEXT_WINDOW DEFAULT_LOCAL_CONTEXT_WINDOW DEFAULT_MAX_RESPONSE_TOKENS);
 
 # Define request states
@@ -266,6 +274,7 @@ sub new {
         api_key          => '',  # Will be set by _get_api_key()
         config           => $config,  # Config for dynamic model lookup
         debug            => $args{debug} // 0,
+        config_dir       => get_config_dir(),
         rate_limit_until => 0,  # Rate limiting support
         session          => $args{session},  # Session for statefulMarker
         broker_client    => $args{broker_client},  # Broker client for multi-agent rate limit coordination
@@ -312,6 +321,13 @@ sub new {
     # at 2.5 - causing proactive trim to underestimate by ~40%.
     require CLIO::Memory::TokenEstimator;
     CLIO::Memory::TokenEstimator::set_learned_ratio($self->{learned_token_ratio});
+
+    # Initialize persistent Copilot editor-identification IDs.
+    # VScode-MachineId is a stable per-installation identifier; VScode-SessionId
+    # is a per-conversation identifier used by the Copilot backend for request
+    # correlation.  Both match the vscode-copilot-chat reference implementation.
+    $self->{_copilot_machine_id} = $self->_load_or_create_machine_id();
+    $self->{_copilot_session_id} = uuid_v4();
     
     return $self;
 }
@@ -346,6 +362,39 @@ sub set_session {
     }
     
     return 1;
+}
+
+=head2 _load_or_create_machine_id
+
+Load the persistent Copilot machine ID from disk, or create and cache one.
+
+The machine ID is stable across sessions (like VS Code's machineId).  It
+identifies this CLIO installation to the Copilot backend.  Stored in the
+config directory so it survives process restarts.
+
+=cut
+
+sub _load_or_create_machine_id {
+    my ($self) = @_;
+
+    my $cache_file = $self->{config_dir} . '/.copilot_machine_id';
+    if (-e $cache_file) {
+        my $fh;
+        if (open $fh, '<:encoding(UTF-8)', $cache_file) {
+            my $id = <$fh>;
+            close $fh;
+            $id =~ s/\s+$//;
+            return $id if $id;
+        }
+    }
+
+    my $id = uuid_v4();
+    my $fh;
+    if (open $fh, '>:encoding(UTF-8)', $cache_file) {
+        print $fh $id;
+        close $fh;
+    }
+    return $id;
 }
 
 =head2 refresh_api_key
@@ -426,7 +475,7 @@ sub _attempt_token_recovery {
     # Determine if this is a GitHub Copilot provider (check both api_base URL and provider name)
     my $is_copilot_provider = 0;
     my $detected = provider_from_url($self->{api_base} // '');
-    if ($detected && $detected eq 'github-copilot') {
+    if ($detected && $detected eq 'github_copilot') {
         $is_copilot_provider = 1;
     }
     if (!$is_copilot_provider && $self->{config} && $self->{config}->can('get')) {
@@ -512,7 +561,7 @@ sub _get_api_key {
     # api_base to a proxy (e.g. http://flip:9090) while still using GitHub auth.
     my $is_copilot_provider = 0;
     my $detected_provider = provider_from_url($self->{api_base} // '');
-    if ($detected_provider && $detected_provider eq 'github-copilot') {
+    if ($detected_provider && $detected_provider eq 'github_copilot') {
         $is_copilot_provider = 1;
     }
     # Also check by provider name (handles custom api_base proxies)
@@ -550,19 +599,30 @@ sub _get_api_key {
         log_debug('APIManager', "GitHub Copilot not authenticated via GitHub, checking for static key");
     }
     
-    # Priority 2: Config api_key (fallback for GitHub Copilot or primary for other providers)
+    # Priority 2: Check per-provider stored API key for the current provider.
+    # Custom providers (e.g., 'anthropic_test') store their keys via
+    # set_provider_key('anthropic_test', ...). Also check for built-in per-provider keys.
+    if ($self->{config} && $self->{config}->can('get') && $self->{config}->can('get_provider_key')) {
+        my $provider = $self->{config}->get('provider') || '';
+        my $per_provider_key = $self->{config}->get_provider_key($provider);
+        if ($per_provider_key && length($per_provider_key) > 0) {
+            log_debug('APIManager', "Using per-provider API key for '$provider'");
+            $self->{using_exchanged_token} = 1 if $is_copilot_provider;
+            return $per_provider_key;
+        }
+    }
+    
+    # Priority 3: Config api_key (fallback for GitHub Copilot or primary for other providers)
     if ($self->{config} && $self->{config}->can('get')) {
         my $key = $self->{config}->get('api_key');
         if ($key && length($key) > 0) {
             log_debug('APIManager', "Using API key from Config");
-            # Set using_exchanged_token so Editor-Version header is sent
-            # This is needed for github_copilot to recognize the PAT properly
             $self->{using_exchanged_token} = 1 if $is_copilot_provider;
             return $key;
         }
     }
     
-    # Priority 3: Environment variable (for remote execution and CI/CD)
+    # Priority 4: Environment variable (for remote execution and CI/CD)
     if ($ENV{CLIO_API_KEY} && length($ENV{CLIO_API_KEY}) > 0) {
         log_debug('APIManager', "Using API key from CLIO_API_KEY environment variable");
         $self->{using_exchanged_token} = 1 if $is_copilot_provider;
@@ -700,7 +760,23 @@ sub model_routing_active {
     
     my $ua = $self->_create_http_client(timeout => 10);
     my %headers = ('Authorization' => "Bearer $api_key");
-    $headers{'Editor-Version'} = 'CLIO/1.0' if $api_type eq 'github-copilot';
+    if ($api_type eq 'github_copilot') {
+        %headers = (
+            'Authorization'                => "Bearer $api_key",
+            'Editor-Version'               => COPILOT_EDITOR_VERSION,
+            'Editor-Plugin-Version'        => COPILOT_PLUGIN_VERSION,
+            'Copilot-Language-Server-Version' => COPILOT_LS_VERSION,
+            'X-GitHub-Api-Version'         => COPILOT_API_VERSION,
+            'X-Request-Id'                 => uuid_v4(),
+            'User-Agent'                   => 'CLIO/2.0.0',
+            'OpenAI-Intent'                => 'model-access',
+            'X-Interaction-Type'           => 'model-access',
+            'X-Agent-Task-Id'              => uuid_v4(),
+            'VScode-SessionId'             => $self->{_copilot_session_id},
+            'VScode-MachineId'             => $self->{_copilot_machine_id},
+            'Openai-Organization'          => 'github-copilot',
+        );
+    }
     
     if ($api_type eq 'google') {
         $models_url .= "?key=$api_key";
@@ -1100,16 +1176,11 @@ sub adapt_request_for_endpoint {
     # Per-model tool support check (more granular than provider-level)
     if (exists $payload->{tools} && $payload->{model}) {
         my $model = $payload->{model};
-        # Use full model name (with provider prefix) for capability lookup
-        # to avoid prefix-collision bug: a stripped name like
-        # 'minimax/minimax-m2.7:free' would be mis-parsed as the CLIO
-        # 'minimax' provider instead of 'openrouter'.
-        my $full_model = $self->get_current_model() || $model;
         # Use model_supports_tools (goes through get_model_capabilities which
         # applies user overrides from /api set tools).
-        if (!$self->model_supports_tools($full_model)) {
+        if (!$self->model_supports_tools($model)) {
             delete $payload->{tools};
-            log_debug('APIManager', "Removed tools: model '$full_model' does not support function calling");
+            log_debug('APIManager', "Removed tools: model '$model' does not support function calling");
         }
     }
     
@@ -1261,18 +1332,15 @@ sub _inject_reasoning_params {
     my $thinking_mode = $self->{config} ? ($self->{config}->get('thinking_mode') // 'auto') : 'auto';
     my $model = $payload->{model} // '';
 
-    # Determine if the model supports reasoning.
-    # Use full model name (with provider prefix) to avoid prefix-collision
-    # bug: stripped 'minimax/minimax-m2.7:free' would be mis-parsed as the
-    # CLIO 'minimax' provider instead of 'openrouter'.
-    my $full_model = $self->get_current_model() || $model;
-
-    my $reasoning_mode = $full_model ? $self->_get_reasoning_mode($full_model) : undef;
+    # Determine if the model supports reasoning. Use the payload model
+    # (the model that will actually receive the params) rather than
+    # get_current_model(), which may differ in routing/sub-agent scenarios.
+    my $reasoning_mode = $model ? $self->_get_reasoning_mode($model) : undef;
     my $model_supports;
     if ($mode eq 'nested') {
         # OpenRouter: endpoint-level supports_reasoning OR model-level
         $model_supports = $endpoint_config->{supports_reasoning}
-            || ($full_model && $self->_model_supports_reasoning($full_model));
+            || ($model && $self->_model_supports_reasoning($model));
     } else {
         # effort / think_object / mixed: check model-level reasoning_mode
         $model_supports = $reasoning_mode ? 1 : 0;
@@ -1524,84 +1592,21 @@ sub model_supports_vision {
 
 sub get_model_capabilities {
     my ($self, $model) = @_;
-    
+
     $model ||= $self->get_current_model();
-    
+
     # Parse provider prefix from model name
     my ($target_provider, $api_model) = $self->_parse_model_provider($model);
-    
-    # Check cache first (cache by full model name including provider prefix)
-    if ($self->{_model_capabilities_cache} &&
-        $self->{_model_capabilities_cache}{$model}) {
-        log_debug('APIManager', "Model caps for $model (cached): prompt=" . ($self->{_model_capabilities_cache}{$model}{max_prompt_tokens} // 'undef') . ", ctx_window=" . ($self->{_model_capabilities_cache}{$model}{max_context_window_tokens} // 'undef'));
-        # Cache holds raw caps; apply user overrides so runtime config changes
-        # (e.g. /api set context_window) are reflected without cache invalidation.
-        return $self->_caps_with_overrides($self->{_model_capabilities_cache}{$model});
-    }
-    
-    # Use ModelCapabilitiesManager for providers with static capability maps
-    # or native APIs that have their own capability fetcher (Anthropic, Google)
     my $eff_provider = $target_provider || ($self->{config} ? ($self->{config}->get('provider') || '') : '');
-    
-    my $use_mcm = 0;
-    if ($eff_provider) {
-        eval {
-            require CLIO::Providers;
-            my $pdef = CLIO::Providers::get_provider($eff_provider);
-            # Use MCM for providers with static maps, native APIs, OR custom capability fetchers
-            $use_mcm = ($pdef && ($pdef->{capability_map} || $pdef->{native_api} || $pdef->{capability_fetcher})) ? 1 : 0;
-        };
-    }
-    
-    if ($use_mcm) {
-        my $normalized = eval {
-            require CLIO::Core::ModelCapabilitiesManager;
-            my $mcm = CLIO::Core::ModelCapabilitiesManager->new(debug => $self->{debug});
-            my $caps = $mcm->get_capabilities($eff_provider, $api_model);
-            log_debug('APIManager', "MCM get_capabilities for $eff_provider/$api_model: " . ($caps ? "found" : "undef"));
-            if ($caps) {
-                # Cache stores RAW caps (without overrides). Overrides applied
-                # at get_model_capabilities return point so runtime changes
-                # to overrides are reflected immediately.
-                my $n = {
-                    max_prompt_tokens          => $caps->{max_prompt_tokens} || $caps->{context_window},
-                    max_output_tokens          => $caps->{max_output_tokens},
-                    max_context_window_tokens  => $caps->{context_window},
-                    supports_tools              => $caps->{supports_tools},
-                    supports_streaming          => $caps->{supports_streaming},
-                    supports_vision             => $caps->{supports_vision},
-                    supports_reasoning          => $caps->{supports_reasoning},
-                    # Pass through reasoning_mode so _get_reasoning_mode() can
-                    # classify models as 'effort'|'enabled'|'adaptive'. Without
-                    # this field, _get_reasoning_mode always returned undef,
-                    # silently disabling every adapt_request_for_endpoint code
-                    # path that gates payload construction on it (OpenAI-compat
-                    # reasoning_effort, MiniMax thinking.type, Z.AI thinking).
-                    reasoning_mode              => $caps->{reasoning_mode},
-                };
-                $self->{_model_capabilities_cache} ||= {};
-                $self->{_model_capabilities_cache}{$model} = $n;
-                log_debug('APIManager', "MCM capability for $model: ctx=$caps->{context_window}, tools=$caps->{supports_tools}");
-                return $self->_caps_with_overrides($n);
-            }
-            return undef;
-        };
-        if ($@) {
-            log_debug('APIManager', "MCM failed for $model: $@");
-        }
-        return undef unless $normalized;
-        return $normalized;
-    }
-    
-    # Determine API base for the model's provider
+
+    # Determine API base for the model's provider — needed before MCM
+    # so we can resolve the local_model sentinel to the actual model name.
     my $api_base;
     if ($target_provider) {
         my $current_provider = $self->{config} ? ($self->{config}->get('provider') || '') : '';
         if ($target_provider eq $current_provider) {
-            # Same provider as currently configured - use user's api_base (may be overridden)
             $api_base = $self->{api_base};
         } else {
-            # Different provider - check per-provider stored base, then provider default
             my $stored_base = $self->{config} ? $self->{config}->get_provider_base($target_provider) : undef;
             if ($stored_base) {
                 $api_base = $stored_base;
@@ -1614,241 +1619,116 @@ sub get_model_capabilities {
     } else {
         $api_base = $self->{api_base};
     }
-    
-    # Detect API type and models endpoint
-    my ($api_type, $models_url) = $self->_detect_api_type_and_url($api_base);
-    
-    unless ($models_url) {
-        log_debug('APIManager', "Unable to determine models endpoint for: $api_base (using fallback token limits)");
-        return undef;
+
+    # Resolve local_model/local-model sentinel to the actual model name
+    # before capability lookup. _resolve_local_model queries /v1/models
+    # on the running server to get the real model id. This lets MCM
+    # match the actual model name (for static maps, heuristics, and
+    # /v1/models matching) instead of passing the literal sentinel that
+    # nothing recognizes. Cache the resolution to avoid re-querying
+    # on every call when the result is already cached.
+    if ($api_model =~ /^local[-_]model$/i && $api_base) {
+        if ($self->{_local_model_resolution} && exists $self->{_local_model_resolution}{$api_base}) {
+            $api_model = $self->{_local_model_resolution}{$api_base} if $self->{_local_model_resolution}{$api_base};
+        } elsif ($self->{_local_model_resolution}{$api_base} = $self->_resolve_local_model($api_base, $api_model)) {
+            $api_model = $self->{_local_model_resolution}{$api_base};
+        }
     }
-    
-    # For GitHub Copilot, use GitHubCopilotModelsAPI which includes supplementary models
-    my $models = [];
-    if ($api_type eq 'github-copilot') {
+    # Update cache key to use resolved model name if sentinel was resolved
+    if ($eff_provider && $api_model !~ /^local[-_]model$/i) {
+        $model = "$eff_provider/$api_model";
+    }
+
+    # Check cache first (cache by full model name including provider prefix).
+    # Placed AFTER sentinel resolution so the cache key is the resolved name.
+    if ($self->{_model_capabilities_cache} &&
+        $self->{_model_capabilities_cache}{$model}) {
+        log_debug('APIManager', "Model caps for $model (cached): prompt=" . ($self->{_model_capabilities_cache}{$model}{max_prompt_tokens} // 'undef') . ", ctx_window=" . ($self->{_model_capabilities_cache}{$model}{max_context_window_tokens} // 'undef'));
+        return $self->_caps_with_overrides($self->{_model_capabilities_cache}{$model});
+    }
+
+    # Use MCM for all providers — it handles native APIs (Anthropic, Google),
+    # static maps/local fetchers (llama.cpp, SAM, LM Studio), openai-compatible
+    # /models fetches (OpenAI, OpenRouter, Vercel, KiloCode, OrcaRouter), and
+    # heuristics for unknown models.
+    my $use_mcm = 0;
+    if ($eff_provider) {
         eval {
-            require CLIO::Core::GitHubCopilotModelsAPI;
-            my $copilot_api = CLIO::Core::GitHubCopilotModelsAPI->new(
-                api_key => $self->{api_key},
-                debug => $self->{debug}
-            );
-            $models = $copilot_api->get_all_models() || [];
+            require CLIO::Providers;
+            my $pdef = CLIO::Providers::get_provider($eff_provider);
+            # Use MCM for: static maps, native APIs, custom capability
+            # fetchers, OR any apikey-based provider (the latter covers
+            # OpenAI, OpenRouter, Vercel, Ollama Cloud, OrcaRouter, and
+            # KiloCode — all of which expose an OpenAI-compatible /v1/models
+            # endpoint that MCM's _fetch_openai_compatible_capabilities
+            # queries for per-model context windows). Without this, these
+            # providers skip MCM entirely and fall back to the generic
+            # provider-level default (e.g. 128K), causing premature trimming
+            # on models with larger windows (e.g. Vercel poolside/laguna-s-2.1
+            # at 262K).
+            $use_mcm = ($pdef && ($pdef->{capability_map} || $pdef->{native_api} || $pdef->{capability_fetcher} || ($pdef->{requires_auth} && $pdef->{requires_auth} eq 'apikey'))) ? 1 : 0;
+        };
+    }
+
+    if ($use_mcm) {
+        my $normalized = eval {
+            require CLIO::Core::ModelCapabilitiesManager;
+            my $mcm = CLIO::Core::ModelCapabilitiesManager->new(debug => $self->{debug});
+            my $caps = $mcm->get_capabilities($eff_provider, $api_model);
+            log_debug('APIManager', "MCM get_capabilities for $eff_provider/$api_model: " . ($caps ? "found" : "undef"));
+            if ($caps) {
+                # Cache stores RAW caps (without overrides). Overrides applied
+                # at get_model_capabilities return point so runtime changes
+                # to overrides are reflected immediately without cache
+                # invalidation.
+                my $n = {
+                    max_prompt_tokens          => $caps->{max_prompt_tokens} || $caps->{context_window},
+                    max_output_tokens          => $caps->{max_output_tokens},
+                    max_context_window_tokens  => $caps->{context_window},
+                    supports_tools              => $caps->{supports_tools},
+                    supports_streaming          => $caps->{supports_streaming},
+                    supports_vision             => $caps->{supports_vision},
+                    supports_reasoning          => $caps->{supports_reasoning},
+                    reasoning_mode              => $caps->{reasoning_mode},
+                };
+                $self->{_model_capabilities_cache} ||= {};
+                $self->{_model_capabilities_cache}{$model} = $n;
+                log_debug('APIManager', "MCM capability for $model: ctx=$caps->{context_window}, tools=$caps->{supports_tools}");
+                return $self->_caps_with_overrides($n);
+            }
+            return undef;
         };
         if ($@) {
-            log_debug('APIManager', "GitHubCopilotModelsAPI failed: $@");
-            # Fall through to direct API fetch
-            $models = [];
+            log_debug('APIManager', "MCM failed for $model: $@");
         }
+        return $normalized if defined $normalized && ref $normalized eq 'HASH';
     }
-    
-    # If we didn't get models from GitHubCopilotModelsAPI, fetch directly
-    unless (@$models) {
-        my $ua = $self->_create_http_client(timeout => 30);
-        # Use the per-provider API key when querying a different provider's models endpoint
-        my $lookup_key = $self->{api_key};
-        if ($target_provider && $target_provider ne ($self->{config} ? ($self->{config}->get('provider') || '') : '')) {
-            my $per_provider_key = $self->{config} ? $self->{config}->get_provider_key($target_provider) : undef;
-            $lookup_key = $per_provider_key if $per_provider_key;
-        }
-        my %headers = (
-            'Authorization' => "Bearer $lookup_key",
-        );
-        $headers{'Editor-Version'} = 'CLIO/1.0' if $api_type eq 'github-copilot';
-        
-        # Google native models endpoint uses API key as URL parameter
-        if ($api_type eq 'google') {
-            $models_url .= "?key=$self->{api_key}";
-            delete $headers{'Authorization'};
-        }
-        
-        my $resp = $ua->get($models_url, headers => \%headers);
-        
-        unless ($resp->is_success) {
-            # For local/generic providers, use provider-level fallback silently
-            my $effective_provider = $target_provider || ($self->{config} ? ($self->{config}->get('provider') || '') : '');
-            if ($effective_provider) {
-                require CLIO::Providers;
-                my $pdef = CLIO::Providers::get_provider($effective_provider);
-                if ($pdef && $pdef->{max_context_tokens}) {
-                    my $ctx = $pdef->{max_context_tokens};
-                    my $capabilities = {
-                        max_prompt_tokens          => $ctx,
-                        max_output_tokens          => $pdef->{max_output_tokens} || CLIO::Core::Defaults::DEFAULT_MAX_OUTPUT_TOKENS(),
-                        max_context_window_tokens  => $ctx,
-                    };
-                    $self->{_model_capabilities_cache} ||= {};
-                    $self->{_model_capabilities_cache}{$model} = $capabilities;
-                    log_debug('APIManager', "Using provider fallback for $model: context=$ctx (models endpoint unavailable)");
-                    return $self->_caps_with_overrides($capabilities);
-                }
-            }
-            log_debug('APIManager', "Models endpoint unavailable ($models_url), using fallback token limits");
-            return undef;
-        }
-        
-        my $data = safe_decode_json($resp->decoded_content);
-        if ($@) {
-            if (should_log('WARNING')) {
-                log_debug('APIManager', "Failed to parse models response from $models_url");
-                log_debug('APIManager', "JSON error: $@");
-            }
-            return undef;
-        }
-        
-        # Google native API returns { models: [{name: "models/gemini-2.5-flash", ...}] }
-        # OpenAI-compatible APIs return { data: [{id: "model-name", ...}] }
-        if ($api_type eq 'google' && $data->{models}) {
-            # Normalize Google format to OpenAI format
-            $models = [ map {
-                my $name = $_->{name} || '';
-                $name =~ s{^models/}{};  # Strip "models/" prefix
-                {
-                    id => $name,
-                    context_window => $_->{inputTokenLimit},
-                    max_completion_tokens => $_->{outputTokenLimit},
-                    %$_,
-                }
-            } @{$data->{models}} ];
-        } else {
-            $models = $data->{data} || [];
-        }
-    }
-    
-    # Find our model and extract capabilities
-    for my $model_info (@$models) {
-        # Match by id or aliases. llama.cpp populates both with the full
-        # filesystem path, but other OpenAI-compatible servers may use
-        # aliases for short names. Accept either.
-        my $id_match = ($model_info->{id} && $model_info->{id} eq $api_model);
-        my $alias_match = 0;
-        if (!$id_match && $model_info->{aliases} && ref($model_info->{aliases}) eq 'ARRAY') {
-            for my $alias (@{$model_info->{aliases}}) {
-                if ($alias && $alias eq $api_model) {
-                    $alias_match = 1;
-                    last;
-                }
-            }
-        }
-        next unless $id_match || $alias_match;
 
-        # For local OpenAI-compatible servers (generic api_type), enrich model_info
-        # with the actual running context window from the llama.cpp /props endpoint.
-        # The /v1/models response only has n_ctx_train (model's training context), not
-        # the server's actual -c value. /props exposes default_generation_settings.n_ctx
-        # which reflects exactly what was passed with --ctx-size / -c at startup.
-        if ($api_type eq 'generic' && !$model_info->{context_window}) {
-            my $props_ctx = $self->_query_llama_props($api_base);
-            if ($props_ctx) {
-                $model_info->{context_window} = $props_ctx;
-                log_debug('APIManager', "llama.cpp /props n_ctx=$props_ctx for $api_model");
-            }
-        }
-
-        my $capabilities = $self->_extract_model_capabilities($model_info, $api_type, $target_provider);
+    # Final fallback: use provider-level default context window.
+    # No more /models endpoint re-query or hardcoded per-provider
+    # max_context_tokens values — default_context_window() resolves
+    # through JSON defaults and then DEFAULT_CONTEXT_WINDOW /
+    # DEFAULT_LOCAL_CONTEXT_WINDOW constants based on whether the
+    # provider is a local inference server.
+    require CLIO::Providers;
+    my $eff_ctx = CLIO::Providers::default_context_window($eff_provider);
+    if ($eff_ctx && $eff_ctx > 0) {
+        require CLIO::Core::Defaults;
+        my $capabilities = {
+            max_prompt_tokens          => $eff_ctx,
+            max_output_tokens          => CLIO::Core::Defaults::DEFAULT_MAX_OUTPUT_TOKENS(),
+            max_context_window_tokens  => $eff_ctx,
+        };
         $self->{_model_capabilities_cache} ||= {};
         $self->{_model_capabilities_cache}{$model} = $capabilities;
-
-        log_debug('APIManager', "Model caps for $model: prompt=$capabilities->{max_prompt_tokens}, output=$capabilities->{max_output_tokens}, ctx_window=$capabilities->{max_context_window_tokens}");
+        log_debug('APIManager', "Using default context window for $model: $eff_ctx");
         return $self->_caps_with_overrides($capabilities);
-    }
-    
-    log_debug('APIManager', "Model $api_model not found in /models response, falling back to default context window");
-
-    # Restore /props fallback for local providers when /v1/models doesn't
-    # match. Common cause: llama.cpp returns the full path as the id but
-    # _resolve_local_model returned the basename (stripped to match aliases
-    # and id paths consistently), so the eq comparison above misses. /props
-    # exposes the runtime n_ctx (e.g. 196608 from --ctx-size) which is the
-    # ground truth for context budgeting.
-    if ($api_type =~ /^(generic|sam|lmstudio)$/i) {
-        require CLIO::Core::Defaults;
-        my $props_ctx = $self->_query_llama_props($api_base);
-        if ($props_ctx && $props_ctx > 0) {
-            my $capabilities = {
-                max_prompt_tokens          => $props_ctx,
-                max_output_tokens          => CLIO::Core::Defaults::DEFAULT_MAX_OUTPUT_TOKENS(),
-                max_context_window_tokens  => $props_ctx,
-            };
-            $self->{_model_capabilities_cache} ||= {};
-            $self->{_model_capabilities_cache}{$model} = $capabilities;
-            log_debug('APIManager', "llama.cpp /props fallback n_ctx=$props_ctx for $api_model");
-            return $self->_caps_with_overrides($capabilities);
-        }
     }
 
     log_debug('APIManager', "get_model_capabilities returning undef for $model");
     return undef;
 }
 
-=head2 _extract_model_capabilities($model_info, $api_type, $target_provider)
-
-Extract normalized capabilities hash from a model info record.
-Handles GitHub Copilot, Google, OpenRouter, SAM, and standard OpenAI formats.
-
-=cut
-
-sub _extract_model_capabilities {
-    my ($self, $info, $api_type, $target_provider) = @_;
-
-    require CLIO::Core::Defaults;
-    my $limits = ($info->{capabilities} && $info->{capabilities}{limits}) || {};
-
-    # Local models: conservative context to avoid OOM
-    require CLIO::Providers;
-    my $fallback_ctx = CLIO::Providers::default_context_window($api_type);
-
-    # Provider-level output fallback
-    my $provider_max_output;
-    my $eff_provider = $target_provider || ($self->{config} ? ($self->{config}->get('provider') || '') : '');
-    if ($eff_provider) {
-        require CLIO::Providers;
-        my $pdef = CLIO::Providers::get_provider($eff_provider);
-        $provider_max_output = $pdef->{max_output_tokens} if $pdef;
-    }
-
-    # Some providers (e.g. OpenRouter) nest per-endpoint capability limits
-    # inside a top_provider sub-object rather than at the model root.
-    # Check there as a fallback so we get accurate max_output_tokens and
-    # context_length instead of falling through to DEFAULT_* values.
-    my $tp = ref($info->{top_provider}) eq 'HASH' ? $info->{top_provider} : {};
-    my $tp_ctx = $tp->{context_length} || $tp->{context_window};
-    my $tp_out = $tp->{max_completion_tokens} || $tp->{max_output_tokens};
-
-    my $caps = {
-        max_prompt_tokens => $info->{max_request_tokens}
-            || $limits->{max_prompt_tokens} || $limits->{max_context_window_tokens}
-            || $info->{context_length} || $info->{context_window}
-            || $tp_ctx || $fallback_ctx,
-        max_output_tokens => $info->{max_completion_tokens}
-            || $limits->{max_output_tokens} || $limits->{max_completion_tokens}
-            || $tp_out
-            || $provider_max_output || CLIO::Core::Defaults::DEFAULT_MAX_OUTPUT_TOKENS(),
-        max_context_window_tokens => $info->{context_window}
-            || $limits->{max_context_window_tokens} || $limits->{max_context_window}
-            || $info->{context_length}
-            || $tp_ctx || $fallback_ctx,
-    };
-
-    # Per-model tool support (GitHub Copilot)
-    if ($info->{capabilities} && $info->{capabilities}{supports}) {
-        $caps->{supports_tools} = $info->{capabilities}{supports}{tool_calls} ? 1 : 0;
-    }
-
-    # Google: supportedGenerationMethods
-    if ($api_type eq 'google' && $info->{supportedGenerationMethods}) {
-        $caps->{supports_tools} = (grep { $_ eq 'generateContent' } @{$info->{supportedGenerationMethods}}) ? 1 : 0;
-    }
-
-    # OpenRouter: reasoning support
-    if ($info->{supported_parameters} && ref($info->{supported_parameters}) eq 'ARRAY') {
-        $caps->{supports_reasoning} = (grep { $_ eq 'reasoning' } @{$info->{supported_parameters}}) ? 1 : 0;
-    }
-
-    # Returns RAW caps (without user overrides). Overrides applied at
-    # get_model_capabilities return point via _caps_with_overrides so runtime
-    # changes to overrides are reflected immediately without cache invalidation.
-    return $caps;
-}
 
 =head2 _apply_capability_overrides($caps)
 
@@ -2017,14 +1897,16 @@ sub _resolve_local_model {
 
     # No localhost guard: the local_model sentinel only matches llama.cpp and
     # LM Studio defaults, so resolution is only triggered for local-style
-    # providers. LAN-hosted llama.cpp servers (e.g. http://max:9090) work
-    # the same as localhost for capability lookup.
+    # providers. LAN-hosted llama.cpp servers (e.g.
+    # http://192.168.1.50:9090) work the same as localhost for
+    # capability lookup.
     return undef unless $api_base;
 
     my $models_url = $api_base;
     $models_url =~ s{/+$}{};
-    $models_url =~ s{/v1(/.*)?$}{};
-    $models_url .= '/v1/models';
+    $models_url =~ s{/chat/completions/?$}{};
+    $models_url =~ s{/chat/?$}{};
+    $models_url .= '/models';
 
     my $ua = $self->_get_shared_http_client(timeout => 5);
     my $resp = eval { $ua->get($models_url) };
@@ -2054,52 +1936,6 @@ sub _resolve_local_model {
     return $model_name;
 }
 
-=head2 _query_llama_props($api_base)
-
-Query the llama.cpp /props endpoint to retrieve the actual running context window size.
-
-Returns the integer n_ctx value on success, or undef if the endpoint is unavailable
-or the response does not contain context information. This is used to supplement
-the /v1/models response which only exposes n_ctx_train (training context), not the
-server's runtime --ctx-size value.
-
-Only called for C<generic> api_type providers (local OpenAI-compatible servers).
-
-=cut
-
-sub _query_llama_props {
-    my ($self, $api_base) = @_;
-
-    # Derive the /props URL from the api_base
-    # e.g. http://localhost:9090/v1/chat/completions -> http://localhost:9090/props
-    my $props_url = $api_base;
-    $props_url =~ s{/+$}{};       # strip trailing slashes
-    $props_url =~ s{/v1(/.*)?$}{};  # strip /v1 and anything after it
-    $props_url .= '/props';
-
-    my $ua = $self->_get_shared_http_client(timeout => 5);
-    my $resp = eval { $ua->get($props_url) };
-    if ($@ || !$resp || !$resp->is_success) {
-        log_debug('APIManager', "llama.cpp /props not available at $props_url");
-        return undef;
-    }
-
-    my $data = safe_decode_json($resp->decoded_content);
-    if ($@) {
-        log_debug('APIManager', "llama.cpp /props parse error: $@");
-        return undef;
-    }
-
-    # /props exposes: default_generation_settings.n_ctx (actual runtime context window)
-    # This reflects the --ctx-size / -c value passed at server startup, not the model's
-    # training context (n_ctx_train) which is what /v1/models exposes.
-    my $n_ctx = $data->{default_generation_settings}{n_ctx}
-             || $data->{n_ctx};   # some older versions may expose it at top level
-
-    return $n_ctx if $n_ctx && $n_ctx > 0;
-    return undef;
-}
-
 =head2 _detect_api_type_and_url
 
 Internal method to detect API type and models URL from base URL
@@ -2111,7 +1947,7 @@ sub _detect_api_type_and_url {
     
     # Map of logical names to (type, models_url)
     my %api_configs = (
-        'github-copilot' => ['github-copilot', 'https://api.githubcopilot.com/models'],
+        'github_copilot' => ['github_copilot', 'https://api.githubcopilot.com/models'],
         'openai'         => ['openai', 'https://api.openai.com/v1/models'],
         'dashscope-cn'   => ['dashscope', 'https://dashscope.aliyuncs.com/compatible-mode/v1/models'],
         'dashscope-intl' => ['dashscope', 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1/models'],
@@ -2137,7 +1973,7 @@ sub _detect_api_type_and_url {
     # user-supplied api_base (e.g. http://max:8080/...) takes precedence and
     # these localhost URLs are not used.
     my %provider_models_urls = (
-        'github-copilot' => ['github-copilot', 'https://api.githubcopilot.com/models'],
+        'github_copilot' => ['github_copilot', 'https://api.githubcopilot.com/models'],
         'openai'         => ['openai', 'https://api.openai.com/v1/models'],
         'google'         => ['google', 'https://generativelanguage.googleapis.com/v1beta/models'],
         'openrouter'     => ['openrouter', 'https://openrouter.ai/api/v1/models'],
@@ -2653,7 +2489,12 @@ sub _prepare_endpoint_config {
             $endpoint = $stored_base;
         } else {
             require CLIO::Providers;
-            my $provider_def = CLIO::Providers::get_provider($target_provider);
+            # Resolve custom provider to base type for default api_base lookup
+            my $base_provider = $target_provider;
+            if ($self->{config} && $self->{config}->can('resolve_custom_provider')) {
+                $base_provider = $self->{config}->resolve_custom_provider($target_provider);
+            }
+            my $provider_def = CLIO::Providers::get_provider($base_provider);
             $endpoint = $provider_def ? $provider_def->{api_base} : $self->{api_base};
         }
     } else {
@@ -2725,6 +2566,12 @@ sub _parse_model_provider {
             }
            return ($prefix, $rest);
        }
+       
+       # Check if it's a custom provider alias (e.g., 'anthropic_test')
+       if ($self->{config} && $self->{config}->can('is_custom_provider') && 
+           $self->{config}->is_custom_provider($prefix)) {
+           return ($prefix, $rest);
+       }
    }
     
     # No explicit provider prefix - caller uses current provider
@@ -2740,12 +2587,21 @@ Get endpoint configuration for a specific provider (used for cross-provider rout
 sub _get_endpoint_config_for_provider {
     my ($self, $provider_name) = @_;
     
-    # Resolve API key for the target provider
+    # Resolve custom provider aliases to their base provider type
+    # for endpoint config lookup (custom providers share the base
+    # provider's endpoint structure but have their own API key/base).
+    my $base_provider = $provider_name;
+    if ($self->{config} && $self->{config}->can('resolve_custom_provider')) {
+        $base_provider = $self->{config}->resolve_custom_provider($provider_name);
+    }
+    
+    # Resolve API key for the target provider.
+    # Custom providers store their key under their own name in api_keys.
     my $api_key = $self->{config}->get_provider_key($provider_name);
     
     # For copilot auth providers, use OAuth token
     require CLIO::Providers;
-    my $provider_def = CLIO::Providers::get_provider($provider_name);
+    my $provider_def = CLIO::Providers::get_provider($base_provider);
     if ($provider_def && $provider_def->{requires_auth} && $provider_def->{requires_auth} eq 'copilot' && !$api_key) {
         eval {
             require CLIO::Core::GitHubAuth;
@@ -2759,7 +2615,7 @@ sub _get_endpoint_config_for_provider {
     $api_key ||= '';
     
     require CLIO::Providers;
-    return CLIO::Providers::build_endpoint_config($provider_name, $api_key);
+    return CLIO::Providers::build_endpoint_config($base_provider, $api_key);
 }
 
 # Helper: Prepare and trim messages
@@ -2829,9 +2685,9 @@ sub _build_payload {
     
     # Add copilot_thread_id for session continuity (GitHub Copilot requirement)
     if ($endpoint_config->{requires_copilot_headers}) {
-        # copilot_thread_id and previous_response_id are GitHub Copilot billing fields.
-        # They are deleted for non-Copilot providers (see adapt_request_for_endpoint).
-        # Only warn about their absence when using Copilot, where they affect billing.
+        # copilot_thread_id and previous_response_id are GitHub Copilot
+        # billing fields, only required for Copilot. adapt_request_for_endpoint
+        # strips them for non-Copilot providers.
         if ($self->{session} && $self->{session}{session_id}) {
             $payload->{copilot_thread_id} = $self->{session}{session_id};
             log_debug('APIManager', "Including copilot_thread_id: $payload->{copilot_thread_id}");
@@ -2983,21 +2839,26 @@ sub _build_request {
     if ($endpoint_config->{requires_copilot_headers}) {
         my $tool_call_iteration = $opts->{tool_call_iteration} || 1;
         my $initiator = $tool_call_iteration <= 1 ? 'user' : 'agent';
-        $req->header('x-initiator' => $initiator);
         
         # Generate per-request UUID for tracking
         my $request_id = uuid_v4();
         
         # Required headers per VS Code Copilot Chat reference
-        $req->header('X-GitHub-Api-Version' => '2025-05-01');
-        $req->header('X-Request-Id' => $request_id);
-        $req->header('User-Agent' => 'GitHubCopilotChat/0.38.0');
-        $req->header('OpenAI-Intent' => 'conversation-agent');
-        $req->header('X-Interaction-Type' => 'conversation-agent');
-        $req->header('X-Agent-Task-Id' => $request_id);
-        
-        # Editor-Version is REQUIRED for exchanged tokens
-        $req->header('Editor-Version' => 'vscode/2.0.0') if $self->{using_exchanged_token};
+        $req->header('X-GitHub-Api-Version'  => COPILOT_API_VERSION);
+        $req->header('X-Request-Id'          => $request_id);
+        $req->header('User-Agent'            => 'CLIO/2.0.0');
+        $req->header('OpenAI-Intent'         => 'conversation-agent');
+        $req->header('X-Interaction-Type'    => 'conversation-agent');
+        $req->header('X-Agent-Task-Id'       => $request_id);
+        $req->header('X-Initiator'           => $initiator);
+
+        # Editor identification headers (always required per reference)
+        $req->header('Editor-Version'               => COPILOT_EDITOR_VERSION);
+        $req->header('Editor-Plugin-Version'        => COPILOT_PLUGIN_VERSION);
+        $req->header('Copilot-Language-Server-Version' => COPILOT_LS_VERSION);
+        $req->header('VScode-SessionId'             => $self->{_copilot_session_id});
+        $req->header('VScode-MachineId'             => $self->{_copilot_machine_id});
+        $req->header('Openai-Organization'          => 'github-copilot');
         
         log_debug('APIManager', "Copilot headers: initiator=$initiator, request_id=$request_id");
     }
@@ -3098,8 +2959,15 @@ sub _check_connectivity {
 
         # Add GitHub-specific headers if using Copilot
         my $detected = provider_from_url($self->{api_base} // '');
-        if ($detected && $detected eq 'github-copilot') {
-            $headers{'Editor-Version'} = 'CLIO/1.0';
+        if ($detected && $detected eq 'github_copilot') {
+            $headers{'Editor-Version'} = COPILOT_EDITOR_VERSION;
+            $headers{'Editor-Plugin-Version'} = COPILOT_PLUGIN_VERSION;
+            $headers{'Copilot-Language-Server-Version'} = COPILOT_LS_VERSION;
+            $headers{'X-GitHub-Api-Version'} = COPILOT_API_VERSION;
+            $headers{'User-Agent'} = 'CLIO/2.0.0';
+            $headers{'VScode-SessionId'} = $self->{_copilot_session_id};
+            $headers{'VScode-MachineId'} = $self->{_copilot_machine_id};
+            $headers{'Openai-Organization'} = 'github-copilot';
         }
 
         # Try a lightweight request - models list or health check
@@ -3685,10 +3553,7 @@ sub send_request {
     my $wait = $self->{rate_limiter}->check_and_wait($provider);
     if ($wait > 0) {
         log_debug('APIManager', "Rate limited by $provider, waiting ${wait}s...");
-        # Use interruptible sleep so ESC works during rate-limit waits.
-        # The bare sleep() previously blocked for up to $wait seconds with
-        # no interrupt check, making long rate-limit waits (e.g. 60s)
-        # unresponsive to user input.
+        # Interruptible sleep so ESC works during rate-limit waits.
         _interruptible_rate_wait($self, $wait, 'rate limit');
     }
     
@@ -3900,10 +3765,7 @@ sub send_request_streaming {
     my $wait = $self->{rate_limiter}->check_and_wait($provider);
     if ($wait > 0) {
         log_debug('APIManager', "Rate limited by $provider, waiting ${wait}s...");
-        # Use interruptible sleep so ESC works during rate-limit waits.
-        # The bare sleep() previously blocked for up to $wait seconds with
-        # no interrupt check, making long rate-limit waits (e.g. 60s)
-        # unresponsive to user input.
+        # Interruptible sleep so ESC works during rate-limit waits.
         _interruptible_rate_wait($self, $wait, 'rate limit');
     }
     
@@ -4715,11 +4577,8 @@ sub _finalize_streaming_response {
             || !$s{_finish_reason})) {
         my $sse_err = $s{_sse_error};
         $self->{response_handler}->release_broker_slot($resp, 200);
-        # Release rate limiter slot - the success path below owns the release,
-        # but this SSE-error early-return bypasses it. Leaked slots pinned the
-        # per-provider concurrency counter at the limit, making every retry
-        # hit "Concurrency limit reached for $provider" and exhaust the 3-retry
-        # budget on what was originally a transient provider rate limit.
+        # Release the rate limiter slot - the success path below owns
+        # the release, but this SSE-error early-return bypasses it.
         $self->{rate_limiter}->release(lc($s{provider_label})) if $s{provider_label};
         my $code = $sse_err->{code} // '';
         my $msg = $sse_err->{message} // '';

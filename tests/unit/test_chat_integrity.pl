@@ -206,8 +206,7 @@ for my $mod (qw(header security help)) {
 
         if (exists $symtab->{$sym} && *{$symtab->{$sym}}{CODE}) {
             # Check if the CODE was defined in this package, not imported.
-            # We use B to introspect - but that's heavy. Instead, use a simpler
-            # heuristic: skip well-known imported utility functions.
+            # Skip well-known imported utility functions.
             next if $sym =~ /^(log_debug|log_info|log_warning|log_error|log_fatal|ReadMode|ReadKey|GetTerminalSize|box_char|ui_char|_exit|filter_invisible_chars|has_invisible_chars|sanitize_text|set_sanitize_mode)$/;
 
             if (exists $defined_methods{$sym}) {

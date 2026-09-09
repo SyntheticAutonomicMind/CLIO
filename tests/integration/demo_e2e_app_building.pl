@@ -191,12 +191,10 @@ print "Broker log: $BROKER_LOG\n";
 sub run_clio_agent {
     my ($agent) = @_;
     
-    # This is where we would actually invoke CLIO with:
-    # - The agent's task as input
-    # - The specified model
-    # - Connection to the coordination broker
-    #
-    # For now, simulate by creating some files and using the coordination client
+    # This is where we would actually invoke CLIO with the agent's
+    # task, the specified model, and connection to the coordination
+    # broker. For now, simulate by creating some files and using the
+    # coordination client.
     
     require CLIO::Coordination::Client;
     

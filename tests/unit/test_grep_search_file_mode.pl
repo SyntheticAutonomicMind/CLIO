@@ -2,17 +2,14 @@
 # SPDX-License-Identifier: GPL-3.0-only
 # SPDX-FileCopyrightText: Copyright (c) 2026 Andrew Wyatt (Fewtarius)
 #
-# Test: grep_search accepts a file path (not just a directory) and searches
-# only that file. Models naturally pass file paths to grep_search (Unix grep
-# semantics), but the tool previously only accepted directories and failed
-# with "Directory not found". This test verifies the file-vs-directory
-# detection in grep_search:
+# Test: grep_search accepts a file path (not just a directory) and
+# searches only that file. Verifies the file-vs-directory detection:
 #   - File path via 'directory' parameter
 #   - File path via 'path' parameter (alias)
 #   - File path with is_regex=true
 #   - File path with literal query
 #   - Non-existent path returns a clear error
-#   - Directory mode still works (regression)
+#   - Directory mode still works
 #   - relative_path is populated for single-file results
 
 use strict;

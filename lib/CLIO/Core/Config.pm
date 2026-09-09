@@ -83,6 +83,7 @@ use constant DEFAULT_CONFIG => {
     api_key => '',
     api_keys => {},  # Per-provider API keys: { google => 'AIza...', minimax => '...' }
     api_bases => {},  # Per-provider API base URLs: { 'llama.cpp' => 'http://localhost:9090/...' }
+    custom_providers => {},  # Named provider aliases: { 'anthropic_test' => { base_provider => 'anthropic' }, ... }
     provider => undef,  # No default - must be configured by user
     route_name => undef,  # Active named routing profile (from --route or /api route use)
     editor => $ENV{EDITOR} || $ENV{VISUAL} || 'vim',  # Default editor
@@ -190,10 +191,21 @@ sub new {
         config_file => undef,  # Will be set in _get_config_path
         config => {},
         user_set => {},  # Track which values user explicitly configured
+        persist => 1,    # When false (test mode), config is never written to disk
     };
     
     bless $self, $class;
-    
+
+    # Test-mode isolation: when constructed from under tests/ (or with
+    # CLIO_TEST set) and no explicit config_dir was given, point at a private
+    # tempdir and refuse to persist. PREVENTS unit/integration tests from ever
+    # writing provider/model into the user's real ~/.clio/config.json.
+    if (_config_in_test_mode() && !$args{config_dir}) {
+        $self->{persist} = 0;
+        require File::Temp;
+        $self->{config_dir} = File::Temp::tempdir(CLEANUP => 1);
+    }
+
     $self->{config_file} = $self->_get_config_path();
     $self->load();
     
@@ -210,6 +222,22 @@ sub _get_config_path {
     my ($self) = @_;
     
     return File::Spec->catfile($self->{config_dir}, 'config.json');
+}
+
+=head2 _config_in_test_mode (Internal)
+
+True when this Config instance is being constructed from a test: either the
+CLIO_TEST environment variable is set, or the caller's source file lives under
+a tests/ directory. Used to auto-isolate config writes so tests can never
+pollute the real ~/.clio.
+
+=cut
+
+sub _config_in_test_mode {
+    return 1 if $ENV{CLIO_TEST};
+    my $caller_file = (caller(1))[1] // '';
+    return 1 if $caller_file =~ m{/tests/} || $caller_file =~ m{^\.\.?/tests/};
+    return 0;
 }
 
 =head2 load
@@ -344,8 +372,9 @@ sub load {
                 }
             }
             
-            # Load the provider's api_key if one exists in the api_keys store
-            # Note: Use local %config hash directly - $self->{config} isn't set until later
+            # Load the provider's api_key if one exists in the api_keys
+            # store. Use the local %config hash directly -
+            # $self->{config} isn't set until later.
             my $api_keys = $config{api_keys} || {};
             my $provider_key = $api_keys->{$config{provider}};
             if ($provider_key) {
@@ -367,16 +396,15 @@ sub load {
             log_debug('Config', "Unknown provider '$config{provider}', using defaults");
         }
     } else {
-        # No provider set
-        # Note: Provider should be set via user configuration.
-        # The clio executable will prompt the user if no provider is configured.
-        # If we reach here, the user has already configured a provider.
+        # No provider set. The clio executable will prompt the user
+        # if no provider is configured; reaching here means the user
+        # has already configured one.
         log_debug('Config', 'No provider set - waiting for user configuration');
     }
-    
-    # Note: Log level is now controlled by CLIO_LOG_LEVEL environment variable
-    # which is set by the --debug flag in the main clio script
-    
+
+    # Log level is controlled by CLIO_LOG_LEVEL environment variable
+    # (set by the --debug flag in the main clio script).
+
     $self->{config} = \%config;
 
     # Per-model scoped config for the current model. Two phases:
@@ -391,10 +419,10 @@ sub load {
         my $model = $self->{config}->{model};
         my $model_configs = $self->{config}->{model_configs} ||= {};
 
-        # Migration: seed the model's entry from current global scoped
-        # values if it doesn't exist yet. Only non-default values are
-        # migrated - default-value entries are skipped to avoid creating
-        # migration junk that the explicit-flag guard would later ignore.
+        # Seed the model's entry from current global scoped values if
+        # it doesn't exist yet. Only non-default values are migrated -
+        # default-value entries are skipped to avoid creating entries
+        # the explicit-flag guard would later ignore.
         if (!exists $model_configs->{$model} || !%{$model_configs->{$model}}) {
             my $has_migration = 0;
             my $entry = $model_configs->{$model} ||= {};
@@ -431,6 +459,13 @@ Only saves what user explicitly configured via /api commands.
 sub save {
     my ($self) = @_;
     
+    # TEST-MODE GUARD: a Config constructed in test mode (persist => 0) must
+    # never write to disk. The config_dir is an ephemeral tempdir; writing
+    # is pointless and, more importantly, we must never fall through to the
+    # real ~/.clio if the tempdir resolution ever fails. This is the last
+    # line of defense behind the test-mode isolation in new().
+    return 1 unless $self->{persist};
+
     # Ensure config directory exists with secure permissions
     unless (-d $self->{config_dir}) {
         make_path($self->{config_dir}, { mode => 0700 }) or croak "Cannot create config dir: $!";
@@ -840,8 +875,8 @@ sub set_provider {
     # It may be valid for the new provider. Providers that use other
     # auth (GitHub Copilot OAuth) will handle that in APIManager.
     
-    # Remove api_base and model from user_set if they were there
-    # (user is now using provider defaults, not custom values)
+    # Remove api_base and model from user_set; the provider's
+    # defaults now apply.
     delete $self->{user_set}->{api_base};
     delete $self->{user_set}->{model};
     
@@ -986,6 +1021,198 @@ sub set_provider_base {
     return 1;
 }
 
+=head2 add_custom_provider($name, $base_provider, $api_key, $api_base)
+
+Register a custom provider alias. A custom provider is a named configuration
+that maps to a built-in provider type, allowing multiple accounts for the
+same provider type (e.g., two Anthropic accounts).
+
+Example:
+    $config->add_custom_provider('anthropic_test', 'anthropic', 'sk-...', 'https://api.anthropic.com');
+
+Arguments:
+    $name: Custom provider name (e.g., 'anthropic_test')
+    $base_provider: Built-in provider type (e.g., 'anthropic')
+    $api_key: API key for this provider (optional)
+    $api_base: API base URL override (optional, uses base provider default if omitted)
+
+Returns: 1 on success, croak on error
+
+=cut
+
+sub add_custom_provider {
+    my ($self, $name, $base_provider, $api_key, $api_base) = @_;
+
+    # Validate the base provider exists
+    require CLIO::Providers;
+    my $base_def = CLIO::Providers::get_provider($base_provider);
+    unless ($base_def) {
+        croak "Unknown base provider '$base_provider'. Available: " .
+              join(', ', CLIO::Providers::list_providers());
+    }
+
+    $name = lc($name);
+    $self->{config}->{custom_providers} //= {};
+
+    $self->{config}->{custom_providers}{$name} = {
+        base_provider => lc($base_provider),
+        display_name  => $base_def->{name} . ' (' . $name . ')',
+        created_at    => time(),
+    };
+    $self->{user_set}->{custom_providers} = 1;
+
+    # Store per-provider API key and base if provided
+    if (defined $api_key && length($api_key)) {
+        $self->set_provider_key($name, $api_key);
+    }
+    if (defined $api_base && length($api_base)) {
+        $self->set_provider_base($name, $api_base);
+    }
+
+    log_debug('Config', "Registered custom provider '$name' -> '$base_provider'");
+    $self->save();
+    return 1;
+}
+
+=head2 list_custom_providers()
+
+List all registered custom provider aliases.
+
+Returns: Array of hashrefs:
+    [
+        { name => 'anthropic_test', base_provider => 'anthropic', display_name => 'Anthropic (anthropic_test)' },
+        ...
+    ]
+
+=cut
+
+sub list_custom_providers {
+    my ($self) = @_;
+
+    my $custom = $self->{config}->{custom_providers} || {};
+    my @result;
+    for my $name (sort keys %$custom) {
+        push @result, {
+            name => $name,
+            base_provider => $custom->{$name}{base_provider},
+            display_name => $custom->{$name}{display_name} || $custom->{$name}{base_provider},
+            api_base => $self->get_provider_base($name),  # may be undef
+            has_key => defined $self->get_provider_key($name),
+        };
+    }
+    return @result;
+}
+
+=head2 get_custom_provider($name)
+
+Get a custom provider definition by name.
+
+Arguments:
+    $name: Custom provider name (e.g., 'anthropic_test')
+
+Returns: Hashref with base_provider, display_name, or undef if not found
+
+=cut
+
+sub get_custom_provider {
+    my ($self, $name) = @_;
+    return unless $name;
+    $name = lc($name);
+    my $custom = $self->{config}->{custom_providers} || {};
+    return $custom->{$name};
+}
+
+=head2 resolve_custom_provider($name)
+
+Resolve a provider name (which may be a custom alias) to its base provider type.
+
+If $name is a custom provider alias, returns the base provider name (e.g.,
+'anthropic_test' -> 'anthropic'). If $name is a built-in provider, returns it
+unchanged.
+
+Arguments:
+    $name: Provider name (custom alias or built-in)
+
+Returns: Base provider name (string)
+
+=cut
+
+sub resolve_custom_provider {
+    my ($self, $name) = @_;
+    return $name unless $name;
+    $name = lc($name);
+
+    # Check if it's a custom provider alias
+    my $custom = $self->{config}->{custom_providers} || {};
+    if (exists $custom->{$name}) {
+        return $custom->{$name}{base_provider};
+    }
+
+    # Not a custom provider - return as-is (may be built-in)
+    return $name;
+}
+
+=head2 is_custom_provider($name)
+
+Check if a provider name is a custom alias.
+
+Arguments:
+    $name: Provider name
+
+Returns: Boolean (1 if custom, 0 if built-in)
+
+=cut
+
+sub is_custom_provider {
+    my ($self, $name) = @_;
+    return 0 unless $name;
+    $name = lc($name);
+    my $custom = $self->{config}->{custom_providers} || {};
+    return exists $custom->{$name} ? 1 : 0;
+}
+
+=head2 remove_custom_provider($name)
+
+Remove a custom provider alias and its stored credentials.
+
+Arguments:
+    $name: Custom provider name
+
+Returns: 1 on success, 0 if provider not found
+
+=cut
+
+sub remove_custom_provider {
+    my ($self, $name) = @_;
+    return 0 unless $name;
+    $name = lc($name);
+
+    my $custom = $self->{config}->{custom_providers} || {};
+    unless (exists $custom->{$name}) {
+        return 0;
+    }
+
+    delete $custom->{$name};
+    $self->{user_set}->{custom_providers} = 1;
+
+    # Clean up stored key and base for this provider name
+    if ($self->{config}->{api_keys}) {
+        delete $self->{config}->{api_keys}{$name};
+    }
+    if ($self->{config}->{api_bases}) {
+        delete $self->{config}->{api_bases}{$name};
+    }
+
+    # If the current provider is the one being removed, reset it
+    if (($self->get('provider') || '') eq $name) {
+        $self->set('provider', undef, 0);
+    }
+
+    log_debug('Config', "Removed custom provider '$name'");
+    $self->save();
+    return 1;
+}
+
 =head2 get_model_alias($name)
 
 Get the model value for a given alias name. Returns undef if not found.
@@ -994,7 +1221,7 @@ Get the model value for a given alias name. Returns undef if not found.
 
 sub get_model_alias {
     my ($self, $name) = @_;
-    
+
     my $aliases = $self->{config}->{model_aliases} || {};
     return $aliases->{lc($name)};
 }

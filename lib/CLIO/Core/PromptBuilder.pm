@@ -59,6 +59,8 @@ sub new {
         # (Anthropic adaptive summarizer only - see generate_thinking_steering_section)
         _tools_section_cache => undef,
         _skills_section_cache => undef,
+        _user_context_cache => undef,
+        _user_context_cache_time => 0,
     }, $class;
 }
 
@@ -70,7 +72,7 @@ and mode-specific instructions.
 LTM patterns and other dynamic content (loaded skills, OpenSpec) are NOT
 injected here. They are delivered per-turn via the ContextBuilder
 projection's dynamic userContext block (rendered by
-MessageHistory::messages_to_prose_dynamic), which sits after the cache-
+PromptBuilder::get_user_context(), which is cached per-minute and
 stable history so its churn does not invalidate the system-prompt cache
 segment. build_system_prompt only assembles the static system prompt
 (base prompt from PromptManager + tools + skills + profile).
@@ -121,8 +123,7 @@ sub build_system_prompt {
     # Dynamically add available tools section from tool registry
     my $tools_section = $self->generate_tools_section();
 
-    # LTM is now handled by PromptManager (budgeted, scored, with index footer)
-    # PromptBuilder no longer injects a separate LTM section to avoid duplication
+    # LTM is handled by PromptManager (budgeted, scored, with index footer).
     if ($self->{skip_ltm}) {
         log_debug('PromptBuilder', "LTM injection skipped (--no-ltm or --incognito)");
     }
@@ -174,11 +175,11 @@ sub build_system_prompt {
     # as its thinking when given tools under this steering, which the user
     # reasonably called out as not real thinking).
     #
-    # The caller (WorkflowOrchestrator) sets needs_thinking_steering when
-    # show_thinking is on AND the current model's reasoning_mode resolves
-    # to 'adaptive' (Anthropic family only, per _ensure_reasoning_mode).
-    # show_thinking alone is no longer enough - it was over-firing for M3,
-    # DeepSeek, Z.AI, and every other provider with their own native thinking.
+    # The caller sets needs_thinking_steering when show_thinking is on
+    # AND the current model's reasoning_mode resolves to 'adaptive'
+    # (Anthropic family only, per _ensure_reasoning_mode). show_thinking
+    # alone is not enough - it over-fires for M3, DeepSeek, Z.AI, and
+    # other providers with their own native thinking.
     if ($self->{needs_thinking_steering}) {
         $base_prompt .= "\n\n" . generate_thinking_steering_section();
     }
@@ -636,6 +637,71 @@ sub _language_name {
 }
 
 1;
+
+=head2 get_user_context
+
+Return a cached user-context string (date/time, working directory,
+language) for concatenation with the user input message. Cached
+per-minute (60s TTL) so the date/time does NOT change between API
+calls within the same turn, ensuring byte stability of the user message.
+
+The context is NOT a separate system message — it is concatenated with
+the user's input into a single user message, so it shares the user
+message's position in the array and is never re-positioned mid-turn.
+
+Returns:
+- User context string (cached for 60 seconds)
+
+=cut
+
+sub get_user_context {
+    my ($self) = @_;
+
+    my $now = time();
+    my $cache_ttl = 60;  # Cache TTL in seconds (1 minute)
+
+    if (!$self->{_user_context_cache} || ($now - $self->{_user_context_cache_time}) >= $cache_ttl) {
+        $self->{_user_context_cache} = $self->_generate_user_context_section();
+        $self->{_user_context_cache_time} = $now;
+        log_debug('PromptBuilder', "User context cache refreshed");
+    }
+
+    return $self->{_user_context_cache};
+}
+
+=head2 _generate_user_context_section
+
+Internal: Generate the user-context section with date/time, path, and language.
+No seconds in the timestamp — minute-level granularity matches the
+60s cache TTL so the string is truly stable for a full minute.
+
+Returns:
+- User context block text (plain prose, no XML tags, no seconds)
+
+=cut
+
+sub _generate_user_context_section {
+    my ($self) = @_;
+
+    my ($sec, $min, $hour, $mday, $mon, $year, $wday) = localtime(time);
+    $year += 1900;
+    $mon += 1;
+
+    my @day_names = qw(Sunday Monday Tuesday Wednesday Thursday Friday Saturday);
+    my @month_names = qw(January February March April May June July August September October November December);
+    my $day_name = $day_names[$wday];
+    my $month_name = $month_names[$mon - 1];
+
+    # No seconds — matches the 60s cache TTL for byte stability.
+    my $datetime_iso = sprintf("%04d-%02d-%02d %02d:%02d", $year, $mon, $mday, $hour, $min);
+
+    my $cwd = getcwd();
+    my $lang = $self->_detect_user_language();
+
+    my $section = "CWD: `$cwd` | Date: $datetime_iso ($day_name, $month_name $mday, $year) | Lang: $lang->{name} ($lang->{locale}) | Respond in $lang->{name}\n";
+
+    return $section;
+}
 
 __END__
 

@@ -126,12 +126,9 @@ my $mcm = CLIO::Core::ModelCapabilitiesManager->new();
         'single leading org/ segment is stripped from model name');
 }
 
-# Test 9: Model name with no path - just lowercased.
-# The cache key includes the api_base as the third component
-# (see docblock at top - provider+model+api_base is the cache
-# dimension). This test was previously asserting an empty third
-# component, which contradicted the docblock and the api_base
-# test (#4). Updated to assert the full key shape.
+# Test 9: Model name with no path - just lowercased. The cache key
+# includes the api_base as the third component (provider+model+api_base
+# is the cache dimension).
 {
     my $key = $mcm->_build_cache_key('github_copilot', 'claude-sonnet-4.6');
     like($key, qr/^github_copilot:claude-sonnet-4\.6:/,

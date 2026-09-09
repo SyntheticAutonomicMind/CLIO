@@ -1,19 +1,10 @@
 #!/usr/bin/env perl
 # Regression test: /api route add must resolve provider from the FIRST
-# slash, not pass the full "provider/model" string to _check_provider_auth.
-#
-# Original bug (commit 628300c1):
-#   _route_add unpacked _resolve_model_details into 2 values:
-#     my ($provider, $api_model) = $self->_resolve_model_details($m);
-#   but the function returns 4 values: ($full_model, $display_model,
-#   $target_provider, $api_model). So $provider received the full model
-#   string (e.g. "openrouter/poolside/laguna-s-2.1:free") and
-#   _check_provider_auth was called with that bogus "provider" name,
-#   producing the wrong error:
-#     Provider 'openrouter/poolside/laguna-s-2.1:free' has no API key configured.
-#     Set it with: /api set provider openrouter/poolside/laguna-s-2.1:free ...
-#
-# Fix: unpack 4 values and use $target_provider for the auth check.
+# slash, not pass the full "provider/model" string to
+# _check_provider_auth. _resolve_model_details returns
+# ($full_model, $display_model, $target_provider, $api_model); the
+# route-add path must unpack all four and use $target_provider for
+# the auth check.
 
 use strict;
 use warnings;

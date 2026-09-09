@@ -7,8 +7,9 @@
 # Verifies that compress_for_context_recovery:
 # 1. Extracts previous_summary from <thread_summary> blocks in the message array
 # 2. Passes it to compress_messages for cross-cycle carryover
-# 3. Filters out old thread_summary system messages from the compressed set
-# 4. Returns a system message with <thread_summary> content
+# 3. Returns a system message with <thread_summary> content (slimmed:
+#    only original task + recent user requests, no commit/file/decision
+#    statistical noise)
 
 use strict;
 use warnings;
@@ -22,7 +23,8 @@ use CLIO::Memory::YaRN;
 my $yarn = CLIO::Memory::YaRN->new();
 
 # ---------------------------------------------------------------------------
-# previous_summary is extracted from messages and carried forward
+# previous_summary is extracted from messages and only user_requests carried
+# forward (no commits/files/decisions — slimmed format)
 # ---------------------------------------------------------------------------
 my @messages = (
     {
@@ -31,26 +33,19 @@ my @messages = (
 
 Current task: Build a widget system
 
-Commits:
-- abc1234: Add widget base class
-- def5678: Implement widget renderer
-
-Files:
-- lib/Widget/Base.pm
-- lib/Widget/Renderer.pm
-
-Tools:
-- file_operations: 5 calls
+Recent user requests:
+- [original] Build a widget system
+- Add a test suite
 </thread_summary>'
     },
-    { role => 'user', content => 'Add a test suite for the widget system' },
-    { role => 'assistant', content => 'Writing tests now' },
-    { role => 'tool', tool_call_id => 'tc1', content => '[ghi9012] Add test suite for widgets' },
+    { role => 'user', content => 'Deploy the widget system to production' },
+    { role => 'assistant', content => 'Deploying now' },
+    { role => 'tool', tool_call_id => 'tc1', content => 'Deploy result' },
 );
 
 my $result = $yarn->compress_for_context_recovery(
     \@messages,
-    original_task => 'Add a test suite for the widget system'
+    original_task => 'Deploy the widget system to production'
 );
 
 ok(defined $result, 'compress_for_context_recovery returns a result');
@@ -58,10 +53,17 @@ ok(ref($result) eq 'HASH', 'Result is a hashref');
 ok(defined $result->{content} && length($result->{content}), 'Result has content');
 like($result->{content}, qr/<thread_summary>/, 'Result is wrapped in <thread_summary> tags');
 
-# The previous commit should be carried forward (cross-cycle carryover)
-like($result->{content}, qr/abc1234/, 'Previous commit preserved in new summary');
-like($result->{content}, qr/def5678/, 'Previous commit def5678 preserved');
-like($result->{content}, qr/Widget\/Renderer\.pm/, 'Previous file preserved');
-like($result->{content}, qr/file_operations: 5 calls/, 'Tool counts carried forward from previous summary');
+# Previous user request carried forward
+like($result->{content}, qr/Build a widget system/, 'Previous original request carried forward');
+
+# No statistical noise in the slimmed output
+unlike($result->{content}, qr/abc1234|Commits:|Files:|Decisions:|Tool calls:/,
+    'No commit/file/decision/tool noise in slimmed output');
+
+# Current task is surfaced
+like($result->{content}, qr/Current task:/, 'Current task section present');
+
+# New user request is included
+like($result->{content}, qr/Deploy the widget system/, 'New user request included');
 
 done_testing();

@@ -123,7 +123,6 @@ run_test(
 );
 
 # Test 4b: list_usages - file_paths as string (not arrayref)
-# Regression: previously crashed with "Can't use string as ARRAY ref"
 run_test(
     "list_usages - file_paths as string (not arrayref)",
     { operation => 'list_usages', symbol_name => 'use strict', file_paths => 'lib/CLIO/Tools' },

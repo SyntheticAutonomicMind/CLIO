@@ -281,7 +281,7 @@ sub get_model_capabilities_by_provider {
     
     $self->_ensure_loaded();
     
-    my $mapping = $self->{_cache}{provider_mappings}{$provider};
+    my $mapping = $self->{_cache}{provider_mapping}{$provider};
     return undef unless $mapping;
     
     # Normalize the model ID based on provider's format

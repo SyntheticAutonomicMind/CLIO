@@ -12,6 +12,7 @@ use File::Basename qw(dirname);
 our @EXPORT_OK = qw(
     get_provider list_providers provider_exists
     build_endpoint_config DEFAULT_MODEL provider_from_url
+    resolve_custom_provider list_all_providers
     is_local_inference exposes_props default_context_window
     capability_fetcher default_reasoning_mode
     quota_handler
@@ -62,7 +63,6 @@ my %PROVIDERS = (
         requires_auth => 'apikey',
         supports_tools => 1,
         supports_streaming => 1,
-        max_context_tokens => 32000,
         slow_api => 1,  # Local inference is significantly slower than cloud APIs
         llama_user_id_supported => 1,
         # Provider-feature flags (replaces scattered `provider =~ /^sam$/`
@@ -71,6 +71,7 @@ my %PROVIDERS = (
         # usage and the per-flag rationale.
         local_inference => 1,
         exposes_props => 1,
+        capability_fetcher => 'llama_cpp',  # SAM is a llama.cpp fork
         url_detection_patterns => [ qr{^https?://[^/]+:8080/}i ],
         endpoint => {
             path_suffix => '',
@@ -168,7 +169,6 @@ my %PROVIDERS = (
         requires_auth => 'none',
         supports_tools => 1,
         supports_streaming => 1,
-        max_context_tokens => 32000,
         slow_api => 1,  # Local inference is significantly slower than cloud APIs
         # Per-session SSD cache directory on the inference server. CLIO
         # injects the session_id as llama_user_id so each session gets
@@ -204,11 +204,11 @@ my %PROVIDERS = (
         requires_auth => 'none',
         supports_tools => 1,
         supports_streaming => 1,
-        max_context_tokens => 32000,
         slow_api => 1,  # Local inference is significantly slower than cloud APIs
         llama_user_id_supported => 1,
         local_inference => 1,
         exposes_props => 1,
+        capability_fetcher => 'llama_cpp',  # LM Studio is OpenAI-compatible with /props
         url_detection_patterns => [ qr{^https?://[^/]+:1234/}i ],
         endpoint => {
             path_suffix => '',
@@ -649,6 +649,73 @@ sub provider_exists {
     return exists $PROVIDERS{$name} ? 1 : 0;
 }
 
+=head2 resolve_custom_provider
+
+Resolve a provider name that may be a custom alias (e.g., 'anthropic_test')
+to its base provider type (e.g., 'anthropic'). Custom aliases are stored
+in Config under the 'custom_providers' key.
+
+If the name is already a built-in provider, returns it unchanged.
+
+Arguments:
+  $name - Provider name (custom alias or built-in)
+
+Returns:
+  Base provider name (e.g. 'anthropic' for 'anthropic_test')
+
+=cut
+
+sub resolve_custom_provider {
+    my ($name, $config) = @_;
+    return $name unless defined $name && length($name);
+
+    # If it's already a built-in provider, return as-is
+    return $name if exists $PROVIDERS{$name};
+
+    # Check config for a custom provider alias
+    my $base;
+    if ($config && ref($config) eq 'CLIO::Core::Config') {
+        $base = $config->resolve_custom_provider($name);
+    }
+    else {
+        eval {
+            require CLIO::Core::Config;
+            $config = CLIO::Core::Config->new();
+            $base = $config->resolve_custom_provider($name);
+        };
+    }
+    if ($@ || !$base) {
+        return $name;  # Unknown provider, return as-is for error messages
+    }
+
+    return $base;
+}
+
+=head2 list_all_providers
+
+List all providers including both built-in and custom (user-registered) ones.
+
+Returns: Array of provider names (sorted). Built-in names come first,
+followed by custom provider names.
+
+=cut
+
+sub list_all_providers {
+    my @builtins = list_providers();
+
+    my @custom;
+    eval {
+        require CLIO::Core::Config;
+        my $config = CLIO::Core::Config->new();
+        for my $cp ($config->list_custom_providers()) {
+            push @custom, $cp->{name};
+        }
+    };
+    # Ignore config errors - just return builtins if config isn't loaded
+
+    return (@builtins, sort @custom);
+}
+
 =head2 build_endpoint_config($provider_name, $api_key)
 
 Build endpoint configuration for a provider with the given API key.
@@ -668,10 +735,16 @@ Returns:
 =cut
 
 sub build_endpoint_config {
-    my ($provider_name, $api_key) = @_;
+    my ($provider_name, $api_key, $config) = @_;
     $api_key //= '';
 
-    my $provider = $PROVIDERS{$provider_name};
+    # Resolve custom provider aliases to their base provider type.
+    # Custom providers (e.g., 'anthropic_test') share the same endpoint
+    # config as their base provider (e.g., 'anthropic') but have their
+    # own API key/base stored per-provider.
+    my $resolved_name = resolve_custom_provider($provider_name, $config);
+
+    my $provider = $PROVIDERS{$resolved_name};
 
     # Default config for unknown providers
     my $defaults = {
@@ -969,7 +1042,7 @@ sub provider_from_url {
     # Standard API providers - well-known domain patterns. Hardcoded
     # by name because the host portion of the URL is the primary key
     # (not a port or path we could confuse with another provider).
-    return 'github-copilot' if $url =~ m{githubcopilot\.com}i;
+    return 'github_copilot' if $url =~ m{githubcopilot\.com}i;
     return 'openai'         if $url =~ m{api\.openai\.com}i;
     return 'google'         if $url =~ m{generativelanguage\.googleapis\.com}i;
     return 'openrouter'     if $url =~ m{openrouter\.ai}i;

@@ -46,11 +46,6 @@ my $projection = {
         { confidence => 0.95, content => 'Always check LTM first before debugging', type => 'pattern' },
     ],
     ltm_total_count => 5,
-    environment => {
-        working_directory => '/home/user/project',
-        language => 'English',
-        datetime_iso => '2026-09-06T10:00:00Z',
-    },
     context_files_block => '',
 };
 
@@ -70,7 +65,7 @@ unlike($prose, qr/more memories available/, 'dynamic UC has no "more memories av
 unlike($prose, qr/<current_topic>|<task_recovery>|<recent_context>|<git_recovery>|<session_progress>|<sessionContext>|<dynamicContext>/,
     'dynamic UC has no XML tags');
 
-# Verify working directory leads
-like($prose, qr/^Working directory:/, 'dynamic UC leads with working directory');
+# dynamic UC is non-empty when it has active_todos
+like($prose, qr/Active todos:/, 'dynamic UC renders todos section');
 
 done_testing();

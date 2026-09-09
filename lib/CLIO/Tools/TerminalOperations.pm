@@ -427,16 +427,15 @@ sub _execute_passthrough {
     # Suspend CLIO's terminal input handling so the command owns the TTY
     $self->_suspend_clio_input();
 
-    # Note: On Unix we INTENTIONALLY do NOT touch $SIG{ALRM} or alarm() here.
-    # Chat.pm installs a 1-second ALRM handler that scans stdin for ESC and
-    # sets session->state()->{user_interrupted}, which the poll loop below
-    # checks. The Unix path also uses Time::HiRes polling for the timeout, so
-    # it doesn't need a local alarm() either.
-    #
-    # The Windows path below DOES need its own alarm() because fork() is
-    # unavailable and we fall back to system(); the local SIG{ALRM} is scoped
-    # to the eval block, so Chat.pm's handler is still preserved on Windows
-    # outside that eval.
+    # On Unix we INTENTIONALLY do NOT touch $SIG{ALRM} or alarm().
+    # Chat.pm installs a 1-second ALRM handler that scans stdin for
+    # ESC and sets session->state()->{user_interrupted}, which the
+    # poll loop below checks. The Unix path also uses Time::HiRes
+    # polling for the timeout, so it doesn't need a local alarm().
+    # The Windows path below DOES need its own alarm() because fork()
+    # is unavailable and we fall back to system(); the local SIG{ALRM}
+    # is scoped to the eval block, so Chat.pm's handler is still
+    # preserved on Windows outside that eval.
     my $saved_alrm;
     my $saved_alarm_remaining;
     if ($^O eq 'MSWin32') {

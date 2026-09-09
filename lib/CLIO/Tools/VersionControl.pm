@@ -36,24 +36,11 @@ sub _in_repo {
         return $code->();
     }
     my $original_cwd = getcwd();
-    # chdir failure is an EXPECTED user error (non-existent / hallucinated
-    # repository_path), not an exceptional condition. croak() here used to
-    # propagate all the way up through Tool::execute, bypassing the eval
-    # blocks in every operation handler and the ToolErrorGuidance pipeline,
-    # ultimately surfacing as SimpleAIAgent's generic "I'm experiencing
-    # technical difficulties. Please try again." message.
-    #
-    # die() with a plain string (no Carp caller-location suffix) lets the
-    # existing eval{} blocks in each operation handler catch it cleanly.
-    # Those handlers wrap the message via _clean_eval_error() and forward
-    # to error_result(), producing "Git status failed: Cannot chdir to
-    # /Users/andrew/ALICE: No such file or directory" - which
-    # ToolErrorGuidance then categorizes as file_not_found with proper
-    # guidance.
-    #
-    # If a future caller of _in_repo is NOT wrapped in eval, Tool::execute's
-    # new defense-in-depth eval catches the die and converts it to an
-    # error_result anyway. Two layers of protection.
+    # chdir failure is an expected user error (non-existent repository
+    # path). die() with a plain string (no Carp caller-location suffix)
+    # lets the eval{} blocks in each operation handler catch it cleanly
+    # and forward to error_result(). Tool::execute's eval catches
+    # anything that escapes the per-handler evals.
     unless (chdir $repo_path) {
         die "Cannot chdir to $repo_path: $!";
     }
@@ -442,21 +429,21 @@ sub commit {
     my $lock_acquired = 0;
     if ($context->{broker_client}) {
         log_debug('VersionControl', "Requesting git lock via broker");
+        my $lock_result;
         eval {
-            my $lock_result = $context->{broker_client}->request_git_lock();
-            if ($lock_result) {
-                $lock_acquired = 1;
-                log_debug('VersionControl', "Git lock acquired");
-            } else {
-                return $self->error_result(
-                    "Git is locked by another agent.\n" .
-                    "Wait for the other agent's commit to complete."
-                );
-            }
+            $lock_result = $context->{broker_client}->request_git_lock();
         };
         if ($@) {
             log_debug('VersionControl', "Failed to acquire git lock: $@");
             log_debug('VersionControl', "Continuing without lock");
+        } elsif ($lock_result) {
+            $lock_acquired = 1;
+            log_debug('VersionControl', "Git lock acquired");
+        } else {
+            return $self->error_result(
+                "Git is locked by another agent.\n" .
+                "Wait for the other agent's commit to complete."
+            );
         }
     }
 

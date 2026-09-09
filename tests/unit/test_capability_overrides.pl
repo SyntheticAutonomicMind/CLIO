@@ -389,10 +389,8 @@ subtest '_apply_capability_overrides caps max_prompt' => sub {
 };
 
 subtest '_apply_capability_overrides context_window cap also caps max_prompt' => sub {
-    # Regression: cap_context_window used to only cap max_context_window_tokens,
-    # but MessageValidator's budget reads max_prompt_tokens. The cap was
-    # effectively dead for the validator. Verify the cap also caps the
-    # prompt field so the user's intent (limit budget to N) is honored.
+    # cap_context_window must cap both max_context_window_tokens and
+    # max_prompt_tokens; MessageValidator's budget reads the latter.
     my $config = _make_config_with_provider();
     $config->set('cap_context_window', 128000);
 

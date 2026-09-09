@@ -145,6 +145,19 @@ subtest 'handle_error_response - 400 token limit' => sub {
     is($result->{error_type}, 'token_limit_exceeded', 'Error type is token_limit_exceeded');
 };
 
+subtest 'handle_error_response - 400 llama.cpp exceed_context_size_error' => sub {
+    my $handler = CLIO::Core::API::ResponseHandler->new();
+    my $resp = MockResponse->new(
+        code => 400,
+        status_line => '400 Bad Request',
+        content => '{"error":{"code":400,"message":"request (66281 tokens) exceeds the available context size (65536 tokens), try increasing it","type":"exceed_context_size_error","n_prompt_tokens":66281,"n_ctx":65536}}',
+    );
+
+    my $result = $handler->handle_error_response($resp, '{}', 0);
+    ok($result->{retryable}, 'llama.cpp exceed_context_size_error is retryable');
+    is($result->{error_type}, 'token_limit_exceeded', 'Error type is token_limit_exceeded (triggers reactive trim)');
+};
+
 subtest 'handle_error_response - generic 500' => sub {
     my $handler = CLIO::Core::API::ResponseHandler->new();
     my $resp = MockResponse->new(

@@ -463,11 +463,14 @@ if ($mode eq 'list_sessions') {
             local $/;
             my $json = <$fh>;
             close $fh;
-            # Regex extraction avoids full decode_json on every file
-            if ($json =~ /"session_name"\s*:\s*"((?:[^"\\]|\\.)*)"/) {
+            # Regex extraction avoids full decode_json on every file.
+            # The {0,500} cap on the capture group prevents Perl's regex
+            # recursion limit (65534) from being exceeded on large session
+            # files — session_name/model values are short human-friendly strings.
+            if ($json =~ /"session_name"\s*:\s*"((?:[^"\\]|\\.){0,500})"/) {
                 $name = $1;
             }
-            if ($json =~ /"billing"\s*:\s*\{[^}]*?"model"\s*:\s*"((?:[^"\\]|\\.)*)"/s) {
+            if ($json =~ /"billing"\s*:\s*\{[^}]*?"model"\s*:\s*"((?:[^"\\]|\\.){0,500})"/s) {
                 $model = $1;
             }
             if ($json =~ /"total_requests"\s*:\s*(\d+)\s*,\s*"total_tokens"\s*:\s*(\d+)/s) {
@@ -1306,6 +1309,8 @@ if ($input) {
     # Save session after processing all commands
     $session->save();
     
+    eval { $session->release_lock() };
+    
     # Exit if --exit flag was provided
     if ($should_exit) {
         # Send completion result to broker if running as sub-agent
@@ -1332,6 +1337,7 @@ if ($input) {
 
 # If --exit is present, exit immediately after session setup (unless --input was handled above)
 if ($should_exit && !$input) {
+    eval { $session->release_lock() };
     exit 0;
 }
 
@@ -1469,6 +1475,7 @@ if ($session && $session->can('state') && $session->state()) {
             if ($$session_ref) {
                 eval {
                     $$session_ref->save();
+                    $$session_ref->release_lock();
                     push @messages, "Session saved.";
                 };
                 if ($@) {
@@ -1486,6 +1493,7 @@ if ($session && $session->can('state') && $session->state()) {
             if ($$session_ref) {
                 eval {
                     $$session_ref->save();
+                    $$session_ref->release_lock();
                     print "SYSTEM: Session saved.\n";
                 };
                 if ($@) {
@@ -1515,6 +1523,8 @@ END {
         require CLIO::Compat::Terminal;
         CLIO::Compat::Terminal::ReadMode('restore');
     };
+    # Release session lock as final safety net
+    eval { $session->release_lock() } if $session;
     # Silently ignore errors - we're exiting anyway
 }
 
@@ -1532,6 +1542,7 @@ eval {
 # Group all exit messages together for consistency
 my @exit_messages = ("Saving session");
 $session->save();
+$session->release_lock();
 push @exit_messages, "Goodbye!";
 
 if ($ui && $ui->can('display_system_messages')) {
@@ -1555,7 +1566,9 @@ sub _resolve_session_id {
     my @json_files = grep { /\.json$/ } readdir($dh);
     closedir($dh);
     
-    # Build session list sorted by mtime (for list number resolution)
+    # Build session list with UUID + mtime only (stat-based, no file reading).
+    # Session names are loaded lazily only if name-based matching is needed,
+    # avoiding reading all 2066+ session files on every --resume call.
     my @sessions;
     for my $json_file (@json_files) {
         my $sid = $json_file;
@@ -1563,43 +1576,45 @@ sub _resolve_session_id {
         my $file_path = "$sessions_dir/$json_file";
         my @stat = stat($file_path);
         my $mtime = $stat[9] // 0;
-        
-        # Extract session name via regex (avoids full decode_json on every file)
-        my $name = undef;
-        eval {
-            open my $fh, '<:raw', $file_path or die;
-            local $/;
-            my $json = <$fh>;
-            close $fh;
-            if ($json =~ /"session_name"\s*:\s*"((?:[^"\\]|\\.)*)"/) {
-                $name = $1;
-            }
-        };
-        
-        push @sessions, { id => $sid, name => $name, mtime => $mtime };
+        push @sessions, { id => $sid, name => undef, mtime => $mtime, file_path => $file_path };
     }
     
     @sessions = sort { $b->{mtime} <=> $a->{mtime} } @sessions;
     
-    # 1. Exact UUID match
+    # 1. Exact UUID match (no file reading needed)
     for my $s (@sessions) {
         return $s->{id} if $s->{id} eq $identifier;
     }
     
-    # 2. UUID prefix match
+    # 2. UUID prefix match (no file reading needed)
     my @uuid_matches = grep { index($_->{id}, $identifier) == 0 } @sessions;
     if (@uuid_matches == 1) {
         log_debug('Main', "Resolved UUID prefix '$identifier' -> $uuid_matches[0]->{id}");
         return $uuid_matches[0]->{id};
     }
     
-    # 3. List number (from --sessions output)
+    # 3. List number (no file reading needed, just mtime-sorted index)
     if ($identifier =~ /^\d+$/) {
         my $idx = $identifier - 1;
         if ($idx >= 0 && $idx < @sessions) {
             log_debug('Main', "Resolved list number $identifier -> $sessions[$idx]->{id}");
             return $sessions[$idx]->{id};
         }
+    }
+    
+    # 4-6. Name-based matching: lazily read session_name from each file.
+    # The {0,500} cap on the capture group prevents Perl's regex recursion
+    # limit (65534) from being exceeded on large session files.
+    for my $s (@sessions) {
+        eval {
+            open my $fh, '<:raw', $s->{file_path} or die;
+            local $/;
+            my $json = <$fh>;
+            close $fh;
+            if ($json =~ /"session_name"\s*:\s*"((?:[^"\\]|\\.){0,500})"/) {
+                $s->{name} = $1;
+            }
+        };
     }
     
     # 4. Exact friendly name match (case-insensitive)

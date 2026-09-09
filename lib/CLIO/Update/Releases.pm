@@ -378,11 +378,9 @@ sub _download_and_extract {
 
     log_debug('Update', "Successfully downloaded to: $extracted_dir");
     # Return both the extracted path and the cleanup scope. Callers that
-    # only need the extracted path can still call us in scalar context;
-    # callers that need to clean up should use list context to avoid the
-    # fragile dirname($source_dir) approach (which previously caused
-    # switch_to_version to rmtree('/tmp') when source_dir sat at /tmp/foo
-    # and walked the entire real /tmp tree).
+    # only need the extracted path can call in scalar context; callers
+    # that need to clean up use list context to avoid computing a parent
+    # directory walk (which rmtree treats as the cleanup target).
     return wantarray ? ($extracted_dir, $download_dir) : $extracted_dir;
 }
 

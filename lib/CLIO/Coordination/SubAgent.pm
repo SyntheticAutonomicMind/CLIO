@@ -210,7 +210,7 @@ sub _run_agent_loop {
     print "Mode: $mode\n";
     print "Starting agent loop\n\n";
     
-    # Set sub-agent environment (previously only set by the exec path)
+    # Set sub-agent environment
     $ENV{CLIO_BROKER_SESSION} = $self->{session_id};
     $ENV{CLIO_BROKER_AGENT_ID} = $agent_id;
     $ENV{IS_SUBAGENT} = 1;

@@ -101,9 +101,8 @@ is_deeply($history->[-1]{reasoning_blocks},   $all_four->{reasoning_blocks},   '
 is_deeply($history->[-1]{responses_reasoning_items}, $all_four->{responses_reasoning_items}, 'all-four: responses_reasoning_items');
 
 # --- 6. save+load round-trip preserves everything ---
-# --- 6. save+load round-trip preserves everything ---
-# Note: State.pm derives its save path from session_id via _session_file(),
-# so the round-trip uses the canonical sessions dir and we clean up after.
+# State.pm derives its save path from session_id via _session_file(),
+# so the round-trip uses the canonical sessions dir and we clean up.
 $state->save();
 
 # Locate the file that save() actually wrote

@@ -94,7 +94,6 @@ sub _build {
 
 # ─────────────────────────────────────────────────────────────────────────
 # Section 1: get_model_capabilities passes reasoning_mode through.
-# This is the root fix; everything downstream depends on it.
 # ─────────────────────────────────────────────────────────────────────────
 
 subtest 'get_model_capabilities returns reasoning_mode in normalized hash' => sub {
@@ -227,7 +226,6 @@ subtest 'MiniMax payload always sets reasoning_split=true' => sub {
 # ─────────────────────────────────────────────────────────────────────────
 
 subtest 'DeepSeek v4-pro + auto + show_thinking=1 -> reasoning_effort=high' => sub {
-    # This was dead code before the cap-passthrough fix.
     my $payload = _build(
         provider      => 'deepseek',
         model         => 'deepseek/deepseek-v4-pro',

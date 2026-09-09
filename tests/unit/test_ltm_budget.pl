@@ -61,10 +61,8 @@ my $disc_score = $ltm->score_entry($disc, 'discovery', $now);
 ok_test($sol_score > $disc_score, "score_entry: solution scores higher than discovery at same confidence ($sol_score vs $disc_score)");
 
 # ============================================================
-# Test 2: get_scored_entries (REMOVED - dead code, no production caller)
-# The render_budgeted_section/get_scored_entries/_extract_keywords
-# rendering path was deleted in the LTM cleanup. Scoring is handled
-# inline by ContextBuilder::score_ltm.
+# Test 2: get_scored_entries (REMOVED - no production caller)
+# Scoring is handled inline by ContextBuilder::score_ltm.
 # ============================================================
 
 # ============================================================
@@ -108,10 +106,8 @@ $ltm->{patterns}{discoveries} = [
 my $stats = $ltm->consolidate(confidence_decay_days => 60);
 ok_test($stats->{decayed} >= 1, "consolidate: decayed stale entry");
 
-# Note: The decayed entry may be age-out removed in Phase 2 if its confidence
-# drops below 0.7 (unverified entries with age > 30 days and conf < 0.7 are removed).
-# The $stats->{decayed} check above confirms decay happened.
-# Find the old entry by content if it survived age-out
+# The decayed entry may be age-out removed if its confidence drops
+# below 0.7. Find the old entry by content if it survived age-out.
 my $found_old = 0;
 for my $entry (@{$ltm->{patterns}{discoveries}}) {
     if ($entry->{fact} eq "Old stale discovery") {

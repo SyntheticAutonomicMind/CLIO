@@ -45,6 +45,7 @@ our @EXPORT_OK = qw(
     validate_and_truncate
     validate_tool_message_pairs
     preflight_validate
+    _validate_or_passthrough
 );
 
 =head2 validate_and_truncate
@@ -137,8 +138,6 @@ sub validate_and_truncate {
 
     # Compute prompt budget from model capabilities. Uses the model's
     # actual max_output_tokens (no hard cap) plus an estimation buffer.
-    # This replaces the previous 15% margin + 8K buffer, which over-
-    # reserved for models with small actual output caps.
     require CLIO::Memory::TokenEstimator;
     my $prompt_budget = CLIO::Memory::TokenEstimator::compute_prompt_budget($caps);
 
@@ -161,11 +160,9 @@ sub validate_and_truncate {
         return validate_tool_message_pairs($messages);
     }
 
-    # Normal path: messages are role-based (history pushed individually
-    # from WorkflowOrchestrator's projection, not bundled into a single
-    # system message). Walk from the oldest end and drop messages until
-    # we fit, while preserving the first user message (the original
-    # task anchor) and keeping tool_call/tool_result pairs together so
+    # Walk from the oldest end and drop messages until we fit,
+    # while preserving the first user message (the original task
+    # anchor) and keeping tool_call/tool_result pairs together so
     # we never strand an orphan.
     return _role_based_tail_walk($messages, $effective_limit, $debug);
 }
@@ -178,12 +175,13 @@ tool_call/tool_result pairs together (never leaves a tool_result
 without its call, or vice versa).
 
 This is the proactive trim path. When messages are dropped to fit the
-budget, they are compressed with CLIO::Memory::YaRN's
-compress_for_context_recovery (with cross-cycle carryover) and the
-resulting thread_summary is injected as a system message at the base
-of the kept set. The reactive-trim recovery path
-(WorkflowOrchestrator::_compress_dropped_for_recovery) does the same
-for token-limit-error recovery.
+budget, they are NOT re-compressed here — the projection's compressed_tail
+(in the dynamic UC prepended to the user message) already covers dropped
+messages. The thread_summary system message injection that previously
+happened here was removed: it changed every turn (new tool/file/commit
+counts), busting provider KV cache of the stable prefix. Dropped messages
+remain in the session history (add_message no longer calls State::trim_context)
+so the next turn's projection includes them in a fresh compressed_tail.
 
 Arguments:
 - $messages:  ArrayRef of message hashes
@@ -215,14 +213,11 @@ sub _role_based_tail_walk {
     #  - system_prompt at index 0 (cache-stable prefix anchor)
     #  - ALL <thread_summary> system messages (YaRN compressed summaries
     #    from prior trim cycles — dropping them loses cross-cycle carryover)
-    #  - the LAST system message that follows a user message
-    #    (dynamic userContext - carries active task, todos, memory)
     #  - the LAST user message (current turn's user_input)
     #
-    # Without this guard, the proactive trim drops the dynamic
-    # userContext and the current user_input under budget pressure,
-    # and the model loses its task/todos/relevant memory and the
-    # actual question it was asked. Long-session context-loss bug B1.
+    # The dynamic UC (active_todos, compressed_tail, context_files) is
+    # now prepended to the user message (not a separate system message),
+    # so it is covered by pinning the last user message.
     my @pinned = ($first_user_idx);
     if ($messages->[0]
         && ($messages->[0]{role} // '') eq 'system'
@@ -230,11 +225,8 @@ sub _role_based_tail_walk {
         unshift @pinned, 0;
     }
     # Pin all <thread_summary> system messages so YaRN compressed
-    # summaries survive trimming. Without this, a large context that
-    # has been trimmed multiple times loses its cross-cycle carryover
-    # and the model can't see the task history its summaries describe.
-    # The system_prompt (idx 0) is NOT a thread_summary — the regex
-    # check avoids pinning it twice.
+    # summaries survive trimming. The system_prompt (idx 0) is NOT
+    # a thread_summary — the regex check avoids pinning it twice.
     for my $i (0 .. $#$messages) {
         my $msg = $messages->[$i];
         next unless ref($msg) eq 'HASH';
@@ -244,14 +236,11 @@ sub _role_based_tail_walk {
             push @pinned, $i unless grep { $_ == $i } @pinned;
         }
     }
-    my $last_system_after_user;
     my $last_user_idx;
     for my $i ($first_user_idx .. $#$messages) {
         my $r = $messages->[$i]{role} // '';
         $last_user_idx = $i if $r eq 'user';
-        $last_system_after_user = $i if $r eq 'system';
     }
-    push @pinned, $last_system_after_user if defined $last_system_after_user;
     push @pinned, $last_user_idx if defined $last_user_idx && $last_user_idx != $first_user_idx;
     my %pinned_idx = map { $_ => 1 } @pinned;
 
@@ -293,12 +282,21 @@ sub _role_based_tail_walk {
         my $msg_tokens = _estimate_tokens([$msg]);
 
         # If this is a tool_result, locate its assistant tool_call
-        # index and ensure it would also be kept. If the call would be
-        # skipped, include it inline (tool pairing invariant).
+        # index and ensure it would also be kept. We make
+        # tool_call/tool_result BATCHES atomic: if any tool_result in
+        # a batch can't fit (alongside its assistant), the entire
+        # batch — the assistant message with ALL its tool_calls and
+        # ALL its tool_results — is dropped. This prevents the model
+        # from seeing its own tool_calls without results and
+        # re-issuing them (the looping bug).
         if (($msg->{role} // '') eq 'tool' && $msg->{tool_call_id}) {
             my $call_idx = _find_assistant_for_tool_call($messages, $msg->{tool_call_id}, $i);
             if (defined $call_idx && $call_idx >= $first_user_idx
                 && !(grep { $_ == $call_idx } @kept_indices)) {
+                # Assistant not yet in @kept_indices. If we can't fit
+                # assistant + this tool_result, drop the entire batch
+                # by exiting the walk (all remaining items are older
+                # and will be skipped).
                 my $call_msg = $messages->[$call_idx];
                 my $call_tokens = _estimate_tokens([$call_msg]);
                 if ($kept_tokens + $msg_tokens + $call_tokens <= $walk_limit) {
@@ -311,8 +309,43 @@ sub _role_based_tail_walk {
                         $call_idx);
                     $kept_tokens += $call_tokens;
                 } else {
+                    # Can't fit the assistant + this tool_result.
+                    # Exit the walk — the assistant hasn't been added
+                    # yet, and all other items (including remaining
+                    # tool_results from this batch) are older and
+                    # would be skipped by `last`. The entire batch
+                    # stays out of @kept_indices.
                     last;
                 }
+            } elsif (defined $call_idx && $call_idx >= $first_user_idx
+                     && grep { $_ == $call_idx } @kept_indices) {
+                # The assistant is ALREADY in @kept_indices (included
+                # by an earlier tool_result in the same batch). If
+                # this tool_result can't fit, we can't just `last` —
+                # that would leave the assistant orphaned with
+                # tool_calls whose results are missing. The model
+                # would re-issue those tool calls.
+                #
+                # Fix: remove the assistant from @kept_indices and
+                # exit the walk. All tool_results from this batch are
+                # older than $i (walk goes newest-to-oldest), so
+                # exiting here drops them all too. The entire batch
+                # is removed atomically.
+                if ($kept_tokens + $msg_tokens > $walk_limit) {
+                    # Remove the assistant from @kept_indices.
+                    # Its other tool_results (older, not yet walked)
+                    # are implicitly dropped by the `last`.
+                    @kept_indices = grep { $_ != $call_idx } @kept_indices;
+                    $kept_tokens -= _estimate_tokens([$messages->[$call_idx]]);
+                    log_debug('MessageValidator',
+                        "role-based tail walk: tool batch at assistant idx "
+                        . "$call_idx partially un-fitable (tool_result at $i "
+                        . "doesn't fit with $kept_tokens kept); dropping entire "
+                        . "batch to prevent orphaned tool_calls");
+                    last;
+                }
+                # Tool result fits — fall through to the normal
+                # inclusion path below.
             }
         }
 
@@ -344,17 +377,9 @@ sub _role_based_tail_walk {
     # Force-include the pinned indices (system_prompt, dynamic
     # userContext, current user_input). If their tokens push us over
     # budget, evict the oldest non-pinned kept messages until we fit.
-    # Critical for long sessions: the model needs the dynamic
-    # userContext (active task, todos, relevant memory) and the
-    # current user_input even when budget is exhausted.
-    #
-    # BUGFIX (long-session context-loss): the previous eviction loop
-    # did `shift @kept_indices; next;` when the front was pinned -
-    # which silently dropped the pinned index from the kept set,
-    # defeating the pin. The fix is to break out instead: pinned
-    # indices are force-included, so evicting them is always wrong.
-    # If we can't fit pinned without evicting them, bail to
-    # return-as-is (validate_tool_message_pairs still cleans orphans).
+    # Pinned indices are force-included, so evicting them is always
+    # wrong - bail to return-as-is if they cannot fit alongside the
+    # other kept content.
     my %kept_set = map { $_ => 1 } @kept_indices;
     for my $idx (sort { $a <=> $b } @pinned) {
         next if $kept_set{$idx};
@@ -377,7 +402,10 @@ sub _role_based_tail_walk {
         if ($kept_tokens + $msg_tokens > $effective_limit) {
             log_debug('MessageValidator',
                 "role-based tail walk: pinned message at index $idx cannot fit (have $kept_tokens, need +$msg_tokens of $effective_limit); returning as-is");
-            return validate_tool_message_pairs($messages);
+            # Byte stability: only re-validate if there are actual orphans/dupes
+            # to fix. If the full array is already clean, return it as-is so
+            # provider KV caches aren't invalidated by identical re-serialization.
+            return _validate_or_passthrough($messages);
         }
         splice(@kept_indices,
             (scalar grep { $_ < $idx } @kept_indices),
@@ -400,15 +428,21 @@ sub _role_based_tail_walk {
     if ($kept_tokens > $effective_limit) {
         log_debug('MessageValidator',
             "role-based tail walk: even first user message exceeds budget ($kept_tokens > $effective_limit); returning as-is");
-        return validate_tool_message_pairs($messages);
+        # Byte stability: see comment at the other bail-out path above.
+        return _validate_or_passthrough($messages);
     }
 
+    # Build the trimmed set by direct array slicing. This preserves
+    # the ORIGINAL message hash references — no re-serialization —
+    # so the provider's KV cache stays warm for messages that survive
+    # unchanged between turns. The old code built @trimmed via grep +
+    # unshift/splice on copies; this slices direct refs from $messages.
     my @trimmed = @{$messages}[@kept_indices];
 
     # Proactive compression: if any messages were dropped during the walk,
     # compress them with YaRN so their content survives as a thread_summary
-    # system message at the base of the kept set. Previously dropped messages
-    # were permanently lost — the model had no summary to work from.
+    # system message placed near the tail (before the last user turn). See the
+    # injection block below for why the tail anchor matters for KV caching.
     my %kept_idx_set = map { $_ => 1 } @kept_indices;
     my @dropped;
     for my $i (0 .. $#$messages) {
@@ -431,28 +465,21 @@ sub _role_based_tail_walk {
         }
         if ($compressed && ref($compressed) eq 'HASH'
             && defined $compressed->{content} && length($compressed->{content})) {
-            # Remove any old thread_summary system messages from the kept
-            # set to avoid duplication. The new one is injected at the base.
-            @trimmed = grep {
-                my $c = $_->{content} // '';
-                $c !~ /<thread_summary>/;
-            } @trimmed;
-
-            # Inject the compressed summary as a system message at the base
-            # (index 1, right after the system prompt at index 0).
-            my $summary_msg = {
-                role    => 'system',
-                content => $compressed->{content},
-                _importance => 0.5,
-            };
-            if (@trimmed && ($trimmed[0]{role} // '') eq 'system') {
-                splice(@trimmed, 1, 0, $summary_msg);
-            } else {
-                unshift @trimmed, $summary_msg;
-            }
+            # REMOVED: thread_summary system message injection.
+            # Previously, dropped messages were re-compressed here and
+            # injected as a <thread_summary> system message before the
+            # current user turn. This changed every turn (new tool/file/
+            # commit counts), busting provider KV cache of the stable
+            # prefix. The projection's compressed_tail (in the dynamic UC
+            # system message) already covers dropped messages — the
+            # thread_summary is redundant.
+            #
+            # Dropped messages remain in the session history (add_message
+            # no longer calls State::trim_context). On the next turn, the
+            # projection will include them in the fresh compressed_tail.
             log_debug('MessageValidator',
-                "role-based tail walk: compressed " . scalar(@dropped) .
-                " dropped messages into thread_summary at base");
+                "role-based tail walk: dropped " . scalar(@dropped) .
+                " messages (compressed_tail in dynamic UC covers them)");
         }
     }
 
@@ -466,12 +493,101 @@ sub _role_based_tail_walk {
     #   user: continue\n\ncontinue\n\n...<actual user input>
     # which is confusing to the model. The actual current user
     # input is preserved (filter skips the LAST user message).
+    # filter_continuation_prompts preserves original references — byte stable.
     require CLIO::Core::ConversationManager;
     @trimmed = @{ CLIO::Core::ConversationManager::filter_continuation_prompts(\@trimmed) };
 
     log_debug('MessageValidator',
         "role-based tail walk: " . scalar(@$messages) . " -> " . scalar(@trimmed) . " messages, $kept_tokens tokens") if $debug;
-    return validate_tool_message_pairs(\@trimmed);
+    # Byte stability: only re-serialize if there are actual orphans/dupes
+    # to fix. If the trimmed set is already clean, return it as-is so
+    # provider KV caches stay warm for unchanged messages.
+    return _validate_or_passthrough(\@trimmed);
+}
+
+=head2 _validate_or_passthrough
+
+Check whether a message array needs tool-call / tool-result validation
+(orphan cleanup or duplicate-id dedup). If the array is already clean,
+return it as-is WITHOUT re-serialization — this preserves the original
+hash references so provider KV caches stay warm for messages that haven't
+changed.
+
+The proactive trim path (_role_based_tail_walk) and the legacy bail-out
+paths call this instead of blindly calling validate_tool_message_pairs(),
+which always rebuilds the array (new hash refs, potentially reordered
+tool_calls) even when there's nothing to fix.
+
+Arguments:
+- $messages: ArrayRef of message hashes
+
+Returns: ArrayRef (either the original ref or a validated copy)
+
+=cut
+
+sub _validate_or_passthrough {
+    my ($messages) = @_;
+
+    return $messages unless $messages && @$messages;
+
+    # Scan for orphaned tool_calls and duplicates. This is O(n) over
+    # the messages array, cheap relative to the API call that follows.
+    # Tool call IDs that appear more than once are duplicates.
+    # A tool_call_id with no matching tool result is orphaned.
+    my %tc_id_to_idx;     # tool_call_id -> assistant msg index
+    my %tr_id_to_idx;     # tool_call_id -> tool result msg index
+    my %id_count;         # tool_call_id -> occurrence count
+
+    for my $i (0 .. $#$messages) {
+        my $msg = $messages->[$i];
+        next unless ref($msg) eq 'HASH';
+        my $role = $msg->{role} // '';
+
+        if ($role eq 'assistant' && ref($msg->{tool_calls}) eq 'ARRAY') {
+            for my $tc (@{$msg->{tool_calls}}) {
+                my $id = $tc->{id};
+                next unless defined $id && length $id;
+                $tc_id_to_idx{$id} = $i;
+                $id_count{$id}++;
+            }
+        } elsif ($role eq 'tool') {
+            my $id = $msg->{tool_call_id};
+            $tr_id_to_idx{$id} = $i if defined $id && length $id;
+        }
+    }
+
+    # Check for any orphaned tool_calls (no matching tool result)
+    # or duplicate tool_call_ids (more than one occurrence).
+    my $has_orphans = 0;
+    for my $id (keys %tc_id_to_idx) {
+        $has_orphans = 1, last unless exists $tr_id_to_idx{$id};
+    }
+
+    my $has_dupes = 0;
+    for my $id (keys %id_count) {
+        $has_dupes = 1, last if $id_count{$id} > 1;
+    }
+
+    # Check for orphaned tool results (no matching tool call)
+    my $has_orphan_results = 0;
+    for my $id (keys %tr_id_to_idx) {
+        $has_orphan_results = 1, last unless exists $tc_id_to_idx{$id};
+    }
+
+    # If nothing needs fixing, return the original array reference.
+    # This is the byte-stability fast path: no re-serialization,
+    # original hash references preserved.
+    unless ($has_orphans || $has_dupes || $has_orphan_results) {
+        log_debug('MessageValidator',
+            "validate_or_passthrough: no orphans/dupes — passing " .
+            scalar(@$messages) . " messages through unchanged (byte stable)");
+        return $messages;
+    }
+
+    # Something needs fixing — re-serialize via the full validation path.
+    log_debug('MessageValidator',
+        "validate_or_passthrough: orphans=$has_orphans dupes=$has_dupes orphan_results=$has_orphan_results — running validate_tool_message_pairs");
+    return validate_tool_message_pairs($messages);
 }
 
 =head2 _find_assistant_for_tool_call
@@ -594,11 +710,9 @@ sub validate_tool_message_pairs {
     }
 
     # Rebuild: remove orphaned results entirely, strip orphaned OR
-    # duplicate tool_calls (keeping the first occurrence only).
-    # ALWAYS rebuild (don't short-circuit on "no fixes needed") so
-    # that the dedup pass is the single source of truth for tool_call
-    # id uniqueness - any path that produces duplicate ids lands here
-    # and gets cleaned up.
+    # duplicate tool_calls (keeping the first occurrence only). The
+    # dedup pass is the single source of truth for tool_call id
+    # uniqueness.
     my @validated;
     my $fixes = 0;
     # We track which ids have been kept in the OUTPUT so far. A

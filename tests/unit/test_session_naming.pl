@@ -65,6 +65,56 @@ subtest '_generate_session_name produces sensible titles' => sub {
     }
 };
 
+# Test 2b: truncation behavior in _generate_session_name
+subtest 'truncation at word boundary' => sub {
+    require CLIO::Session::State;
+    my $fn = \&CLIO::Session::State::_generate_session_name;
+
+    # Long input (well over 80 chars) is truncated to <=80 at a word boundary
+    my $long = 'fix the auth bug that is causing problems with user '
+             . 'authentication in the login flow and we need to address '
+             . 'it as soon as possible today';
+    my $result = $fn->($long);
+    ok(defined $result, 'long input produces defined name');
+    ok(length($result) <= 80, 'result is <= 80 chars (got ' . length($result) . ')');
+    ok(length($result) < length($long), 'result is shorter than input');
+
+    # Verify word-boundary: the result should not end in the middle of a word.
+    # After truncation, trailing whitespace is stripped, so the last char
+    # of the result should be alphanumeric (end of a complete word) or
+    # the result should be exactly 80 chars (hard-cut fallback).
+    if (length($result) < 80) {
+        like($result, qr/[a-zA-Z0-9]$/,
+            'ends at word boundary (not mid-word) when < 80 chars');
+    }
+
+    # Names that fit within 80 chars are preserved unchanged (beyond cleanup)
+    my $short = 'fix the auth bug';
+    is($fn->($short), 'Fix the auth bug',
+        'short names (< 80 chars) preserved unchanged');
+
+    # Input with no spaces at all (80+ chars) triggers hard-cut at exactly 80
+    my $nospace = 'a' x 104;  # 104 chars, no spaces
+    my $ns_result = $fn->($nospace);
+    ok(length($ns_result) <= 80, 'no-space input hard-cut to <= 80 chars');
+    is($ns_result, 'A' . ('a' x 79),
+        'no-space input hard-cut at exactly 80 chars');
+
+    # Input exactly at the boundary: after ucfirst the name is exactly 80 chars
+    # "Fix the auth bug that is causing problems with user authentication" = 68 chars
+    # Need something that's exactly 80 after cleanup. Build one with known length.
+    # 'a' x 80 -> ucfirst -> 'A' + 79 'a's = 80 chars, no truncation needed.
+    my $eighty = 'a' x 80;
+    is($fn->($eighty), 'A' . ('a' x 79),
+        'exactly-80-char input preserved (not truncated)');
+
+    # 81 chars: should truncate to <=80 at word boundary
+    # 'a' x 81 has no spaces -> hard-cut to exactly 80
+    my $eightyone = 'a' x 81;
+    is($fn->($eightyone), 'A' . ('a' x 79),
+        '81-char no-space input hard-cut to exactly 80');
+};
+
 # Test 3: auto_name_session fires on first user message
 subtest 'auto_name_session derives name from first user message' => sub {
     require CLIO::Session::State;

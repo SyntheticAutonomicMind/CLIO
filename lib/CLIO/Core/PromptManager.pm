@@ -79,16 +79,9 @@ sub new {
     };
     
     bless $self, $class;
-    
-    # Ensure directories exist ONLY if custom prompts are being used
-    # Don't create directories just for reading the default prompt
-    
-    # Load metadata only if it exists
+
     $self->_load_metadata();
-    
-    # DO NOT create default prompt file - use embedded prompt instead
-    # File is only created when user explicitly edits/saves
-    
+
     return $self;
 }
 
@@ -97,15 +90,8 @@ sub new {
 Get the currently active system prompt text (STABLE PORTION ONLY).
 
 Dynamic sections (LTM patterns, loaded skills, OpenSpec context) are
-NOT included here - they are delivered via the role-based history
-projection's dynamic userContext block (built by ContextBuilder in
-turn with WorkflowOrchestrator). See CLIO::Core::ContextBuilder
-and CLIO::Core::WorkflowOrchestrator for the active pipeline.
-
-The earlier get_dynamic_context() method and _format_ltm_patterns
-helper that used to inject these into the user message are now
-deleted (dead since the role-based refactor moved LTM/skills/
-OpenSpec into ContextBuilder's projection).
+delivered via the dynamic userContext system message, built from
+the projection in CLIO::Core::ContextBuilder.
 
 Includes: base prompt, custom instructions, plugin instructions,
 puppeteer topology.
@@ -151,10 +137,6 @@ sub get_system_prompt {
         log_error('PromptManager', "Failed to load active prompt '$active', falling back to embedded default");
         $prompt = $self->_get_default_prompt_content();
     }
-    
-    # LTM/skills/OpenSpec are now delivered via the ContextBuilder
-    # projection's dynamic userContext block. See
-    # CLIO::Core::ContextBuilder::build_projection.
 
     # Append custom instructions if they exist (unless --no-custom-instructions flag set)
     if (!$self->{skip_custom}) {
@@ -174,8 +156,6 @@ sub get_system_prompt {
     } elsif ($self->{debug}) {
         log_debug('PromptManager', "Skipping custom instructions (--no-custom-instructions flag)");
     }
-
-    # (loaded skills + OpenSpec are now in the ContextBuilder projection.)
 
     # Inject plugin instructions if any plugins are loaded
     eval {
@@ -210,23 +190,6 @@ sub get_system_prompt {
     
     return $prompt;
 }
-
-=head2 get_dynamic_context
-
-DELETED in this commit. Dynamic sections (LTM patterns, loaded skills,
-OpenSpec context) are now delivered via ContextBuilder's projection
-dynamic userContext block. See CLIO::Core::ContextBuilder for the
-active pipeline.
-
-The previous get_dynamic_context and _format_ltm_patterns helpers
-were orphaned when the role-based history refactor moved LTM into
-the projection. Removing the dead code:
-
-=cut
-
-# DELETED in this commit: sub get_dynamic_context was removed.
-# (Implementation between here and the next =head2 block has been
-# deleted. See git history for the prior version.)
 
 =head2 list_prompts
 

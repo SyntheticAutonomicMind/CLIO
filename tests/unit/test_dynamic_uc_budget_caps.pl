@@ -4,18 +4,8 @@
 #
 # Regression test: dynamic userContext components must be capped
 # so they cannot balloon the prompt budget on iteration 1
-# (where no proactive trim runs).
-#
-# Bug (SMELL #5 in QA review 2026-09-02): 200 todos x 500 chars
-# produced ~22K tokens of dynamic UC content. For a 128K-context
-# model that's ~17% of budget; for smaller models it's catastrophic.
-#
-# Fix: cap active_todos at 10 entries. Show an "...and N more"
-# hint when items exceed the cap.
-#
-# Note: The Unresolved: and Relevant memory: sections were removed
-# entirely in the 2026-09-06 metadata-leak fix, so they no longer
-# contribute to the dynamic UC budget regardless of cap.
+# (where no proactive trim runs). Caps active_todos at 10 entries
+# with an "...and N more" hint when items exceed the cap.
 
 use strict;
 use warnings;
@@ -44,11 +34,6 @@ my $proj = {
     relevant_memory => \@ltm,
     ltm_total_count => 20,
     unresolved => \@unresolved,
-    environment => {
-        working_directory => '/tmp',
-        language => 'English',
-        datetime_iso => '2026-09-02T12:00:00',
-    },
 };
 
 my $prose = messages_to_prose_dynamic($proj);

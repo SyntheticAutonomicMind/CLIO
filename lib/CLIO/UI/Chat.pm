@@ -542,17 +542,19 @@ sub run {
             next;
         }
         
-        # Display user message (if not already from a command)
-        # Note: After multiline command, $input contains the content, not the /command
+        # Display user message (if not already from a command).
+        # After a multiline command, $input contains the content, not
+        # the /command.
         log_debug('Chat', "Before display check: input starts with /? " . ($input =~ /^\// ? "YES" : "NO"));
         unless ($input =~ /^\//) {
             log_debug('Chat', "Calling display_user_message with input length=" . length($input));
             $self->display_user_message($input);
         }
-        
-        # NOTE: User message is added to session history by WorkflowOrchestrator AFTER processing
-        # Do NOT add here - that would create duplicates
-        # WorkflowOrchestrator handles adding both user message and assistant response atomically
+
+        # User message is added to session history by
+        # WorkflowOrchestrator AFTER processing; do not add here.
+        # NOTE: user message management is centralized in WorkflowOrchestrator,
+        # not in Chat.pm. See Session::State::add_message.
         
         # Process with AI agent (using streaming)
         if ($self->{ai_agent}) {
@@ -624,10 +626,10 @@ sub _make_thinking_callback {
         # back. We isolate the swap so the main controller's state
         # (in_table, in_code_block, md_line_count, first_line_printed)
         # cannot leak into the answer stream that immediately follows.
-        # Note: first_chunk_received is intentionally NOT saved or
-        # restored - StreamingController::flush never modifies it, and
-        # the 'end' handler explicitly resets it to 0 below so the next
-        # answer chunk re-emits the "CLIO: " prefix.
+        # first_chunk_received is intentionally NOT saved or restored.
+        # StreamingController::flush never modifies it; the 'end'
+        # handler resets it to 0 so the next answer chunk re-emits the
+        # "CLIO: " prefix.
         my $saved_md  = $self->{streaming}{markdown_buffer};
         my $saved_ln  = $self->{streaming}{line_buffer};
         my $saved_flp = $self->{streaming}{first_line_printed};
@@ -904,7 +906,6 @@ sub _handle_ai_response {
     my ($self, $result, $alarm_count, $spinner) = @_;
 
     # Disable the periodic ALRM handler installed by _process_ai_request.
-    # The new helper is idempotent and safe to call multiple times.
     require CLIO::Core::Interrupt;
     CLIO::Core::Interrupt::uninstall_alrm_handler();
     log_debug('Chat', "Disabled periodic ALRM after streaming ($alarm_count interrupts)");

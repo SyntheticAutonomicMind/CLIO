@@ -75,7 +75,7 @@ my $error = "Streaming request failed: 502 Bad Gateway";
     my $status = 400;
     my $retryable = 0;
 
-    # ResponseHandler now treats generic 400 as retryable (transient backend issue)
+    # Generic 400 is treated as retryable (transient backend issue).
     if ($status == 502 || $status == 503 || $status == 429 || $status == 400) {
         $retryable = 1;
     }

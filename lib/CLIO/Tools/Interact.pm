@@ -19,28 +19,17 @@ CLIO::Tools::Interact - Tool for mid-stream user collaboration
 =head1 DESCRIPTION
 
 Enables agents to pause execution and request user input, clarification,
-or decisions during task execution. This is the PRIMARY mechanism for
-agent-user communication. Agents should use this tool for ALL collaboration
-instead of providing summary responses.
+or decisions without consuming additional AI Credits.
 
-The tool is FREE because it blocks execution locally — the agent's tool call
-and the user's response are exchanged within the same API round-trip. No
-second API request is needed to receive the user's answer; the tool result
-(containing the user's response) is appended to the current conversation
-and the model continues from there.
+This is the PRIMARY mechanism for agent-user communication during task
+execution. Agents should use this tool for ALL collaboration instead of
+providing summary responses.
 
 KEY BENEFITS:
-- FREE - No additional API round-trip needed (blocks synchronously)
+- FREE - Does not consume AI Credits
 - SYNCHRONOUS - Workflow continues in same API call
 - INTERACTIVE - User can guide agent in real-time
 - EFFICIENT - Reduces back-and-forth API calls
-
-The tool result is framed with [USER REPLY]...[END USER REPLY] markers so
-the model unambiguously treats the content as user input rather than a
-tool artifact. This framing is necessary because the result arrives as a
-role='tool' message (paired with the model's tool_call), and without the
-markers the model may try to analyze or categorize the response text
-instead of acting on it as a fresh user turn.
 
 =head1 SYNOPSIS
 
@@ -57,7 +46,7 @@ instead of acting on it as a fresh user turn.
         { session => $session, ui => $ui }
     );
     
-    # Result contains user's response, framed as [USER REPLY]...[/USER REPLY]
+    # Result contains user's response
     print "User said: $result->{output}\n";
 
 =cut
@@ -73,16 +62,13 @@ THIS IS A JSON TOOL CALL, NOT TEXT. Always call via JSON function call, never as
 
 REQUIRES the 'operation' parameter (always 'request_input') AND the 'message' parameter.
 
-- FREE (no additional API round-trip - blocks synchronously) and BLOCKING (pauses until user responds)
+- FREE (does not consume API requests) and BLOCKING (pauses until user responds)
 - Use for: checkpoints, approvals, progress updates, questions, reporting blockers
 - Do NOT use for: questions answerable with tools, info already in conversation
 
 Parameters:
 - message (required): Your question/update for the user
 - context (optional): Additional context to help user understand
-
-The user's response is returned framed as [USER REPLY]...[END USER REPLY] so the
-model treats it as a fresh user turn rather than a tool artifact.
 
 QUICK EXAMPLE:
 {"operation": "request_input", "message": "Which approach should I use?"}
@@ -272,22 +258,15 @@ sub request_input {
         if (ref($result) eq 'HASH') {
             $user_response = $result->{input};
             
-            # Build output with agent events context for the AI.
-            # The user-input portion is framed as [USER REPLY]...[/USER REPLY]
-            # so the model unambiguously treats it as a fresh user turn
-            # rather than the bare content of a role='tool' message.
-            # Without this framing, the model has to infer the input's
-            # provenance and can fall into "diagnose what this string is"
-            # instead of "respond to the next user turn."
+            # Build output with agent events context for the AI
+            my $output = $user_response // '';
             my @events = @{$result->{events} || []};
             my $source = $result->{source} || 'user';
-
-            my $output = '';
-            if (defined $user_response && length $user_response && $source ne 'agent_event') {
-                $output = "[USER REPLY]\n$user_response\n[END USER REPLY]";
+            
+            # When interrupted by agent event, format output for AI awareness
+            if ($source eq 'agent_event') {
+                $output = '';  # No user input - this was an agent interrupt
             }
-            # When interrupted by an agent event, $output stays empty
-            # for the user portion; the agent-message loop below fills it.
             
             if (@events) {
                 my @agent_msgs;
@@ -361,12 +340,7 @@ sub request_input {
     
     return {
         success => 1,
-        # Frame the user text so the model treats the bare content of a
-        # role='tool' message unambiguously as a fresh user turn rather
-        # than a tool artifact to analyze. metadata.user_response below
-        # still carries the raw text for any downstream consumer that
-        # needs it unframed.
-        output => "[USER REPLY]\n$user_response\n[END USER REPLY]",
+        output => $user_response,
         # Don't include action_description since we already displayed it
         metadata => {
             message => $message,
@@ -473,7 +447,7 @@ sub _request_via_broker {
     
     return {
         success => 1,
-        output => "[USER REPLY]\n$response\n[END USER REPLY]",
+        output => $response,
         metadata => {
             message => $message,
             context => $user_context,

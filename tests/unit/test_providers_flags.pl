@@ -159,7 +159,7 @@ for my $name (@CLOUD_NAMES) {
 {
     is(provider_from_url('https://api.anthropic.com/v1/messages'), 'anthropic',      'Anthropic URL');
     is(provider_from_url('https://api.openai.com/v1/models'),      'openai',         'OpenAI URL');
-    is(provider_from_url('https://api.githubcopilot.com'),          'github-copilot', 'Copilot URL');
+    is(provider_from_url('https://api.githubcopilot.com'),          'github_copilot', 'Copilot URL');
     is(provider_from_url('https://api.minimax.io/v1/models'),       'minimax',        'MiniMax URL');
     is(provider_from_url('https://api.deepseek.com/v1/models'),     'deepseek',       'DeepSeek URL');
     is(provider_from_url('https://api.z.ai/api/paas/v4/models'),    'zai',            'Z.AI URL');

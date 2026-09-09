@@ -63,12 +63,18 @@ sub get_config_dir {
     my ($type) = @_;
     
     # If PathResolver was initialized with --config, use that directory.
-    # Otherwise, CONFIG_DIR always points to ~/.clio (the global user config).
+    # Otherwise, honor an explicit test override. The test harness sets
+    # CLIO_CONFIG_DIR to a tempdir so tests can never touch the user's real
+    # ~/.clio (previously unit tests clobbered provider/model into the real
+    # config). Production never sets this, so behavior is unchanged for users.
     eval { require CLIO::Util::PathResolver; };
     if (!$@ && defined $CLIO::Util::PathResolver::CONFIG_DIR) {
         return $CLIO::Util::PathResolver::CONFIG_DIR;
     }
-    
+    if (defined $ENV{CLIO_CONFIG_DIR} && -d $ENV{CLIO_CONFIG_DIR}) {
+        return $ENV{CLIO_CONFIG_DIR};
+    }
+
     my $home = $ENV{HOME} || $ENV{USERPROFILE} || '.';
     
     # Determine subdirectory based on type

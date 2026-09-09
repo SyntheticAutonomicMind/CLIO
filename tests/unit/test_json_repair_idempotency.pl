@@ -50,7 +50,7 @@ for my $case (@valid_cases) {
     ok(!$@, "Repaired JSON is still valid: " . substr($json, 0, 50));
 }
 
-# Specifically test the corruption case that the double-repair bug caused
+# Test the corruption case: a : .5 regex pattern must survive repair.
 {
     my $valid_json = '{"operation":"grep_search","query":"error: .500 status"}';
     my $repaired_once = repair_malformed_json($valid_json, 0);

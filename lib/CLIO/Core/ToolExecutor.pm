@@ -200,11 +200,11 @@ sub execute_tool {
         return $self->_error_result("Tool registry not available");
     }
     
-    # Fallback alias resolution: Phase 3 in _prepare_tool_round already resolves
-    # aliases and injects operation into _parsed_args. This block only runs when
-    # ToolExecutor is called directly (bypassing Phase 3 - e.g. from tests or
-    # direct tool invocation). When _parsed_args already has operation set by
-    # Phase 3, we skip the redundant resolution.
+    # Fallback alias resolution. Phase 3 in _prepare_tool_round
+    # already resolves aliases and injects operation into _parsed_args;
+    # this block only runs when ToolExecutor is called directly
+    # (bypassing Phase 3 - e.g. from tests). When _parsed_args already
+    # has operation set, we skip the redundant resolution.
     my $original_tool_name = $tool_name;
     if (!$arguments->{operation}) {
         my $alias_info = $tool_registry->get_alias_info($tool_name);

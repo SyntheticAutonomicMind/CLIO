@@ -113,6 +113,13 @@ sub handle_api_command {
         return;
     }
     if ($action eq 'provider') {
+        my $sub = $args[0] // '';
+        # Subcommands for custom provider management
+        if ($sub =~ /^(add|create|list|ls|remove|rm|delete)$/i) {
+            $self->{cfg}->handle_provider(@args);
+            return;
+        }
+        # Deprecated: /api provider <name> -> /api set provider <name>
         $self->display_warning_message("Deprecated syntax. Use '/api set provider <name>' instead.");
         $self->{cfg}->handle_set('provider', $args[0], $session_only);
         return;
@@ -193,6 +200,9 @@ sub _display_api_help {
             ['/api alias <name> <model>',         'Create model alias', 40],
             ['/api alias <name> --delete',        'Remove alias', 40],
             ['/api remove <provider>',            'Remove stored credentials for a provider', 40],
+            ['/api provider add <name> <base> [key]', 'Register a custom provider alias (e.g. anthropic_test -> anthropic)', 40],
+            ['/api provider list',                'List custom provider aliases', 40],
+            ['/api provider remove <name>',      'Remove a custom provider alias', 40],
           ],
           lines => [''],
         },

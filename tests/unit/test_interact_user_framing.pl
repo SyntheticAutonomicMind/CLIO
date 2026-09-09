@@ -1,13 +1,12 @@
 #!/usr/bin/env perl
-# test_interact_user_framing.pl - Verify interact tool frames user replies
-# in the tool result so the model unambiguously treats the content as a
-# fresh user turn rather than the bare content of a role='tool' message.
+# test_interact_user_framing.pl - Verify interact tool returns raw user replies
+# (no [USER REPLY] tagging) and stores interaction history in the session log.
 
 use strict;
 use warnings;
 use utf8;
 use lib './lib';
-use Test::More tests => 9;
+use Test::More tests => 12;
 use CLIO::Tools::Interact;
 
 # Minimal mock UI. request_collaboration returns a hashref matching the
@@ -55,7 +54,7 @@ package main;
 
 sub make_session { return FakeSession->new; }
 
-# === Test 1: standard mode frames user reply ===
+# === Test 1: standard mode returns raw (unframed) user reply ===
 {
     my $ui    = MockUI->new(next_input => 'yeah, lets proceed');
     my $sess  = make_session;
@@ -65,19 +64,26 @@ sub make_session { return FakeSession->new; }
         { ui => $ui, session => $sess }
     );
     ok($result->{success}, 'standard mode: success=1');
-    like(
+    is(
         $result->{output},
-        qr/^\[USER REPLY\]\nyeah, lets proceed\n\[END USER REPLY\]$/,
-        'standard mode: output is framed as [USER REPLY]...[/USER REPLY]'
+        'yeah, lets proceed',
+        'standard mode: output is raw (not framed)'
     );
     is(
         $result->{metadata}{user_response},
         'yeah, lets proceed',
-        'standard mode: metadata.user_response carries the unframed text'
+        'standard mode: metadata.user_response carries the raw text'
     );
+    is(
+        scalar(@{$sess->{messages}}),
+        2,
+        'standard mode: interaction stored as 2 messages in session log'
+    );
+    is($sess->{messages}[0]{role}, 'assistant', 'standard mode: request stored as assistant message');
+    is($sess->{messages}[1]{role}, 'user', 'standard mode: response stored as user message');
 }
 
-# === Test 2: listen_broker mode (user source) frames the user portion ===
+# === Test 2: listen_broker mode (user source) returns raw user reply ===
 {
     my $ui   = MockUI->new(next_input => 'quick question before I start');
     my $sess = make_session;
@@ -91,10 +97,10 @@ sub make_session { return FakeSession->new; }
         { ui => $ui, session => $sess }
     );
     ok($result->{success}, 'listen_broker user source: success=1');
-    like(
+    is(
         $result->{output},
-        qr/^\[USER REPLY\]\nquick question before I start\n\[END USER REPLY\]$/,
-        'listen_broker user source: output is framed'
+        'quick question before I start',
+        'listen_broker user source: output is raw (not framed)'
     );
     is(
         $result->{metadata}{source},
@@ -103,9 +109,9 @@ sub make_session { return FakeSession->new; }
     );
 }
 
-# === Test 3: listen_broker mode (agent_event source) does NOT frame ===
-# When the request_collaboration returns an agent_event, the user-input
-# framing should be skipped - the output is purely agent messages.
+# === Test 3: listen_broker mode (agent_event source) does NOT include user reply ===
+# When the request_collaboration returns an agent_event, the output is
+# purely agent messages — no user reply text.
 {
     my $ui = MockUI->new(
         next_input  => undef,

@@ -42,7 +42,6 @@ $r->register_tool(CLIO::Tools::ApplyPatch->new(subagent_name => 'test'));
 # Every alias in the table must be resolvable by get_alias_info.
 my $aliases = $r->_get_operation_aliases();
 
-# Previously-missing aliases that caused the drift bug.
 my @previously_broken = qw(ask_user confirm question);
 for my $alias (@previously_broken) {
     my $info = $r->get_alias_info($alias);

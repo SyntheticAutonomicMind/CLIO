@@ -103,7 +103,7 @@ sub make_long_history {
 
     # No separate anchor — active task is in dynamic userContext.
     # Original task preserved in compressed_tail via YaRN [original] marker.
-    ok(!defined $proj->{anchor} || !defined $proj->{anchor}, "No separate anchor (task via dynamic userContext)");
+    ok(!defined $proj->{anchor} || !defined $proj->{anchor}, "No separate anchor (task in compressed tail)");
     ok(length($proj->{compressed_tail}) > 0, "Compressed tail is non-empty");
     like($proj->{compressed_tail}, qr/Original substantive task/,
         "Original task preserved in compressed tail");
@@ -142,13 +142,9 @@ sub make_long_history {
         "Compressed tail has content (was " . length($proj->{compressed_tail}) . " chars)");
 }
 
-# ---------------------------------------------------------------------------
-# Test: stable + dynamic split for the prose renderer
-# DELETED in this commit: messages_to_prose_stable no longer exists.
-# The role-based history refactor pushed the stable content (anchor +
-# recent turns) as role-based messages, not as prose. The active
-# renderer is messages_to_prose_dynamic (the system userContext).
-# messages_to_prose_dynamic is the sole renderer.
+# Prose renderer covers the dynamic userContext only. The stable
+# content (anchor + recent turns) is delivered as role-based
+# messages, not as prose.
 {
     my $history = make_long_history(turns => 50);
     my $proj = build_projection(
@@ -159,14 +155,9 @@ sub make_long_history {
     my $combined = messages_to_prose_dynamic($proj);
     my $dynamic = CLIO::Core::MessageHistory::messages_to_prose_dynamic($proj);
 
-    # Dynamic prose contains the dynamic sections.
-    like($combined, qr/Working directory:/, "Prose renderer emits environment section");
-    # No # Task or # Recent work sections in prose (those are now
-    # pushed as role-based messages by WorkflowOrchestrator).
-    unlike($combined, qr/# Task\b/, "Prose renderer omits # Task (now role-based)");
+    like($combined, qr/Original substantive task/, "Prose renderer emits compressed tail (dynamic section)");
+    unlike($combined, qr/^# Task\b/m, "Prose renderer omits # Task (now role-based)");
     unlike($combined, qr/# Recent work/, "Prose renderer omits # Recent work (now role-based)");
-
-    # messages_to_prose_dynamic is the dynamic renderer.
     is($combined, $dynamic, "messages_to_prose_dynamic renders consistently");
 }
 

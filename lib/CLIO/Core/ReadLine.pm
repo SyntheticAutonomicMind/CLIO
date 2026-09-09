@@ -1249,11 +1249,9 @@ sub reposition_cursor {
     $prompt //= '';
     my $term_width = $self->_get_term_width();
 
-    # Compute BOTH source and target from input state.
-    # This is the key redesign: we never rely on incrementally-tracked
-    # last_cursor_* as the source. _cursor_at_codepoint is a pure
-    # function — given the same (input, cp, prompt), it always
-    # returns the same (row, col).
+    # Compute BOTH source and target from input state. _cursor_at_codepoint
+    # is a pure function: given the same (input, cp, prompt), it always
+    # returns the same (row, col). No incrementally-tracked state.
     my ($old_input_row, $old_col) = $self->_cursor_at_codepoint($$input_ref, $$old_pos_ref, $prompt);
     my ($new_input_row, $new_col) = $self->_cursor_at_codepoint($$input_ref, $$new_pos_ref, $prompt);
 

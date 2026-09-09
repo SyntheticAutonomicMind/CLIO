@@ -62,9 +62,6 @@ sub routing_active {
 
 # ===========================================================================
 # Test 1: clio --model flow clears model_candidates and route_name
-#
-# This is the exact fix in clio startup. We invoke the same config.set()
-# calls the clio script makes after the --model override is parsed.
 # ===========================================================================
 
 subtest 'clio --model flow: clears route_name AND model_candidates' => sub {
@@ -284,7 +281,7 @@ subtest 'end-to-end: ErrorHandler gate after explicit --model' => sub {
 subtest 'original bug: --model after route use does NOT route on error' => sub {
     my ($config, $dir) = fresh_config();
 
-    # Step 1: user previously activated a named route
+    # Step 1: user activated a named route
     setup_route_state($config);
 
     # Step 2: user starts session with explicit --model

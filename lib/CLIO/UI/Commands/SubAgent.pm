@@ -1069,10 +1069,11 @@ sub start_broker {
         );
         log_debug('SubAgent', "Connected to broker as primary user");
         
-        # Note: We do NOT inject broker_client into the primary agent's APIManager.
-        # The broker rate limiter is for sub-agent coordination only. The primary
-        # agent uses its own local rate limiter. Injecting it here would cause the
-        # primary agent to block on broker API slots while sub-agents are working.
+        # Do NOT inject broker_client into the primary agent's
+        # APIManager. The broker rate limiter is for sub-agent
+        # coordination only; the primary agent uses its own local
+        # rate limiter. Injecting here would cause the primary agent
+        # to block on broker API slots while sub-agents are working.
     };
     if ($@) {
         log_debug('SubAgent', "Could not connect to broker: $@");

@@ -1,17 +1,15 @@
 #!/usr/bin/env perl
 # test_tool_error_improvements.pl - Regression tests for tool error UX fixes
 #
-# These tests cover fixes for findings from the agent's tool audit:
+# Covers:
 #   1. version_control log: clamp/validate limit parameter
 #   2. version_control diff: validate file parameter exists
 #   3. file_operations read_file: explicit error when start_line past EOF
 #   4. web_operations fetch_url: categorize transport/HTTP errors
-#   5. ToolExecutor validator: pass through error_result() (success=0, no
-#      output) instead of replacing it with a generic malformed-result error.
-#      Previously every tool error was clobbered with 'Internal tool error:
-#      malformed result structure', hiding the real error from agents.
-#   6. grep_search invalid-regex path: use error_result() helper instead of
-#      manually building a hash missing the 'output' key.
+#   5. ToolExecutor validator: pass through error_result() (success=0,
+#      no output) instead of replacing it with a generic malformed-result
+#      error.
+#   6. grep_search invalid-regex path: use error_result() helper.
 
 use strict;
 use warnings;

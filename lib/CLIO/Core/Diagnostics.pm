@@ -215,9 +215,8 @@ sub dump_diagnostic {
 
         my $tc_info = $tc_count ? " tool_calls=$tc_count(${tc_tokens}tok)" : "";
         my $tool_id = $msg->{tool_call_id} ? " tool_call_id=$msg->{tool_call_id}" : "";
-        my $importance = defined $msg->{_importance} ? " importance=$msg->{_importance}" : "";
-        print $fh sprintf("[%4d] role=%-10s tokens=%-6d chars=%-7d%s%s%s\n",
-            $i, $role, $msg_tokens, $content_len, $tc_info, $tool_id, $importance);
+        print $fh sprintf("[%4d] role=%-10s tokens=%-6d chars=%-7d%s%s\n",
+            $i, $role, $msg_tokens, $content_len, $tc_info, $tool_id);
 
         my $preview = substr($content, 0, 200);
         $preview =~ s/\n/\\n/g;

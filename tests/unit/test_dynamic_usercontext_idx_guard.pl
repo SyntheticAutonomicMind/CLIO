@@ -24,11 +24,9 @@ my $prose = messages_to_prose_dynamic($proj);
 is(length($prose), 0, 'empty projection produces empty prose');
 
 # A populated projection produces non-empty prose.
-$proj->{environment} = {
-    working_directory => '/tmp',
-    language => 'English',
-    datetime_iso => '2026-09-02T12:00:00',
-};
+$proj->{active_todos} = [
+    { status => 'pending', content => 'fix the bug' },
+];
 $prose = messages_to_prose_dynamic($proj);
 ok(length($prose) > 0, 'populated projection produces non-empty prose');
 

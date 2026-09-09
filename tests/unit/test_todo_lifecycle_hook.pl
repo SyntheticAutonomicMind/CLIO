@@ -77,12 +77,13 @@ use File::Temp qw(tempdir);
 # assertions guard against the dead cache machinery being re-introduced.
 {
     my $src = do { local $/; open my $fh, '<', 'lib/CLIO/Core/PromptBuilder.pm' or die "open: $!"; <$fh> };
+    # Note: _user_context_cache (per-minute TTL cache for CWD/Date/Lang)
+    # is INTENTIONALLY kept — it provides byte stability by preventing
+    # the date/time from changing between API calls within the same
+    # minute. The invalidation hook (set_invalidation_hook) was removed,
+    # but the cache itself remains.
     unlike($src, qr/set_invalidation_hook/,
          'PromptBuilder no longer subscribes to TodoStore invalidation');
-    unlike($src, qr/_user_context_cache/,
-         'PromptBuilder no longer has _user_context_cache');
-    unlike($src, qr/_user_context_cache_time/,
-         'PromptBuilder no longer has _user_context_cache_time');
 }
 
 # ── Test 5: session-scoped cache tracking is gone ─────────────────────

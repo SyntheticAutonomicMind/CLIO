@@ -1,22 +1,11 @@
 #!/usr/bin/env perl
-# Regression test: /api route use must switch the global provider to match
-# the route's first model's provider prefix.
-#
-# Bug: After /api route use minimax-free (whose first model is
-# "openrouter/minimax/minimax-m3:free"), the global config still had
-# provider=github_copilot and api_base=http://192.0.2.1:9090/... (the
-# github_copilot proxy). /api show displayed the wrong provider even
-# though APIManager correctly routed the request via the model prefix.
-#
-# The same root cause exists in /api set model and /api set model
-# (multi-model candidates) - both update the model but never switch the
-# global provider. All three call sites are fixed by the same pattern:
-# resolve provider from the model's first prefix and call set_provider
-# BEFORE set('model', ...) so set_provider's default model doesn't
-# clobber the intended model.
-#
-# This file tests the helper that consolidates the fix, plus regression
-# tests that exercise the public dispatch through the stubs.
+# Regression test: /api route use must switch the global provider to
+# match the route's first model's provider prefix. Tests the helper
+# that consolidates the fix across /api route use, /api set model, and
+# /api set model (multi-model candidates) - all three must resolve
+# provider from the model's first prefix and call set_provider BEFORE
+# set('model', ...) so set_provider's default model doesn't clobber the
+# intended model.
 
 use strict;
 use warnings;

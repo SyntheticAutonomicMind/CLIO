@@ -2,14 +2,13 @@
 # SPDX-License-Identifier: GPL-3.0-only
 # SPDX-FileCopyrightText: Copyright (c) 2026 Andrew Wyatt (Fewtarius)
 #
-# Regression test: _role_based_tail_walk must protect the dynamic
-# userContext system message and the current turn's user_input
-# even under aggressive budget pressure.
+# Regression test: _role_based_tail_walk must protect the current turn's
+# user_input (which now includes the dynamic UC content prepended) even
+# under aggressive budget pressure.
 #
-# Without this guard (B1), the proactive trim drops the dynamic
-# userContext and the current user_input when budget is tight, and
-# the model loses its task/todos/relevant memory and the actual
-# question it was asked. Long-session context-loss bug.
+# Without this guard (B1), the proactive trim drops the current user_input
+# when budget is tight, and the model loses its task/todos/relevant memory
+# and the actual question it was asked. Long-session context-loss bug.
 
 use strict;
 use warnings;
@@ -20,23 +19,24 @@ use Test::More;
 use CLIO::Core::API::MessageValidator qw(validate_and_truncate);
 
 # Build the realistic message layout produced by WorkflowOrchestrator's
-# role-based projection rebuild:
+# role-based projection rebuild (post-fix layout):
 #   [0] system_prompt
 #   [1] anchor turn (original user task)
 #   [2] anchor turn (assistant)
 #   [3] recent turn (user) ... this is part of recent turns
 #   [4] recent turn (assistant)
-#   [5] system_userContext (dynamic - has active task, todos, memory)
-#   [6] user_input (current turn)
-#   [7..] current turn exchanges (tool pairs)
+#   [5] user: user_context + dynamic_UC (active_todos, compressed_tail,
+#       context_files) + user_input (CURRENT_QUESTION_HERE)
+#   [6..] current turn exchanges (tool pairs)
 my @messages;
 push @messages, { role => 'system', content => 'SYSTEM_PROMPT_' . ('x' x 200) };
 push @messages, { role => 'user', content => 'Original anchor task ' . ('x' x 200) };
 push @messages, { role => 'assistant', content => 'Got it, will work on it.' };
 push @messages, { role => 'user', content => 'Recent turn user ' . ('x' x 100) };
 push @messages, { role => 'assistant', content => 'Recent turn assistant.' };
-push @messages, { role => 'system', content => 'DYNAMIC_USERCONTEXT_TASK_TODOS_MEMORY' . ('x' x 100) };
-push @messages, { role => 'user', content => 'CURRENT_QUESTION_HERE' };
+# The dynamic UC is prepended to the user message (NOT a separate system
+# message). It carries active_todos, compressed_tail, and context_files.
+push @messages, { role => 'user', content => 'DYNAMIC_USERCONTEXT_TASK_TODOS_MEMORY' . ('x' x 100) . 'CURRENT_QUESTION_HERE' };
 # Many tool exchanges to blow budget
 for my $i (1..50) {
     push @messages, {
@@ -71,7 +71,7 @@ ok(grep { /Original anchor task/ } @contents,
     'anchor user message survived aggressive trim') or diag("Roles: @roles");
 
 ok(grep { /DYNAMIC_USERCONTEXT_TASK_TODOS_MEMORY/ } @contents,
-    'dynamic userContext system message survived aggressive trim (B1 fix)')
+    'dynamic userContext content survived aggressive trim (B1 fix - now in user message)')
     or diag("Roles: @roles");
 
 ok(grep { /CURRENT_QUESTION_HERE/ } @contents,

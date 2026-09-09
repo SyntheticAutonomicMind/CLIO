@@ -59,14 +59,11 @@ my $orch = bless({
         'Test 2.4: short content ending with comma = premature');
     is($orch->_looks_premature_stop('OK', 2), 1,
         'Test 2.5: 2-char content with no punctuation = premature');
-    # Note: "..." matches the [.!?] terminal-punctuation regex, so the
-    # heuristic treats it as a stop signal. This is a fine-grained
-    # limitation: a model that says "working on it..." intending to
-    # continue will be treated as a final answer. The streaming-side
+    # "..." matches the [.!?] terminal-punctuation regex, so the
+    # heuristic treats it as a stop signal. The streaming-side
     # truncation guard in APIManager is the real defense for those
     # cases - the model would need to actually send a finish_reason
-    # chunk for this heuristic to be the only thing standing between
-    # a continuation and a stop.
+    # chunk for this heuristic to matter.
     is($orch->_looks_premature_stop('working on it...', 1), 0,
         'Test 2.6: content ending with ellipsis = treated as terminal (heuristic limitation)');
 }

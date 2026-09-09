@@ -23,7 +23,13 @@ use warnings;
 use utf8;
 use File::Find;
 use File::Basename;
+use File::Spec;
 use Cwd 'abs_path';
+# setpgid + WNOHANG power _run_test_safely below: tests are spawned in their own
+# process group so a timeout can SIGKILL the whole tree (test + grandchildren)
+# and reap it, instead of orphaning grandchildren as zombies (the old
+# `system("timeout 15 ...")` only killed the immediate child).
+use POSIX qw(setpgid WNOHANG);
 
 my $json_mode = grep { $_ eq '--json' } @ARGV;
 my $score_mode = grep { $_ eq '--score-only' } @ARGV;
@@ -415,6 +421,51 @@ for my $t (@integration_tests) {
     }
 }
 
+# ── Safe per-test execution (fallback path only) ───────────────────────
+# Runs a single test file in its own process group with a hard timeout, then
+# reaps it. This replaces the old `system("timeout 15 perl ... > /dev/null")`.
+# Why: `timeout` only kills the immediate child. Tests that fork grandchildren
+# (e.g. broker/MCP stubs, terminal-kill-safety's TERM-ignoring `sleep`) were
+# orphaned on timeout, surfacing as <defunct> zombies and holding their temp
+# files/sockets open -- which is what filled /tmp after a killed run.
+#
+# Also sets CLIO_TEST_RUNNER_INVOKED so meta-tests (test_assessment_regression,
+# test_lint_size_regression) self-skip instead of re-entering assess_codebase
+# and re-spawning the suite -- that re-entrancy was the source of the
+# ~10x concurrent-process explosion seen in `ps` after a timeout-15 kill.
+#
+# Returns the raw $?-encoded status (124<<8 on timeout), matching system()'s
+# encoding so the existing `$result == 0` checks stay valid.
+sub _run_test_safely {
+    my ($test_file) = @_;
+    $test_file //= return (124 << 8);
+    my $pid = fork();
+    die "fork: $!" unless defined $pid;
+    if ($pid == 0) {
+        # Child: own process group -> parent can kill the whole group.
+        setpgid(0, 0) or exit(255);
+        open(my $dn, '>', '/dev/null') or exit(255);
+        open(STDOUT, '>&', $dn) or exit(255);
+        open(STDERR, '>&', $dn) or exit(255);
+        exec('perl', '-I', 'lib', $test_file) or exit(255);
+    }
+    # Parent: ensure child is in the group it claims before racing the clock.
+    setpgid($pid, $pid) or kill('KILL', -$pid);
+    my $deadline = time() + 20;
+    while (1) {
+        my $reaped = waitpid($pid, WNOHANG);
+        if ($reaped == $pid) {
+            return $?;
+        }
+        if (time() >= $deadline) {
+            kill('KILL', -$pid);                 # SIGKILL the entire group
+            while (waitpid($pid, 0) > 0) { }     # reap, no zombie
+            return 124 << 8;                     # mimic `timeout` exit 124
+        }
+        select(undef, undef, undef, 0.1);
+    }
+}
+
 # Run unit tests via the existing runner (tests/run_all_tests.pl).
 # The runner supports --per-test-timeout and prints a structured summary,
 # which we parse. Exit codes are unreliable for TAP-based tests.
@@ -453,18 +504,24 @@ if ($runner) {
         }
     }
 } else {
-    # Fallback: bare timeout invocation (less accurate but works without runner)
+    # Fallback: bare timeout invocation (less accurate but works without runner).
+    # Guard against re-entrant recursion: assess_codebase is invoked by
+    # test_assessment_regression (which passes --skip-tests), so without this
+    # flag the meta-test re-runs assess_codebase, which re-runs the meta-test,
+    # ... until `timeout` kills each layer and orphans the rest as zombies.
+    $ENV{CLIO_TEST_RUNNER_INVOKED} = 1;
     for my $t (@unit_tests) {
-        my $result = system("timeout 15 perl -I lib $t > /dev/null 2>&1");
+        my $result = _run_test_safely($t);
         if ($result == 0) { $unit_pass++ } else { $unit_fail++; push @unit_failures, basename($t) }
     }
 }
 
-# Run standalone integration tests
+# Run standalone integration tests. Reuse the group-kill runner so grandchildren
+# are reaped on timeout (same guard as the unit loop above).
 my ($int_pass, $int_fail) = (0, 0);
 my @int_failures;
 for my $t (@standalone_integration) {
-    my $result = system("timeout 15 perl -I lib $t > /dev/null 2>&1");
+    my $result = _run_test_safely($t);
     if ($result == 0) { $int_pass++ } else { $int_fail++; push @int_failures, basename($t) }
 }
 

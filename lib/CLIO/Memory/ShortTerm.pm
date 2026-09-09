@@ -49,10 +49,9 @@ sub new {
 sub add_message {
     my ($self, $role, $content) = @_;
     
-    # DEFENSIVE: Handle malformed input where entire message hash was passed as role
-    # This fixes corruption from old sessions where role was {role => "user", content => "text"}
+    # DEFENSIVE: Handle malformed input where the entire message
+    # hash was passed as the role. Extract role and content from it.
     if (ref($role) eq 'HASH') {
-        # Extract actual role and content from the hash
         $content = $role->{content} if defined $role->{content};
         $role = $role->{role} if defined $role->{role};
     }

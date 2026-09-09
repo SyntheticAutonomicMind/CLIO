@@ -13,6 +13,13 @@ use CLIO::Compat::HTTP;
 use Time::HiRes qw(sleep time);
 use Carp qw(croak);
 use File::Spec;
+use CLIO::Core::Defaults qw(
+    COPILOT_EDITOR_VERSION
+    COPILOT_PLUGIN_VERSION
+    COPILOT_LS_VERSION
+    COPILOT_API_VERSION
+    COPILOT_USER_API_VERSION
+);
 
 =head1 NAME
 
@@ -66,6 +73,8 @@ sub new {
         # This enables token exchange for full model access (42+ models)
         client_id => $args{client_id} || 'Iv1.b507a08c87ecfe98',
         debug => $args{debug} || 0,
+        # Allow overriding the GitHub API base (e.g. for GHE or mock server)
+        api_base => $args{api_base} || 'https://api.github.com',
         ua => CLIO::Compat::HTTP->new(
             agent => 'CLIO/2.0.0',
             timeout => 30,
@@ -270,13 +279,18 @@ sub exchange_for_copilot_token {
     
     log_debug('GitHubAuth', "Exchanging GitHub token for Copilot token");
     
-    my $url = 'https://api.github.com/copilot_internal/v2/token';
+    my $url = $self->{api_base} . '/copilot_internal/v2/token';
     
     # Note: This endpoint requires GET, not POST
     my $request = HTTP::Request->new(GET => $url);
     $request->header('Authorization' => "token $github_token");
-    $request->header('Editor-Version' => 'vscode/2.0.0');
-    $request->header('User-Agent' => 'GitHubCopilotChat/2.0.0');
+    $request->header('Editor-Version'               => COPILOT_EDITOR_VERSION);
+    $request->header('Editor-Plugin-Version'        => COPILOT_PLUGIN_VERSION);
+    $request->header('Copilot-Language-Server-Version' => COPILOT_LS_VERSION);
+    $request->header('X-GitHub-Api-Version'         => COPILOT_USER_API_VERSION);
+    $request->header('User-Agent'                   => 'CLIO/2.0.0');
+    $request->header('OpenAI-Intent'                => 'model-access');
+    $request->header('Openai-Organization'          => 'github-copilot');
     
     my $response = $self->{ua}->request($request);
     
