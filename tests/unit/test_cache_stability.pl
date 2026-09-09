@@ -20,7 +20,6 @@ my @messages = (
     { role => 'assistant', content => 'Working on it' },
     { role => 'tool', tool_call_id => 'tc1', content => 'File contents here' },
     { role => 'user', content => 'Also fix tests' },
-    { role => 'tool', tool_call_id => 'tc2', content => '[abc1234] Fix tests' },
 );
 
 # Compress twice with identical inputs
@@ -40,7 +39,7 @@ is($result1->{content}, $result2->{content},
 my @cycle2 = (
     { role => 'system', content => $result1->{content} },
     { role => 'user', content => 'Add CSS styling' },
-    { role => 'tool', tool_call_id => 'tc3', content => '[def5678] Add CSS' },
+    { role => 'assistant', content => 'Writing CSS' },
 );
 my $result3 = $yarn->compress_for_context_recovery(
     \@cycle2,
@@ -54,9 +53,7 @@ my $result4 = $yarn->compress_for_context_recovery(
 is($result3->{content}, $result4->{content},
     'Cross-cycle compression is deterministic (byte-identical for same inputs)');
 
-# Verify the second cycle includes carried-over content from the first
-like($result3->{content}, qr/abc1234/, 'Cycle 2 summary includes carried-over commit from cycle 1');
-like($result4->{content}, qr/abc1234/, 'Cycle 2 summary #2 also includes carried-over commit');
-like($result3->{content}, qr/def5678/, 'Cycle 2 includes new commit');
-
-done_testing();
+# Cross-cycle carryover: previous user requests carried forward
+like($result3->{content}, qr/Build a new feature/, 'Cycle 2 summary includes carried-over original task');
+like($result3->{content}, qr/Also fix tests/, 'Cycle 2 summary includes carried-over user request');
+like($result3->{content}, qr/Add CSS styling/, 'Cycle 2 includes new user request');

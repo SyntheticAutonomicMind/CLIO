@@ -1,21 +1,18 @@
 #!/usr/bin/env perl
-# Test: local model sentinel resolution for llama.cpp / LM Studio
+# Test: local model sentinel resolution for llama.cpp / LM Studio.
 #
-# Problem: CLIO uses local_model/local-model as a sentinel for llama.cpp and
-# LM Studio providers. The /v1/models response from llama.cpp returns the full
-# filesystem path as the model id (e.g.
-# /home/deck/llama-ai/models/Qwen3.6-35B-A3B-UD-Q8_K_XL.gguf), which CLIO
-# must resolve to a usable model name. Three bugs were fixed:
+# CLIO uses local_model/local-model as a sentinel for llama.cpp and LM
+# Studio providers. The /v1/models response from llama.cpp returns the
+# full filesystem path as the model id, which CLIO must resolve to a
+# usable model name before capability lookup.
 #
-#   1. _resolve_local_model had a localhost|127.0.0.1 guard that blocked
-#      LAN-hosted llama.cpp servers (e.g. http://max:9090).
-#
-#   2. /props fallback was removed by 0e52ab3, leaving no context window
-#      detection when /v1/models returns a path-based id.
-#
-#   3. The resolved model name kept the full path, making /v1/models lookup
-#      miss during capability detection (the path stripping now strips
-#      directories in addition to .gguf).
+#   1. _resolve_local_model is called in APIManager.get_model_capabilities
+#      BEFORE MCM, so MCM receives the actual model name (e.g.
+#      "Qwen3.6-35B-A3B-UD-Q4_K_XL") instead of the sentinel "local_model".
+#   2. MCM._fetch_llama_cpp_capabilities queries /v1/models + /props as
+#      primary data sources. The /v1/models meta object provides n_ctx
+#      (runtime context), n_ctx_train, n_params, etc. The /props endpoint
+#      provides modalities, chat_template_caps, and runtime n_ctx.
 
 use strict;
 use warnings;
@@ -49,10 +46,6 @@ if ($source =~ /sub _resolve_local_model \{[^}]*?return undef unless \$api_base;
 # return undef on the basis of a localhost check.
 if ($source =~ /sub _resolve_local_model \{[\s\S]*?\n\}/s) {
     my $sub = $1;
-    # $1 may be undef if the regex engine somehow doesn't anchor (e.g. if
-    # the source ever loses its trailing \n}). Default to '' so the
-    # inner pattern match fires on empty string under `perl -W` instead
-    # of emitting "Use of uninitialized value $sub in pattern match (m//)".
     if (($sub // '') =~ /localhost|127\.0\.0\.1/) {
         fail("_resolve_local_model body still references 'localhost' or '127.0.0.1'");
     } else {
@@ -100,93 +93,133 @@ for my $input (sort keys %strip_tests) {
 
 print "\n";
 
-# ─── Test 3: /props fallback restored in get_model_capabilities ──────────────
-print "Test 3: /props fallback present in get_model_capabilities\n";
+# ─── Test 3: Sentinel resolved before MCM in get_model_capabilities ──────────
+print "Test 3: Sentinel resolved before MCM in get_model_capabilities\n";
 
-if ($source =~ /get_model_capabilities[\s\S]{0,3000}_query_llama_props/s) {
-    pass("get_model_capabilities references _query_llama_props (fallback present)");
+if ($source =~ /sub get_model_capabilities[\s\S]{0,2000}_resolve_local_model/) {
+    pass("get_model_capabilities resolves local_model sentinel before MCM");
 } else {
-    fail("get_model_capabilities does not call _query_llama_props");
+    fail("get_model_capabilities does not resolve sentinel before MCM");
 }
 
-# Check that the fallback is gated on generic/sam/lmstudio api_type
-if ($source =~ /\$api_type\s*=~\s*\/\^\(generic\|sam\|lmstudio\)\$/s) {
-    pass("Fallback is gated on generic/sam/lmstudio api_type");
+# Check that MCM handles /v1/models + /props for local inference
+my $mcm_source;
+{
+    open my $mcm_fh, '<', 'lib/CLIO/Core/ModelCapabilitiesManager.pm' or die $!;
+    local $/; $mcm_source = <$mcm_fh>;
+}
+
+if ($mcm_source && $mcm_source =~ /_fetch_llama_cpp_capabilities/) {
+    pass("MCM _fetch_llama_cpp_capabilities handles /v1/models + /props for local providers");
 } else {
-    fail("Fallback gate regex not found");
+    fail("MCM _fetch_llama_cpp_capabilities not found");
+}
+
+if ($mcm_source && $mcm_source =~ /_find_local_model_by_basename/) {
+    pass("MCM _find_local_model_by_basename handles path-prefixed model ids");
+} else {
+    fail("MCM _find_local_model_by_basename not found");
+}
+
+# Check that APIManager no longer has duplicate _query_llama_props (consolidated in MCM)
+if ($source !~ /sub _query_llama_props/) {
+    pass("APIManager has no duplicate _query_llama_props (consolidated in MCM)");
+} else {
+    fail("APIManager still has _query_llama_props (should be MCM only)");
 }
 
 print "\n";
 
-# ─── Test 4: aliases matching in capability lookup ────────────────────────────
-print "Test 4: get_model_capabilities matches by id or aliases\n";
+# ─── Test 4: MCM model matching methods ────────────────────────────────────────
+print "Test 4: MCM _find_model_in_list and _find_local_model_by_basename\n";
 
-# Verify by source inspection
-if ($source =~ /alias_match|aliases.*ARRAY/i) {
-    pass("Source includes aliases matching logic");
+if ($mcm_source && $mcm_source =~ /sub _find_model_in_list/) {
+    pass("MCM _find_model_in_list exists for model matching");
 } else {
-    fail("Source does not include aliases matching");
+    fail("MCM _find_model_in_list not found");
+}
+
+if ($mcm_source && $mcm_source =~ /sub _find_local_model_by_basename/) {
+    pass("MCM _find_local_model_by_basename exists for basename matching");
+} else {
+    fail("MCM _find_local_model_by_basename not found");
 }
 
 print "\n";
 
 # ─── Test 5: Live integration against local llama.cpp (if available) ──────────
-print "Test 5: Live integration against max:9090 (skip if unreachable)\n";
+print "Test 5: Live integration against local llama.cpp server\n";
 
 use CLIO::Core::APIManager;
 use CLIO::Core::Config;
 use CLIO::Util::JSON qw(safe_decode_json);
 
-# Quick reachability check (timeout 2s)
-use IO::Socket::INET;
-my $sock = IO::Socket::INET->new(
-    PeerAddr => 'max',
-    PeerPort => 9090,
-    Proto    => 'tcp',
-    Timeout  => 2,
-);
+# Check if llama.cpp is configured with a local server
+my $config = CLIO::Core::Config->new();
+my $local_base = $config->get_provider_base('llama.cpp');
 
-if (!$sock) {
-    print "   SKIP: max:9090 unreachable (test optional, will run in production)\n";
+if ($local_base && $local_base =~ /localhost|127\.0\.0\.1/) {
+    # Quick reachability check
+    use IO::Socket::INET;
+    my $port = 9090;
+    if ($local_base =~ /:(\d+)/) {
+        $port = $1;
+    }
+    my $host = 'localhost';
+    if ($local_base =~ m{https?://([^:/]+)/}) {
+        $host = $1;
+    }
+    my $sock = IO::Socket::INET->new(
+        PeerAddr => $host,
+        PeerPort => $port,
+        Proto    => 'tcp',
+        Timeout  => 2,
+    );
+
+    if (!$sock) {
+        print "   SKIP: llama.cpp server at $host:$port unreachable\n";
+    } else {
+        close $sock;
+
+        my $cfg = CLIO::Core::Config->new();
+        $cfg->set('provider', 'llama.cpp');
+        $cfg->set('api_base', $local_base);
+        $cfg->set('model', 'llama.cpp/local_model');
+        $cfg->set('api_key', 'dummy');
+
+        my $mgr = CLIO::Core::APIManager->new(config => $cfg);
+
+        # Resolution should produce the basename, not the path
+        my $resolved = $mgr->_resolve_local_model($local_base, 'local_model');
+        if ($resolved && $resolved !~ m{/}) {
+            pass("Resolved to basename (no path separators): '$resolved'");
+        } elsif ($resolved) {
+            fail("Resolution still has path separators: '$resolved'");
+        } else {
+            fail("Resolution returned undef (server reachable but resolution failed)");
+        }
+
+        # Capability lookup should return a valid context_window
+        my $caps = $mgr->get_model_capabilities('llama.cpp/local_model');
+        if ($caps && $caps->{max_context_window_tokens} && $caps->{max_context_window_tokens} > 1000) {
+            pass("get_model_capabilities returned context_window=" . $caps->{max_context_window_tokens} . " (> 1000, not the old buggy 1000 floor)");
+        } elsif ($caps) {
+            fail("Context window too low: $caps->{max_context_window_tokens}");
+        } else {
+            fail("get_model_capabilities returned undef");
+        }
+
+        # compute_prompt_budget should return a reasonable value
+        require CLIO::Memory::TokenEstimator;
+        my $budget = CLIO::Memory::TokenEstimator::compute_prompt_budget($caps);
+        if ($budget && $budget > 1000) {
+            pass("compute_prompt_budget returned $budget (> 1000, prevents aggressive trimming)");
+        } else {
+            fail("compute_prompt_budget too low: " . ($budget // 'undef'));
+        }
+    }
 } else {
-    close $sock;
-
-    my $cfg = CLIO::Core::Config->new();
-    $cfg->set('provider', 'llama.cpp');
-    $cfg->set('api_base', 'http://max:9090/v1/chat/completions');
-    $cfg->set('model', 'llama.cpp/local_model');
-    $cfg->set('api_key', 'dummy');
-
-    my $mgr = CLIO::Core::APIManager->new(config => $cfg);
-
-    # Resolution should produce the basename, not the path
-    my $resolved = $mgr->_resolve_local_model('http://max:9090/v1/chat/completions', 'local_model');
-    if ($resolved && $resolved eq 'Qwen3.6-35B-A3B-UD-Q8_K_XL') {
-        pass("Resolved to basename 'Qwen3.6-35B-A3B-UD-Q8_K_XL' (not full path)");
-    } elsif ($resolved) {
-        fail("Expected 'Qwen3.6-35B-A3B-UD-Q8_K_XL', got '$resolved'");
-    } else {
-        fail("Resolution returned undef");
-    }
-
-    # Capability lookup should return 196608 (the runtime n_ctx from /props)
-    my $caps = $mgr->get_model_capabilities('llama.cpp/local_model');
-    if ($caps && $caps->{max_context_window_tokens} == 196608) {
-        pass("get_model_capabilities returned n_ctx=196608 from /props fallback");
-    } elsif ($caps) {
-        fail("Expected n_ctx=196608, got $caps->{max_context_window_tokens}");
-    } else {
-        fail("get_model_capabilities returned undef");
-    }
-
-    # Provider prefix should be stripped when the id is the path
-    # (because we resolved to basename, this also verifies the round-trip)
-    my $ep = $mgr->_prepare_endpoint_config();
-    if ($ep && $ep->{model} && $ep->{model} !~ m{/}) {
-        pass("_prepare_endpoint_config returns basename (no slashes)");
-    } else {
-        fail("Endpoint config returned model '$ep->{model}' with slashes");
-    }
+    print "   SKIP: llama.cpp not configured with local server\n";
 }
 
 print "\n";
@@ -200,7 +233,7 @@ print "Test 6: Sentinel resolution does not affect explicit path-based models\n"
 
 my $cfg2 = CLIO::Core::Config->new();
 $cfg2->set('provider', 'llama.cpp');
-$cfg2->set('api_base', 'http://max:9090/v1/chat/completions');
+$cfg2->set('api_base', 'http://localhost:9090/v1/chat/completions');
 $cfg2->set('model', 'llama.cpp//home/deck/llama-ai/models/Qwen3.6-35B-A3B-UD-Q8_K_XL.gguf');
 $cfg2->set('api_key', 'dummy');
 

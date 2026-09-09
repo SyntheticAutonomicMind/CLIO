@@ -172,8 +172,8 @@ print "Expected: 2 (one after header, one after first wrapped data row)\n";
 print ($sep_count == 2 ? "PASS - Separators only between distinct rows\n\n" : "FAIL - Wrong number of separators\n\n");
 
 # Test 8: Tables where the natural header width exceeds the terminal.
-# Previously these overflowed the terminal because min_widths were
-# applied verbatim. They should now scale to fit and wrap cells.
+# Tables whose natural header width exceeds the terminal. They should
+# scale to fit and wrap cells.
 print "=" x 70, "\n";
 print "Test 8: Header columns wider than terminal (proportional compression)\n";
 print "=" x 70, "\n";

@@ -2,11 +2,13 @@
 # SPDX-License-Identifier: GPL-3.0-only
 # SPDX-FileCopyrightText: Copyright (c) 2026 Andrew Wyatt (Fewtarius)
 #
-# Test: Proactive trim generates thread_summary
+# Test: Proactive trim drops messages without thread_summary injection
 #
-# Verifies that MessageValidator::_role_based_tail_walk now generates
-# a thread_summary when it drops messages (Path A - proactive trim).
-# Previously, dropped messages were permanently lost with no summary.
+# Verifies that MessageValidator::_role_based_tail_walk drops messages
+# when over budget WITHOUT injecting a thread_summary system message.
+# The compressed summary lives in the dynamic UC system message (via
+# the projection's compressed_tail), not as an injected system message.
+# This keeps the cache-stable prefix byte-stable between turns.
 
 use strict;
 use warnings;
@@ -14,13 +16,11 @@ use utf8;
 use FindBin qw($Bin);
 use lib "$Bin/../../lib";
 
-use Test::More tests => 7;
+use Test::More tests => 6;
 use CLIO::Core::API::MessageValidator qw(validate_and_truncate);
 
 # ---------------------------------------------------------------------------
 # Build a large enough message array to force the tail walk to drop messages.
-# Each message is ~500 chars, 200 messages = ~100K chars = ~40K tokens.
-# With a small effective_limit, the walk will drop older messages.
 # ---------------------------------------------------------------------------
 my @messages;
 push @messages, { role => 'system', content => 'You are a helpful assistant.' };
@@ -28,17 +28,14 @@ push @messages, { role => 'user', content => 'Original task: write tests for the
 push @messages, { role => 'assistant', content => 'I will start working on that.' };
 push @messages, { role => 'tool', tool_call_id => 'tc0', content => 'result 0' };
 
-my $msg_count = 3;
 for my $i (1 .. 50) {
     push @messages, { role => 'user', content => "Question $i: " . ('x' x 200) };
     push @messages, { role => 'assistant', content => "Answer $i: " . ('y' x 200) };
     push @messages, { role => 'tool', content => "Result $i", tool_call_id => "call_$i" };
-    $msg_count += 3;
 }
 
-# Estimate tokens: each message ~200 chars / 2.5 = ~80 tokens.
-# 152 messages * 80 = ~12160 tokens. Use a tight limit to force drops.
-my $effective_limit = 2000;  # Force significant trimming
+# Tight limit to force drops.
+my $effective_limit = 2000;
 
 my $trimmed_ref = CLIO::Core::API::MessageValidator::_role_based_tail_walk(\@messages, $effective_limit, 1);
 my @trimmed = ref($trimmed_ref) eq 'ARRAY' ? @$trimmed_ref : ($trimmed_ref);
@@ -46,7 +43,10 @@ my @trimmed = ref($trimmed_ref) eq 'ARRAY' ? @$trimmed_ref : ($trimmed_ref);
 ok(scalar(@trimmed) < scalar(@messages),
     'Tail walk dropped messages (was ' . scalar(@messages) . ', now ' . scalar(@trimmed) . ')');
 
-# Check that a thread_summary system message was injected
+# NO thread_summary system message should be injected — the compressed
+# summary lives in the dynamic UC (projection's compressed_tail), not
+# as a separate injected system message. Injecting one here would
+# break KV cache stability of the prefix.
 my $has_summary = 0;
 for my $msg (@trimmed) {
     if (ref($msg) eq 'HASH'
@@ -56,21 +56,7 @@ for my $msg (@trimmed) {
         last;
     }
 }
-ok($has_summary, 'Thread summary system message injected after proactive trim');
-
-# The summary should NOT contain framework narration
-my $summary_content = '';
-for my $msg (@trimmed) {
-    if (ref($msg) eq 'HASH'
-        && ($msg->{role} // '') eq 'system'
-        && ($msg->{content} // '') =~ /<thread_summary>/) {
-        $summary_content = $msg->{content};
-        last;
-    }
-}
-unlike($summary_content, qr/To recover more context/, 'No "To recover more context" narration');
-unlike($summary_content, qr/DO NOT read handoff/, 'No "DO NOT read handoff" instruction');
-unlike($summary_content, qr/call memory_operations/, 'No memory_operations framework instruction');
+ok(!$has_summary, 'No thread_summary system message injected (compressed_tail in dynamic UC covers drops)');
 
 # The first user message should be preserved (pinned)
 my $has_first_user = 0;
@@ -84,23 +70,42 @@ for my $msg (@trimmed) {
 }
 ok($has_first_user, 'First user message (original task) preserved after trim');
 
-# The thread_summary should be positioned early (after system prompt)
-my $summary_idx = -1;
-my $user_idx = -1;
-for my $i (0 .. $#trimmed) {
-    my $msg = $trimmed[$i];
-    if (ref($msg) eq 'HASH'
-        && ($msg->{role} // '') eq 'system'
-        && ($msg->{content} // '') =~ /<thread_summary>/) {
-        $summary_idx = $i;
-    }
-    if (ref($msg) eq 'HASH'
-        && ($msg->{role} // '') eq 'user'
-        && ($msg->{content} // '') =~ /Original task/) {
-        $user_idx = $i;
+# The system prompt should be preserved (pinned)
+my $has_system = 0;
+for my $msg (@trimmed) {
+    if (ref($msg) eq 'HASH' && ($msg->{role} // '') eq 'system') {
+        $has_system = 1;
+        last;
     }
 }
-ok($summary_idx < $user_idx || ($summary_idx >= 0 && $user_idx >= 0),
-    'Thread summary positioned before first user message');
+ok($has_system, 'System prompt preserved after trim');
+
+# No orphaned tool calls (every tool result has a matching assistant)
+my %tool_call_ids;
+for my $msg (@trimmed) {
+    if (ref($msg) eq 'HASH' && ($msg->{role} // '') eq 'assistant' && $msg->{tool_calls}) {
+        for my $tc (@{$msg->{tool_calls}}) {
+            $tool_call_ids{$tc->{id}} //= 0;
+            $tool_call_ids{$tc->{id}} = 1;
+        }
+    }
+}
+my $orphans = 0;
+for my $msg (@trimmed) {
+    if (ref($msg) eq 'HASH' && ($msg->{role} // '') eq 'tool' && $msg->{tool_call_id}) {
+        $orphans++ unless $tool_call_ids{$msg->{tool_call_id}};
+    }
+}
+is($orphans, 0, 'No orphaned tool results after trim');
+
+# Messages should be in valid role-based order (no consecutive system)
+my $prev_role = '';
+my $consecutive_system = 0;
+for my $msg (@trimmed) {
+    my $r = ref($msg) eq 'HASH' ? ($msg->{role} // '') : '';
+    $consecutive_system++ if $r eq 'system' && $prev_role eq 'system';
+    $prev_role = $r;
+}
+is($consecutive_system, 0, 'No consecutive system messages');
 
 done_testing();

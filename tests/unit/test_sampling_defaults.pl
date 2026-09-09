@@ -1,13 +1,9 @@
 #!/usr/bin/env perl
 
-# Regression tests for sampling parameter defaulting.
-#
-# Background: _build_payload used to inject temperature => 0.2 and
-# top_p => 0.95 into every request, which leaked into providers that
-# reject these defaults (e.g. OpenAI o-series rejects temperature
-# combined with reasoning_effort, Anthropic rejects temperature=0.2
-# when thinking is enabled, etc.). The fix removes the defaults and
-# lets providers/callers fill in what they want.
+# Regression tests for sampling parameter defaulting. _build_payload
+# must not inject temperature => 0.2 / top_p => 0.95 into every
+# request - some providers reject these defaults (OpenAI o-series
+# with reasoning_effort, Anthropic with thinking enabled, etc.).
 
 use strict;
 use warnings;

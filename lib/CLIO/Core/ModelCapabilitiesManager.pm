@@ -12,6 +12,10 @@ use CLIO::Util::JSON qw(encode_json decode_json safe_decode_json);
 use CLIO::Compat::HTTP;
 use Fcntl qw(LOCK_EX LOCK_UN LOCK_NB);
 
+# Bump this when the capability schema or data sources change to
+# invalidate stale cache entries from a previous version of CLIO.
+use constant CACHE_VERSION => 2;
+
 =head1 NAME
 
 CLIO::Core::ModelCapabilitiesManager - Centralized model capability fetching and caching
@@ -97,6 +101,7 @@ sub new {
         cache_file          => $args{cache_file} || $cache_file,
         cache_ttl           => $args{cache_ttl} || 3600,
         cache               => undef,  # Lazily loaded
+        cache_version       => $args{cache_version} || CACHE_VERSION,
         http                => undef,  # Lazily created
         model_data_loader   => undef,  # Lazily created ModelDataLoader
     };
@@ -155,7 +160,16 @@ sub get_capabilities {
     #   up to 1 hour, which is wrong when the user has switched proxies
     #   or hosts.
     my $cache_key = $self->_build_cache_key($provider, $model);
-    if (my $cached = $self->_get_cached($cache_key)) {
+
+    # Local inference providers (llama.cpp, SAM, LM Studio) always hit the
+    # live server — their --ctx-size and loaded model can change between
+    # sessions, making the on-disk cache stale. APIManager already caches
+    # results in-memory for within-session deduplication.
+    my $cached;
+    unless (CLIO::Providers::is_local_inference($provider)) {
+        $cached = $self->_get_cached($cache_key);
+    }
+    if ($cached) {
         log_debug('ModelCapabilitiesManager', "Cache hit for $cache_key");
         return $cached;
     }
@@ -375,7 +389,17 @@ sub _ensure_cache_loaded {
             if ($fh) {
                 my $data = do { local $/; <$fh> };
                 close $fh;
-                $self->{cache} = decode_json($data) if $data;
+                if ($data) {
+                    my $decoded = decode_json($data);
+                    # Validate cache version — stale entries from a
+                    # previous schema are discarded so bad data
+                    # (e.g. supports_tools=0 from a bug) doesn't persist.
+                    if ($decoded->{_cache_version} && $decoded->{_cache_version} eq $self->{cache_version}) {
+                        $self->{cache} = $decoded;
+                    } else {
+                        log_debug('ModelCapabilitiesManager', "Cache version mismatch (stored: " . ($decoded->{_cache_version} // 'none') . ", expected: $self->{cache_version}), discarding cache");
+                    }
+                }
             }
         };
         if ($@) {
@@ -399,6 +423,9 @@ sub _save_cache {
     eval {
         open my $fh, '>:encoding(UTF-8)', $temp or die "Cannot write $temp: $!";
         flock($fh, LOCK_EX | LOCK_NB) if $fh;
+        # Store the cache version alongside the data so future loads
+        # can detect and discard stale entries.
+        $self->{cache}->{_cache_version} = $self->{cache_version};
         print $fh encode_json($self->{cache});
         close $fh;
         
@@ -550,69 +577,121 @@ Returns:
 
 sub _fetch_provider_capabilities {
     my ($self, $provider, $model) = @_;
-    
+
     log_debug('ModelCapabilitiesManager', "Fetching capabilities for ${provider}:${model}");
-    
-    # First, try the unified JSON model database via ModelDataLoader.
-    # This uses the provider-specific model ID and normalizes it to
-    # our canonical model names, then returns the unified capabilities.
+
     my $loader = $self->_model_data_loader();
-    if ($loader) {
-        my $json_caps = $loader->get_model_capabilities_by_provider($provider, $model);
-        if ($json_caps) {
-            log_debug('ModelCapabilitiesManager', "JSON loader hit for ${provider}:${model}");
-            my $caps = $self->_build_caps_from_json($json_caps, $provider, $model);
-            
-            # For llama.cpp, query /props for actual runtime context window
-            if ($provider eq 'llama.cpp' || $provider eq 'sam' || $provider eq 'lmstudio') {
+    require CLIO::Providers;
+    my $provider_def = CLIO::Providers::get_provider($provider);
+    my $is_local = $provider_def && CLIO::Providers::is_local_inference($provider);
+
+    # For local inference providers (llama.php, SAM, LM Studio): the
+    # JSON database is the primary source — these servers' /v1/models
+    # responses are sparse (no supported_parameters, no reasoning data).
+    # The /props endpoint provides the authoritative runtime context
+    # window that may differ from the model's training context.
+    # JSON-first + /props enrichment stays for local providers.
+    if ($is_local) {
+        if ($loader) {
+            my $json_caps = $loader->get_model_capabilities_by_provider($provider, $model);
+            if ($json_caps) {
+                log_debug('ModelCapabilitiesManager', "JSON loader hit for ${provider}:${model}");
+                my $caps = $self->_build_caps_from_json($json_caps, $provider, $model);
+
                 my $props_ctx = $self->_query_llama_props_for_provider($provider);
                 if ($props_ctx && $props_ctx > 0) {
                     $caps->{context_window} = $props_ctx;
                     $caps->{max_prompt_tokens} = $props_ctx;
                     log_debug('ModelCapabilitiesManager', "${provider} /props n_ctx=$props_ctx for $model (overriding training context)");
                 }
-            }
-            
-            return $caps;
-        }
-    }
-    
-    require CLIO::Providers;
-    my $provider_def = CLIO::Providers::get_provider($provider);
 
-    # Registry-driven dispatch: providers with a dedicated fetcher
-    # declare it via C<capability_fetcher => 'foo'> and we call
-    # C<_fetch_foo_capabilities>. This replaces the previous chain of
-    # `provider =~ /^anthropic$/i` (and friends) inside an
-    # `if ($provider_def->{native_api})` group. Grouping by
-    # C<native_api> vs C<capability_map> vs C<copilot_models> was
-    # incidental - all those groups route to a named fetcher method.
-    # Adding a new provider with a custom fetcher now means one line
-    # in CLIO::Providers' registry; the dispatcher here stays put.
+                return $caps;
+            }
+        }
+
+        # JSON miss: try /props-only for runtime context
+        my $props_ctx = $self->_query_llama_props_for_provider($provider);
+        if ($props_ctx && $props_ctx > 0) {
+            log_debug('ModelCapabilitiesManager', "${provider} /props n_ctx=$props_ctx for $model (JSON miss, props-only)");
+            return {
+                context_window       => $props_ctx,
+                max_prompt_tokens    => $props_ctx,
+                max_output_tokens    => 16384,
+                supports_tools       => 1,
+                supports_streaming   => 1,
+                supports_vision      => 0,
+                supports_reasoning   => 0,
+            };
+        }
+        log_debug('ModelCapabilitiesManager', "${provider} /props query failed for $model");
+    }
+
+    # For all other providers: the API is the source of truth. Try the
+    # live API first, fall back to the static JSON database only if the
+    # API is unavailable or doesn't know the model. This ensures we get
+    # live context windows, supported_parameters, and tool/vision support
+    # that may differ from the static JSON (e.g. OpenRouter laguna-s-2.1
+    # has 1M context at runtime, not the 128K in the JSON database).
+    # Static JSON data may be stale or provider-specific (e.g. a model
+    # family entry lists providers: ["llama.cpp"] but the same model may
+    # be available via OpenRouter with a different context window).
+
+    # 1. Dedicated provider fetcher (Anthropic, Google, DeepSeek, NVIDIA,
+    #    MiniMax, Z.AI, GitHub Copilot). These have native API endpoints
+    #    that return authoritative capability data.
     if ($provider_def) {
         my $fetcher = CLIO::Providers::capability_fetcher($provider);
         if ($fetcher) {
             my $method = "_fetch_${fetcher}_capabilities";
             if ($self->can($method)) {
-                log_debug('ModelCapabilitiesManager', "Falling back to static map for ${provider}:${model}");
-                return $self->$method($model);
+                log_debug('ModelCapabilitiesManager', "Using provider fetcher for ${provider}:${model}");
+                my $api_caps = $self->$method($provider, $model);
+                if ($api_caps) {
+                    return $api_caps;
+                }
+                log_debug('ModelCapabilitiesManager',
+                    "Provider fetcher returned no caps for ${provider}:${model}, falling back to JSON");
+            } else {
+                log_debug('ModelCapabilitiesManager',
+                    "Provider $provider declared fetcher '$fetcher' but method $method is missing");
             }
-            log_debug('ModelCapabilitiesManager',
-                "Provider $provider declared fetcher '$fetcher' but method $method is missing");
         }
     }
-    
-    # Fallback: OpenAI-compatible path for unknown apikey-based providers.
-    # This is the only remaining route for plain OpenAI, Ollama Cloud,
-    # OpenRouter, and any user-added custom provider.
-    if ($provider_def && $provider_def->{requires_auth} && $provider_def->{requires_auth} eq 'apikey') {
-        return $self->_fetch_openai_compatible_capabilities($provider, $model);
+
+    # 2. OpenAI-compatible API fetcher (OpenRouter, OpenAI, Vercel,
+    #    KiloCode, OrcaRouter, Ollama Cloud). These are apikey-based
+    #    providers without a dedicated fetcher — they expose an
+    #    OpenAI-compatible /v1/models endpoint.
+    if ($provider_def
+        && $provider_def->{requires_auth}
+        && $provider_def->{requires_auth} eq 'apikey') {
+
+        # Skip the OpenAI-compatible path if we already tried a dedicated
+        # fetcher above (those providers aren't OpenAI-compatible).
+        my $fetcher = CLIO::Providers::capability_fetcher($provider);
+        unless ($fetcher) {
+            my $api_caps = $self->_fetch_openai_compatible_capabilities($provider, $model);
+            if ($api_caps) {
+                return $api_caps;
+            }
+            log_debug('ModelCapabilitiesManager',
+                "OpenAI-compatible fetcher returned no caps for ${provider}:${model}, falling back to JSON");
+        }
     }
-    
-    # Last-resort: try heuristics from JSON loader for unknown models.
-    # Heuristics are tried AFTER all authoritative sources (JSON database,
-    # provider-specific static maps, and live API fetch) so stale or
-    # inaccurate heuristic data doesn't override correct provider data.
+
+    # 3. JSON loader fallback (static database). Used when the API fetch
+    #    failed (network error, no auth, model not on the API) to provide
+    #    a best-effort guess so the session can still proceed.
+    if ($loader) {
+        my $json_caps = $loader->get_model_capabilities_by_provider($provider, $model);
+        if ($json_caps) {
+            log_debug('ModelCapabilitiesManager', "JSON loader fallback hit for ${provider}:${model}");
+            return $self->_build_caps_from_json($json_caps, $provider, $model);
+        }
+    }
+
+    # 4. Heuristics (last resort). Pattern-based inference for model
+    #    names that aren't in any database or API response.
     if ($loader) {
         my $heuristic_caps = $loader->match_heuristics($model);
         if ($heuristic_caps) {
@@ -621,7 +700,7 @@ sub _fetch_provider_capabilities {
         }
     }
 
-    log_debug('ModelCapabilitiesManager', "No capability fetcher for provider: $provider");
+    log_debug('ModelCapabilitiesManager', "No capability source found for ${provider}:${model}");
     return undef;
 }
 
@@ -676,7 +755,7 @@ Returns:
 =cut
 
 sub _fetch_github_copilot_capabilities {
-    my ($self, $model) = @_;
+    my ($self, $provider, $model) = @_;
 
     my $caps;
     eval {
@@ -713,10 +792,8 @@ sub _fetch_github_copilot_capabilities {
     # - context_window is missing, so /api models shows "-" for
     #   context_window on copilot rows.
     my $supports_adaptive = $caps->{supports_adaptive_thinking} ? 1 : 0;
-    # Note: GitHubCopilotModelsAPI's get_model_capabilities doesn't
-    # currently extract supports_enabled_thinking even when the API
-    # provides it. If/when that gets added upstream, this also picks
-    # it up automatically.
+    # If/when GitHubCopilotModelsAPI starts extracting
+    # supports_enabled_thinking, this picks it up automatically.
     my $supports_enabled = $caps->{supports_enabled_thinking} ? 1 : 0;
 
     return {
@@ -762,7 +839,7 @@ Returns:
 =cut
 
 sub _fetch_anthropic_capabilities {
-    my ($self, $model) = @_;
+    my ($self, $provider, $model) = @_;
 
     # Anthropic exposes two related endpoints:
     #   GET /v1/models/{model_id}  - rich per-model data including
@@ -1121,7 +1198,7 @@ Returns:
 =cut
 
 sub _fetch_google_capabilities {
-    my ($self, $model) = @_;
+    my ($self, $provider, $model) = @_;
 
     # Get API key and (optionally) a user-configured api_base for Google.
     my ($api_key, $user_api_base);
@@ -1208,7 +1285,7 @@ Returns:
 =cut
 
 sub _fetch_nvidia_capabilities {
-    my ($self, $model) = @_;
+    my ($self, $provider, $model) = @_;
     
     # NVIDIA NIM /v1/models returns only model IDs with no metadata.
     # This static capability map provides context windows and output limits
@@ -2029,6 +2106,37 @@ sub _find_model_in_list {
         }
     }
 
+    # Third pass: basename match (path stripped, extension removed).
+    # llama.cpp-compatible servers return the full filesystem path as
+    # the model id (e.g. "/home/user/models/Qwen3-Q4.gguf"), but
+    # _resolve_local_model strips path and .gguf before passing the name.
+    # This pass bridges that gap.
+    my $target_base = lc($model);
+    $target_base =~ s{.*/}{};
+    $target_base =~ s/\.[^.]+\z//;
+
+    for my $m (@$models) {
+        my $id = $m->{$id_field};
+        next unless defined $id;
+        $id =~ s{^models/}{} if $id_field eq 'name';
+
+        my $id_base = lc($id);
+        $id_base =~ s{.*/}{};
+        $id_base =~ s/\.[^.]+\z//;
+        return $m if $id_base eq $target_base;
+
+        # Also try aliases
+        if ($m->{aliases} && ref($m->{aliases}) eq 'ARRAY') {
+            for my $alias (@{$m->{aliases}}) {
+                next unless defined $alias;
+                my $ab = lc($alias);
+                $ab =~ s{.*/}{};
+                $ab =~ s/\.[^.]+\z//;
+                return $m if $ab eq $target_base;
+            }
+        }
+    }
+
     return undef;
 }
 
@@ -2100,7 +2208,7 @@ Returns:
 =cut
 
 sub _fetch_zai_capabilities {
-    my ($self, $model) = @_;
+    my ($self, $provider, $model) = @_;
     
     # Z.AI models static capability map (derived from their API docs)
     # This could be extended to use their API endpoint if available
@@ -2219,7 +2327,7 @@ Returns:
 =cut
 
 sub _fetch_minimax_capabilities {
-    my ($self, $model) = @_;
+    my ($self, $provider, $model) = @_;
     
     # MiniMax models static capability map
     my %minimax_models = (
@@ -2330,7 +2438,7 @@ so we maintain a static capability map sourced from their API docs
 =cut
 
 sub _fetch_deepseek_capabilities {
-    my ($self, $model) = @_;
+    my ($self, $provider, $model) = @_;
 
     # DeepSeek V4 series: 1M context, 32K max output (API allows up to 384K
     # but 32K is the practical sweet spot for typical agent loops). Both
@@ -2380,722 +2488,242 @@ sub _fetch_deepseek_capabilities {
 
 =head2 _fetch_llama_cpp_capabilities
 
-Fetch capabilities for llama.cpp local models using a static map.
-llama.cpp's /v1/models endpoint returns only the model id with no capability
-metadata, so we maintain a static capability map for popular models that can
-be run locally. Sources: model cards on Hugging Face, Unsloth documentation,
-and NVIDIA/DeepSeek API specs for the original model families.
+Fetch capabilities for local inference models (llama.cpp, SAM, LM Studio)
+by querying the server's /v1/models and /props endpoints.
+
+The /v1/models response contains model metadata including C<meta.n_ctx>
+(runtime context window from --ctx-size), C<meta.n_ctx_train> (training
+context), C<meta.n_params>, and C<meta.size>. The /props endpoint
+supplements this with C<modalities.vision>, C<chat_template_caps>
+(tool support), and the definitive runtime C<n_ctx>.
+
+Heuristics provide model-name-based metadata (C<supports_reasoning>,
+C<max_output_tokens>) that neither endpoint reports.
 
 Arguments:
-- $model: Model identifier (as resolved from llama.cpp /v1/models, typically
-          the GGUF filename without .gguf extension and path stripped)
+- $provider: Provider name ('llama.cpp', 'sam', 'lmstudio')
+- $model: Model identifier (resolved from sentinel if needed)
 
 Returns:
-- Hashref with capability data, or undef if model not in static map
+- Hashref with capability data, or undef if the server is unavailable
+  or the model is not found.
 
 =cut
 
 sub _fetch_llama_cpp_capabilities {
-    my ($self, $model) = @_;
+    my ($self, $provider, $model) = @_;
+    $provider ||= 'llama.cpp';
 
-    # Static capability map for popular local models run via llama.cpp.
-    # Keys are case-insensitive and should match the basename returned by
-    # llama.cpp /v1/models (path stripped, .gguf extension removed).
-    my %llama_cpp_models = (
-        # --- DeepSeek V4 (Unsloth) ---
-        # DeepSeek V4: 1M context, reasoning, tools
-        # Source: https://unsloth.ai/docs/models/deepseek-v4
-        'deepseek-v4' => {
-            context_window => 1048576,
-            max_output_tokens => 32768,
-            supports_tools => 1,
-            supports_streaming => 1,
-            supports_vision => 0,
-            supports_reasoning => 1,
-        },
-        'deepseek-v4-flash' => {
-            context_window => 1048576,
-            max_output_tokens => 32768,
-            supports_tools => 1,
-            supports_streaming => 1,
-            supports_vision => 0,
-            supports_reasoning => 1,
-        },
-        'deepseek-v4-pro' => {
-            context_window => 1048576,
-            max_output_tokens => 32768,
-            supports_tools => 1,
-            supports_streaming => 1,
-            supports_vision => 0,
-            supports_reasoning => 1,
-        },
+    # Read api_base from config for this provider
+    my $api_base;
+    eval {
+        require CLIO::Core::Config;
+        my $config = CLIO::Core::Config->new();
+        $api_base = $config->get_provider_base($provider);
+    };
+    return undef unless $api_base;
 
-        # --- Laguna (Unsloth) ---
-        # Laguna-S-2.1: 128K context, reasoning, tools
-        # Source: https://huggingface.co/unsloth/Laguna-S-2.1-GGUF
-        'laguna-s-2.1' => {
-            context_window => 131072,
-            max_output_tokens => 32768,
-            supports_tools => 1,
-            supports_streaming => 1,
-            supports_vision => 0,
-            supports_reasoning => 1,
-        },
-        'laguna-s2.1' => {
-            context_window => 131072,
-            max_output_tokens => 32768,
-            supports_tools => 1,
-            supports_streaming => 1,
-            supports_vision => 0,
-            supports_reasoning => 1,
-        },
+    my $http = $self->get_http();
 
-        # --- Nemotron 3 (NVIDIA/Unsloth) ---
-        # Nemotron 3 Ultra/Super: 1M context, 32K output, reasoning, tools
-        # Source: https://unsloth.ai/docs/models/nemotron-3/nemotron-3-super
-        #         https://docs.api.nvidia.com (NIM API reference)
-        'nemotron-3-ultra' => {
-            context_window => 1048576,
-            max_output_tokens => 32768,
-            supports_tools => 1,
-            supports_streaming => 1,
-            supports_vision => 0,
-            supports_reasoning => 1,
-        },
-        'nemotron-3-super' => {
-            context_window => 1048576,
-            max_output_tokens => 32768,
-            supports_tools => 1,
-            supports_streaming => 1,
-            supports_vision => 0,
-            supports_reasoning => 1,
-        },
-        'nemotron-3-super-120b' => {
-            context_window => 1048576,
-            max_output_tokens => 32768,
-            supports_tools => 1,
-            supports_streaming => 1,
-            supports_vision => 0,
-            supports_reasoning => 1,
-        },
-        'nemotron-3-ultra-550b' => {
-            context_window => 1048576,
-            max_output_tokens => 32768,
-            supports_tools => 1,
-            supports_streaming => 1,
-            supports_vision => 0,
-            supports_reasoning => 1,
-        },
+    # Derive /v1/models URL from the api_base (same normalization as
+    # _fetch_openai_compatible_capabilities: strip /chat/completions,
+    # /chat, and trailing slashes before appending /models)
+    my $models_url = $api_base;
+    $models_url =~ s{/+$}{};
+    $models_url =~ s{/chat/completions/?$}{};
+    $models_url =~ s{/chat/?$}{};
+    $models_url .= '/models';
 
-        # --- Additional popular local models ---
-        # Qwen 3 series: 256K context, reasoning, tools
-        'qwen3-32b' => {
-            context_window => 262144,
-            max_output_tokens => 16384,
-            supports_tools => 1,
-            supports_streaming => 1,
-            supports_vision => 0,
-            supports_reasoning => 1,
-        },
-        'qwen3-14b' => {
-            context_window => 262144,
-            max_output_tokens => 16384,
-            supports_tools => 1,
-            supports_streaming => 1,
-            supports_vision => 0,
-            supports_reasoning => 1,
-        },
-        'qwen3-8b' => {
-            context_window => 262144,
-            max_output_tokens => 16384,
-            supports_tools => 1,
-            supports_streaming => 1,
-            supports_vision => 0,
-            supports_reasoning => 1,
-        },
-        'qwen3-4b' => {
-            context_window => 262144,
-            max_output_tokens => 16384,
-            supports_tools => 1,
-            supports_streaming => 1,
-            supports_vision => 0,
-            supports_reasoning => 1,
-        },
-        'qwen3-1.7b' => {
-            context_window => 262144,
-            max_output_tokens => 16384,
-            supports_tools => 1,
-            supports_streaming => 1,
-            supports_vision => 0,
-            supports_reasoning => 1,
-        },
-        'qwen3-0.6b' => {
-            context_window => 262144,
-            max_output_tokens => 16384,
-            supports_tools => 1,
-            supports_streaming => 1,
-            supports_vision => 0,
-            supports_reasoning => 1,
-        },
-
-        # Llama 3.1/3.2/3.3 series
-        'llama-3.1-8b-instruct' => {
-            context_window => 131072,
-            max_output_tokens => 16384,
-            supports_tools => 1,
-            supports_streaming => 1,
-            supports_vision => 0,
-            supports_reasoning => 0,
-        },
-        'llama-3.1-70b-instruct' => {
-            context_window => 131072,
-            max_output_tokens => 16384,
-            supports_tools => 1,
-            supports_streaming => 1,
-            supports_vision => 0,
-            supports_reasoning => 0,
-        },
-        'llama-3.2-1b-instruct' => {
-            context_window => 131072,
-            max_output_tokens => 8192,
-            supports_tools => 0,
-            supports_streaming => 1,
-            supports_vision => 0,
-            supports_reasoning => 0,
-        },
-        'llama-3.2-3b-instruct' => {
-            context_window => 131072,
-            max_output_tokens => 8192,
-            supports_tools => 0,
-            supports_streaming => 1,
-            supports_vision => 0,
-            supports_reasoning => 0,
-        },
-        'llama-3.2-11b-vision-instruct' => {
-            context_window => 131072,
-            max_output_tokens => 16384,
-            supports_tools => 1,
-            supports_streaming => 1,
-            supports_vision => 1,
-            supports_reasoning => 0,
-        },
-        'llama-3.2-90b-vision-instruct' => {
-            context_window => 131072,
-            max_output_tokens => 16384,
-            supports_tools => 1,
-            supports_streaming => 1,
-            supports_vision => 1,
-            supports_reasoning => 0,
-        },
-        'llama-3.3-70b-instruct' => {
-            context_window => 131072,
-            max_output_tokens => 16384,
-            supports_tools => 1,
-            supports_streaming => 1,
-            supports_vision => 0,
-            supports_reasoning => 0,
-        },
-
-        # Phi-4 series
-        'phi-4' => {
-            context_window => 131072,
-            max_output_tokens => 16384,
-            supports_tools => 1,
-            supports_streaming => 1,
-            supports_vision => 0,
-            supports_reasoning => 0,
-        },
-        'phi-4-mini-instruct' => {
-            context_window => 131072,
-            max_output_tokens => 16384,
-            supports_tools => 1,
-            supports_streaming => 1,
-            supports_vision => 0,
-            supports_reasoning => 0,
-        },
-
-        # Gemma 3 series
-        'gemma-3-4b-it' => {
-            context_window => 131072,
-            max_output_tokens => 16384,
-            supports_tools => 1,
-            supports_streaming => 1,
-            supports_vision => 1,
-            supports_reasoning => 0,
-        },
-        'gemma-3-12b-it' => {
-            context_window => 131072,
-            max_output_tokens => 16384,
-            supports_tools => 1,
-            supports_streaming => 1,
-            supports_vision => 1,
-            supports_reasoning => 0,
-        },
-        'gemma-3-27b-it' => {
-            context_window => 131072,
-            max_output_tokens => 16384,
-            supports_tools => 1,
-            supports_streaming => 1,
-            supports_vision => 1,
-            supports_reasoning => 0,
-        },
-
-        # Mistral series
-        'mistral-7b-instruct-v0.3' => {
-            context_window => 32768,
-            max_output_tokens => 8192,
-            supports_tools => 0,
-            supports_streaming => 1,
-            supports_vision => 0,
-            supports_reasoning => 0,
-        },
-        'mistral-nemo-12b-instruct' => {
-            context_window => 131072,
-            max_output_tokens => 16384,
-            supports_tools => 1,
-            supports_streaming => 1,
-            supports_vision => 0,
-            supports_reasoning => 0,
-        },
-
-        # DeepSeek R1 distills
-        'deepseek-r1-distill-llama-8b' => {
-            context_window => 131072,
-            max_output_tokens => 16384,
-            supports_tools => 1,
-            supports_streaming => 1,
-            supports_vision => 0,
-            supports_reasoning => 1,
-        },
-        'deepseek-r1-distill-llama-70b' => {
-            context_window => 131072,
-            max_output_tokens => 16384,
-            supports_tools => 1,
-            supports_streaming => 1,
-            supports_vision => 0,
-            supports_reasoning => 1,
-        },
-        'deepseek-r1-distill-qwen-1.5b' => {
-            context_window => 131072,
-            max_output_tokens => 16384,
-            supports_tools => 1,
-            supports_streaming => 1,
-            supports_vision => 0,
-            supports_reasoning => 1,
-        },
-        'deepseek-r1-distill-qwen-7b' => {
-            context_window => 131072,
-            max_output_tokens => 16384,
-            supports_tools => 1,
-            supports_streaming => 1,
-            supports_vision => 0,
-            supports_reasoning => 1,
-        },
-        'deepseek-r1-distill-qwen-14b' => {
-            context_window => 131072,
-            max_output_tokens => 16384,
-            supports_tools => 1,
-            supports_streaming => 1,
-            supports_vision => 0,
-            supports_reasoning => 1,
-        },
-        'deepseek-r1-distill-qwen-32b' => {
-            context_window => 131072,
-            max_output_tokens => 16384,
-            supports_tools => 1,
-            supports_streaming => 1,
-            supports_vision => 0,
-            supports_reasoning => 1,
-        },
-
-        # Granite series
-        'granite-3.1-8b-instruct' => {
-            context_window => 131072,
-            max_output_tokens => 8192,
-            supports_tools => 1,
-            supports_streaming => 1,
-            supports_vision => 0,
-            supports_reasoning => 0,
-        },
-
-        # Yi series
-        'yi-1.5-9b-chat' => {
-            context_window => 32768,
-            max_output_tokens => 8192,
-            supports_tools => 1,
-            supports_streaming => 1,
-            supports_vision => 0,
-            supports_reasoning => 0,
-        },
-        'yi-1.5-34b-chat' => {
-            context_window => 32768,
-            max_output_tokens => 8192,
-            supports_tools => 1,
-            supports_streaming => 1,
-            supports_vision => 0,
-            supports_reasoning => 0,
-        },
-    );
-
-    # Case-insensitive lookup with prefix stripping (e.g., handles
-    # "unsloth/deepseek-v4" -> "deepseek-v4")
-    my $model_data = $self->_lookup_static_model(\%llama_cpp_models, $model, 'unsloth', 'nvidia', 'meta', 'microsoft', 'google', 'mistralai', 'deepseek', 'ibm', '01-ai');
-    
-    if ($model_data) {
-        # Get base capabilities from static map
-        my $caps = {
-            provider              => 'llama.cpp',
-            model                 => $model,
-            context_window        => $model_data->{context_window},
-            max_prompt_tokens     => $model_data->{context_window},
-            max_output_tokens     => $model_data->{max_output_tokens},
-            supports_tools        => $model_data->{supports_tools},
-            supports_streaming    => $model_data->{supports_streaming},
-            supports_vision       => $model_data->{supports_vision},
-            supports_reasoning    => $model_data->{supports_reasoning},
-            embeddings_dimension  => undef,
-            architecture          => 'llama',
-            quantization          => undef,
-            parameters            => undef,
-            capabilities          => [],
-            size_bytes            => undef,
-            raw                   => $model_data,
-        };
-        
-        # Query /props for actual runtime context window (overrides training context)
-        my $props_ctx = $self->_get_llama_cpp_props_ctx();
-        if ($props_ctx && $props_ctx > 0) {
-            $caps->{context_window} = $props_ctx;
-            $caps->{max_prompt_tokens} = $props_ctx;
-            log_debug('ModelCapabilitiesManager', "llama.cpp /props n_ctx=$props_ctx for $model (overriding training context)");
-        }
-        
-        return $caps;
+    # Query /v1/models — primary data source for model metadata
+    my $resp = $http->get($models_url);
+    unless ($resp && $resp->{success}) {
+        log_debug('ModelCapabilitiesManager', "${provider} /v1/models failed: " . ($resp ? ($resp->{status} // 'unknown') : 'no response'));
+        return undef;
     }
-    
-    # If no static match, try pattern-based heuristics
-    my $heuristic_data = $self->_llama_cpp_model_heuristics($model);
-    if ($heuristic_data) {
-        # Get base capabilities from heuristics
-        my $caps = {
-            provider              => 'llama.cpp',
-            model                 => $model,
-            context_window        => $heuristic_data->{context_window},
-            max_prompt_tokens     => $heuristic_data->{context_window},
-            max_output_tokens     => $heuristic_data->{max_output_tokens},
-            supports_tools        => $heuristic_data->{supports_tools},
-            supports_streaming    => $heuristic_data->{supports_streaming},
-            supports_vision       => $heuristic_data->{supports_vision},
-            supports_reasoning    => $heuristic_data->{supports_reasoning},
-            embeddings_dimension  => undef,
-            architecture          => 'llama',
-            quantization          => undef,
-            parameters            => undef,
-            capabilities          => [],
-            size_bytes            => undef,
-            raw                   => $heuristic_data,
-        };
-        
-        # Query /props for actual runtime context window (overrides heuristic)
-        my $props_ctx = $self->_get_llama_cpp_props_ctx();
-        if ($props_ctx && $props_ctx > 0) {
-            $caps->{context_window} = $props_ctx;
-            $caps->{max_prompt_tokens} = $props_ctx;
-            log_debug('ModelCapabilitiesManager', "llama.cpp /props n_ctx=$props_ctx for $model (overriding heuristic context)");
-        }
-        
-        return $caps;
+
+    my $data = eval { decode_json($resp->{content}) };
+    if ($@) {
+        log_debug('ModelCapabilitiesManager', "Failed to parse ${provider} /v1/models: $@");
+        return undef;
     }
-    
-    return undef;
+
+    my $models = $data->{data} || $data->{models} || [];
+    my $model_info = $self->_find_model_in_list($models, $model, 'id');
+
+    # llama.cpp returns full filesystem paths as ids; match by basename
+    # (path stripped, extension removed) so the resolved model name
+    # (e.g. "Qwen3.6-35B-A3B-UD-Q4_K_XL") matches the server's id
+    # (e.g. "/home/deck/models/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf").
+    unless ($model_info) {
+        $model_info = $self->_find_local_model_by_basename($models, $model);
+    }
+
+    unless ($model_info) {
+        log_debug('ModelCapabilitiesManager', "Model $model not found in ${provider} /v1/models response");
+        # Fall back to /props-only lookup for context window
+        my $props_data = $self->_query_llama_props_data($api_base);
+        if ($props_data) {
+            my $props_ctx = $props_data->{default_generation_settings}{n_ctx}
+                         || $props_data->{n_ctx};
+            if ($props_ctx && $props_ctx > 0) {
+                require CLIO::Core::Defaults;
+                my $heuristic = $self->_model_data_loader()->match_heuristics($model);
+                return {
+                    provider              => $provider,
+                    model                 => $model,
+                    context_window        => $props_ctx,
+                    max_prompt_tokens     => $props_ctx,
+                    max_output_tokens     => $heuristic ? $heuristic->{max_output_tokens} : CLIO::Core::Defaults::DEFAULT_MAX_OUTPUT_TOKENS(),
+                    supports_tools        => $props_data->{chat_template_caps} && $props_data->{chat_template_caps}{supports_tools} ? 1 : 1,
+                    supports_streaming    => 1,
+                    supports_vision       => ($props_data->{modalities} && $props_data->{modalities}{vision}) ? 1 : 0,
+                    supports_reasoning    => $heuristic ? $heuristic->{supports_reasoning} : 0,
+                    embeddings_dimension  => undef,
+                    architecture          => 'llama',
+                    quantization          => $props_data->{model_ftype},
+                    parameters            => undef,
+                    capabilities          => [],
+                    size_bytes            => undef,
+                    raw                   => { source => 'props', props => $props_data },
+                };
+            }
+        }
+        return undef;
+    }
+
+    # Extract metadata from /v1/models meta object
+    # meta.n_ctx = runtime context window (--ctx-size at startup)
+    # meta.n_ctx_train = model's training context window
+    # meta.n_params = parameter count
+    # meta.size = model file size
+    # meta.n_vocab = vocabulary size
+    my $meta = ref($model_info->{meta}) eq 'HASH' ? $model_info->{meta} : {};
+    my $context_window = $meta->{n_ctx} || $meta->{n_ctx_train};
+
+    # Query /props for runtime n_ctx override, modalities, chat_template_caps
+    my $props_data = $self->_query_llama_props_data($api_base);
+    if ($props_data) {
+        # /props default_generation_settings.n_ctx = runtime n_ctx (--ctx-size)
+        # This is the authoritative runtime value; use it to override the
+        # /v1/models meta value which may reflect the model's training context
+        my $props_ctx = $props_data->{default_generation_settings}{n_ctx}
+                     || $props_data->{n_ctx};
+        if ($props_ctx && $props_ctx > 0) {
+            $context_window = $props_ctx;
+        }
+    }
+
+    require CLIO::Core::Defaults;
+    my $caps = {
+        provider              => $provider,
+        model                 => $model,
+        context_window        => $context_window,
+        max_prompt_tokens     => $context_window,
+        max_output_tokens     => undef,  # Set from heuristics below
+        supports_tools        => undef,  # Set from /props or heuristics
+        supports_streaming    => 1,
+        supports_vision       => undef,  # Set from /props or heuristics
+        supports_reasoning    => undef,  # Set from heuristics below
+        embeddings_dimension  => $meta->{n_vocab},
+        architecture          => 'llama',
+        quantization          => undef,
+        parameters            => $meta->{n_params},
+        capabilities          => [],
+        size_bytes            => $meta->{size},
+        raw                   => { model_info => $model_info, props => $props_data // {} },
+    };
+
+    # Enrich with /props data
+    if ($props_data) {
+        # /props modalities.vision -> supports_vision
+        if (ref($props_data->{modalities}) eq 'HASH') {
+            $caps->{supports_vision} = $props_data->{modalities}{vision} ? 1 : 0;
+        }
+
+        # /props chat_template_caps -> tool support
+        if (ref($props_data->{chat_template_caps}) eq 'HASH') {
+            my $ctc = $props_data->{chat_template_caps};
+            $caps->{supports_tools} = $ctc->{supports_tools} if defined $ctc->{supports_tools};
+        }
+
+        # /props model_ftype -> quantization string
+        $caps->{quantization} = $props_data->{model_ftype} if $props_data->{model_ftype};
+    }
+
+    # Use heuristics for fields the API doesn't report.
+    # supports_reasoning and max_output_tokens are model-family properties
+    # that /v1/models and /props don't expose explicitly. The //= operator
+    # ensures /props values (authoritative for the running server) are
+    # never overridden by heuristics — heuristics only fill gaps.
+    my $heuristic = $self->_model_data_loader()->match_heuristics($model);
+    if ($heuristic) {
+        $caps->{max_output_tokens}   //= $heuristic->{max_output_tokens};
+        $caps->{supports_reasoning}  //= $heuristic->{supports_reasoning};
+        $caps->{supports_tools}      //= $heuristic->{supports_tools};
+        $caps->{supports_vision}     //= $heuristic->{supports_vision};
+    }
+
+    # Final defaults for any remaining undef fields
+    $caps->{max_output_tokens}   //= CLIO::Core::Defaults::DEFAULT_MAX_OUTPUT_TOKENS();
+    $caps->{supports_tools}      //= 1;   # Modern llama.cpp supports tools by default
+    $caps->{supports_reasoning}  //= 0;
+    $caps->{supports_vision}     //= 0;
+
+    log_debug('ModelCapabilitiesManager', "${provider} capabilities for $model: ctx=" . ($context_window // 'undef') . ", tools=$caps->{supports_tools}, vision=$caps->{supports_vision}, reasoning=$caps->{supports_reasoning}, output=$caps->{max_output_tokens}");
+
+    return $caps;
 }
 
-=head2 _llama_cpp_model_heuristics (Internal)
+=head2 _find_local_model_by_basename (Internal)
 
-Pattern-based heuristics for llama.cpp models not in the static map.
-Infers capabilities from model ID naming conventions commonly used in
-GGUF filenames.
+Find a model in a /v1/models response by matching basename (path stripped,
+file extension removed). llama.cpp returns the full filesystem path as the
+model id (e.g. "/home/user/models/Qwen3-Q4_K_M.gguf"), but
+_resolve_local_model strips the path and .gguf extension before passing
+the name to MCM. This bridges the two representations.
 
 Arguments:
-- $model: Model identifier (basename from llama.cpp /v1/models)
+- $models: ArrayRef of model info hashes from /v1/models
+- $model: Model name to match (basename, no path, no extension)
 
 Returns:
-- Hashref with capability data, or undef if no pattern matches
+- Matching model info hashref, or undef
 
 =cut
 
-sub _llama_cpp_model_heuristics {
-    my ($self, $model) = @_;
+sub _find_local_model_by_basename {
+    my ($self, $models, $model) = @_;
 
-    # Strip common org prefixes for pattern matching
-    my $base = $model;
-    $base =~ s{^unsloth/}{};
-    $base =~ s{^nvidia/}{};
-    $base =~ s{^meta/}{};
-    $base =~ s{^microsoft/}{};
-    $base =~ s{^google/}{};
-    $base =~ s{^mistralai/}{};
-    $base =~ s{^deepseek-ai/}{};
-    $base =~ s{^ibm/}{};
-    $base =~ s{^01-ai/}{};
+    return undef unless $models && ref($models) eq 'ARRAY' && $model;
 
-    # Also strip quantization suffixes (e.g., -Q4_K_M, -Q8_0, -IQ4_XS)
-    $base =~ s{-(?:Q[1-8]_[KM]|IQ[1-4]_[XS]|Q[1-8]|FP16|BF16|F16|F32)$}{i};
+    my $target = lc($model);
+    $target =~ s{.*/}{};       # Strip any path
+    $target =~ s/\.(gguf|gge|bin|safetensors|pt|gguf)$//i;  # Strip model file extensions only
 
-    # --- Model family patterns (ordered by specificity) ---
+    for my $m (@$models) {
+        my $id = $m->{id};
+        next unless defined $id;
 
-    # DeepSeek V4: 1M context, reasoning
-    if ($base =~ m{deepseek.*v4}i) {
-        return {
-            context_window => 1048576, max_output_tokens => 32768,
-            supports_tools => 1, supports_streaming => 1, supports_vision => 0, supports_reasoning => 1,
-        };
+        my $basename = lc($id);
+        $basename =~ s{.*/}{};
+        $basename =~ s/\.(gguf|gge|bin|safetensors|pt)$//i;  # Strip model file extensions only
+
+        return $m if $basename eq $target;
+
+        # Also try aliases
+        if ($m->{aliases} && ref($m->{aliases}) eq 'ARRAY') {
+            for my $alias (@{$m->{aliases}}) {
+                next unless defined $alias;
+                my $ab = lc($alias);
+                $ab =~ s{.*/}{};
+                $ab =~ s/\.(gguf|gge|bin|safetensors|pt)$//i;  # Strip model file extensions only
+                return $m if $ab eq $target;
+            }
+        }
     }
 
-    # DeepSeek V3: 128K context, reasoning
-    if ($base =~ m{deepseek.*v3}i) {
-        return {
-            context_window => 131072, max_output_tokens => 16384,
-            supports_tools => 1, supports_streaming => 1, supports_vision => 0, supports_reasoning => 1,
-        };
-    }
-
-    # DeepSeek R1 distills: 128K context, reasoning
-    if ($base =~ m{deepseek.*r1.*distill}i || $base =~ m{r1.*distill}i) {
-        return {
-            context_window => 131072, max_output_tokens => 16384,
-            supports_tools => 1, supports_streaming => 1, supports_vision => 0, supports_reasoning => 1,
-        };
-    }
-
-    # Laguna: 128K context, reasoning
-    if ($base =~ m{laguna}i) {
-        return {
-            context_window => 131072, max_output_tokens => 32768,
-            supports_tools => 1, supports_streaming => 1, supports_vision => 0, supports_reasoning => 1,
-        };
-    }
-
-    # Nemotron 3 Ultra/Super: 1M context, 32K output, reasoning
-    if ($base =~ m{nemotron.*3.*(ultra|super)}i) {
-        return {
-            context_window => 1048576, max_output_tokens => 32768,
-            supports_tools => 1, supports_streaming => 1, supports_vision => 0, supports_reasoning => 1,
-        };
-    }
-
-    # Nemotron 3 Nano: 256K context
-    if ($base =~ m{nemotron.*3.*nano}i) {
-        return {
-            context_window => 262144, max_output_tokens => 16384,
-            supports_tools => 1, supports_streaming => 1, supports_vision => 0, supports_reasoning => 0,
-        };
-    }
-
-    # Nemotron 4: 128K context
-    if ($base =~ m{nemotron.*4}i) {
-        return {
-            context_window => 131072, max_output_tokens => 8192,
-            supports_tools => 1, supports_streaming => 1, supports_vision => 0, supports_reasoning => 0,
-        };
-    }
-
-    # Nemotron (generic): 128K context
-    if ($base =~ m{nemotron}i) {
-        return {
-            context_window => 131072, max_output_tokens => 16384,
-            supports_tools => 1, supports_streaming => 1, supports_vision => 0, supports_reasoning => 0,
-        };
-    }
-
-    # Qwen 3.5: 256K context, reasoning
-    if ($base =~ m{qwen.*3[._]5}i) {
-        return {
-            context_window => 262144, max_output_tokens => 16384,
-            supports_tools => 1, supports_streaming => 1, supports_vision => 1, supports_reasoning => 1,
-        };
-    }
-
-    # Qwen 3: 256K context, reasoning
-    if ($base =~ m{qwen.*3}i) {
-        return {
-            context_window => 262144, max_output_tokens => 16384,
-            supports_tools => 1, supports_streaming => 1, supports_vision => 0, supports_reasoning => 1,
-        };
-    }
-
-    # Qwen 2.5: 128K context
-    if ($base =~ m{qwen.*2[._]5}i) {
-        return {
-            context_window => 131072, max_output_tokens => 16384,
-            supports_tools => 1, supports_streaming => 1, supports_vision => 0, supports_reasoning => 0,
-        };
-    }
-
-    # Llama 4 Maverick: 1M context, vision
-    if ($base =~ m{llama.*4.*maverick}i) {
-        return {
-            context_window => 1048576, max_output_tokens => 16384,
-            supports_tools => 1, supports_streaming => 1, supports_vision => 1, supports_reasoning => 0,
-        };
-    }
-
-    # Llama 3.3: 128K context
-    if ($base =~ m{llama.*3[._]3}i) {
-        return {
-            context_window => 131072, max_output_tokens => 16384,
-            supports_tools => 1, supports_streaming => 1, supports_vision => 0, supports_reasoning => 0,
-        };
-    }
-
-    # Llama 3.2 vision: 128K context, vision
-    if ($base =~ m{llama.*3[._]2.*vision}i) {
-        return {
-            context_window => 131072, max_output_tokens => 16384,
-            supports_tools => 1, supports_streaming => 1, supports_vision => 1, supports_reasoning => 0,
-        };
-    }
-
-    # Llama 3.2 text: 128K context
-    if ($base =~ m{llama.*3[._]2}i) {
-        return {
-            context_window => 131072, max_output_tokens => 8192,
-            supports_tools => 0, supports_streaming => 1, supports_vision => 0, supports_reasoning => 0,
-        };
-    }
-
-    # Llama 3.1: 128K context
-    if ($base =~ m{llama.*3[._]1}i) {
-        return {
-            context_window => 131072, max_output_tokens => 16384,
-            supports_tools => 1, supports_streaming => 1, supports_vision => 0, supports_reasoning => 0,
-        };
-    }
-
-    # Llama (generic): 4K context fallback (older models)
-    if ($base =~ m{llama}i) {
-        return {
-            context_window => 4096, max_output_tokens => 4096,
-            supports_tools => 0, supports_streaming => 1, supports_vision => 0, supports_reasoning => 0,
-        };
-    }
-
-    # Phi-4: 128K context
-    if ($base =~ m{phi.*4}i) {
-        return {
-            context_window => 131072, max_output_tokens => 16384,
-            supports_tools => 1, supports_streaming => 1, supports_vision => 0, supports_reasoning => 0,
-        };
-    }
-
-    # Phi-3: 128K context
-    if ($base =~ m{phi.*3}i) {
-        return {
-            context_window => 131072, max_output_tokens => 8192,
-            supports_tools => 0, supports_streaming => 1, supports_vision => 0, supports_reasoning => 0,
-        };
-    }
-
-    # Gemma 4: 256K context, vision
-    if ($base =~ m{gemma.*4}i) {
-        return {
-            context_window => 262144, max_output_tokens => 16384,
-            supports_tools => 1, supports_streaming => 1, supports_vision => 1, supports_reasoning => 0,
-        };
-    }
-
-    # Gemma 3/3n: 128K context, vision
-    if ($base =~ m{gemma.*3}i) {
-        return {
-            context_window => 131072, max_output_tokens => 16384,
-            supports_tools => 1, supports_streaming => 1, supports_vision => 1, supports_reasoning => 0,
-        };
-    }
-
-    # Gemma 2: 8K context
-    if ($base =~ m{gemma.*2}i) {
-        return {
-            context_window => 8192, max_output_tokens => 8192,
-            supports_tools => 0, supports_streaming => 1, supports_vision => 0, supports_reasoning => 0,
-        };
-    }
-
-    # Mistral Large: 128K context
-    if ($base =~ m{mistral.*large}i) {
-        return {
-            context_window => 131072, max_output_tokens => 16384,
-            supports_tools => 1, supports_streaming => 1, supports_vision => 0, supports_reasoning => 0,
-        };
-    }
-
-    # Mistral Small/Medium: 128K context
-    if ($base =~ m{mistral.*(small|medium)}i) {
-        return {
-            context_window => 131072, max_output_tokens => 16384,
-            supports_tools => 1, supports_streaming => 1, supports_vision => 0, supports_reasoning => 0,
-        };
-    }
-
-    # Mistral Nemo: 128K context
-    if ($base =~ m{mistral.*nemo}i) {
-        return {
-            context_window => 131072, max_output_tokens => 16384,
-            supports_tools => 1, supports_streaming => 1, supports_vision => 0, supports_reasoning => 0,
-        };
-    }
-
-    # Mistral 7B: 32K context
-    if ($base =~ m{mistral.*7b}i) {
-        return {
-            context_window => 32768, max_output_tokens => 8192,
-            supports_tools => 0, supports_streaming => 1, supports_vision => 0, supports_reasoning => 0,
-        };
-    }
-
-    # Mixtral 8x22B: 64K context
-    if ($base =~ m{mixtral.*8x22}i) {
-        return {
-            context_window => 65536, max_output_tokens => 8192,
-            supports_tools => 0, supports_streaming => 1, supports_vision => 0, supports_reasoning => 0,
-        };
-    }
-
-    # Mixtral 8x7B: 32K context
-    if ($base =~ m{mixtral.*8x7}i) {
-        return {
-            context_window => 32768, max_output_tokens => 8192,
-            supports_tools => 1, supports_streaming => 1, supports_vision => 0, supports_reasoning => 0,
-        };
-    }
-
-    # Granite: 128K context
-    if ($base =~ m{granite}i) {
-        return {
-            context_window => 131072, max_output_tokens => 8192,
-            supports_tools => 1, supports_streaming => 1, supports_vision => 0, supports_reasoning => 0,
-        };
-    }
-
-    # Yi: 32K context
-    if ($base =~ m{yi}i) {
-        return {
-            context_window => 32768, max_output_tokens => 8192,
-            supports_tools => 1, supports_streaming => 1, supports_vision => 0, supports_reasoning => 0,
-        };
-    }
-
-    # Solar/Upstage: 32K context
-    if ($base =~ m{solar|upstage}i) {
-        return {
-            context_window => 32768, max_output_tokens => 8192,
-            supports_tools => 0, supports_streaming => 1, supports_vision => 0, supports_reasoning => 0,
-        };
-    }
-
-    # No pattern matched - return undef to use system defaults
     return undef;
 }
-
 =head2 _fetch_openai_compatible_capabilities
 
 Fetch capabilities from OpenAI-compatible APIs.
@@ -3189,11 +2817,16 @@ sub _fetch_openai_compatible_capabilities {
         # names: OpenAI uses max_tokens/context_window, Google uses
         # inputTokenLimit, OpenRouter uses context_length (top-level) and
         # also nests it inside top_provider for per-endpoint limits.
+        # llama.cpp-compatible servers include n_ctx/n_ctx_train in a
+        # meta sub-object (runtime vs training context).
         my $tp = ref($m->{top_provider}) eq 'HASH' ? $m->{top_provider} : {};
+        my $meta = ref($m->{meta}) eq 'HASH' ? $m->{meta} : {};
         my $context_window = $m->{context_length}
             || $m->{context_window}
             || $m->{max_tokens}
             || $m->{max_context_tokens}
+            || $meta->{n_ctx}          # llama.cpp runtime context (--ctx-size)
+            || $meta->{n_ctx_train}     # llama.cpp training context
             || $tp->{context_length}
             || $tp->{context_window}
             || undef;
@@ -3221,11 +2854,16 @@ sub _fetch_openai_compatible_capabilities {
         #     404 without blocking the fetch.
         require CLIO::Providers;
         my $is_local = CLIO::Providers::is_local_inference($api_type);
+        my $props_data;
         if (!$context_window || $is_local || $api_type eq 'generic') {
-            my $props_ctx = $self->_query_llama_props($api_base);
-            if ($props_ctx && $props_ctx > 0) {
-                $context_window = $props_ctx;
-                log_debug('ModelCapabilitiesManager', "llama.cpp /props n_ctx=$props_ctx for $model (overriding training context)");
+            $props_data = $self->_query_llama_props_data($api_base);
+            if ($props_data) {
+                my $props_ctx = $props_data->{default_generation_settings}{n_ctx}
+                             || $props_data->{n_ctx};
+                if ($props_ctx && $props_ctx > 0) {
+                    $context_window = $props_ctx;
+                    log_debug('ModelCapabilitiesManager', "llama.cpp /props n_ctx=$props_ctx for $model (overriding training context)");
+                }
             }
         }
         
@@ -3240,13 +2878,51 @@ sub _fetch_openai_compatible_capabilities {
 
         # Parse reasoning metadata (OpenRouter returns a 'reasoning' field)
         my $reasoning_mode;
+        my $supports_reasoning_flag = 0;
         my $reasoning_mandatory = 0;
         if ($m->{reasoning} && ref($m->{reasoning}) eq 'HASH') {
             my $r = $m->{reasoning};
-            # Determine mode from supported_efforts if available
-            # OpenRouter uses 'reasoning.effort' parameter -> 'effort' mode
-            $reasoning_mode = 'effort' if $r->{supported_efforts};
+            # The presence of a reasoning field means the model supports
+            # reasoning. OpenRouter returns this even when supported_efforts
+            # is absent — in that case we infer 'effort' mode from the
+            # reasoning parameter being accepted (see supported_parameters).
+            $supports_reasoning_flag = 1;
             $reasoning_mandatory = $r->{mandatory} || 0;
+            # Determine mode from supported_efforts if available.
+            # OpenRouter uses 'reasoning.effort' parameter -> 'effort' mode.
+            $reasoning_mode = 'effort' if $r->{supported_efforts};
+        }
+        
+        # Enrich with /props data for local inference servers
+        my $supports_vision = $m->{vision} || $m->{supports_vision} || 0;
+        my $supports_tools = $m->{supports_tools} || $m->{function_call} || 0;
+        # OpenRouter and other OpenAI-compatible APIs signal function-calling
+        # support via a supported_parameters array (e.g. ["function_calls"])
+        # rather than a supports_tools boolean field. Check it as a fallback.
+        if (!$supports_tools && $m->{supported_parameters} && ref($m->{supported_parameters}) eq 'ARRAY') {
+            for my $p (@{$m->{supported_parameters}}) {
+                if (defined $p && (lc($p) eq 'function_calls' || lc($p) eq 'tools' || lc($p) eq 'function_call')) {
+                    $supports_tools = 1;
+                    last;
+                }
+            }
+        }
+        my $quantization = $m->{quantization};
+
+        if ($props_data) {
+            # /props modalities.vision -> supports_vision (authoritative for running server)
+            if (ref($props_data->{modalities}) eq 'HASH') {
+                $supports_vision = $props_data->{modalities}{vision} ? 1 : 0;
+            }
+
+            # /props chat_template_caps -> tool support
+            if (ref($props_data->{chat_template_caps}) eq 'HASH') {
+                my $ctc = $props_data->{chat_template_caps};
+                $supports_tools = $ctc->{supports_tools} if defined $ctc->{supports_tools};
+            }
+
+            # /props model_ftype -> quantization
+            $quantization //= $props_data->{model_ftype} if $props_data->{model_ftype};
         }
         
         return {
@@ -3255,14 +2931,14 @@ sub _fetch_openai_compatible_capabilities {
             context_window        => $context_window,
             max_prompt_tokens     => $context_window,  # Approximation
             max_output_tokens     => $output_tokens,
-            supports_tools        => $m->{supports_tools} || $m->{function_call} || 0,
+            supports_tools        => $supports_tools,
             supports_streaming    => 1,  # Most OpenAI-compatible support streaming
-            supports_vision       => $m->{vision} || $m->{supports_vision} || 0,
-            supports_reasoning    => $reasoning_mode ? 1 : 0,
+            supports_vision       => $supports_vision,
+            supports_reasoning    => $supports_reasoning_flag,
             reasoning_mode        => $reasoning_mode,
             embeddings_dimension  => undef,
             architecture          => undef,
-            quantization          => $m->{quantization} || undef,
+            quantization          => $quantization,
             parameters           => $m->{parameters} || $m->{parameter_count} || undef,
             capabilities         => [],
             size_bytes           => undef,
@@ -3419,47 +3095,18 @@ localhost, a LAN hostname, or an IP address - the function does not filter by UR
 
 =cut
 
-sub _query_llama_props {
+sub _query_llama_props_data {
     my ($self, $api_base) = @_;
 
-    # Derive the /props URL from the api_base.
-    #
-    # The /props endpoint is mounted at the server root, so the correct
-    # URL is the api_base's origin (protocol + host + port) + /props,
-    # regardless of what path the chat endpoint is at.
-    #
-    # Real-world inputs this function receives (after the openai-compatible
-    # fetcher normalizes the api_base):
-    #   http://localhost:8080/v1/chat/completions  (default llama.cpp)
-    #   http://localhost:1234/v1/chat/completions  (LM Studio default)
-    #   http://max.local:9090/v1/chat/completions  (LAN host)
-    #   http://192.168.1.50:8080/v1/chat/completions (LAN IP)
-    #   http://[::1]:8080/v1/chat/completions      (IPv6 localhost)
-    #   https://my-proxy.example.com/v1/chat/completions (proxy)
-    #
-    # All of these should map to <origin>/props.
-    #
-    # The old regex `s{/v1(/.*)?$}{}` only stripped /v1 paths. It missed:
-    #   - /api/chat/completions (SAM's path on some forks)
-    #   - /v2/chat/completions (hypothetical future API version)
-    #   - Bare hosts (no path at all, e.g. "https://api.githubcopilot.com")
-    # For the bare-host case the old regex left the trailing "com" alone
-    # but didn't prepend a slash, producing "https://api.githubcopilot.comprops".
-    #
-    # The new parser extracts just the origin. Subpath-mounted servers
-    # (e.g. "http://server.com/llama/v1/chat/completions" where the
-    # whole llama.cpp server is mounted under /llama/) are not handled
-    # here - the /props endpoint would be at /llama/props not /props.
-    # This is documented as a known limitation. If you mount llama.cpp
-    # under a subpath, the function will try /props at the root and
-    # silently return undef; the caller falls back to max_context_tokens.
-
+    # Derive the /props URL from the api_base using _origin_from_url,
+    # which correctly extracts scheme://host[:port] regardless of the
+    # path component. The /props endpoint is always at the server root.
     my $origin = $self->_origin_from_url($api_base);
     return undef unless $origin;
     my $props_url = "${origin}/props";
 
-    my $ua = $self->get_http();
-    my $resp = eval { $ua->get($props_url) };
+    my $http = $self->get_http();
+    my $resp = eval { $http->get($props_url) };
     if ($@ || !$resp || !$resp->{success}) {
         log_debug('ModelCapabilitiesManager', "llama.cpp /props not available at $props_url");
         return undef;
@@ -3471,9 +3118,24 @@ sub _query_llama_props {
         return undef;
     }
 
-    # /props exposes: default_generation_settings.n_ctx (actual runtime context window)
-    # This reflects the --ctx-size / -c value passed at server startup, not the model's
-    # training context (n_ctx_train) which is what /v1/models exposes.
+    return $data;
+}
+
+=head2 _query_llama_props
+
+Query the llama.cpp /props endpoint to retrieve the actual running context window size.
+Returns the integer n_ctx value on success, or undef if unavailable.
+
+=cut
+
+sub _query_llama_props {
+    my ($self, $api_base) = @_;
+    my $data = $self->_query_llama_props_data($api_base);
+    return undef unless $data;
+
+    # /props exposes: default_generation_settings.n_ctx (runtime context window)
+    # This reflects the --ctx-size / -c value passed at server startup, not the
+    # model's training context (n_ctx_train) which is what /v1/models exposes.
     my $n_ctx = $data->{default_generation_settings}{n_ctx}
              || $data->{n_ctx};   # some older versions may expose it at top level
 
@@ -3526,13 +3188,14 @@ Returns the integer n_ctx value on success, or undef if unavailable.
 =cut
 
 sub _get_llama_cpp_props_ctx {
-    my ($self) = @_;
+    my ($self, $provider) = @_;
+    $provider ||= 'llama.cpp';
 
     my $api_base;
     eval {
         require CLIO::Core::Config;
         my $config = CLIO::Core::Config->new();
-        $api_base = $config->get_provider_base('llama.cpp');
+        $api_base = $config->get_provider_base($provider);
     };
     return undef unless $api_base;
 

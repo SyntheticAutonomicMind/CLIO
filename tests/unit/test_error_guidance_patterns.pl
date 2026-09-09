@@ -17,12 +17,10 @@ my $g = CLIO::Core::ToolErrorGuidance->new();
 
 # Each case: [error_msg, expected_category, expected_missing_param]
 my @categorization_cases = (
-    # Original canonical form (already worked)
     [q{Missing required parameter: message},     'missing_required',  'message'],
     [q{Missing required parameters: targets, task_description}, 'missing_required', 'targets, task_description'],
 
-    # Canonical form for FileOperations fields (now used by handlers after
-    # the validator rework - minimal schema + handler-enforced per-op reqs)
+    # FileOperations handler-enforced per-op requirements.
     [q{Missing required parameter: path},        'missing_required',  'path'],
     [q{Missing required parameter: content},     'missing_required',  'content'],
     [q{Missing required parameter: old_string},  'missing_required',  'old_string'],

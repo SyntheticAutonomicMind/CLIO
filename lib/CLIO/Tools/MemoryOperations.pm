@@ -286,22 +286,24 @@ sub retrieve {
     eval {
         my $file_path = File::Spec->catfile($memory_dir, "$key.json");
 
-        return $self->error_result("Memory not found: $key") unless -f $file_path;
+        if (-f $file_path) {
+            open my $fh, '<:utf8', $file_path or croak "Cannot read $file_path: $!";
+            my $json = do { local $/; <$fh> };
+            close $fh;
 
-        open my $fh, '<:utf8', $file_path or croak "Cannot read $file_path: $!";
-        my $json = do { local $/; <$fh> };
-        close $fh;
+            my $data = decode_json($json);
 
-        my $data = decode_json($json);
+            my $action_desc = "retrieving memory '$key'";
 
-        my $action_desc = "retrieving memory '$key'";
-
-        $result = $self->success_result(
-            $data->{content},
-            action_description => $action_desc,
-            key => $key,
-            timestamp => $data->{timestamp},
-        );
+            $result = $self->success_result(
+                $data->{content},
+                action_description => $action_desc,
+                key => $key,
+                timestamp => $data->{timestamp},
+            );
+        } else {
+            $result = $self->error_result("Memory not found: $key");
+        }
     };
 
     if ($@) {
@@ -407,24 +409,26 @@ sub list_memories {
     
     my $result;
     eval {
-        return $self->error_result("Memory directory not found") unless -d $memory_dir;
-        
-        my @memories;
-        opendir my $dh, $memory_dir or croak "Cannot open $memory_dir: $!";
-        while (my $file = readdir $dh) {
-            next unless $file =~ /^(.+)\.json$/;
-            push @memories, $1;
+        if (-d $memory_dir) {
+            my @memories;
+            opendir my $dh, $memory_dir or croak "Cannot open $memory_dir: $!";
+            while (my $file = readdir $dh) {
+                next unless $file =~ /^(.+)\.json$/;
+                push @memories, $1;
+            }
+            closedir $dh;
+            
+            my $count = scalar(@memories);
+            my $action_desc = "listing memories ($count items)";
+            
+            $result = $self->success_result(
+                \@memories,
+                action_description => $action_desc,
+                count => $count,
+            );
+        } else {
+            $result = $self->error_result("Memory directory not found");
         }
-        closedir $dh;
-        
-        my $count = scalar(@memories);
-        my $action_desc = "listing memories ($count items)";
-        
-        $result = $self->success_result(
-            \@memories,
-            action_description => $action_desc,
-            count => $count,
-        );
     };
     
     if ($@) {
@@ -446,17 +450,19 @@ sub delete {
     eval {
         my $file_path = File::Spec->catfile($memory_dir, "$key.json");
         
-        return $self->error_result("Memory not found: $key") unless -f $file_path;
-        
-        unlink $file_path or croak "Cannot delete $file_path: $!";
-        
-        my $action_desc = "deleting memory '$key'";
-        
-        $result = $self->success_result(
-            "Memory deleted successfully",
-            action_description => $action_desc,
-            key => $key,
-        );
+        if (-f $file_path) {
+            unlink $file_path or croak "Cannot delete $file_path: $!";
+            
+            my $action_desc = "deleting memory '$key'";
+            
+            $result = $self->success_result(
+                "Memory deleted successfully",
+                action_description => $action_desc,
+                key => $key,
+            );
+        } else {
+            $result = $self->error_result("Memory not found: $key");
+        }
     };
     
     if ($@) {
@@ -491,13 +497,11 @@ sub recall_sessions {
     
  return $self->error_result("Missing required parameter: query") unless $query;
     
+    my $sessions_dir = '.clio/sessions';
+    return $self->error_result("Sessions directory not found") unless -d $sessions_dir;
+
     my $result;
     eval {
-        # Find sessions directory - ALWAYS use project-local .clio/sessions
-        my $sessions_dir = '.clio/sessions';
-        
-        return $self->error_result("Sessions directory not found") unless -d $sessions_dir;
-        
         # Extract keywords from query for fuzzy matching
         my @keywords = _extract_keywords($query);
         my $query_lc = lc($query);
@@ -843,11 +847,11 @@ sub add_discovery {
  return $self->error_result("Missing required parameter: fact") unless $fact;
     return $self->error_result("Confidence must be between 0 and 1") if $confidence < 0 || $confidence > 1;
     
+    my $ltm = ref($context) eq 'HASH' ? ($context->{ltm} || $context->{session}->{ltm}) : undef;
+    return $self->error_result("LTM not available in context") unless $ltm;
+
     my $result;
     eval {
-        # Get LTM from session if available
-        my $ltm = $context->{ltm} || $context->{session}->{ltm} if ref($context) eq 'HASH';
-        return $self->error_result("LTM not available in context") unless $ltm;
         
         # Add discovery to LTM
         $ltm->add_discovery($fact, $confidence, 1);  # verified=1 (user explicitly added)
@@ -891,11 +895,11 @@ sub add_solution {
  return $self->error_result("Missing required parameter: error") unless $error;
  return $self->error_result("Missing required parameter: solution") unless $solution;
     
+    my $ltm = ref($context) eq 'HASH' ? ($context->{ltm} || $context->{session}->{ltm}) : undef;
+    return $self->error_result("LTM not available in context") unless $ltm;
+
     my $result;
     eval {
-        # Get LTM from context
-        my $ltm = $context->{ltm} || $context->{session}->{ltm} if ref($context) eq 'HASH';
-        return $self->error_result("LTM not available in context") unless $ltm;
         
         # Add solution to LTM
         $ltm->add_problem_solution($error, $solution, $examples);
@@ -939,11 +943,11 @@ sub add_pattern {
  return $self->error_result("Missing required parameter: pattern") unless $pattern;
     return $self->error_result("Confidence must be between 0 and 1") if $confidence < 0 || $confidence > 1;
     
+    my $ltm = ref($context) eq 'HASH' ? ($context->{ltm} || $context->{session}->{ltm}) : undef;
+    return $self->error_result("LTM not available in context") unless $ltm;
+
     my $result;
     eval {
-        # Get LTM from context
-        my $ltm = $context->{ltm} || $context->{session}->{ltm} if ref($context) eq 'HASH';
-        return $self->error_result("LTM not available in context") unless $ltm;
         
         # Add pattern to LTM
         $ltm->add_code_pattern($pattern, $confidence, $examples);
@@ -1020,10 +1024,11 @@ sub update_ltm {
  return $self->error_result("Missing required parameter: search_text") unless $search;
  return $self->error_result("Missing required parameter: replacement") unless $replacement;
 
+    my $ltm = ref($context) eq 'HASH' ? ($context->{ltm} || $context->{session}->{ltm}) : undef;
+    return $self->error_result("LTM not available in context") unless $ltm;
+
     my $result;
     eval {
-        my $ltm = $context->{ltm} || $context->{session}->{ltm} if ref($context) eq 'HASH';
-        return $self->error_result("LTM not available in context") unless $ltm;
         
         my $update_result = $ltm->update_entry(
             search      => $search,
@@ -1082,11 +1087,11 @@ sub prune_ltm {
     my $max_solutions = $params->{max_solutions} // 50;
     my $max_patterns = $params->{max_patterns} // 30;
     
+    my $ltm = ref($context) eq 'HASH' ? ($context->{ltm} || $context->{session}->{ltm}) : undef;
+    return $self->error_result("LTM not available in context") unless $ltm;
+
     my $result;
     eval {
-        # Get LTM from context
-        my $ltm = $context->{ltm} || $context->{session}->{ltm} if ref($context) eq 'HASH';
-        return $self->error_result("LTM not available in context") unless $ltm;
         
         # Prune LTM
         my $removed = $ltm->prune(
@@ -1137,11 +1142,11 @@ Returns counts and metadata about stored patterns.
 sub ltm_stats {
     my ($self, $params, $context) = @_;
     
+    my $ltm = ref($context) eq 'HASH' ? ($context->{ltm} || $context->{session}->{ltm}) : undef;
+    return $self->error_result("LTM not available in context") unless $ltm;
+
     my $result;
     eval {
-        # Get LTM from context
-        my $ltm = $context->{ltm} || $context->{session}->{ltm} if ref($context) eq 'HASH';
-        return $self->error_result("LTM not available in context") unless $ltm;
         
         my $stats = $ltm->get_stats();
         
@@ -1204,10 +1209,11 @@ sub add_corroboration {
         $source_agent = $ENV{CLIO_AGENT_ID} || 'main';
     }
 
+    my $ltm = ref($context) eq 'HASH' ? ($context->{ltm} || $context->{session}->{ltm}) : undef;
+    return $self->error_result("LTM not available in context") unless $ltm;
+
     my $result;
     eval {
-        my $ltm = $context->{ltm} || $context->{session}->{ltm} if ref($context) eq 'HASH';
-        return $self->error_result("LTM not available in context") unless $ltm;
 
         my $corroboration_result = $ltm->add_corroboration($search_text, $source_agent, $source_session, $type);
         

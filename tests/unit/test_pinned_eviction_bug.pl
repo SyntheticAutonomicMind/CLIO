@@ -92,8 +92,7 @@ use CLIO::Core::API::MessageValidator qw(validate_and_truncate);
     push @messages, { role => 'assistant', content => 'Got it.' };
     push @messages, { role => 'user', content => 'Recent turn user ' . ('x' x 100) };
     push @messages, { role => 'assistant', content => 'Recent turn assistant.' };
-    push @messages, { role => 'system', content => 'DYNAMIC_USERCONTEXT_' . ('x' x 100) };
-    push @messages, { role => 'user', content => 'CURRENT_QUESTION_HERE' };
+    push @messages, { role => 'user', content => 'DYNAMIC_USERCONTEXT_' . ('x' x 100) . 'CURRENT_QUESTION_HERE' };
     for my $i (1..50) {
         push @messages, { role => 'assistant', content => "iter $i", tool_calls => [{id=>"tc_$i",function=>{name=>'fs',arguments=>'{}'}}] };
         push @messages, { role => 'tool', tool_call_id => "tc_$i", content => 'result ' x 200 };

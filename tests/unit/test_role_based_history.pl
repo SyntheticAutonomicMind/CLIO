@@ -14,8 +14,8 @@
 # 3. The cache-stable prefix is [system_prompt + role-based history].
 #    The dynamic userContext churns each turn but doesn't invalidate
 #    the prefix.
-# 4. The @$history >= 3 gate that used to force first-turn sessions
-#    onto the legacy XML path is gone - prose path runs always.
+# 4. The @$history >= 3 gate is gone - the prose path runs always,
+#    including first-turn sessions.
 # 5. messages_to_xml, xml_to_turns, trim_xml_history are gone.
 
 use strict;
@@ -108,21 +108,23 @@ sub make_history {
     my $dynamic = messages_to_prose_dynamic($proj);
 
     unlike($dynamic, qr/Active task:/, "No 'Active task:' label scaffolding in prose (metadata-leak fix)");
-    like($dynamic, qr/investigate trim_xml_history bug/, "Active task content still present (unlabeled)");
+    unlike($dynamic, qr/investigate trim_xml_history bug/,
+        "Active task content NOT in prose (rendered via get_user_context)");
     like($dynamic, qr/Active todos:/, "Active todos section present (natural prose)");
     like($dynamic, qr/- \[in-progress\] Read ContextBuilder\.pm/, "Todo rendered with status");
-    like($dynamic, qr/Working directory:/, "Environment section present (natural prose)");
+    # Environment (Working directory, Language, Date) is NOT rendered
+    # here — it is handled solely by PromptBuilder::get_user_context()
+    # and prepended to the user message. This is the single source
+    # for environment info, verified by test_pwd_in_prompt.pl.
+    unlike($dynamic, qr/Working directory:/, "Environment NOT rendered here (handled by PromptBuilder)");
     unlike($dynamic, qr/# Task\b/, "Dynamic prose omits # Task (that's stable)");
     unlike($dynamic, qr/# Recent work/, "Dynamic prose omits # Recent work (that's stable)");
 }
 
-# Test 3 was: messages_to_prose_stable emits only stable sections.
-# DELETED in this commit: messages_to_prose_stable no longer exists.
-# The stable content (anchor + recent turns) is now pushed by
-# WorkflowOrchestrator as role-based messages, not as prose.
-# messages_to_prose_dynamic is the sole renderer used in production.
-# The cache-stable prefix is verified by inspecting the role-based
-# messages directly (see test 4 below).
+# The stable content (anchor + recent turns) is delivered by
+# WorkflowOrchestrator as role-based messages, not as prose. The
+# cache-stable prefix is verified by inspecting those role-based
+# messages directly in test 4 below.
 
 # ---------------------------------------------------------------------------
 # Test 4: Projection produces role-based anchor + turns (no XML wrapping)
@@ -183,7 +185,10 @@ sub make_history {
         ok(ref($proj) eq 'HASH', "$c->{desc}: build_projection returns hashref");
         ok(exists $proj->{anchor}, "$c->{desc}: projection has anchor field");
         ok(exists $proj->{turns}, "$c->{desc}: projection has turns field");
-        ok(exists $proj->{environment}, "$c->{desc}: projection has environment field");
+        # NOTE: 'environment' field no longer exists in projection —
+        # environment (CWD, Date, Lang) is rendered solely by
+        # PromptBuilder::get_user_context(). The projection does not
+        # carry it.
     }
 }
 

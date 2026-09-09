@@ -15,9 +15,9 @@ use CLIO::Providers qw(provider_from_url);
 # =============================================================================
 
 subtest 'standard API providers' => sub {
-    is(provider_from_url('https://api.githubcopilot.com'), 'github-copilot',
+    is(provider_from_url('https://api.githubcopilot.com'), 'github_copilot',
         'GitHub Copilot detected');
-    is(provider_from_url('https://api.githubcopilot.com/'), 'github-copilot',
+    is(provider_from_url('https://api.githubcopilot.com/'), 'github_copilot',
         'GitHub Copilot with trailing slash');
     is(provider_from_url('https://api.openai.com/v1/chat/completions'), 'openai',
         'OpenAI detected');
@@ -69,7 +69,7 @@ subtest 'local providers' => sub {
         'SAM (LAN IP) detected');
 
     # llama.cpp has no default port - users must --provider llama.cpp explicitly
-    is(provider_from_url('http://max:9090/v1/chat/completions'), undef,
+    is(provider_from_url('http://localhost:9090/v1/chat/completions'), undef,
         'llama.cpp not auto-detected (no default port)');
 };
 
@@ -82,7 +82,7 @@ subtest 'edge cases' => sub {
     is(provider_from_url(''), undef, 'empty string returns undef');
     is(provider_from_url('https://unknown.example.com'), undef,
         'Unknown URL returns undef');
-    is(provider_from_url('https://api.githubcopilot.com/models'), 'github-copilot',
+    is(provider_from_url('https://api.githubcopilot.com/models'), 'github_copilot',
         'GitHub Copilot with /models path detected');
 };
 

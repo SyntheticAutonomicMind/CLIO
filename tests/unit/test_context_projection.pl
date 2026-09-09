@@ -114,15 +114,18 @@ sub make_history {
 {
     my $history = make_history(turns => 3);
     my $proj = build_projection(history => $history, user_input => 'continue');
-    my $uc = $proj->{userContext};
+    # Check compressed_tail for framework narration (this is the
+    # projection's compressed summary that replaces dropped turns in
+    # the message stream).
+    my $uc = $proj->{compressed_tail} // '';
 
-    unlike($uc, qr/After context trimming/, "userContext has no 'After context trimming'");
-    unlike($uc, qr/UNVERIFIED/, "userContext has no 'UNVERIFIED' label");
-    unlike($uc, qr/TRUSTED/, "userContext has no 'TRUSTED' label");
-    unlike($uc, qr/Showing \d+ of \d+ memories/, "userContext has no 'Showing X of Y' footer");
-    unlike($uc, qr/memory_operations\(operation: "search"/, "userContext has no 'memory_operations(search)' instruction");
-    unlike($uc, qr/informational context only/, "userContext has no 'informational context only' boilerplate");
-    unlike($uc, qr/Session ID/, "userContext has no 'Session ID' header");
+    unlike($uc, qr/After context trimming/, "compressed_tail has no 'After context trimming'");
+    unlike($uc, qr/UNVERIFIED/, "compressed_tail has no 'UNVERIFIED' label");
+    unlike($uc, qr/TRUSTED/, "compressed_tail has no 'TRUSTED' label");
+    unlike($uc, qr/Showing \d+ of \d+ memories/, "compressed_tail has no 'Showing X of Y' footer");
+    unlike($uc, qr/memory_operations\(operation: "search"/, "compressed_tail has no 'memory_operations(search)' instruction");
+    unlike($uc, qr/informational context only/, "compressed_tail has no 'informational context only' boilerplate");
+    unlike($uc, qr/Session ID/, "compressed_tail has no 'Session ID' header");
 }
 
 # ---------------------------------------------------------------------------
@@ -156,14 +159,14 @@ sub make_history {
     ok(scalar(@$scored2) <= 5, "At most 5 memories pass cap (was " . scalar(@$scored2) . ")");
     ok(scalar(@$scored2) > 0, "Some memories pass threshold when relevant");
 
-    # Verify tier labels are absent from the rendered userContext
+    # Verify tier labels are absent from the compressed_tail
     my $proj = build_projection(
         history    => make_history(turns => 2),
         user_input => 'fix the cache-collapse regex bug',
         active_task => 'qa-messageHistory-fix',
         ltm        => \@ltm,
     );
-    unlike($proj->{userContext}, qr/UNVERIFIED|TRUSTED/, "userContext has no tier labels");
+    unlike($proj->{compressed_tail}, qr/UNVERIFIED|TRUSTED/, "compressed_tail has no tier labels");
 }
 
 # ---------------------------------------------------------------------------
@@ -209,7 +212,7 @@ sub make_history {
 
     # No separate anchor — the first user message is in the dropped set
     # and preserved in the compressed_tail.
-    ok(!defined $proj->{anchor}, "No anchor (task via dynamic userContext + compressed tail)");
+    ok(!defined $proj->{anchor}, "No anchor (task via compressed tail)");
 
     # The "current" user input (last user message) is in recent turns,
     # not in anchor. This is by design: the projection shows past turns
@@ -252,12 +255,8 @@ sub make_history {
         ltm        => $ltm,
     );
 
-    is($p1->{userContext}, $p2->{userContext}, "userContext is deterministic across runs");
+    is($p1->{compressed_tail}, $p2->{compressed_tail}, "compressed_tail is deterministic across runs");
     is(scalar @{$p1->{turns}}, scalar @{$p2->{turns}}, "Turn count is deterministic");
-
-    # compressed_tail may include a clock-derived string? No - it
-    # doesn't include timestamps. Verify it's stable.
-    is($p1->{compressed_tail}, $p2->{compressed_tail}, "compressed_tail is deterministic");
 }
 
 # ---------------------------------------------------------------------------

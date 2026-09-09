@@ -357,9 +357,7 @@ sub trim_conversation_for_api {
     my $max_response = $opts{max_response_tokens} // CLIO::Core::Defaults::DEFAULT_MAX_RESPONSE_TOKENS();
 
     # Compute prompt budget from model capabilities. Uses the model's
-    # actual max_response_tokens (passed in as max_response_tokens,
-    # originally from Provider.max_output_tokens) plus an estimation
-    # buffer. NO hard cap on the reserve - whatever the model supports.
+    # actual max_response_tokens plus an estimation buffer.
     my $caps_for_budget = {
         max_context_window_tokens => $model_context,
         max_output_tokens         => $max_response,
@@ -391,18 +389,13 @@ sub trim_conversation_for_api {
 
     my @messages = @$history;
 
-    # Identify pinned indices (force-included regardless of budget):
-    # - First user message (original task anchor) - the original task
-    #   must survive even under aggressive trim.
-    # - Last user message (current turn's user_input) - the model's
-    #   actual question must survive.
+    # Pinned indices (force-included regardless of budget):
+    # - First user message (original task anchor)
+    # - Last user message (current turn's user_input)
     #
-    # The role-based `_role_based_tail_walk` (in MessageValidator)
-    # handles the full messages array including system_prompt and
-    # dynamic userContext. This legacy trim operates on history only
-    # (system_prompt is passed separately). The dynamic userContext
-    # is added by WorkflowOrchestrator AFTER this trim runs, so it
-    # isn't a concern here.
+    # This legacy trim operates on history only. The role-based
+    # `_role_based_tail_walk` in MessageValidator handles the full
+    # messages array including system_prompt and dynamic userContext.
     my $first_user_idx;
     for my $i (0 .. $#messages) {
         if (ref($messages[$i]) eq 'HASH' && ($messages[$i]{role} // '') eq 'user') {

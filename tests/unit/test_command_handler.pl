@@ -4,15 +4,7 @@
 #
 # Test: CommandHandler.handle_command() does not emit uninitialized-value
 # warnings for slash-only or empty input, and still routes real commands.
-#
-# Catches the regression where typing `/` at the prompt produced:
-#   Use of uninitialized value within @parts in lc at
-#     lib/CLIO/UI/CommandHandler.pm line 257.
-# Root cause was `lc(shift @parts)` running on the empty list returned by
-# `shellwords('')`, so `shift` returned undef.
-#
-# Also exercises other edge cases that previously could have been silent
-# under-initialized paths:
+# Exercises:
 #   - `/`           (slash only)
 #   - `/  `         (slash with whitespace)
 #   - `//`          (double slash)

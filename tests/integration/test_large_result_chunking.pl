@@ -101,7 +101,7 @@ my $store = CLIO::Session::ToolResultStore->new(
     is($chunk4->{nextOffset}, undef, 'Final chunk: nextOffset=undef');
 }
 
-# Test 4: Verify 32KB cap is enforced (this was the bug!)
+# Test 4: Verify 32KB cap is enforced
 {
     my $content = "a" x 150000;  # 150KB
     $store->processToolResult('test_oversized_999', $content, 'test_session_4');

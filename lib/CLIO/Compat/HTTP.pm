@@ -721,12 +721,12 @@ sub request {
                 };
                 
                 $response = $self->{http}->request($method, $uri, \%options);
-                # Note: with data_callback, $response->{content} is empty
-                # Store accumulated content on the response for post-processing
-                # Only overwrite content when we actually received streaming data (2xx response).
-                # For error responses (4xx/5xx), the error body is in $response->{content} already
-                # and the data_callback was never invoked, so accumulated_content would be empty.
-                # Overwriting would destroy the error message, making debugging impossible.
+                # With data_callback, $response->{content} is empty - we
+                # store accumulated streaming content on the response. Only
+                # overwrite when we actually received streaming data (2xx
+                # response). For error responses (4xx/5xx), the error body
+                # is in $response->{content} and the callback was never
+                # invoked, so overwriting would destroy the error message.
                 if (length($accumulated_content) > 0) {
                     $response->{content} = $accumulated_content;
                 } # else: preserve original $response->{content} (may contain error body)

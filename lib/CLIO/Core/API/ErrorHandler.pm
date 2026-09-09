@@ -466,18 +466,15 @@ sub handle_api_error {
         }
     }
 
-    # ── Retryable errors ──────────────────────────────────────────────
+    # Retryable errors.
     if ($api_response->{retryable}) {
         $$retry_count_ref++;
 
-# Bail out on persistent bad_request after the configured retry limit is exhausted.
-        # The previous behavior was to flip error_type to 'token_limit_exceeded' after just
-        # 2 retries and try to trim context - that was wrong. Token limit errors have their
-        # own specific handler below (model_max_prompt_tokens_exceeded / context_length_exceeded).
-        # An unrecognized 400 that's persistent is more likely a backend / model / payload
-        # issue than a context size issue. Bail with the actual provider error so the user
-        # sees what the provider actually said and can take action (switch model, contact support,
-        # check /api logs).
+        # Bail out on persistent bad_request after the configured retry
+        # limit is exhausted. An unrecognized 400 is more likely a
+        # backend/model/payload issue than a context size issue; surface
+        # the provider's actual error rather than synthesizing a
+        # misleading "Token limit exceeded" message.
         my $error_type_check = $api_response->{error_type} || '';
         if ($error_type_check eq 'bad_request' && $$retry_count_ref >= $max_retries) {
             log_debug('ErrorHandler', "Persistent 400 Bad Request after $$retry_count_ref retries - giving up without context trim.");

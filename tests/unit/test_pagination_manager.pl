@@ -83,8 +83,8 @@ $pager->line_count(10);
 is($pager->should_trigger(), 0, 'no trigger below threshold');
 
 $pager->line_count(22);
-# Note: -t STDIN will be false in test, so should_trigger returns 0
-# We test the logic by checking enabled + count
+# -t STDIN is false in test, so should_trigger returns 0. Test the
+# logic by checking enabled + count.
 
 # Test 10: save_page / reset_page
 $pager->reset();

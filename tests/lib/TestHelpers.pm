@@ -33,6 +33,34 @@ use File::Temp qw(tempfile tempdir);
 use File::Spec;
 use Cwd qw(getcwd abs_path);
 
+# ── Config / session isolation for the clio subprocess ───────────────────
+# Tests that shell out to the real `clio` binary (run_clio / run_clio_with_session
+# below) are NOT in test-mode: the clio script's caller is itself, not tests/,
+# and CLIO_TEST is unset. Those subprocesses therefore build a real Config
+# (persist=1) and write provider/model into whatever get_config_dir() resolves
+# to. Without intervention that is the user's ~/.clio/config.json -- which is
+# exactly how the test suite clobbered "Connected to gpt-4o@GitHub Copilot" into
+# the user's real config: the last clio subprocess to exit won, seeding a default
+# that survives the test process.
+#
+# This is scoped to run_clio ONLY. We deliberately do NOT set CLIO_CONFIG_DIR
+# globally on the test process: a blanket ENV affects EVERY subprocess any test
+# spawns (broker daemons, MCP sockets, mock providers, ...), and that clashes
+# with each test's in-process Config isolation (CLIO::Core::Config::_config_in_test_mode
+# already points in-process Config at its own tempdir + persist=0). Two different
+# tempdirs in play broke tests that expect their in-process Config and their
+# spawned clio subprocesses to agree (e.g. api_base cache-key, rate-limit/session
+# recovery flows) -> false failures + hangs from the subprocess hitting a real,
+# unseeded provider. Limiting the override to run_clio fixes the real pollution
+# vector without disturbing any other subprocess.
+#
+# A single shared sandbox tempdir (auto-removed at process exit) backs every
+# run_clio call in one test process, so run_clio_with_session's --new and
+# --resume subprocesses see the same config.json. Precedence: an explicit
+# --config <dir> (PathResolver::CONFIG_DIR) still wins for clio, and a test that
+# sets CLIO_CONFIG_DIR itself is respected (we never stomp a pre-set value).
+my $SANDBOX_CONFIG_DIR = tempdir(CLEANUP => 1);
+
 our @EXPORT = qw(
     assert_equals
     assert_not_equals
@@ -450,10 +478,21 @@ sub run_clio {
     } else {
         $args_str = join(' ', @args);
     }
-    
-    my $cmd = "$clio $args_str 2>&1";
+
+    # Scope the CLIO_CONFIG_DIR override to THIS clio subprocess only (see the
+    # isolation block at module load for why this must not be global). We prefix
+    # the command so the subprocess builds/isolates its config in the private
+    # sandbox tempdir instead of the user's real ~/.clio. Honored only when the
+    # caller hasn't already pinned CLIO_CONFIG_DIR; an existing --config <dir>
+    # (PathResolver::CONFIG_DIR) still wins inside clio itself.
+    my $env_prefix = '';
+    unless ($ENV{CLIO_CONFIG_DIR}) {
+        # tempdir never contains spaces, so unquoted env-var assignment is safe.
+        $env_prefix = "CLIO_CONFIG_DIR=$SANDBOX_CONFIG_DIR ";
+    }
+    my $cmd = "${env_prefix}${clio} ${args_str} 2>&1";
     my $output = `$cmd`;
-    
+
     return $output;
 }
 

@@ -3,6 +3,7 @@ package CLIO::Core::ContextBuilder;
 use strict;
 use warnings;
 use utf8;
+use feature 'state';
 binmode(STDOUT, ':encoding(UTF-8)');
 binmode(STDERR, ':encoding(UTF-8)');
 
@@ -10,10 +11,8 @@ use CLIO::Core::Logger qw(log_debug log_warning log_error);
 use CLIO::Memory::TokenEstimator qw(estimate_messages_tokens);
 use CLIO::Memory::LongTerm ();
 # YaRN does not use Exporter; call its subs via fully-qualified name.
-# Loading the module here ensures the symbol is defined before the
-# _select_turns fallback tries to call CLIO::Memory::YaRN::
-# recover_substantive_task - which previously hit "Undefined
-# subroutine" because nothing in ContextBuilder loaded YaRN.
+# Loading the module here ensures the symbol is defined before
+# _select_turns tries to call recover_substantive_task.
 use CLIO::Memory::YaRN ();
 
 =head1 NAME
@@ -62,7 +61,6 @@ The projection is deterministic given the same inputs.
 =head1 SYNOPSIS
 
     use CLIO::Core::ContextBuilder;
-    use CLIO::Core::MessageHistory qw(messages_to_prose_dynamic);
 
     my $projection = CLIO::Core::ContextBuilder::build_projection(
         history       => $session->get_conversation_history(),
@@ -77,10 +75,9 @@ The projection is deterministic given the same inputs.
     # The projection's anchor + turns can be pushed directly into the
     # role-based messages array as individual messages. The dynamic
     # parts (active task, todos, LTM, environment, context files) get
-    # rendered as a single trailing system message so the cache-stable
+    # rendered via get_user_context() in WorkflowOrchestrator so the cache-stable
     # prefix (system_prompt + role-based history) stays unchanged
     # across turns while dynamic context refreshes.
-    my $dynamic_usercontext = messages_to_prose_dynamic($projection);
 
 =cut
 
@@ -140,16 +137,15 @@ Arguments:
 - session: Session object (optional; used for anchor fallback via YaRN).
 
 Returns a hashref:
-    {
-        turns             => [ ... ],  # selected full turns (newest 1-2)
-        anchor            => { ... },  # original task turn (1 element) or undef
-        compressed_tail   => "...",    # one combined thread_summary text, or ''
-        userContext       => '',        # legacy field - kept for backwards compat with tests
-        relevant_memory   => [ ... ],  # arrayref of {confidence, content}
-        active_task       => "...",    # for per-iteration LTM re-score
-        user_input        => "...",    # for per-iteration LTM re-score
-        token_estimate    => $int,
-    }
+   {
+       turns             => [ ... ],  # selected full turns (newest 1-2)
+       anchor            => { ... },  # original task turn (1 element) or undef
+       compressed_tail   => "...",    # one combined thread_summary text, or ''
+       relevant_memory   => [ ... ],  # arrayref of {confidence, content}
+       active_task       => "...",    # for per-iteration LTM re-score
+       user_input        => "...",    # for per-iteration LTM re-score
+       token_estimate    => $int,
+   }
 
 =cut
 
@@ -182,12 +178,6 @@ sub build_projection {
     # Build the compressed tail if any turns were dropped
     my $compressed_tail = _build_compressed_tail($dropped_turns, $active_task);
 
-    # Recent turns from _select_turns are already an arrayref of
-    # role-based messages per turn (the shape produced by
-    # _split_into_turns). The within-turn dedup pass
-    # (collapse_repeated_tool_calls) was originally written for the
-    # old {tools => [...]} turn shape and is a no-op for role-based
-    # turns - dropped from the pipeline.
     my @deduped_recent = @$recent_turns;
 
     # Cross-turn dedup: collapses two adjacent pure-tool turns that
@@ -200,12 +190,6 @@ sub build_projection {
     my $chain = defined $anchor_turn ? [$anchor_turn, @deduped_recent] : [@deduped_recent];
     my $deduped_chain = collapse_repeated_tool_calls_across_turns($chain);
     if (defined $anchor_turn) {
-        # The first element of the chain is the anchor; the rest are
-        # recent turns. If the anchor was collapsed into the
-        # subsequent turn, we need to either drop the anchor (if its
-        # tool call was already represented) or keep it. The current
-        # implementation only ever drops the SECOND turn of a pair,
-        # so the anchor stays in the chain.
         @deduped_recent = @$deduped_chain[1 .. $#$deduped_chain];
     } else {
         @deduped_recent = @$deduped_chain;
@@ -214,109 +198,26 @@ sub build_projection {
     # Score LTM entries against the current request.
     my $relevant = score_ltm($ltm, $user_input, $active_task, $unresolved);
 
-    # After the role-based history refactor, the structured userContext
-    # is rendered by the prose renderer (messages_to_prose_dynamic)
-    # using the projection's structured fields directly. We no longer
-    # build an XML userContext string here. The userContext field
-    # below is kept as an empty string for backwards compatibility
-    # with tests that read it.
-    my $user_context = '';
-
-    # Estimate tokens (rough). Token accounting is approximate; the
-    # exact budget pass happens in MessageValidator's
-    # _role_based_tail_walk.
     my $anchor_list = ref($anchor_turn) eq 'ARRAY' ? $anchor_turn : [];
     my @all_messages;
     push @all_messages, @$anchor_list;
     push @all_messages, @deduped_recent;
-    my $token_estimate = estimate_messages_tokens(\@all_messages) + int(length($user_context) / 4);
+    my $token_estimate = estimate_messages_tokens(\@all_messages);
 
-    # The compressed_tail carries the earlier-work summary. It is rendered
-    # by messages_to_prose_dynamic into the dynamic userContext block, not
-    # by a messages_to_xml call (that serializer was removed in the
-    # role-based history refactor). Return it as a separate field so the
-    # renderer can splice it in at the right position.
-    #
-    # Also return the structured fields (active_todos, unresolved,
-    # environment) directly so non-XML serializers (prose renderer)
-    # can use them without having to re-parse the userContext XML.
     return {
         turns               => \@deduped_recent,
         anchor              => $anchor_turn,
         compressed_tail     => $compressed_tail,
-        userContext         => $user_context,
         relevant_memory     => $relevant,
         active_task         => $active_task,
         active_todos        => $active_todos,
         unresolved          => $unresolved,
         context_files       => $context_files,
         context_files_block => $context_files_block,
-        environment         => _build_environment_hash(),
-        # user_input is preserved on the projection so per-iteration
-        # refresh in WorkflowOrchestrator can re-score LTM against
-        # the ORIGINAL input. Re-scoring against the model's evolving
-        # output would be unstable (each tool result shifts the
-        # topic).
+        # user_input is preserved on the projection for reference.
         user_input          => $user_input,
         token_estimate      => $token_estimate,
     };
-}
-
-=head2 _build_environment_hash
-
-Internal: build the environment hashref consumed by non-XML
-serializers (prose renderer). Returns:
-    {
-        working_directory => '/path/to/cwd',
-        language          => 'English',
-        datetime_iso      => '2026-09-01T13:51:42',
-    }
-
-=cut
-
-sub _build_environment_hash {
-    my $cwd = eval { require Cwd; Cwd::getcwd(); } || '';
-    my @t = localtime(time);
-    my $ts = sprintf("%04d-%02d-%02dT%02d:%02d:%02d",
-        $t[5] + 1900, $t[4] + 1, $t[3], $t[2], $t[1], $t[0]);
-    return {
-        working_directory => $cwd,
-        language          => _detect_language_name(),
-        datetime_iso      => $ts,
-    };
-}
-
-=head2 _detect_language_name
-
-Detect the user's preferred language from environment variables
-(LC_ALL, LANG, LC_MESSAGES, LANGUAGE). Returns the friendly
-language name (e.g. 'English'). Defaults to 'en' if no locale
-is set or the locale is unrecognized.
-
-Returns:
-- String with the friendly language name
-
-=cut
-
-sub _detect_language_name {
-    my $locale = $ENV{LC_ALL} || $ENV{LANG} || $ENV{LC_MESSAGES} || $ENV{LANGUAGE} || '';
-    $locale = (split /:/, $locale)[0] if $locale =~ /:/;
-    my $code = lc($locale);
-    $code =~ s/\.[^.]+$//;
-    $code =~ s/_.*$//;
-    $code =~ s/[^a-z]//g;
-    $code ||= 'en';
-    $code = 'en' if $code eq 'c' || $code eq 'posix';
-
-    my %NAMES = (
-        en => 'English',  zh => 'Chinese',  ja => 'Japanese',
-        ko => 'Korean',   de => 'German',   fr => 'French',
-        es => 'Spanish',  it => 'Italian',  pt => 'Portuguese',
-        ru => 'Russian',  ar => 'Arabic',   hi => 'Hindi',
-        nl => 'Dutch',   pl => 'Polish',   tr => 'Turkish',
-        sv => 'Swedish',  da => 'Danish',   no => 'Norwegian',
-    );
-    return $NAMES{$code} || $code;
 }
 
 =head2 score_ltm
@@ -397,7 +298,11 @@ sub score_ltm {
     # framework-narration words (memory_operations, prompt cache,
     # etc.) written before the sanitizer existed. Clean them on read
     # so the prose renderer never sees the framework smell.
-    my $sanitizer = CLIO::Memory::LongTerm->new();
+    # Cache the LongTerm instance — sanitize_narration* are stateless
+    # (they only reference package-level @SANITIZE_DROP_PHRASES and
+    # %SANITIZE_REPLACEMENTS), so creating a new object per call is
+    # wasted work (two time() syscalls + nested data-structure init).
+    state $sanitizer = CLIO::Memory::LongTerm->new();
 
     # The category boost is meaningful when the user is working on
     # the framework itself. Detect that by checking if the current
@@ -573,11 +478,10 @@ sub _turn_tool_pair {
 }
 
 # Compute the dedup signature: tool name + arguments + result digest.
-# Note: tool_call_id is intentionally NOT part of the signature. The
-# id is an opaque identifier assigned by the assistant each turn; it
-# differs for two semantically-identical calls. The semantic identity
-# is (name, args, result) - if those match, the calls are equivalent
-# for the purpose of "did the model just retry the same call".
+# tool_call_id is intentionally NOT part of the signature - it's an
+# opaque identifier assigned by the assistant each turn and differs for
+# two semantically-identical calls. Semantic identity is
+# (name, args, result).
 sub _turn_signature {
     my ($turn) = @_;
     my ($assistant, $tool) = _turn_tool_pair($turn);
@@ -745,6 +649,41 @@ sub _select_turns {
     my $min_recent = 3;
     $recent_count = $min_recent if $recent_count < $min_recent;
     $recent_count = $total_turns if $recent_count > $total_turns;
+
+    # Tool-turn preservation: if the most recent turn (or the 2nd-most
+    # recent) contains assistant messages with tool_calls, always
+    # include that turn in the recent window even if it would otherwise
+    # be compressed. Without this, tool_calls from a prior turn get
+    # compressed into prose via _build_compressed_tail, and the model
+    # loses the actual tool_call/tool_result pairs — it re-issues the
+    # same calls because it can't see the results (model looping bug).
+    # The proactive trim (_role_based_tail_walk) has its own batch-atomic
+    # drop logic, but _select_turns compressing the turn entirely is a
+    # different path that loses the pairing at the turn-selection layer.
+    my $force_include = 0;
+    for my $offset (0, 1) {
+        my $idx = $total_turns - 1 - $offset;
+        next if $idx < 0;
+        my $turn = $turns->[$idx];
+        if (ref($turn) eq 'ARRAY') {
+            for my $msg (@$turn) {
+                if (ref($msg) eq 'HASH'
+                    && ($msg->{role} // '') eq 'assistant'
+                    && ref($msg->{tool_calls}) eq 'ARRAY'
+                    && @{$msg->{tool_calls}}) {
+                    $force_include = $offset + 1;
+                    last;
+                }
+            }
+        }
+        last if $force_include;
+    }
+    if ($force_include && $recent_count < $force_include) {
+        $recent_count = $force_include;
+        log_debug('ContextBuilder',
+            "Tool-turn preservation: extending recent window to include "
+            . "$force_include turn(s) with tool_calls (was $recent_target)");
+    }
 
     # Select the last $recent_count turns as "recent" (cache-stable prefix).
     my $start_idx = $total_turns - $recent_count;

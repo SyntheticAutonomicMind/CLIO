@@ -1,20 +1,14 @@
 #!/usr/bin/env perl
 # Regression test: ReadLine control signals must not leak as user input.
 #
-# Originally this bug came from ReadLine emitting { type => '__TIMEOUT__' }
-# on a 5-minute idle timer. Chat.pm's get_input passed it through as user
-# input, corrupting the session and triggering a phantom "you pasted a Perl
-# hash ref" exchange that confused the model.
+# Verifies:
+#   1. ReadLine.pm does not emit a __TIMEOUT__ signal.
+#   2. Defense-in-depth layers (SessionState, WorkflowOrchestrator,
+#      Chat) still reject any hash ref that somehow reaches them.
 #
-# The root cause was removed by reverting the timeout mechanism in ReadLine.
-# This test now verifies two things:
-#   1. ReadLine.pm does NOT emit the __TIMEOUT__ signal anymore.
-#   2. Defense-in-depth layers (SessionState, WorkflowOrchestrator, Chat)
-#      still reject any hash ref that somehow reaches them.
-#
-# The agent event mechanism (__AGENT_EVENT__) is still in place because
-# it's a separate, intentional feature for the multi-agent broker. Chat.pm's
-# hash-ref filter catches it before it can leak as user input.
+# The __AGENT_EVENT__ mechanism is a separate, intentional feature
+# for the multi-agent broker; Chat.pm's hash-ref filter catches it
+# before it can leak as user input.
 
 use strict;
 use warnings;

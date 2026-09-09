@@ -107,8 +107,9 @@ ok_test('load_result invalid name rejected', !$load_invalid->{success});
 my $load_unknown = $tool->execute({ operation => 'load', name => 'definitely-not-a-skill' });
 ok_test('load_result unknown skill error', !$load_unknown->{success});
 
-# PromptBuilder skill section: with auto_discover_skills=1, catalog appears.
-# We use a stub tool registry (empty) since we're testing only the skills section.
+# PromptBuilder skill section: with auto_discover_skills=1, the
+# catalog appears. Use a stub tool registry (empty) since we are
+# testing only the skills section.
 require CLIO::Tools::Registry;
 my $registry = CLIO::Tools::Registry->new(debug => 0);
 

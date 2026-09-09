@@ -114,25 +114,24 @@ subtest 'H3: no framework instructions in dynamic userContext' => sub {
 };
 
 # ===========================================================================
-# H2: per-iteration refresh (verified at the prose-renderer level -
-# WorkflowOrchestrator integration is checked via the orchestrator
-# test suite)
+# H2: per-iteration refresh — the dynamic UC (todos, compressed_tail)
+# is re-rendered every iteration from the current projection. Environment
+# (CWD, Date, Lang) is handled separately by PromptBuilder::get_user_context()
+# (cached per-minute, prepended to user input) — not tested here.
 # ===========================================================================
 
-subtest 'H2: messages_to_prose_dynamic reflects current datetime' => sub {
+subtest 'H2: dynamic UC refresh is deterministic for identical inputs' => sub {
     my $proj1 = CLIO::Core::ContextBuilder::build_projection(
-        history => [], user_input => 'test',
+        history    => [],
+        user_input => 'test',
+        active_todos => [
+            { id => 1, status => 'in_progress', content => 'write tests' },
+        ],
     );
     my $render1 = messages_to_prose_dynamic($proj1);
-    sleep(1);
-    my $proj2 = CLIO::Core::ContextBuilder::build_projection(
-        history => [], user_input => 'test',
-    );
-    my $render2 = messages_to_prose_dynamic($proj2);
-    isnt($render1, $render2,
-        'datetime_iso is refreshed on each build_projection call');
-    like($render1, qr/Date: \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/, 'first render has ISO date');
-    like($render2, qr/Date: \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/, 'second render has ISO date');
+    my $render2 = messages_to_prose_dynamic($proj1);
+    is($render1, $render2, 'dynamic UC render is deterministic for identical inputs');
+    like($render1, qr/Active todos:/, 'dynamic UC contains active todos');
 };
 
 done_testing();

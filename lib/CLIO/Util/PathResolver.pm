@@ -333,11 +333,11 @@ sub strip_path_quotes {
         return $stripped;
     }
 
-    # Note: We intentionally do NOT strip a lone trailing quote. A
-    # filename ending in `"` is unusual but legal, and stripping it
-    # silently would change behavior the user did not ask for. The
-    # common bug pattern (LLM wrapping a path in JSON-string quotes)
-    # is caught by the balanced case above.
+    # We intentionally do NOT strip a lone trailing quote. A
+    # filename ending in `"` is unusual but legal; stripping it
+    # would change behavior the user did not ask for. The common
+    # bug pattern (LLM wrapping a path in JSON-string quotes) is
+    # caught by the balanced case above.
 
     return $path;
 }

@@ -13,6 +13,15 @@ use CLIO::Util::ConfigPath qw(get_config_file);
 use CLIO::Util::JSON qw(encode_json decode_json safe_decode_json);
 use CLIO::Compat::HTTP;
 
+use CLIO::Core::Defaults qw(
+    COPILOT_EDITOR_VERSION
+    COPILOT_PLUGIN_VERSION
+    COPILOT_LS_VERSION
+    COPILOT_API_VERSION
+    COPILOT_USER_API_VERSION
+);
+use CLIO::Util::UUID qw(uuid_v4);
+
 =head1 NAME
 
 CLIO::Core::CopilotUserAPI - GitHub Copilot User API client
@@ -60,11 +69,12 @@ our $ERR_INVALID_RESPONSE = 'copilot_user: invalid response';
 sub new {
     my ($class, %args) = @_;
     
+    my $api_base = $args{api_base_url} || 'https://api.github.com';
     my $self = {
         debug => $args{debug} || 0,
         cache_ttl => $args{cache_ttl} || 300,  # 5 minutes default
         cache_file => $args{cache_file} || get_config_file('copilot_user_cache.json'),
-        base_url => 'https://api.github.com/copilot_internal/user',
+        base_url => "$api_base/copilot_internal/user",
         ua => CLIO::Compat::HTTP->new(
             agent => 'CLIO/2.0.0',
             timeout => 30,
@@ -101,11 +111,11 @@ sub fetch_user {
             my $tokens = $auth->load_tokens();
             $token = $tokens->{github_token} if $tokens;
             
-            # Note: We do NOT fall back to Config->get('github_pat') here
-            # because it creates a circular dependency: Config->load() calls
-            # _get_copilot_user_api_endpoint() which calls this method, which
-            # would then call Config->new() again -> infinite recursion.
-            # GitHubAuth is the proper token source.
+            # Do NOT fall back to Config->get('github_pat') here - it
+            # creates a circular dependency (Config->load() calls
+            # _get_copilot_user_api_endpoint() which calls this
+            # method, which would call Config->new() again). GitHubAuth
+            # is the proper token source.
         };
         
         unless ($token) {
@@ -120,6 +130,11 @@ sub fetch_user {
     $req->header('Authorization' => "token $token");
     $req->header('Accept' => 'application/json');
     $req->header('User-Agent' => 'CLIO/2.0.0');
+    $req->header('Editor-Version' => COPILOT_EDITOR_VERSION);
+    $req->header('Editor-Plugin-Version' => COPILOT_PLUGIN_VERSION);
+    $req->header('Copilot-Language-Server-Version' => COPILOT_LS_VERSION);
+    $req->header('X-GitHub-Api-Version' => COPILOT_USER_API_VERSION);
+    $req->header('X-Request-Id' => uuid_v4());
     
     my $resp = $self->{ua}->request($req);
     

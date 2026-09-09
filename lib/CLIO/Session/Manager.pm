@@ -343,6 +343,16 @@ sub cleanup {
     $self->{state}->cleanup();
 }
 
+sub release_lock {
+    my ($self) = @_;
+    
+    if ($self->{lock}) {
+        $self->{lock}->release();
+        delete $self->{lock};
+        log_debug('Manager', 'Session lock released');
+    }
+}
+
 sub get_history {
     my ($self) = @_;
     return $self->{stm}->get_context();

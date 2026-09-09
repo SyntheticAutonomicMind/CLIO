@@ -14,6 +14,12 @@ use File::Spec;
 use File::Basename;
 use CLIO::Util::CABundle;
 use CLIO::Util::UUID qw(uuid_v4);
+use CLIO::Core::Defaults qw(
+    COPILOT_EDITOR_VERSION
+    COPILOT_PLUGIN_VERSION
+    COPILOT_LS_VERSION
+    COPILOT_API_VERSION
+);
 
 =head1 NAME
 
@@ -33,11 +39,11 @@ especially billing information. The following headers MUST be present:
 
   Authorization: Bearer <token>
   Editor-Version: vscode/2.0.0 (configurable via editor_version in config)
-  Editor-Plugin-Version: copilot-chat/0.38.0 (configurable via plugin_version in config)
+  Editor-Plugin-Version: GitHubCopilotChat/0.38.0 (configurable via plugin_version in config)
   Copilot-Language-Server-Version: 1.378.1799 (configurable via copilot_language_server_version in config)
   X-Request-Id: <uuid> (generated per request)
   OpenAI-Intent: model-access (REQUIRED for billing metadata!)
-  X-GitHub-Api-Version: 2025-05-01 (configurable via github_api_version in config)
+  X-GitHub-Api-Version: 2026-01-09 (configurable via github_api_version in config)
 
 If these headers (especially OpenAI-Intent: model-access) are missing or incorrect, 
 the API may return incomplete or different model lists.
@@ -47,9 +53,9 @@ based on the request context (editor version, intent, etc.).
 
 Version headers can be updated via config to match latest vscode-copilot-chat:
   /api set editor_version vscode/2.0.0
-  /api set plugin_version copilot-chat/0.38.0
+  /api set plugin_version GitHubCopilotChat/0.38.0
   /api set copilot_language_server_version 1.378.1799
-  /api set github_api_version 2025-05-01
+  /api set github_api_version 2026-01-09
 
 =head1 SYNOPSIS
 
@@ -104,22 +110,22 @@ sub new {
     my $models_base_url = $args{models_base_url} || $api_base_url || 'https://api.githubcopilot.com';
     
     # Load version headers from config (with fallback defaults)
-    my ($editor_version, $plugin_version, $copilot_language_server_version, $github_api_version);
-    eval {
-        require CLIO::Core::Config;
-        my $config = CLIO::Core::Config->new(debug => $args{debug} || 0);
-        $editor_version = $config->get('editor_version') || 'vscode/2.0.0';
-        $plugin_version = $config->get('plugin_version') || 'copilot-chat/0.38.0';
-        $copilot_language_server_version = $config->get('copilot_language_server_version') || '1.378.1799';
-        $github_api_version = $config->get('github_api_version') || '2025-05-01';
-    };
-    if ($@) {
-        # Fallback if Config fails to load
-        $editor_version = 'vscode/2.0.0';
-        $plugin_version = 'copilot-chat/0.38.0';
-        $copilot_language_server_version = '1.378.1799';
-        $github_api_version = '2025-05-01';
-    }
+   my ($editor_version, $plugin_version, $copilot_language_server_version, $github_api_version);
+   eval {
+       require CLIO::Core::Config;
+       my $config = CLIO::Core::Config->new(debug => $args{debug} || 0);
+        $editor_version = $config->get('editor_version') || COPILOT_EDITOR_VERSION;
+        $plugin_version = $config->get('plugin_version') || COPILOT_PLUGIN_VERSION;
+        $copilot_language_server_version = $config->get('copilot_language_server_version') || COPILOT_LS_VERSION;
+        $github_api_version = $config->get('github_api_version') || COPILOT_API_VERSION;
+   };
+   if ($@) {
+       # Fallback if Config fails to load
+        $editor_version = COPILOT_EDITOR_VERSION;
+        $plugin_version = COPILOT_PLUGIN_VERSION;
+        $copilot_language_server_version = COPILOT_LS_VERSION;
+        $github_api_version = COPILOT_API_VERSION;
+   }
     
     my $self = {
         api_key => $api_key,  # API key from parameter or GitHubAuth
@@ -345,8 +351,7 @@ sub get_model_capabilities {
     
     require CLIO::Core::Defaults;
 
-    # Find model by ID. Case-insensitive match (same as get_model_billing
-    # and the MCM case-insensitive lookup fix) so user input like
+    # Find model by ID. Case-insensitive match so user input like
     # "Gpt-4.1" finds server-side "gpt-4.1" without a strict case
     # match requirement. The actual server-side id is preserved in
     # the returned $caps as needed by the caller.

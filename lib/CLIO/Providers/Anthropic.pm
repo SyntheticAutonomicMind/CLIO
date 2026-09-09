@@ -974,15 +974,10 @@ sub _supports_adaptive_thinking {
     my ($self, $model) = @_;
     return 0 unless defined $model && length $model;
     # Delegate to MCM._anthropic_model_reasoning_mode so build-time and
-    # MCM-time heuristics share a single source of truth. Without this,
-    # the two regexes can drift (this function previously missed the
-    # 5-series and proxy aliases, sending {type:enabled} for models
-    # like Proxy-Sonnet-5 and getting HTTP 400'd by the API).
-    #
-    # MCM is loaded lazily because Anthropic.pm is used by APIManager
-    # which also uses MCM - the module is almost always loaded by the
-    # time build_request runs. If MCM is somehow unavailable, fall
-    # back to the inline regex (covers the common 4.6+ case at least).
+    # MCM-time heuristics share a single source of truth. MCM is
+    # loaded lazily because Anthropic.pm is used by APIManager which
+    # also uses MCM - the module is almost always loaded by the time
+    # build_request runs.
     my $mcm;
     eval {
         require CLIO::Core::ModelCapabilitiesManager;
@@ -1102,9 +1097,9 @@ sub _default_thinking_config {
     # 'xhigh' maps to 32k - deeper reasoning than 'high', useful for
     # complex agent loops and long-horizon planning tasks.
     # 'max' maps to the model max budget - no soft constraint, only the
-    # hard max_tokens ceiling applies.
-    # Note: build_request() ensures max_tokens > budget_tokens + 4096
-    # (minimum response budget) as a safety net.
+    # hard max_tokens ceiling applies. build_request() ensures
+    # max_tokens > budget_tokens + 4096 (minimum response budget) as a
+    # safety net.
     my %effort_to_budget = (
         low    => 4096,
         medium => 10240,

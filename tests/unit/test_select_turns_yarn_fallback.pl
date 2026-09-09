@@ -4,18 +4,7 @@
 #
 # Regression test: _select_turns must not die with "Undefined subroutine
 # YaRN::recover_substantive_task" when no anchor turn is found in
-# history. The fix loads YaRN in ContextBuilder (use CLIO::Memory::YaRN)
-# and dedupes the duplicate fallback block.
-#
-# Previously ContextBuilder.pm called
-# CLIO::Memory::YaRN::recover_substantive_task without loading the
-# module. When YaRN hadn't been loaded by some prior require, the
-# call died with "Undefined subroutine ... called at lib/CLIO/Core/
-# ContextBuilder.pm line 688." This was a fatal error in the rare
-# but real case where _split_into_turns produces only continuation
-# prompts (e.g. a session whose first substantive user message was
-# trimmed past by aggressive context trimming, leaving only
-# "continue" / "ok" / "go on" in history).
+# history. ContextBuilder must load YaRN before calling the helper.
 
 use strict;
 use warnings;

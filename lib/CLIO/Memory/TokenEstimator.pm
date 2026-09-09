@@ -337,9 +337,19 @@ Returns:
 
 sub compute_prompt_budget {
     my ($caps) = @_;
-    return 1000 unless ref $caps eq 'HASH';
 
     require CLIO::Core::Defaults;
+
+    # When caps is undef (e.g. MCM couldn't resolve the model), use
+    # DEFAULT_CONTEXT_WINDOW (128K) as the baseline. Previously this
+    # returned 1000, which caused the proactive trim path to
+    # aggressively lop off 50%+ of conversation history even though
+    # the model could safely handle far more. The 1000-token floor is
+    # preserved below for the case where computed budget < 1000, but
+    # an undef caps should not itself force a 1000-token budget.
+    if (ref($caps) ne 'HASH') {
+        $caps = {};
+    }
 
     # Resolve context window. Prefer max_context_window_tokens (the
     # model's true context window), fall back to max_prompt_tokens

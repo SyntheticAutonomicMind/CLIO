@@ -47,11 +47,18 @@ subtest 'metadata-leak regression: no label scaffolding' => sub {
     unlike($prose, qr/^Unresolved:/m, 'No "Unresolved:" label');
     unlike($prose, qr/^Relevant memory:/m, 'No "Relevant memory:" label');
 
+    # Active task text is NOT rendered in the prose — it is prepended
+    # to the user_input by WorkflowOrchestrator via
+    # PromptBuilder::get_user_context(). Rendering it here would cause
+    # the model to refocus on the original request every turn.
+    unlike($prose, qr/fix the metadata leak bug/,
+        'Active task text is NOT in prose (rendered separately)');
+
     # But the underlying work product must still be present:
-    like($prose, qr/fix the metadata leak bug/, 'Active task text is present (unlabeled)');
     like($prose, qr/Active todos:/, 'Active todos section is present');
     like($prose, qr/\[in-progress\] Strip label scaffolding/, 'Todo content with status is present');
-    like($prose, qr/Working directory:/, 'Environment section is present');
+    # Environment is NOT rendered here — handled by PromptBuilder::get_user_context().
+    unlike($prose, qr/Working directory:/, 'Environment NOT rendered (handled by PromptBuilder)');
 };
 
 # ===========================================================================
@@ -59,8 +66,8 @@ subtest 'metadata-leak regression: no label scaffolding' => sub {
 # ===========================================================================
 
 subtest 'metadata-leak regression: tool errors not recycled' => sub {
-    # Simulate unresolved state with raw tool errors (the kind that
-    # previously appeared in the "Unresolved:" section).
+    # Simulate unresolved state with raw tool errors. The prose
+    # renderer must not surface them in the userContext.
     my $proj = CLIO::Core::ContextBuilder::build_projection(
         history      => [],
         user_input   => 'continue working',
@@ -87,8 +94,8 @@ subtest 'metadata-leak regression: tool errors not recycled' => sub {
     unlike($prose, qr/file_operations error/, 'No tool error text leaked');
     unlike($prose, qr/Missing required parameter/, 'No parameter error text leaked');
 
-    # But work product is still present.
-    like($prose, qr/fix bugs/, 'Task text still present');
+    # Active task text is NOT in the prose — rendered separately via
+    # get_user_context(). Only the todos should be present as work product.
     like($prose, qr/\[in-progress\] Fix leak/, 'Todo still present');
 };
 
@@ -190,8 +197,9 @@ subtest 'metadata-leak regression: empty projection produces no labels' => sub {
     unlike($prose, qr/^Unresolved:/m, 'No Unresolved label on empty proj');
     unlike($prose, qr/^Relevant memory:/m, 'No Relevant memory label on empty proj');
 
-    # But environment info is still present (it's always populated by _build_environment_hash).
-    like($prose, qr/Working directory:/, 'Environment still present on empty proj');
+        # Environment is handled separately by PromptBuilder::get_user_context(),
+    # not by this renderer. An empty projection produces empty prose.
+    is(length($prose), 0, 'Empty projection produces empty prose (env handled elsewhere)');
 };
 
 done_testing();

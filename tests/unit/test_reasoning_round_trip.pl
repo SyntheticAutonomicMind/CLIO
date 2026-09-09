@@ -282,8 +282,6 @@ use_ok('CLIO::Core::APIManager');
     ok(!$p->_supports_adaptive_thinking('claude-3-5-sonnet'), 'Anthropic: 3.5 not adaptive');
 
     # 5-series: every Anthropic-family 5-generation is adaptive per docs.
-    # Previously this regex only matched 4.6+, sending {type:enabled} for
-    # 5-series models and getting HTTP 400'd by the API.
     ok($p->_supports_adaptive_thinking('claude-sonnet-5'), 'Anthropic: sonnet-5 is adaptive');
     ok($p->_supports_adaptive_thinking('claude-opus-5'), 'Anthropic: opus-5 is adaptive');
     ok($p->_supports_adaptive_thinking('claude-haiku-5'), 'Anthropic: haiku-5 is adaptive');

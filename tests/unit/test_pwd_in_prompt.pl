@@ -1,9 +1,10 @@
 #!/usr/bin/env perl
 # Test: Working directory included in session context
 #
-# Asserts the working directory is included in the <sessionContext>
-# block built by CLIO::Core::PromptBuilder. The PWD is the lead field
-# so the model anchors to it when resolving relative paths.
+# Asserts the working directory is included in the user context string
+# built by CLIO::Core::PromptBuilder::get_user_context(). The PWD is
+# the lead field so the model anchors to it when resolving relative
+# paths.
 
 use strict;
 use warnings;
@@ -26,38 +27,29 @@ mkdir('.clio') or warn "mkdir .clio: $!";
 my $current_pwd = getcwd();
 print "# Test directory: $current_pwd\n";
 
-# Use the live prose renderer (ContextBuilder projection +
-# MessageHistory::messages_to_prose_dynamic) - the same path
-# WorkflowOrchestrator uses in production. get_user_context (the old
-# <sessionContext> XML builder) was removed in the role-based history
-# refactor; the environment block is now rendered as natural prose.
-require CLIO::Core::ContextBuilder;
-require CLIO::Core::MessageHistory;
+# Use the live PromptBuilder::get_user_context() path — the production
+# source for environment info (CWD, Date, Lang). Environment rendering
+# was consolidated here from ContextBuilder::_build_environment_hash
+# and MessageHistory::messages_to_prose_dynamic.
+require CLIO::Core::PromptBuilder;
 
-my $projection = CLIO::Core::ContextBuilder::build_projection(
-    history             => [],
-    user_input          => 'verify cwd',
-    active_task         => 'verify cwd',
-    active_todos        => [],
-    ltm                 => [],
-    unresolved          => [],
-    context_files_block => '',
-);
-my $section = eval { CLIO::Core::MessageHistory::messages_to_prose_dynamic($projection) };
+my $pb = CLIO::Core::PromptBuilder->new();
+my $section = $pb->get_user_context();
 
 ok(defined $section && length($section), "Generated user context section");
 
 if ($section) {
-    ok($section =~ /Working directory:/, "Section includes 'Working directory:'");
+    ok($section =~ /CWD:/, "Section includes 'CWD:'");
     ok($section =~ /\Q$current_pwd\E/, "Section includes actual PWD: $current_pwd");
+    ok($section =~ /Date:/, "Section includes Date:");
+    ok($section =~ /Lang:/, "Section includes language");
     unlike($section, qr/sessionContext/, "No <sessionContext> XML tag (prose format)");
 
     print "# Sample from section:\n";
-    for my $line (grep { defined $_ && /Working directory|Language|Date/ } (split /\n/, $section)[0..5]) {
+    for my $line (grep { defined $_ && /CWD|Date|Lang/ } (split /\n/, $section)[0..5]) {
         print "#   $line\n";
     }
 } else {
-    fail("Could not generate section: $@");
     fail("No section content");
     fail("No PWD found");
 }

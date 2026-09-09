@@ -435,7 +435,7 @@ sub _clean_path {
 sub _check_write_authorization {
     my ($self, $path, $operation, $context) = @_;
     
-    # Note: session object uses 'session_id' not 'id'
+    # session object uses 'session_id' (or 'id' as fallback).
     my $session_id = $context->{session}->{session_id} || $context->{session}->{id} || '';
     my $working_dir = $self->{session_dir} || '';
     
@@ -660,9 +660,7 @@ sub read_file {
     return $self->error_result("File not readable: $path") unless -r $path;
 
     # Interrupt check before reading. read_file can take a long time on
-    # large files (gigabytes), and any interrupt bypass used to be missed
-    # until the read finished. Checking before the read gives the user a
-    # chance to cancel before we burn I/O on a file they no longer want.
+    # large files, so give the user a chance to cancel before we burn I/O.
     if ($self->check_interrupt($context)) {
         return $self->error_result(
             "Interrupted by user before reading $path. File was not read."
@@ -671,14 +669,9 @@ sub read_file {
 
 
     # Count total lines so we can give a helpful error when start_line is
-    # Count total lines so we can give a helpful error when start_line is
-    # past EOF (previously returned silent empty output with success=1).
-    # Wrapped in eval{} because the prior -f/-r checks can race with the
-    # actual open() call (e.g. file deleted between stat and open, or
-    # permission revoked). Without eval the croak used to propagate up
-    # to SimpleAIAgent's outermost catch, surfacing as the generic
-    # "I'm experiencing technical difficulties" message and killing the
-    # conversation. Now we surface a proper error_result and ToolErrorGuidance
+    # past EOF. Wrapped in eval{} because the prior -f/-r checks can race
+    # with the actual open() call (file deleted between stat and open,
+    # permission revoked). Surface a proper error_result so ToolErrorGuidance
     # can categorize it.
     my $total_lines = 0;
     my $line_count_error;
@@ -725,9 +718,8 @@ sub read_file {
         # Open in raw mode first, then try to decode UTF-8 gracefully
         open my $fh, '<:raw', $path or croak "Cannot open $path: $!";
 
-        # Inline interrupt polling. Long file reads (millions of lines)
-        # used to ignore user ESC until the read finished. The cost is
-        # one boolean flag check per poll unit - negligible vs the I/O.
+        # Inline interrupt polling. The cost is one boolean flag check
+        # per poll unit - negligible vs the I/O.
         my $poll_every = CLIO::Core::WorkflowOrchestrator::INTERRUPT_POLL_INTERVAL_MS() * 100;
         my $lines_since_check = 0;
 
@@ -1794,7 +1786,7 @@ sub read_tool_result {
     }
     
     # Get session ID from context
-    # Note: session object uses 'session_id' not 'id'
+    # Get session ID from context (session object uses 'session_id').
     my $session_id = $context->{session}->{session_id} || $context->{session}->{id};
     unless ($session_id) {
         return $self->error_result("No session ID in context. Cannot retrieve tool result.");
@@ -2109,9 +2101,22 @@ Returns: Summary of all replacements performed
 sub multi_replace_string {
     my ($self, $params, $context) = @_;
     
-    my $replacements = $params->{replacements};
-    
+   my $replacements = $params->{replacements};
+   
     return $self->error_result("Missing required parameter: replacements") unless $replacements;
+
+    # Silent remediation: some models pass 'replacements' as a JSON
+    # string instead of a parsed array. Decode it if needed so the
+    # tool works regardless of how the provider formats the argument.
+    if (ref($replacements) ne 'ARRAY' && !ref($replacements)) {
+        require CLIO::Util::JSON;
+        my $decoded = CLIO::Util::JSON::safe_decode_json($replacements);
+        if (ref($decoded) eq 'ARRAY') {
+            $replacements = $decoded;
+            $params->{replacements} = $decoded;
+        }
+    }
+
     return $self->error_result("'replacements' must be an array") unless ref($replacements) eq 'ARRAY';
     return $self->error_result("'replacements' array is empty") unless @$replacements > 0;
     

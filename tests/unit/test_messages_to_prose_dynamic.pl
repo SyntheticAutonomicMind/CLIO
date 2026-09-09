@@ -70,13 +70,13 @@ my $projection = build_projection();
 my $prose = messages_to_prose_dynamic($projection);
 
 ok(defined $prose && length($prose), 'messages_to_prose_dynamic returns non-empty string');
-# messages_to_prose_dynamic is now an alias for messages_to_prose_dynamic -
-# the "stable" prose sections (Task, Recent work) are pushed as
+# The "stable" prose sections (Task, Recent work) are pushed as
 # role-based messages by WorkflowOrchestrator, not as prose. So the
 # dynamic-only test ensures we don't accidentally regress to
 # rendering stable content as prose (which would invalidate the
-# cache-stable prefix design).
-like($prose, qr/Working directory:/, 'starts with working directory (dynamic-only renderer, no # headers)');
+# cache-stable prefix design). Environment is handled separately
+# by PromptBuilder::get_user_context(), not rendered here.
+like($prose, qr/Active todos:/, 'starts with active todos (dynamic-only renderer, no # headers)');
 
 # ---------------------------------------------------------------------------
 # 2. No XML tags
@@ -99,10 +99,6 @@ for my $tag (qw(
     <unresolvedState> </unresolvedState>
     <relevantMemory > </relevantMemory>
     <memory > </memory>
-    <environment> </environment>
-    <dateTime > </dateTime>
-    <workingDirectory> </workingDirectory>
-    <language> </language>
 )) {
     unlike($prose, qr/\Q$tag\E/, "no XML tag '$tag' in prose output");
 }
@@ -148,45 +144,24 @@ unlike($prose, qr/## Turn 1\n/, 'does NOT render per-turn prose blocks (role-bas
 unlike($prose, qr/User: Fix the qa-messageHistory-fix bug/, 'does NOT render anchor user content as prose');
 like($prose, qr/Active todos:\n/, 'Active todos section present (natural prose, no # header)');
 like($prose, qr/- \[in_progress\] verify prose rendering\b/, 'todo rendered with status only (no internal id)');
-like($prose, qr/Working directory:/, '# Environment section present (natural prose, no # header)');
-like($prose, qr/Working directory: /, 'environment has working directory');
-like($prose, qr/Language: /, 'environment has language');
-like($prose, qr/Date: \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/, 'environment has ISO timestamp');
+# Environment is NOT rendered here — handled by PromptBuilder::get_user_context()
+# prepended to the user message. This is the single source for env info.
+unlike($prose, qr/Working directory:/, 'environment NOT rendered here (handled by PromptBuilder)');
+unlike($prose, qr/Language: /, 'language NOT rendered here (handled by PromptBuilder)');
+unlike($prose, qr/Date: /, 'date NOT rendered here (handled by PromptBuilder)');
 
-# DELETED in this commit: tests 5-8 verified the prose renderer
-# rendered tool calls and the cache-stable # Task block. The role-based
-# history refactor pushed anchor + recent turns as role-based messages
-# rather than prose, so the prose renderer is now dynamic-only. These
-# assertions no longer apply. Test 9 (empty projection) and test 10
-# (missing optional fields) below are still meaningful.
-
-# ---------------------------------------------------------------------------
-# 6. Determinism: same input -> same output
-# ---------------------------------------------------------------------------
-
+# Determinism: same input -> same output.
 my $p1 = messages_to_prose_dynamic(build_projection());
 my $p2 = messages_to_prose_dynamic(build_projection());
 is($p1, $p2, 'messages_to_prose_dynamic is deterministic across runs');
 
-# ---------------------------------------------------------------------------
-# 7. Dynamic-only rendering: no # Task or # Recent work sections
-# ---------------------------------------------------------------------------
-
-# The cache-stable prefix (anchor + recent turns) is now pushed as
-# role-based messages, not as prose. Verify the prose renderer stays
-# dynamic-only.
+# Dynamic-only rendering: no # Task or # Recent work sections
+# (those are now role-based messages, not prose).
 unlike($p1, qr/^# Task\b/m, 'Prose renderer does NOT emit # Task (now role-based)');
 unlike($p1, qr/^# Recent work\b/m, 'Prose renderer does NOT emit # Recent work (now role-based)');
 unlike($p1, qr/Tool call:/, 'Prose renderer does NOT render tool calls (now role-based)');
 unlike($p1, qr/Args: /, 'Prose renderer does NOT render tool args (now role-based)');
-like($p1, qr/Working directory:/, 'Prose renderer emits environment as natural prose (no # header)');
-
-# ---------------------------------------------------------------------------
-# 8. Tool result truncation
-# ---------------------------------------------------------------------------
-# DELETED: tool results are now part of the role-based messages
-# (not prose). Truncation happens in ConversationManager / role-based
-# tail walk, not the prose renderer.
+unlike($p1, qr/Working directory:/, 'Prose renderer does NOT emit environment (handled by PromptBuilder)');
 
 # ---------------------------------------------------------------------------
 # 9. Empty projection is safe
@@ -209,13 +184,5 @@ my $minimal_proj = {
 };
 my $minimal = messages_to_prose_dynamic($minimal_proj);
 is(length($minimal), 0, 'minimal projection (no dynamic fields) renders empty');
-
-# ---------------------------------------------------------------------------
-# 11. messages_to_prose_dynamic is an alias for messages_to_prose_dynamic
-# ---------------------------------------------------------------------------
-# The split (stable + dynamic) was deleted when role-based history
-# was introduced. messages_to_prose_dynamic is now a thin alias.
-my $dynamic_only = CLIO::Core::MessageHistory::messages_to_prose_dynamic($projection);
-is($prose, $dynamic_only, 'messages_to_prose_dynamic == messages_to_prose_dynamic');
 
 done_testing();

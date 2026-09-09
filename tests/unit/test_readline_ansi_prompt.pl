@@ -247,10 +247,8 @@ ok($ansi_bytes > 0, "ANSI prompt has $ansi_bytes invisible bytes that must not c
     is($rl->{last_cursor_col}, 3, "_emit_text: cursor at col 3 after 2-visible-char ANSI prompt");
     is($rl->{last_cursor_disp}, 2, "_emit_text: disp=2 after ANSI prompt (ANSI bytes not counted)");
     # Under autowrap semantics the cursor sits at a valid (row, col) with
-    # col in [1, term_width] after every emit. The "pending wrap" bookkeeping
-    # was removed; the equivalent invariant is "col never exceeds term_width
-    # immediately after emit" — but a short 2-char emit can't exceed 80 cols
-    # anyway, so the col==3 assertion above is the real check.
+    # col in [1, term_width] after every emit. A short 2-char emit can't
+    # exceed 80 cols, so the col==3 assertion above is the real check.
     cmp_ok($rl->{last_cursor_col}, '<=', 80, "_emit_text: cursor col within terminal width after short emit");
     ok($rl->_get_prompt_disp($ansi_prompt) == 2, "_get_prompt_disp: strips ANSI, returns 2");
 }

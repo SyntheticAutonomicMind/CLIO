@@ -908,9 +908,13 @@ sub _handle_error_response_impl {
     # - OpenAI/Ollama/etc: context_length_exceeded, prompt token count exceeds
     # - OpenRouter/OpenAI-style: "maximum context length is N tokens"
     # - Generic: "reduce the length of either one" (OpenRouter variant)
+    # - llama.cpp: exceed_context_size_error, "request (N tokens) exceeds the
+    #   available context size (M tokens)"
     elsif ($status == 400 && ($error =~ /model_max_prompt_tokens_exceeded|context_length_exceeded|prompt token count.*exceeds/i
                                || $error =~ /maximum.context.length/i
-                               || $error =~ /reduce.*(?:prompt|input|context|length)/i)) {
+                               || $error =~ /reduce.*(?:prompt|input|context|length)/i
+                               || $error =~ /exceed.*context.size/i
+                               || (ref($error_obj) eq 'HASH' && ($error_obj->{type} // '') eq 'exceed_context_size_error'))) {
         $is_retryable_error = 1;
         $retryable = 1;
         $retry_after = 0;

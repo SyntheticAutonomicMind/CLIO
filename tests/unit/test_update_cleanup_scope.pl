@@ -12,12 +12,10 @@ use Test::More;
 use File::Path qw(rmtree);
 use CLIO::Update;
 
-# Verify the "silent context" path: when caller does `my $x = download_version()`,
-# wantarray is false inside _download_and_extract so it returns the extracted
-# path only. Make sure Update::switch_to_version's old `my $source_dir = ...`
-# code path still works (it now uses list context, but legacy callers might
-# not). This guards against accidentally changing _download_and_extract's
-# scalar return.
+# Verify the scalar-context path: when caller does
+# `my $x = download_version()`, wantarray is false inside
+# _download_and_extract so it returns the extracted path only. Guards
+# against accidentally changing the scalar return.
 {
     no warnings 'redefine';
     local *CLIO::Update::download_version = sub {

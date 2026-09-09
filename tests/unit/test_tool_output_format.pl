@@ -3,8 +3,7 @@
 # Unit tests for CLIO tool output format and logger interaction.
 #
 # Covers:
-#   1. Logger doesn't clear lines (no \r\e[K prefix) — this previously
-#      destroyed inline-format tool header lines.
+#   1. Logger doesn't clear lines (no \r\e[K prefix).
 #   2. ToolOutputFormatter inline mode renders header + action correctly.
 #   3. ToolOutputFormatter box mode renders with connector.
 #   4. WebOperations.pm error_result returns include tool_name.
@@ -181,8 +180,8 @@ print "\n--- Editor.pm uses list-form system ---\n";
     my $uses_list_form = ($body =~ /system\(\$self->\{editor\},\s*\$?(?:filepath|filename)\)/);
     ok($uses_list_form, 'Editor.pm uses list-form system()');
 
-    # No quotemeta-of-filepath pattern (the old shell-form style)
-    # Note: only check actual code, not comments. Strip comments first.
+    # No quotemeta-of-filepath pattern (the old shell-form style).
+    # Only check actual code, not comments.
     my $code = $body;
     $code =~ s/^\s*#.*$//mg;  # remove single-line comments
     my $uses_quotemeta = ($code =~ /quotemeta\(\$(?:filepath|filename)\)/);

@@ -2,31 +2,9 @@
 # SPDX-License-Identifier: GPL-3.0-only
 # SPDX-FileCopyrightText: Copyright (c) 2026 Andrew Wyatt (Fewtarius)
 #
-# Test: _build_compressed_tail now uses YaRN compression, surfacing
-# file paths, tool counts, and decisions from dropped turns.
-#
-# Prior to 2026-09-02 the implementation was a template-based
-# joiner that produced "User: <200 chars>. | Assistant: <200 chars>."
-# rows. The dropped-tail section was bounded (under 900 chars) but
-# information-sparse. Real work signals (file paths, commit hashes,
-# tool usage counts) were not surfaced.
-#
-# The new path:
-#  1. Pre-filters dropped turns to remove obvious continuation
-#     prompts ("continue" / "ok" / "y" / etc.) so YaRN never sees
-#     pure-continuation noise.
-#  2. Hands the filtered list to CLIO::Memory::YaRN::compress_messages,
-#     the same compressor used by Session::State::trim_context.
-#  3. Strips <thread_summary> wrapper tags and caps the output at
-#     900 chars (the existing dynamic-UC safety bound).
-#  4. Falls back to the legacy template if YaRN is unavailable or
-#     returns nothing useful (defensive only; YaRN is always loaded
-#     in production via `use CLIO::Memory::YaRN ()` at the top of
-#     ContextBuilder.pm).
-#
-# This test pins the new behavior: the dropped-tail section must
-# surface file paths touched by dropped turns (which the template
-# could not do) and must stay under the 900-char cap on long inputs.
+# Test: _build_compressed_tail uses YaRN compression, surfacing file
+# paths, tool counts, and decisions from dropped turns. The dropped-
+# tail section must stay under the 900-char cap on long inputs.
 
 use strict;
 use warnings;
@@ -81,7 +59,7 @@ ok(length($tail) < 900, 'compressed tail is under 900-char cap')
 #    (The old "YaRN-compressed" narration was removed in the context
 #    pipeline redesign — compress_for_context_recovery returns clean
 #    thread_summary content without framework framing.)
-like($tail, qr/Current task:|Files:|Tools:|Commits:/, 'YaRN compression output is present (structured sections found)');
+like($tail, qr/Current task:|Recent user requests:/, 'YaRN compression output is present (structured sections found)');
 
 # 3. The "Current task" section is surfaced (YaRN picks the most
 # substantive user message from the dropped turns; the active_task
@@ -91,16 +69,10 @@ like($tail, qr/Current task:.*Investigate the role-based history/s,
     'Current task: surfaces a substantive user request from dropped turns')
     or diag("tail:\n$tail");
 
-# 4. File paths are extracted (this is the win vs the template).
-like($tail, qr/lib\/CLIO\/Core\/ContextBuilder\.pm/,
-    'dropped tail surfaces the file path that was read in tool calls')
-    or diag("tail:\n$tail");
-
-# 5. Tool counts are reported. Use the /s flag so .* can span
-# newlines (YaRN's output is multi-line).
-like($tail, qr/Tools:.*file_operations.*\d+ calls/s,
-    'dropped tail reports tool usage counts')
-    or diag("tail:\n$tail");
+# No statistical noise (commits, files, decisions) in the slimmed YaRN
+# output — these change every turn and bust provider KV cache.
+unlike($tail, qr/files_touched|Files:|Commits:|Decisions:|Tool calls:/,
+    'no statistical noise (files/commits/decisions) in compressed output');
 
 # 6. Continuation filtering still applies (mixed input).
 my @mixed = (

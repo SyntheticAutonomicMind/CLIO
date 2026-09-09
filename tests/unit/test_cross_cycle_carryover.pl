@@ -10,7 +10,7 @@ use utf8;
 use FindBin qw($Bin);
 use lib "$Bin/../../lib";
 
-use Test::More tests => 7;
+use Test::More tests => 6;
 use CLIO::Memory::YaRN;
 
 my $yarn = CLIO::Memory::YaRN->new();
@@ -21,8 +21,7 @@ my @cycle1_msgs = (
     { role => 'assistant', content => 'Starting...' },
     { role => 'tool', tool_call_id => 'tc1', content => 'Result: created Base.pm' },
     { role => 'user', content => 'Add a renderer' },
-    { role => 'assistant', content => 'Writing renderer...'},
-    { role => 'tool', tool_call_id => 'tc2', content => '[abc1234] Add widget renderer' },
+    { role => 'assistant', content => 'Writing renderer...' },
 );
 
 my $result1 = $yarn->compress_for_context_recovery(
@@ -32,8 +31,8 @@ my $result1 = $yarn->compress_for_context_recovery(
 
 ok(defined $result1 && $result1->{content}, 'Cycle 1: compression produced output');
 my $content1 = $result1->{content};
-like($content1, qr/abc1234/, 'Cycle 1: first commit preserved');
-like($content1, qr/Add widget renderer/, 'Cycle 1: commit description preserved');
+like($content1, qr/Build a widget system/, 'Cycle 1: original task preserved');
+like($content1, qr/Add a renderer/, 'Cycle 1: user request preserved');
 
 # Cycle 2: Simulate session reload — thread_summary from cycle 1
 # is in the message array (as system message), plus new messages.
@@ -41,7 +40,7 @@ my @cycle2_msgs = (
     { role => 'system', content => $content1 },
     { role => 'user', content => 'Add CSS styling' },
     { role => 'assistant', content => 'Styling...' },
-    { role => 'tool', tool_call_id => 'tc3', content => '[def5678] Add CSS styling' },
+    { role => 'tool', tool_call_id => 'tc3', content => 'CSS applied' },
 );
 
 my $result2 = $yarn->compress_for_context_recovery(
@@ -52,11 +51,11 @@ my $result2 = $yarn->compress_for_context_recovery(
 ok(defined $result2 && $result2->{content}, 'Cycle 2: compression produced output');
 my $content2 = $result2->{content};
 
-# Cross-cycle carryover: the previous commit must survive
-like($content2, qr/abc1234/, 'Cycle 2 carryover: previous commit abc1234 preserved');
-like($content2, qr/Add widget renderer/, 'Cycle 2 carryover: previous commit description preserved');
+# Cross-cycle carryover: previous user requests must survive
+like($content2, qr/Build a widget system/, 'Cycle 2 carryover: previous original task preserved');
+like($content2, qr/Add a renderer/, 'Cycle 2 carryover: previous user request preserved');
 
 # New content should also be present
-like($content2, qr/def5678/, 'Cycle 2: new commit included');
+like($content2, qr/Add CSS styling/, 'Cycle 2: new user request included');
 
 done_testing();

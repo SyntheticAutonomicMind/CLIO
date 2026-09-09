@@ -2,32 +2,17 @@
 # SPDX-License-Identifier: GPL-3.0-only
 # SPDX-FileCopyrightText: Copyright (c) 2026 Andrew Wyatt (Fewtarius)
 #
-# Regression test for the task-transition bug.
+# Regression test for the task-transition bug. _active_task_text()
+# must return the most recent active goal, not the first. The dynamic
+# userContext pins the session to whatever the function returns, so
+# returning the wrong goal freezes the model on the previous task.
 #
-# Failure mode reproduced:
-# - User starts task A (e.g. "/init templating"), agent records an active
-#   session goal for it.
-# - User then starts task B (e.g. "auto-skill creation") in the same session,
-#   agent records another active session goal.
-# - WorkflowOrchestrator::_active_task_text() previously returned the FIRST
-#   active goal, not the most recent. The "# Active task" string in the
-#   dynamic userContext therefore pinned the session to task A.
-# - The YaRN-compressed history (the "Earlier work" prose) and the anchor
-#   turn were both frozen to task A. The model saw "# Active task: task A"
-#   plus an anchor turn that was task A, and concluded that any work it
-#   was doing on task B was "scope creep" - reverting its own uncommitted
-#   changes in the bad session.
-#
-# This test pins three properties:
-# 1. _active_task_text() returns the MOST RECENT active goal, not the first.
-# 2. _active_task_text() still returns the original task when only one
-#    active goal is set (regression guard for the simple case).
+# Pins three properties:
+# 1. _active_task_text() returns the most recent active goal.
+# 2. _active_task_text() still returns the original task when only
+#    one active goal is set.
 # 3. Short acknowledgements ("proceed", "yes", "ship it", "looks good")
-#    do NOT trigger a new active task. This is the length guard.
-#
-# Future tests will pin the projection rendering ("NEW TASK: ..." hint)
-# and the "current focus" precedence rules; this file covers the core
-# _active_task_text fix because that is the smallest unit that broke.
+#    do not trigger a new active task.
 
 use strict;
 use warnings;

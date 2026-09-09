@@ -201,7 +201,8 @@ sub process_user_request {
     }
     
     eval {
-        # Orchestrator is now initialized in constructor, just make sure it exists
+        # Orchestrator is initialized in the constructor; this is a
+        # defense-in-depth lazy init.
         unless ($self->{orchestrator}) {
             require CLIO::Core::WorkflowOrchestrator;
             $self->{orchestrator} = CLIO::Core::WorkflowOrchestrator->new(

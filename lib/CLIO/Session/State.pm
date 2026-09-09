@@ -92,14 +92,10 @@ sub new {
        context_files => [],
        # Context management configuration
        max_tokens => $args{max_tokens} // 128000,           # Model context window (updated at runtime)
-       # Session goals: persistent task-tracking goals managed by the model.
-       # Stored as an arrayref of {id, title, description, status, created_at}.
-       # Always injected into user_context by PromptBuilder (no loading step
-       # required) so the agent has its goals in view every turn. Survives
-       # context trims because the storage is the session file, not memory.
-        session_goals => [],  # Arrayref of goal hashes
-    };
-    bless $self, $class;
+       # Session goals stored in the session file.
+       session_goals => [],  # Arrayref of goal hashes
+   };
+   bless $self, $class;
     if ($ENV{CLIO_DEBUG} || $self->{debug}) {
         log_debug('SessionState', "[STATE] yarn object ref: $self->{yarn}");
         log_debug('State::new', "returning self: $self");
@@ -135,7 +131,8 @@ sub save {
 my $data = {
         history => $self->{history},
         stm     => $self->{stm}->{history},
-        # LTM is now saved separately to .clio/ltm.json (project-level, not session-level)
+        # LTM is saved separately to .clio/ltm.json (project-level, not
+        # session-level).
         yarn    => $self->{yarn}->{threads},
         working_directory => $self->{working_directory},
         created_at => $self->{created_at},  # Preserve session creation timestamp
@@ -152,8 +149,7 @@ my $data = {
         session_name => $self->{session_name},  # Human-friendly session name
         loaded_skills => $self->{loaded_skills} || [],  # Skills merged into system prompt
        input_history => $self->{input_history} || [],  # User input readline history
-       # last_api_payload / last_api_metadata fields removed — see new() above.
-       session_goals => $self->{session_goals} || [],  # Persistent task goals (injected into user_context)
+       session_goals => $self->{session_goals} || [],  # Persistent task goals
     };
     if ($ENV{CLIO_DEBUG} || $self->{debug}) {
         require Data::Dumper;
@@ -376,11 +372,7 @@ sub load {
         loaded_skills => $data->{loaded_skills} || [],
        # User input readline history (persisted across sessions)
        input_history => $data->{input_history} || [],
-        # last_api_payload / last_api_metadata removed — session resume now
-        # always rebuilds from load_conversation_history.
-       # Session goals: persistent task goals managed by the model. Always
-        # present in user_context every turn (no loading step). Survives
-        # context trims because storage is the session file.
+        # Session goals stored in the session file.
         session_goals => $data->{session_goals} || [],
     };
     bless $self, $class;
@@ -477,10 +469,12 @@ Heuristic title extraction. Returns undef for input that yields less
 than 3 meaningful characters after cleanup so empty/garbage input does
 not produce a useless "Untitled"-style placeholder.
 
-Truncation at 50 chars is intentionally generous; the session-list UI
-ellipsizes long names. Word-boundary truncation is not applied here
-because the first user message is typically a short imperative ("fix
-the auth bug") that fits without needing it.
+Truncates to at most 80 characters at a word boundary so that long
+first-user messages (e.g. pasted context, multi-paragraph requests)
+do not balloon into multi-KB session names that bloat the session
+JSON, break regex-based name extraction, and inject noise into UI
+headers. Returns undef for input that yields less than 3 meaningful
+characters after cleanup.
 
 =cut
 
@@ -502,6 +496,22 @@ sub _generate_session_name {
     $name = ucfirst($name);
 
     return undef if length($name) < 3;
+
+    # Truncate to 80 chars at a word boundary. The first user message
+    # is often a short imperative ("fix the auth bug") but can be a
+    # long paste of context. Without truncation, the entire message
+    # becomes the session_name, bloating the session JSON, breaking
+    # regex-based name extraction in _resolve_session_id (recursion
+    # limit), and injecting noise into UI headers.
+    my $max_len = 80;
+    if (length($name) > $max_len) {
+        $name = substr($name, 0, $max_len);
+        # Break at word boundary: find the last space and cut there.
+        $name =~ s/\s+\S*$//;
+        # Fallback: if there was no space in the truncated portion,
+        # just hard-cut at max_len (rare for real-world input).
+        $name = substr($name, 0, $max_len) if length($name) > $max_len;
+    }
 
     return $name;
 }
@@ -536,10 +546,6 @@ sub set_session_goals {
     $self->{session_goals} = $goals || [];
     return $self->{session_goals};
 }
-
-# last_api_payload / last_api_metadata removed: session resume now always
-# rebuilds from load_conversation_history — single source of truth. No more
-# stale cached payload contamination on resume.
 
 =head2 _validate_and_repair_history
 
@@ -674,7 +680,8 @@ sub _validate_and_repair_history {
         log_error('State', "Failed to save repaired session: $@");
     }
     
-    # Return user-friendly message instead of just 1 (now this message will be displayed)
+    # Return a user-friendly message instead of just 1; the caller
+    # will display this string to the user.
     return "Session restored. Ready to continue." if $removed_count >= 1;
     
     return 0;  # No repairs were made
@@ -770,11 +777,6 @@ sub add_message {
         $message->{metadata}{providerResponseId} = $self->{lastGitHubCopilotResponseId};
     }
     
-    # Calculate and tag with importance score
-    # Pass the message index so first user message gets special treatment
-    my $message_index = scalar(@{$self->{history}});
-    $message->{_importance} = $self->calculate_message_importance($message, $message_index);
-    
     # DEBUG: Log final message structure
     if (($ENV{CLIO_DEBUG} || $self->{debug}) && $role eq 'tool') {
         log_debug('SessionState', "State::add_message] Final tool message structure: " . "role=$message->{role}, " .
@@ -790,101 +792,17 @@ sub add_message {
     $self->{yarn}->create_thread($thread_id) unless $self->{yarn}->get_thread($thread_id);
     $self->{yarn}->add_to_thread($thread_id, $message);
     
-    # Aggressively trim context to stay within safe token budget
-    # Use prompt budget from model capabilities for model-aware trim threshold
-    my $current_size = $self->get_conversation_size();
-
-    # Threshold: model context window minus reserve for output and
-    # estimation buffer. Previously this was int(max_tokens * 0.75) which
-    # reserved 25% of context for output regardless of model. Now we use
-    # compute_prompt_budget which uses the actual configured output
-    # cap (max_output_tokens) plus the estimation buffer.
-    #
-    # For 1M context with 16K output (typical cloud provider): was 750K
-    # threshold (25% reserved for output), now ~934K (16K + 50K buffer).
-    # For 128K context with 16K output: was 96K, now ~104K.
-    my $max_tokens = $self->{max_tokens} // 128000;  # Default to 128k if not set
-    my $max_output = $self->{max_output_tokens}
-                  // CLIO::Core::Defaults::DEFAULT_MAX_OUTPUT_TOKENS();
-    my $trim_threshold = CLIO::Memory::TokenEstimator::compute_prompt_budget({
-        max_context_window_tokens => $max_tokens,
-        max_output_tokens         => $max_output,
-    });
-
-    if ($current_size > $trim_threshold) {
-        if ($ENV{CLIO_DEBUG} || $self->{debug}) {
-            log_debug('SessionState', "[STATE] Context size ($current_size tokens) exceeds prompt budget ($trim_threshold of $max_tokens max, $max_output output reserve), trimming...");
-        }
-        $self->trim_context();
-    }
-}
-
-=head2 calculate_message_importance
-
-Calculate importance score for a message.
-Higher scores mean message is more important to preserve.
-
-Factors:
-- Role: user (1.5x), assistant with tool_calls (2.0x)
-- Recency: exponential decay (older = less important)
-- Keywords: error/bug/fix/critical (1.3x)
-- Length: log scaling (longer = more detail)
-
-Returns: Importance score (float, decays with age)
-
-=cut
-
-sub calculate_message_importance {
-    my ($self, $message, $message_index) = @_;
-    
-    my $score = 1.0;
-    
-    # Recency factor (exponential decay)
-    my $age = $self->message_age($message);
-    $score *= exp(-$age / 10);  # Older messages decay
-    
-    # Role importance
-    if ($message->{role} eq 'user') {
-        $score *= 1.5;  # User messages always important
-    }
-    
-    if ($message->{role} eq 'assistant' && $message->{tool_calls}) {
-        $score *= 2.0;  # Tool calls are important
-    }
-    
-    # Keyword detection
-    if (defined $message->{content} && $message->{content} =~ /\b(error|bug|fix|critical|important|decision|warning)\b/i) {
-        $score *= 1.3;
-    }
-    
-    # Length indicates detail/importance
-    my $length = length($message->{content} // '');
-    if ($length > 0) {
-        $score *= (1 + log($length) / 10);
-    }
-    
-    return $score;
-}
-
-=head2 message_age
-
-Calculate age of message in number of messages since it was added.
-
-=cut
-
-sub message_age {
-    my ($self, $message) = @_;
-    
-    my $total = scalar(@{$self->{history}});
-    
-    # Find position of this message
-    for my $i (0 .. $#{$self->{history}}) {
-        if ($self->{history}->[$i] == $message) {
-            return $total - $i;
-        }
-    }
-    
-    return $total;  # Fallback: treat as oldest
+    # NOTE: Session history is NOT trimmed at the storage level.
+    # The full conversation is preserved in $self->{history} so that
+    # the per-turn projection (ContextBuilder::build_projection) can
+    # select the anchor + recent turns and compress the rest via YaRN
+    # into the compressed_tail field. Trimming here would inject a
+    # <thread_summary> system message that (a) changes every turn,
+    # busting provider KV cache of the stable prefix, and (b) duplicates
+    # the compression already done by the projection. The projection's
+    # compressed_tail is placed in the dynamic UC (a per-turn non-stable
+    # system message), leaving [system_prompt + anchor + recent turns]
+    # as the cache-stable prefix.
 }
 
 =head2 get_conversation_size
@@ -926,17 +844,70 @@ sub trim_context {
     my @system = grep { defined $_->{role} && $_->{role} eq 'system' } @messages;
     my @non_system = grep { defined $_->{role} && $_->{role} ne 'system' } @messages;
 
-    my @recent = @non_system >= $keep_recent
-        ? @non_system[-$keep_recent .. -1]
-        : @non_system;
-
     my $before = scalar(@messages);
-    my $dropped_count = scalar(@non_system) - scalar(@recent);
 
-    return if $dropped_count <= 0;
+    # Slice @non_system at the $keep_recent boundary, but make the
+    # boundary respect tool_call/tool_result batch atomicity: if the
+    # naive slice would split a batch (an assistant with tool_calls
+    # in @recent but some of its results in @dropped, or vice versa),
+    # adjust @recent so the entire batch stays together. Without this,
+    # the trim can orphan tool_calls (model re-issues them — looping
+    # bug) or strand tool_results (Anthropic/Google reject orphan
+    # results).
+    #
+    # Strategy: after the naive slice, find the first assistant-with-
+    # tool_calls whose batch spans the @dropped/@recent boundary and
+    # move the boundary to include the full batch (or exclude it entirely
+    # if the batch is too large to fit).
+    my $keep_start = scalar(@non_system) - $keep_recent;
+    $keep_start = 0 if $keep_start < 0;
 
-    my $keep_start = scalar(@non_system) - scalar(@recent);
+    # Walk forward from keep_start to find any assistant message with
+    # tool_calls whose results start in @dropped but extend into @recent
+    # (i.e., the assistant is in @dropped but some tool_results are in @recent).
+    # Also check for assistant in @recent whose tool_results are in @dropped.
+    while ($keep_start < scalar(@non_system)) {
+        my $boundary_msg = $non_system[$keep_start];
+        my $role = $boundary_msg->{role} // '';
+        my $needs_adjust = 0;
+
+        if ($role eq 'tool' && $boundary_msg->{tool_call_id}) {
+            # A tool_result sits at the boundary — its assistant is in @dropped.
+            # Move it into @recent so the pair stays together.
+            $needs_adjust = 1;
+            $keep_start--;
+        }
+        elsif ($role eq 'assistant') {
+            # An assistant with tool_calls at the boundary — its results
+            # may be in @recent (good) or split. If this assistant has
+            # tool_calls and ANY of its results are in @dropped (before
+            # keep_start), move the assistant into @dropped too (exclude
+            # the whole batch from @recent).
+            if (ref($boundary_msg->{tool_calls}) eq 'ARRAY'
+                && @{$boundary_msg->{tool_calls}}) {
+                # Check if any of this assistant's tool_results are in @dropped
+                my @call_ids = map { $_->{id} } grep { defined $_->{id} } @{$boundary_msg->{tool_calls}};
+                my %call_set = map { $_ => 1 } @call_ids;
+                for my $j (0 .. $keep_start - 1) {
+                    my $prev = $non_system[$j];
+                    if (($prev->{role} // '') eq 'tool'
+                        && exists $call_set{$prev->{tool_call_id} // ''}) {
+                        $needs_adjust = 1;
+                        last;
+                    }
+                }
+            }
+        }
+
+        last unless $needs_adjust;
+    }
+
+    # After moving the boundary, the @recent set may have grown. Re-slice.
     my @dropped = @non_system[0 .. ($keep_start - 1)];
+    my @recent = @non_system[$keep_start .. $#non_system];
+
+    my $dropped_count = scalar(@dropped);
+    return if $dropped_count <= 0;
 
     # Find the most recent user message for task context
     my $last_user_msg;
@@ -1003,7 +974,6 @@ sub trim_context {
         push @trimmed, {
             role => 'system',
             content => $trim_content,
-            _importance => 0.5,
         };
     }
     push @trimmed, @recent;

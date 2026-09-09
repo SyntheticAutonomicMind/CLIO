@@ -147,25 +147,12 @@ sub execute {
     # Route to operation handler
     log_debug("Tool:$self->{name}", "Routing to operation: $operation");
     
-    # DEFENSE-IN-DEPTH: wrap the dispatch in eval{} so any unexpected
-    # die/croak from before_route() or the dispatched method converts
-    # into a proper error_result() instead of propagating up and taking
-    # down the entire conversation (which previously surfaced as the
-    # generic "I'm experiencing technical difficulties. Please try again."
-    # from SimpleAIAgent's outermost eval).
-    #
-    # Common real-world triggers that this catches:
-    #   - VersionControl._in_repo croaking on chdir failure for a
-    #     non-existent repository_path (e.g. hallucinated macOS path)
-    #   - FileOperations.open/unlink croaking on permission/path errors
-    #     in code paths that forgot to wrap
-    #   - Any third-party tool that uses bare die/croak instead of
-    #     error_result()
-    #
-    # The cleaned error message preserves the underlying cause (after
-    # _clean_eval_error strips Carp caller-location suffixes), and the
-    # returned error_result() flows through the existing ToolErrorGuidance
-    # pipeline so the AI sees a categorized, schema-aware recovery message.
+    # Wrap the dispatch in eval{} so any unexpected die/croak from
+    # before_route() or the dispatched method converts into a proper
+    # error_result() instead of propagating up to SimpleAIAgent's
+    # outermost catch. The returned error_result() flows through the
+    # ToolErrorGuidance pipeline so the AI sees a categorized
+    # recovery message.
     my $result;
     eval {
         $result = $self->route_operation($operation, $params, $context);

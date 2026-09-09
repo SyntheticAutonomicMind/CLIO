@@ -1843,8 +1843,29 @@ sub display_providers {
         $self->writeline("  " . $auth_status . $self->colorize($padded_name, 'USER') . " " . $self->colorize($auth_req, 'DIM') . $marker, markdown => 0);
     }
 
-    $self->writeline("", markdown => 0);
-    $self->display_system_message("Use: /api providers <name> for setup instructions");
+    # Show custom provider aliases (if any)
+    my @custom = $self->{config}->list_custom_providers();
+    if (@custom) {
+        $self->writeline("", markdown => 0);
+        $self->display_command_header("CUSTOM PROVIDERS (" . scalar(@custom) . ")");
+        $self->writeline("", markdown => 0);
+
+        for my $cp (@custom) {
+            my $name = $cp->{name};
+            my $marker = ($name eq $current) ? $self->colorize(" (active)", 'PROMPT') : '';
+            my $has_key = $cp->{has_key};
+
+            my $auth_status = $has_key
+                ? $self->colorize("\x{2713} ", 'SUCCESS')
+                : $self->colorize("  ", 'DIM');
+
+            my $base = $self->colorize($cp->{base_provider}, 'DATA');
+            my $padded_name = sprintf("%-18s", $name);
+            $self->writeline("  " . $auth_status . $self->colorize($padded_name, 'USER') . " " . $self->colorize("alias for $base", 'DIM') . $marker, markdown => 0);
+        }
+        $self->writeline("", markdown => 0);
+        $self->display_system_message("Add: /api provider add <name> <base-provider> [api-key]");
+    }
 }
 
 sub _show_provider_details {
@@ -1995,11 +2016,14 @@ sub handle_remove {
         return;
     }
 
-    # Validate provider exists in registry
+    # Check if it's a custom provider or built-in
     require CLIO::Providers;
-    unless (CLIO::Providers::provider_exists($provider)) {
+    my $is_builtin = CLIO::Providers::provider_exists($provider);
+    my $is_custom = $self->{config}->is_custom_provider($provider);
+
+    unless ($is_builtin || $is_custom) {
         $self->display_error_message("Unknown provider: $provider");
-        my @providers = CLIO::Providers::list_providers();
+        my @providers = CLIO::Providers::list_all_providers();
         $self->display_system_message("Available: " . join(', ', @providers));
         return;
     }
@@ -2034,27 +2058,204 @@ sub handle_remove {
     # If the removed provider is the current one, switch to default
     my $current = $self->{config}->get('provider');
     if ($current && $current eq $provider) {
-        require CLIO::Providers;
-        my $default = 'github_copilot';
-        # Don't switch to the provider being removed
-        $default = 'openai' if $default eq $provider;
-        $self->{config}->set_provider($default);
+        $self->{config}->set_provider('github_copilot');
         $self->{config}->save();
-        $self->display_system_message("Switched to default provider '$default' (was current)");
+        $self->display_system_message("Switched to default provider 'github_copilot' (was current)");
     } else {
         $self->{config}->save();
     }
 }
 
+# Custom provider removal goes through the dedicated _provider_remove method.
+
 }
 
 # Validation helpers
+
+=head2 handle_provider(@args)
+
+Handle /api provider subcommands for managing custom provider aliases.
+
+Custom providers allow configuring multiple accounts for the same provider
+type (e.g., two Anthropic accounts). Each custom provider stores its own
+API key and optional base URL override.
+
+Examples:
+    /api provider add <name> <base_provider>        Register a custom provider
+    /api provider add <name> <base_provider> <key>  ...with an API key
+    /api provider list                              List all custom providers
+    /api provider remove <name>                     Remove a custom provider
+
+=cut
+
+sub handle_provider {
+    my ($self, @args) = @_;
+
+    my $sub = shift @args // '';
+
+    unless ($sub) {
+        $self->display_error_message("Usage: /api provider <add|list|remove> [args...]");
+        $self->writeline("", markdown => 0);
+        $self->writeline("  /api provider add <name> <base-provider> [api-key]", markdown => 0);
+        $self->writeline("    Register a custom provider alias, e.g.:", markdown => 0);
+        $self->writeline("    /api provider add anthropic_test anthropic sk-ant-api-...", markdown => 0);
+        $self->writeline("  /api provider list", markdown => 0);
+        $self->writeline("    List all custom providers", markdown => 0);
+        $self->writeline("  /api provider remove <name>", markdown => 0);
+        $self->writeline("    Remove a custom provider", markdown => 0);
+        return;
+    }
+
+    $sub = lc($sub);
+
+    if ($sub eq 'list' || $sub eq 'ls') {
+        $self->_provider_list();
+        return;
+    }
+
+    if ($sub eq 'add' || $sub eq 'create') {
+        $self->_provider_add(@args);
+        return;
+    }
+
+    if ($sub eq 'remove' || $sub eq 'rm' || $sub eq 'delete') {
+        $self->_provider_remove(@args);
+        return;
+    }
+
+    $self->display_error_message("Unknown subcommand: /api provider $sub");
+    $self->display_system_message("Available: add, list, remove");
+}
+
+sub _provider_list {
+    my ($self) = @_;
+
+    my @custom = $self->{config}->list_custom_providers();
+
+    if (!@custom) {
+        $self->display_command_header("CUSTOM PROVIDERS");
+        $self->writeline("No custom providers configured.", markdown => 0);
+        $self->writeline("", markdown => 0);
+        $self->display_system_message("Add one: /api provider add <name> <base-provider> [api-key]");
+        return;
+    }
+
+    $self->display_command_header("CUSTOM PROVIDERS (" . scalar(@custom) . ")");
+    $self->writeline("", markdown => 0);
+
+    for my $cp (@custom) {
+        my $key_status = $cp->{has_key}
+            ? $self->colorize('configured', 'success_message')
+            : $self->colorize('no key', 'warning_message');
+        my $base = $self->colorize($cp->{base_provider}, 'DATA');
+        my $name = $self->colorize($cp->{name}, 'ASSISTANT');
+        $self->writeline("  $name - $base ($key_status)", markdown => 0);
+        if ($cp->{api_base}) {
+            $self->writeline("    Base: " . $self->colorize($cp->{api_base}, 'DATA'), markdown => 0);
+        }
+        $self->writeline("", markdown => 0);
+    }
+}
+
+sub _provider_add {
+    my ($self, @args) = @_;
+
+    my ($name, $base_provider, $api_key) = @args;
+
+    unless ($name && $base_provider) {
+        $self->display_error_message("Usage: /api provider add <name> <base-provider> [api-key]");
+        $self->writeline("", markdown => 0);
+        $self->display_system_message("Example: /api provider add anthropic_test anthropic sk-ant-api-...");
+        return;
+    }
+
+    $name = lc($name);
+    $base_provider = lc($base_provider);
+
+    # Validate base provider exists
+    require CLIO::Providers;
+    unless (CLIO::Providers::provider_exists($base_provider)) {
+        $self->display_error_message("Unknown base provider: $base_provider");
+        my @providers = CLIO::Providers::list_providers();
+        $self->display_system_message("Available providers: " . join(', ', @providers));
+        return;
+    }
+
+    # Prevent collision with built-in provider names
+    if (CLIO::Providers::provider_exists($name)) {
+        $self->display_error_message("'$name' is already a built-in provider name");
+        return;
+    }
+
+    # Prevent duplicate custom provider names
+    if ($self->{config}->is_custom_provider($name)) {
+        $self->display_error_message("Custom provider '$name' already exists");
+        $self->display_system_message("Use '/api provider remove $name' to remove it first");
+        return;
+    }
+
+    eval {
+        $self->{config}->add_custom_provider($name, $base_provider, $api_key, undef);
+    };
+    if ($@) {
+        $self->display_error_message("Failed to add custom provider: $@");
+        return;
+    }
+
+    my $base_def = CLIO::Providers::get_provider($base_provider);
+    my $display = $base_def ? $base_def->{name} : $base_provider;
+    $self->display_success_message("Added custom provider '$name' -> $display");
+    if ($api_key) {
+        $self->display_system_message("API key stored for '$name'");
+    } else {
+        $self->display_system_message("Set API key: /api set key <value>  (with provider set to '$name')");
+    }
+}
+
+sub _provider_remove {
+    my ($self, @args) = @_;
+
+    my $name = shift @args;
+
+    unless ($name) {
+        $self->display_error_message("Usage: /api provider remove <name>");
+        return;
+    }
+
+    $name = lc($name);
+
+    unless ($self->{config}->is_custom_provider($name)) {
+        $self->display_error_message("Unknown custom provider: $name");
+        return;
+    }
+
+    # Clean up stored credentials
+    my $api_keys = $self->{config}{config}{api_keys} // {};
+    my $had_key = exists $api_keys->{$name};
+    my $api_bases = $self->{config}{config}{api_bases} // {};
+    my $had_base = exists $api_bases->{$name};
+
+    my $result = $self->{config}->remove_custom_provider($name);
+
+    $self->display_success_message("Removed custom provider '$name'");
+    if (!$had_key && !$had_base) {
+        $self->display_system_message("No stored credentials or base found for '$name'");
+    }
+
+    # If the removed provider is the current one, reset to openai
+    my $current = $self->{config}->get('provider');
+    if ($current && $current eq $name) {
+        $self->{config}->set_provider('openai');
+        $self->{config}->save();
+        $self->display_system_message("Switched to default provider 'openai' (was current)");
+    }
+}
 
 sub _detect_api_type {
     my ($self, $api_base) = @_;
 
     my %api_configs = (
-        'github-copilot' => ['github-copilot', 'https://api.githubcopilot.com/models'],
+        'github_copilot' => ['github_copilot', 'https://api.githubcopilot.com/models'],
         'openai'         => ['openai', 'https://api.openai.com/v1/models'],
         'dashscope-cn'   => ['dashscope', 'https://dashscope.aliyuncs.com/compatible-mode/v1/models'],
         'dashscope-intl' => ['dashscope', 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1/models'],
@@ -2066,7 +2267,7 @@ sub _detect_api_type {
     }
 
     if ($api_base =~ m{githubcopilot\.com}i) {
-        return ('github-copilot', 'https://api.githubcopilot.com/models');
+        return ('github_copilot', 'https://api.githubcopilot.com/models');
     } elsif ($api_base =~ m{openai\.com}i) {
         return ('openai', 'https://api.openai.com/v1/models');
     } elsif ($api_base =~ m{dashscope.*\.aliyuncs\.com}i) {

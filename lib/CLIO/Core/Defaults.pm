@@ -37,7 +37,11 @@ our @EXPORT_OK = qw(
     DEFAULT_MAX_OUTPUT_TOKENS
     DEFAULT_MAX_RESPONSE_TOKENS
     DEFAULT_BINARY_SAMPLE_SIZE
-    DEFAULT_POST_TRIM_FLOOR
+    COPILOT_EDITOR_VERSION
+    COPILOT_PLUGIN_VERSION
+    COPILOT_LS_VERSION
+    COPILOT_API_VERSION
+    COPILOT_USER_API_VERSION
     TOOL_RESULT_MAX_CHUNK
     OUTPUT_ESTIMATION_BUFFER
     OUTPUT_ESTIMATION_BUFFER_PCT
@@ -58,11 +62,8 @@ use constant DEFAULT_MAX_RESPONSE_TOKENS  => 16000;   # Response budget for conv
 
 # Output reservation buffer for context budgeting.
 # Trim paths reserve actual max_output_tokens (from model caps) plus this
-# buffer to cover estimation error. NO hard cap on output reserve - use
-# whatever the model actually supports. Clinically: with 128K-output
-# models (MiniMax-M3, Z.AI GLM-5) and a 1M context window, we'd
-# previously reserve 500K (50%) for output; with actual reserves we keep
-# 822K for prompt (172K more usable context).
+# buffer to cover estimation error. No hard cap on output reserve - use
+# whatever the model actually supports.
 use constant OUTPUT_ESTIMATION_BUFFER     => 8192;    # Constant part of reserve
 use constant OUTPUT_ESTIMATION_BUFFER_PCT => 0.05;    # Proportional part (5% of context)
 use constant OUTPUT_ESTIMATION_BUFFER_MAX => 51200;   # Cap proportional buffer at 50K
@@ -73,8 +74,13 @@ use constant TOOL_RESULT_MAX_CHUNK        => 32768;   # Hard ceiling per chunk (
 # File operations
 use constant DEFAULT_BINARY_SAMPLE_SIZE   => 8192;    # Bytes to sample for binary detection
 
-# Conversation management
-use constant DEFAULT_POST_TRIM_FLOOR      => 32000;   # Minimum tokens to keep after trimming
+# GitHub Copilot editor identification constants.
+# These match the vscode-copilot-chat reference implementation headers.
+use constant COPILOT_EDITOR_VERSION       => 'vscode/2.0.0';
+use constant COPILOT_PLUGIN_VERSION       => 'GitHubCopilotChat/0.38.0';
+use constant COPILOT_LS_VERSION           => '1.378.1799';
+use constant COPILOT_API_VERSION          => '2026-01-09';
+use constant COPILOT_USER_API_VERSION     => '2025-04-01';
 
 =head2 default_chunk_size($context_window)
 

@@ -91,8 +91,7 @@ print "\n--- Layer 1: Tool::execute converts uncaught die to error_result ---\n"
     }
     sub before_route {
         my ($self, $op, $params, $ctx) = @_;
-        # Simulate the bug pattern: an uncaught croak in before_route.
-        # This is exactly what VersionControl._in_repo() used to do.
+        # Simulate an uncaught croak in before_route.
         require Carp;
         Carp::croak("Cannot chdir to /Users/andrew/ALICE: No such file or directory");
     }
@@ -285,8 +284,7 @@ print "\n--- Layer 4: FileOperations.read_file line-count race fix ---\n";
 require_ok('CLIO::Tools::FileOperations');
 my $fo = CLIO::Tools::FileOperations->new(debug => 0);
 
-# Test: read_file with a directory path - was returning success=0 from -f check
-# now still works
+# Test: read_file with a directory path
 $r = $fo->read_file({
     operation => 'read_file',
     path => '/tmp',  # A directory, not a file

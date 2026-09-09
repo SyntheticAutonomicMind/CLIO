@@ -324,9 +324,9 @@ subtest 'end-to-end: stale value cannot resurrect after reset through reload' =>
 
 # ============================================================================
 # 7. Same shape of bug for show_thinking / thinking_effort / thinking_mode.
-# These are also in MODEL_SCOPED_KEYS. The /api handlers for them now call
-# clear_model_scoped after set() so a switch back to a model that
-# previously had the opposite value does not resurrect the old setting.
+# These are also in MODEL_SCOPED_KEYS. The /api handlers call
+# clear_model_scoped after set() so a switch back to a model that had
+# the opposite value does not resurrect the old setting.
 # ============================================================================
 
 for my $key (qw(show_thinking thinking_effort thinking_mode)) {
