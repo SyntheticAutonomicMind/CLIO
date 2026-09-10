@@ -15,7 +15,7 @@ our @EXPORT_OK = qw(
     resolve_custom_provider list_all_providers
     is_local_inference exposes_props default_context_window
     capability_fetcher default_reasoning_mode
-    quota_handler
+    quota_handler supports_cache_control
 );
 
 # Fallback model when no model is configured anywhere.
@@ -90,6 +90,9 @@ my %PROVIDERS = (
         supports_streaming => 1,
         supports_reasoning => 1,  # Claude 4, GPT-5, o-series exposed via /chat/completions
         chat_endpoint_suffix => '/chat/completions',
+        # GitHub Copilot proxies to OpenAI/Anthropic providers and supports
+        # their caching mechanisms automatically.
+        supports_cache_control => 1,
         copilot_models => 1,
         # Capability fetcher dispatch (replaces `provider =~ /^...$/i`
         # chain in ModelCapabilitiesManager._fetch_provider_capabilities).
@@ -118,6 +121,11 @@ my %PROVIDERS = (
         supports_tools => 1,
         supports_streaming => 1,
         supports_reasoning => 1,  # o-series and gpt-5 accept reasoning_effort
+        # OpenAI supports automatic prompt caching (>=1024 token prefix, no
+        # configuration needed) and explicit caching via prompt_cache_options
+        # on GPT-5.6+. The supports_cache_control flag tells APIManager not
+        # to strip cache_control fields from messages sent to this endpoint.
+        supports_cache_control => 1,
         endpoint => {
             path_suffix => '/chat/completions',
             temperature_range => [0.0, 2.0],
@@ -143,6 +151,9 @@ my %PROVIDERS = (
         # /api models display can pull from MCM instead.
         lacks_models_metadata => 1,
         capability_fetcher => 'deepseek',
+        # DeepSeek's on-disk KV cache is automatic; the supports_cache_control
+        # flag tells APIManager not to strip cache_control fields.
+        supports_cache_control => 1,
         default_reasoning_mode => 'effort',  # DeepSeek uses reasoning_effort parameter
         # DeepSeek uses CONCURRENCY limits (not RPM) per their docs at
         # https://api-docs.deepseek.com/quick_start/rate_limit. Different
@@ -243,6 +254,10 @@ my %PROVIDERS = (
         supports_tools => 1,
         supports_streaming => 1,
         route_timeout => 1,  # Routes to upstream providers — extra latency from the intermediate hop
+        # OpenRouter accepts cache_control on content blocks and translates
+        # between Anthropic-style and OpenAI-style cache markers when routing
+        # to upstream providers. Automatic caching is on by default.
+        supports_cache_control => 1,
         endpoint => {
             path_suffix => '',
             temperature_range => [0.0, 2.0],
@@ -326,6 +341,9 @@ my %PROVIDERS = (
         max_context_tokens => 1048576,
         capability_fetcher => 'google',
         default_reasoning_mode => 'enabled',  # Gemini uses thinkingBudget (enabled) per its native API
+        # Google's implicit caching is automatic; the flag tells APIManager
+        # not to strip cache_control fields sent via the OpenAI-compatible endpoint.
+        supports_cache_control => 1,
         endpoint => {
             path_suffix => '/openai/chat/completions',
             temperature_range => [0.0, 2.0],
@@ -472,6 +490,11 @@ my %PROVIDERS = (
         supports_reasoning => 1,
         supports_vision => 1,
         max_context_tokens => 200000,
+        # Anthropic supports automatic prompt caching via top-level
+        # cache_control (set in Providers/Anthropic.pm build_request).
+        # The flag also tells APIManager not to strip cache_control
+        # from messages if any are added in the OpenAI-compatible path.
+        supports_cache_control => 1,
         # Claude 4.5/4.6 default output is 64K per platform.claude.com
         # Models overview (verified 2026-07-31). Haiku 4.5 is also 64K.
         # Sonnet 5+/Fable 5/Opus 5 default is 128K. With the
@@ -778,6 +801,14 @@ sub build_endpoint_config {
     if ($provider && $provider->{route_timeout}) {
         $endpoint->{route_timeout} = 1;
     }
+    # Propagate supports_cache_control so APIManager can strip cache_control
+    # fields from messages when the provider doesn't support them, or pass
+    # them through when it does. Currently only Vercel, Orca, and Kilo
+    # explicitly set this, but all OpenAI-compatible providers that
+    # route through OpenRouter inherit it transitively.
+    if ($provider && $provider->{supports_cache_control}) {
+        $endpoint->{supports_cache_control} = 1;
+    }
 
     # Propagate reasoning_schema from provider-defaults JSON so
     # APIManager can drive param injection data-first instead of
@@ -1015,6 +1046,39 @@ sub quota_handler {
     return undef unless $p;
     return undef unless $p->{has_quota_api};
     return $p->{quota_handler};
+}
+
+=head2 supports_cache_control($provider_name)
+
+Return 1 if the named provider supports explicit cache_control
+fields in its API requests. This flag is propagated into the endpoint
+config by build_endpoint_config() so APIManager can:
+
+- Strip cache_control fields from messages/tool defs for providers
+  that don't support them (defensive — CLIO currently only sets
+  cache_control on Anthropic's top-level payload, but third-party
+  provider modules or future code may add per-message markers).
+- Pass cache_control through unchanged for providers that do support it
+  (OpenAI, GitHub Copilot, Google, DeepSeek, OpenRouter, Vercel,
+  OrcaRouter, KiloCode, Anthropic).
+
+Providers without this flag (local inference: SAM, llama.cpp, LM Studio,
+Ollama Cloud) rely on automatic caching at the API level or local
+SSD-backed KV cache — they do not accept explicit cache_control fields.
+
+Arguments:
+  $provider_name - Provider key (e.g., 'anthropic', 'openai')
+
+Returns:
+  1 if the provider supports cache_control, 0 otherwise
+
+=cut
+
+sub supports_cache_control {
+    my ($provider_name) = @_;
+    my $p = get_provider($provider_name);
+    return 0 unless $p;
+    return $p->{supports_cache_control} ? 1 : 0;
 }
 
 =head2 provider_from_url($url)

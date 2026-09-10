@@ -42,12 +42,14 @@ as role-based messages, not as prose:
 
 Cache stability (Anthropic): the projection's anchor + recent
 turns are pushed as role-based messages. The dynamic userContext
-is prepended to the user message that follows them. Anthropic's
-`cache_control: ephemeral` is only set on the system_prompt and
-the last tool (see Providers/Anthropic.pm). The dynamic userContext
-sitting in the user message means it is NOT part of any cache segment
-— it churns per-turn (todo mutations, LTM rescore, compressed_tail
-changes) and the model sees it as conversation context, not instructions.
+is prepended to the user message that follows them. Anthropic uses
+top-level automatic `cache_control: ephemeral` (see
+Providers/Anthropic.pm) which caches the system_prompt + tools +
+conversation history prefix without per-message markers. The dynamic
+userContext sitting in the user message means it is NOT part of any
+cache segment — it churns per-turn (todo mutations, LTM rescore,
+compressed_tail changes) and the model sees it as conversation
+context, not instructions.
 
 Public API:
 - L</messages_to_prose_dynamic> - the only renderer used in

@@ -166,28 +166,42 @@ sub build_request {
     # Convert messages to Anthropic format
     my $anthropic_messages = $self->convert_messages($conversation);
     
-    # Build request payload
+    # Build request payload.
+    #
+    # Prompt caching: Anthropic supports automatic caching via a top-level
+    # cache_control field. With automatic caching, Anthropic places the
+    # breakpoint at the end of the last cacheable block and advances it
+    # forward as the conversation grows. This caches the system prompt +
+    # tools + conversation history (the cache-stable prefix [0..N])
+    # without needing per-message cache_control markers.
+    #
+    # The previous per-message cache_control (on system prompt text + last
+    # tool) is redundant with automatic caching and can cause unnecessary
+    # cache writes. We use top-level automatic mode instead.
+    #
+    # See: https://docs.anthropic.com/en/docs/about-claude/prompt-caching
     my $payload = {
         model => $effective_model,
         max_tokens => $options->{max_tokens} // $self->{max_tokens},
         stream => JSON::PP::true,
         messages => $anthropic_messages,
+        cache_control => { type => 'ephemeral' },
     };
     
-    # Add system prompt if present
+    # Add system prompt if present. No per-message cache_control needed —
+    # the top-level cache_control enables automatic breakpoint placement.
     if ($system_prompt) {
         $payload->{system} = [{
-            type          => 'text',
-            text          => $system_prompt,
-            cache_control => { type => 'ephemeral' },
+            type => 'text',
+            text => $system_prompt,
         }];
     }
     
-    # Add tools if present
+    # Add tools if present. No per-message cache_control needed —
+    # automatic caching handles breakpoint placement on the last tool.
     if ($tools && @$tools) {
         my @converted_tools = map { $self->convert_tool($_) } @$tools;
         if (@converted_tools) {
-            $converted_tools[-1]{cache_control} = { type => 'ephemeral' };
             $payload->{tools} = \@converted_tools;
         }
         # Default to auto tool choice
