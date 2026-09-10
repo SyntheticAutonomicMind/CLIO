@@ -11,6 +11,7 @@ BEGIN {
 use strict;
 use warnings;
 use File::Basename;
+use Cwd qw(abs_path);
 use CLIO::Util::JSON qw(encode_json decode_json);
 use CLIO::UI::Terminal qw(detect_capabilities configure_io_encoding box_char);
 use CLIO::UI::ANSI;
@@ -72,7 +73,9 @@ OPTIONS:
     --list-themes      List all available output themes with descriptions
     --list-spinners    List all available spinner animations
     --debug            Enable debug output
-    --dir <path>       Set working directory for session
+    --dir <path>       Set working directory for session (must exist)
+    --style <name>     Use specific terminal style for this session (not persisted)
+    --theme <name>     Use specific output theme for this session (not persisted)
     --input <text>     Process input and exit
     --exit             Exit after processing (with --input)
     --model <name>     Use specific model (temporary, not persisted)
@@ -100,6 +103,8 @@ EXAMPLES:
     clio --sessions               # List all sessions
     clio --debug --new            # Start with debug logging
     clio --dir /path/to/project   # Start in specific directory
+    clio --style dracula --new    # Start with a specific style
+    clio --theme compact --new    # Start with a specific output theme
     clio --model gpt-4.1 --new    # Start with specific model
     clio --model "openrouter/foo:free kilo/bar:free" --new  # Model routing with fallback
     clio --route my-route --new   # Use a saved routing profile
@@ -266,6 +271,8 @@ my $enable_tools = undef;   # --enable: allowlist of tools (comma-separated)
 my $disable_tools = undef;  # --disable: blocklist of tools (comma-separated)
 my $prompt_override = undef;  # --prompt: system prompt name override
 my $route_name;                # --route: named routing profile to activate
+my $style_override = undef;  # --style: one-shot terminal style override
+my $theme_override = undef;  # --theme: one-shot output theme override
 for (my $i = 0; $i < @ARGV; $i++) {
     if ($ARGV[$i] eq '--input' && defined $ARGV[$i+1]) {
         $input = $ARGV[$i+1];
@@ -336,6 +343,12 @@ for (my $i = 0; $i < @ARGV; $i++) {
     if ($ARGV[$i] eq '--route' && defined $ARGV[$i+1]) {
         $route_name = $ARGV[$i+1];
     }
+    if ($ARGV[$i] eq '--style' && defined $ARGV[$i+1]) {
+        $style_override = $ARGV[$i+1];
+    }
+    if ($ARGV[$i] eq '--theme' && defined $ARGV[$i+1]) {
+        $theme_override = $ARGV[$i+1];
+    }
     if ($ARGV[$i] eq '--list-spinners') {
         $mode = 'list_spinners';
     }
@@ -387,6 +400,66 @@ if ($route_name && length($route_name)) {
 if (defined $enable_tools && defined $disable_tools) {
     print STDERR "Error: --enable and --disable are mutually exclusive. Use one or the other.\n";
     exit 1;
+}
+
+# Validate --dir: the directory must exist and be a directory (issue #34).
+# Previously --dir silently accepted nonexistent paths, giving the user false
+# confidence that everything was fine until a tool later failed with a
+# confusing "Not a directory" error.
+if ($working_dir) {
+    my $abs = abs_path($working_dir);
+    unless (defined $abs && -d $abs) {
+        if (-e $working_dir) {
+            print STDERR "Error: --dir path is not a directory: $working_dir\n";
+        } else {
+            print STDERR "Error: --dir directory does not exist: $working_dir\n";
+        }
+        exit 1;
+    }
+    $working_dir = $abs;
+    log_debug('Main', "Working directory resolved to: $working_dir");
+}
+
+# Validate --style: the style must exist in the available styles.
+if ($style_override) {
+    require CLIO::UI::Theme;
+    my $theme_mgr = CLIO::UI::Theme->new(debug => 0);
+    my @styles = $theme_mgr->list_styles();
+    unless (grep { $_ eq $style_override } @styles) {
+        print STDERR "Error: --style '$style_override' not found. Available styles: "
+            . join(", ", @styles) . "\n";
+        exit 1;
+    }
+    $config->set('style', $style_override, 0);  # Transient (not persisted to config.json)
+    log_debug('Main', "Style override: $style_override");
+}
+
+# Validate --theme: the theme must exist in the available themes.
+if ($theme_override) {
+    require CLIO::UI::Theme;
+    my $theme_mgr = CLIO::UI::Theme->new(debug => 0);
+    my @themes = $theme_mgr->list_themes();
+    unless (grep { $_ eq $theme_override } @themes) {
+        print STDERR "Error: --theme '$theme_override' not found. Available themes: "
+            . join(", ", @themes) . "\n";
+        exit 1;
+    }
+    $config->set('theme', $theme_override, 0);  # Transient (not persisted to config.json)
+    log_debug('Main', "Theme override: $theme_override");
+}
+
+# Validate --prompt: the prompt must exist (builtin or custom).
+if ($prompt_override) {
+    require CLIO::Core::PromptManager;
+    my $pm = CLIO::Core::PromptManager->new(debug => 0);
+    my $prompts = $pm->list_prompts();
+    my @all_prompts = (@{$prompts->{builtin}}, @{$prompts->{custom}});
+    unless (grep { $_ eq $prompt_override } @all_prompts) {
+        print STDERR "Error: --prompt '$prompt_override' not found. Available prompts: "
+            . join(", ", @all_prompts) . "\n";
+        exit 1;
+    }
+    log_debug('Main', "Prompt override: $prompt_override");
 }
 
 # If no --input flag was provided but STDIN is piped (not a TTY), read from STDIN
