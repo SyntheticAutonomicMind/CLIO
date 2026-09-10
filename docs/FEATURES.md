@@ -356,7 +356,7 @@ Connect to external tool servers via the Model Context Protocol. See [MCP Integr
 
 ## 3. AI Providers
 
-CLIO supports 18 AI providers out of the box. Switch between them at any time - even mid-session.
+CLIO supports 19 AI providers out of the box. Switch between them at any time - even mid-session.
 
 | Provider | Type | Authentication |
 |----------|------|---------------|
@@ -365,6 +365,7 @@ CLIO supports 18 AI providers out of the box. Switch between them at any time - 
 | **OpenAI** | Cloud | API key |
 | **Google Gemini** | Cloud | API key |
 | **DeepSeek** | Cloud | API key |
+| **Charm Hyper** | Cloud | API key |
 | **OpenRouter** | Cloud | API key |
 | **OrcaRouter** | Cloud | API key |
 | **KiloCode** | Cloud | API key |

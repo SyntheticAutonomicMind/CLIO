@@ -13,6 +13,7 @@
 | **OpenAI** | `openai` | API Key |
 | **Google Gemini** | `google` | API Key |
 | **DeepSeek** | `deepseek` | API Key |
+| **Charm Hyper** | `hyper` | API Key |
 | **OpenRouter** | `openrouter` | API Key |
 | **OrcaRouter** | `orca` | API Key |
 | **KiloCode** | `kilo` | API Key |
@@ -122,6 +123,25 @@ CLIO tracks AI Credit usage via the `copilot_usage` field in responses (`total_n
 ```
 
 Note: For an alternative option, consider using OpenRouter with MiniMax instead.
+
+---
+
+### Charm Hyper
+
+Charm Hyper (https://hyper.charm.land) is a high-throughput API aggregator optimized for code and reasoning models. CLIO connects to it via the OpenAI-compatible Chat Completions endpoint.
+
+```bash
+clio --new
+
+# Set the provider
+/api set provider hyper
+/api set key <your-hyper-key>
+
+# See available models
+/api models
+```
+
+**Available models:** DeepSeek V4 (Flash/Pro), Qwen3.6/3.7/3.8 series, MiniMax M2/M3, GLM-5, Llama 3/4, Kimi K2/K3, Gemma 4, and more. Use `/api models` for the current list.
 
 ---
 
