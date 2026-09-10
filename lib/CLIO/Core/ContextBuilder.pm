@@ -10,6 +10,7 @@ binmode(STDERR, ':encoding(UTF-8)');
 use CLIO::Core::Logger qw(log_debug log_warning log_error);
 use CLIO::Memory::TokenEstimator qw(estimate_messages_tokens);
 use CLIO::Memory::LongTerm ();
+use Digest::SHA qw(sha256_hex);
 # YaRN does not use Exporter; call its subs via fully-qualified name.
 # Loading the module here ensures the symbol is defined before
 # _select_turns tries to call recover_substantive_task.
@@ -92,7 +93,11 @@ our $RECENT_FULL_TURNS_IF_BUDGET = 10;  # include up to N extra if budget allows
 
 # Package-level cache for lazy compressed_tail regeneration.
 # Keyed on _compressed_tail_sig($dropped_turns, $active_task).
+# Bounded to prevent unbounded growth across long sessions; oldest
+# entries are evicted when the limit is exceeded (LRU via ordered keys).
 my %_compressed_tail_cache;
+my @_compressed_tail_cache_order;
+our $COMPRESSED_TAIL_CACHE_MAX = 50;
 
 # Session-length-aware scaling for the recent window. Long sessions
 # benefit from a wider recent window (more cache churn per turn,
@@ -434,11 +439,15 @@ our @CONTINUATION_PHRASES = (
 );
 
 sub _is_continuation_prompt {
-    my ($text) = @_;
+    my ($text, $phrase_only) = @_;
     return 0 unless defined $text;
     $text = '' . $text;
     return 0 if length($text) > 80;
     return 1 if grep { $text =~ $_ } @CONTINUATION_PHRASES;
+    # When $phrase_only is set, stop after exact phrase matching (used by
+    # _build_compressed_tail pre-filter and filter_continuation_prompts,
+    # which must not filter short non-continuation text).
+    return 0 if $phrase_only;
     return 0 if $text =~ /\?/;
     return 0 if $text =~ /\b(why|how|what|when|where|which|who|can|could|would|should|will|do|does|did|is|are|was|were)\b/i;
     return 1 if length($text) < 30;
@@ -550,9 +559,7 @@ for within-session dedup, cheap to serialize.
 
 sub digest {
     my ($content) = @_;
-    $content //= '';
-    require Digest::SHA;
-    return substr(Digest::SHA::sha256_hex($content), 0, 16);
+    return substr(sha256_hex($content // ''), 0, 16);
 }
 
 # ============================================================================
@@ -705,8 +712,9 @@ for the # Earlier work prose section. Uses YaRN::compress_messages
 when available (the real compressor) with a template-based fallback
 for the rare case where YaRN is unavailable or returns empty.
 
-The compressor is the same one Session::State::trim_context uses on
-hard trim, so the # Earlier work section now carries the same
+The compressor is the same one used by the proactive trim
+(MessageValidator::_role_based_tail_walk) on hard trim, so the
+# Earlier work section now carries the same
 information density as the cross-cycle thread_summary. For dropped
 turns that contained real work (file reads, git commits, tool calls)
 the section surfaces file paths and commit hashes, which the
@@ -748,7 +756,7 @@ sub _build_compressed_tail {
             my $role    = $msg->{role}    // '';
             my $content = $msg->{content} // '';
             next unless length $content;
-            next if $role eq 'user' && _is_continuation_text($content);
+            next if $role eq 'user' && _is_continuation_prompt($content, 1);
             push @flat_msgs, { %$msg };  # shallow copy so we don't mutate source
         }
     }
@@ -775,7 +783,13 @@ sub _build_compressed_tail {
         );
     }
 
-    # Cache the result for lazy regeneration.
+    # Cache the result for lazy regeneration. Evict oldest entry if the
+    # cache has reached its maximum size (LRU via insertion-order tracking).
+    if (scalar(keys %_compressed_tail_cache) >= $COMPRESSED_TAIL_CACHE_MAX) {
+        my $oldest = shift @_compressed_tail_cache_order;
+        delete $_compressed_tail_cache{$oldest};
+    }
+    push @_compressed_tail_cache_order, $sig;
     $_compressed_tail_cache{$sig} = $tail;
 
     return $tail;
@@ -811,12 +825,9 @@ sub _yarn_compress_dropped {
 
     return undef unless $flat_msgs && @$flat_msgs;
 
-    my $yarn;
-    eval {
-        require CLIO::Memory::YaRN;
-        $yarn = CLIO::Memory::YaRN->new();
-    };
-    return undef if $@ || !$yarn;
+    # YaRN->new() is cheap (hashref only), but compress_for_context_recovery
+    # is stateless w.r.t. the instance — cache it per-process.
+    state $yarn = CLIO::Memory::YaRN->new();
 
     my $compressed = eval {
         $yarn->compress_for_context_recovery($flat_msgs,
@@ -854,7 +865,7 @@ sub _build_compressed_tail_template {
             next unless length $content;
             next if $role eq 'tool';  # tool results are noise in a summary
             if ($role eq 'user') {
-                next if _is_continuation_text($content);
+                next if _is_continuation_prompt($content, 1);
                 next if length($content) < 30;  # too short to be substantive
                 next if $user_count >= $max_user;
                 push @substantive_user, _truncate($content, $max_user_chars);
@@ -888,20 +899,9 @@ sub _build_compressed_tail_template {
     return $out;
 }
 
-# Lightweight continuation detector (no overhead of the full
-# _is_continuation_prompt from collapse_repeated_tool_calls_across_turns
-# which assumes a pure tool turn - we just need to filter obvious
-# "continue" / "ok" / "go on" prompts from the dropped-tail).
-sub _is_continuation_text {
-    my ($text) = @_;
-    return 0 unless defined $text && length $text;
-    return 0 if length($text) > 80;
-    return 1 if $text =~ /\A(continue|go on|okay|ok|yes|y|proceed|keep going|please continue|go ahead|same as before|again|and\?+)\.?\z/i;
-    return 0;
-}
-
 sub _truncate {
     my ($text, $max) = @_;
+    return '' unless defined $text && length($text);
     return $text unless length($text) > $max;
     my $truncated = substr($text, 0, $max);
     $truncated =~ s/\s+\S*$//;

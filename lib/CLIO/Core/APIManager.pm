@@ -1739,7 +1739,7 @@ Numeric caps (cap_context_window, cap_max_output, cap_max_prompt) cap the
 model's reported value: effective = min(model_value, override) when override > 0.
 cap_context_window additionally caps max_prompt_tokens so the prompt budget
 enforced by MessageValidator honors the user's intent (otherwise the cap
-only affects State::trim_context via max_context_window_tokens and the
+only affects max_prompt_tokens via max_context_window_tokens and the
 validator still uses the uncapped model value).
 When the model's value is undef (provider did not report it, or the
 ModelCapabilitiesManager lookup failed) and the override is > 0, the override
@@ -1793,7 +1793,7 @@ sub _apply_capability_overrides {
         }
         # Also cap max_prompt_tokens so MessageValidator's budget honors the cap.
         # max_prompt_tokens is what the validator actually uses; if the cap only
-        # touches max_context_window_tokens (the field State::trim_context reads),
+        # touches max_prompt_tokens (the field the proactive trim reads),
         # the user's intent is half-honored and prompts balloon back to model max.
         if (!defined $caps->{max_prompt_tokens} || $caps->{max_prompt_tokens} > $cap) {
             log_debug('APIManager', sprintf(

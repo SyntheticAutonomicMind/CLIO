@@ -180,7 +180,7 @@ budget, they are NOT re-compressed here — the projection's compressed_tail
 messages. The thread_summary system message injection that previously
 happened here was removed: it changed every turn (new tool/file/commit
 counts), busting provider KV cache of the stable prefix. Dropped messages
-remain in the session history (add_message no longer calls State::trim_context)
+remain in the session history (storage-level trimming was removed)
 so the next turn's projection includes them in a fresh compressed_tail.
 
 Arguments:
@@ -433,54 +433,23 @@ sub _role_based_tail_walk {
     }
 
     # Build the trimmed set by direct array slicing. This preserves
-    # the ORIGINAL message hash references — no re-serialization —
-    # so the provider's KV cache stays warm for messages that survive
-    # unchanged between turns. The old code built @trimmed via grep +
-    # unshift/splice on copies; this slices direct refs from $messages.
+    # the original message hash references (no re-serialization) so
+    # the provider's KV cache stays warm for unchanged messages.
     my @trimmed = @{$messages}[@kept_indices];
 
-    # Proactive compression: if any messages were dropped during the walk,
-    # compress them with YaRN so their content survives as a thread_summary
-    # system message placed near the tail (before the last user turn). See the
-    # injection block below for why the tail anchor matters for KV caching.
+    # Count dropped messages for debug logging. The projection's
+    # compressed_tail (ContextBuilder::_build_compressed_tail) handles
+    # compression of dropped messages — not this method.
     my %kept_idx_set = map { $_ => 1 } @kept_indices;
     my @dropped;
     for my $i (0 .. $#$messages) {
         push @dropped, $messages->[$i] unless $kept_idx_set{$i};
     }
 
-    if (@dropped) {
-        my $compressed = eval {
-            require CLIO::Memory::YaRN;
-            my $yarn = CLIO::Memory::YaRN->new();
-            # Extract previous_summary from the full message array —
-            # the old thread_summary may have been kept (pinned), not dropped.
-            my $prev = $yarn->_extract_thread_summary_from_messages($messages);
-            $yarn->compress_for_context_recovery(\@dropped,
-                previous_summary => $prev,
-            );
-        };
-        if ($@) {
-            log_debug('MessageValidator', "Proactive YaRN compression failed: $@");
-        }
-        if ($compressed && ref($compressed) eq 'HASH'
-            && defined $compressed->{content} && length($compressed->{content})) {
-            # REMOVED: thread_summary system message injection.
-            # Previously, dropped messages were re-compressed here and
-            # injected as a <thread_summary> system message before the
-            # current user turn. This changed every turn (new tool/file/
-            # commit counts), busting provider KV cache of the stable
-            # prefix. The projection's compressed_tail (in the dynamic UC
-            # system message) already covers dropped messages — the
-            # thread_summary is redundant.
-            #
-            # Dropped messages remain in the session history (add_message
-            # no longer calls State::trim_context). On the next turn, the
-            # projection will include them in the fresh compressed_tail.
-            log_debug('MessageValidator',
-                "role-based tail walk: dropped " . scalar(@dropped) .
-                " messages (compressed_tail in dynamic UC covers them)");
-        }
+    if (@dropped && $debug) {
+        log_debug('MessageValidator',
+            "role-based tail walk: dropped " . scalar(@dropped) .
+            " messages (compressed_tail in dynamic UC covers them)");
     }
 
     # Filter continuation-only user prompts that survived trim.

@@ -61,6 +61,7 @@ sub new {
         _skills_section_cache => undef,
         _user_context_cache => undef,
         _user_context_cache_time => 0,
+        _system_prompt_cache => undef,
     }, $class;
 }
 
@@ -88,6 +89,19 @@ Returns:
 
 sub build_system_prompt {
     my ($self, $session) = @_;
+
+    # Cache the full system prompt. It is a pure function of the
+    # PromptBuilder's config (tools/skills/profile/thinking_steering),
+    # none of which change mid-session. Returning the cached string
+    # eliminates redundant per-turn work: PromptManager construction
+    # (with _load_metadata disk I/O), profile.md disk read, Puppeteer
+    # topology scan, and auto-skill heredoc regeneration.
+    # The cache is invalidated by clear_prompt_cache() (called from
+    # invalidate_tool_cache when MCP/plugins change, and from profile
+    # update code paths).
+    if (defined $self->{_system_prompt_cache}) {
+        return $self->{_system_prompt_cache};
+    }
 
     # Load from PromptManager (includes custom instructions unless skip_custom)
     require CLIO::Core::PromptManager;
@@ -186,7 +200,25 @@ sub build_system_prompt {
 
     log_debug('PromptBuilder', "Added dynamic tools section to prompt");
 
+    $self->{_system_prompt_cache} = $base_prompt;
     return $base_prompt;
+}
+
+=head2 clear_prompt_cache
+
+Invalidate the cached system prompt. Call this when the underlying
+inputs may have changed (MCP servers connected, plugin instructions
+updated, profile modified). Without invalidation the cached prompt
+serves stale content.
+
+=cut
+
+sub clear_prompt_cache {
+    my ($self) = @_;
+    delete $self->{_system_prompt_cache};
+    delete $self->{_tools_section_cache};
+    delete $self->{_skills_section_cache};
+    log_debug('PromptBuilder', "System prompt cache invalidated");
 }
 
 =head2 generate_tools_section

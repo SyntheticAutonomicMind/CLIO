@@ -37,7 +37,9 @@ use CLIO::Compat::Terminal qw(ReadKey ReadMode);  # Backward compat for legacy c
 use CLIO::Util::AtomicWrite qw(atomic_write);
 use CLIO::Core::Defaults qw(DEFAULT_CONTEXT_WINDOW DEFAULT_MAX_RESPONSE_TOKENS);
 use CLIO::Logging::ProcessStats;
+use CLIO::Memory::YaRN ();  # YaRN methods are stateless; cached instance
 use POSIX qw(strftime);
+use feature 'state';
 
 # Default ALRM interval (seconds) for interrupt scanning during tool execution.
 # 250ms gives sub-second worst-case latency. Trade-off: 4x more wakeups per
@@ -1429,7 +1431,8 @@ are added/removed, or when tool definitions change.
 sub invalidate_tool_cache {
     my ($self) = @_;
     delete $self->{_current_projection};
-    log_debug('WorkflowOrchestrator', "Projection cache invalidated");
+    $self->{prompt_builder}->clear_prompt_cache() if $self->{prompt_builder};
+    log_debug('WorkflowOrchestrator', "Projection and system prompt caches invalidated");
 }
 
 
@@ -2820,7 +2823,6 @@ sub _compress_dropped_for_recovery {
     if (!length $original_task && $session && ref($session)) {
         if ($session->can('id')) {
             my $recovered = eval {
-                require CLIO::Memory::YaRN;
                 CLIO::Memory::YaRN::recover_substantive_task($session);
             };
             if (defined $recovered && length $recovered) {
@@ -2831,18 +2833,19 @@ sub _compress_dropped_for_recovery {
 
     my $compressed;
     eval {
-        require CLIO::Memory::YaRN;
-        my $yarn = CLIO::Memory::YaRN->new();
+        # YaRN->new() is cheap (hashref only) and its methods are
+        # stateless (operate on passed-in message arrays) — cache per-process.
+        state $yarn_cache = CLIO::Memory::YaRN->new();
 
         # Extract previous_summary from the full message array — the
         # old thread_summary may have been kept (pinned) rather than
         # dropped, so scanning @dropped_messages alone may miss it.
         my $prev = '';
         if ($all_messages && ref($all_messages) eq 'ARRAY') {
-            $prev = $yarn->_extract_thread_summary_from_messages($all_messages);
+            $prev = $yarn_cache->_extract_thread_summary_from_messages($all_messages);
         }
 
-        $compressed = $yarn->compress_for_context_recovery($dropped_messages,
+        $compressed = $yarn_cache->compress_for_context_recovery($dropped_messages,
             original_task    => $original_task,
             previous_summary => $prev,
         );
@@ -3270,8 +3273,9 @@ sub _active_task_text {
     my $task = CLIO::Memory::YaRN::find_substantive_task($candidate, $history);
 
     # Fallback 3: recover from the durable YaRN thread. The session's
-    # conversation history is subject to State::trim_context, which may
-    # have dropped the original user task message. The YaRN thread is
+    # conversation history is stored in full; the projection (ContextBuilder)
+    # selects recent turns and compresses the rest into compressed_tail,
+    # which may have dropped the original user task message. The YaRN thread is
     # never trimmed, so recover_substantive_task can always find the
     # original task even after aggressive context trimming.
     if (!length($task) && $session->can('id')) {
@@ -3371,8 +3375,14 @@ sub _collect_unresolved_state {
     my ($self, $history, $session) = @_;
     return [] unless $history && ref($history) eq 'ARRAY';
 
-    require CLIO::Memory::LongTerm;
-    my $sanitizer = CLIO::Memory::LongTerm->new();
+    # LongTerm->new() is cheap (hashref only), but sanitize_narration
+    # is stateless (uses package-level @SANITIZE_DROP_PHRASES). Cache the
+    # instance on $self to avoid redundant construction every turn.
+    $self->{_sanitizer} //= do {
+        require CLIO::Memory::LongTerm;
+        CLIO::Memory::LongTerm->new();
+    };
+    my $sanitizer = $self->{_sanitizer};
 
     # Read blocked todos from TodoStore and surface them as
     # unresolved state. The user explicitly marked the todo as
