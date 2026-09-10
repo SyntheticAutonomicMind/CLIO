@@ -356,6 +356,25 @@ my %PROVIDERS = (
         },
     },
     
+    hyper => {
+        name => 'Charm Hyper',
+        api_base => 'https://hyper.charm.land/v1/chat/completions',
+        model => 'deepseek-v4-pro',
+        requires_auth => 'apikey',
+        supports_tools => 1,
+        supports_streaming => 1,
+        supports_reasoning => 1,
+        # HyperCharm's /v1/models endpoint returns context_window and
+        # max_output_tokens per model (unlike some OpenAI-compatible
+        # providers that omit these). The live API is the source of
+        # truth; heuristics.json provides fallback for unknown models.
+        endpoint => {
+            path_suffix => '',
+            temperature_range => [0.0, 2.0],
+            supports_tools => 1,
+        },
+    },
+
     minimax => {
         name => 'MiniMax',
         api_base => 'https://api.minimax.io/v1/chat/completions',

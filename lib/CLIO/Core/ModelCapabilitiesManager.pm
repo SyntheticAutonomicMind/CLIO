@@ -2777,6 +2777,12 @@ sub _fetch_openai_compatible_capabilities {
         my $config = CLIO::Core::Config->new();
         $api_key = $config->get_provider_key($provider);
     };
+    # Also check CLIO_API_KEY env var (for CI/CD and non-persistent config
+    # launches where the key wasn't stored via /api set key). This mirrors
+    # the 4-level priority in APIManager._get_api_key.
+    if ((!$api_key || !length($api_key)) && $ENV{CLIO_API_KEY} && length($ENV{CLIO_API_KEY})) {
+        $api_key = $ENV{CLIO_API_KEY};
+    }
 
     return undef unless $api_key;
 
@@ -2890,11 +2896,28 @@ sub _fetch_openai_compatible_capabilities {
             $reasoning_mandatory = $r->{mandatory} || 0;
             # Determine mode from supported_efforts if available.
             # OpenRouter uses 'reasoning.effort' parameter -> 'effort' mode.
-            $reasoning_mode = 'effort' if $r->{supported_efforts};
+            # HyperCharm returns effort_levels (array of {value, display})
+            # instead of supported_efforts — both indicate effort-mode.
+            $reasoning_mode = 'effort' if $r->{supported_efforts} || $r->{effort_levels};
+        }
+        # Fallback: if the provider declares supports_reasoning at the
+        # registry level and the model listing omits the 'reasoning' field,
+        # infer reasoning support from known reasoning model families.
+        # HyperCharm omits 'reasoning' for Qwen3/DeepSeek V4 models that
+        # still return reasoning_content — without this, those models would
+        # never get reasoning params injected.
+        elsif ($provider_def->{supports_reasoning} && $model =~ /qwen[._-]?3|deepseek.*v4|deepseek-r1|kimi-k2|reasoning/i) {
+            $supports_reasoning_flag = 1;
+            $reasoning_mode = 'effort';
+            log_debug('ModelCapabilitiesManager', "OpenAI-compatible (${provider}): inferred supports_reasoning for $model (provider-level flag + model-name match)");
         }
         
         # Enrich with /props data for local inference servers
         my $supports_vision = $m->{vision} || $m->{supports_vision} || 0;
+        # HyperCharm nests vision under capabilities.vision
+        if (!$supports_vision && ref($m->{capabilities}) eq 'HASH') {
+            $supports_vision = $m->{capabilities}{vision} || 0;
+        }
         my $supports_tools = $m->{supports_tools} || $m->{function_call} || 0;
         # OpenRouter and other OpenAI-compatible APIs signal function-calling
         # support via a supported_parameters array (e.g. ["function_calls"])
@@ -2906,6 +2929,13 @@ sub _fetch_openai_compatible_capabilities {
                     last;
                 }
             }
+        }
+        # Fallback: if the provider declares supports_tools at the registry
+        # level and the model listing omits tool support info, trust the
+        # provider-level flag. HyperCharm's /v1/models doesn't include
+        # supports_tools or supported_parameters for its models.
+        if (!$supports_tools && $provider_def->{supports_tools}) {
+            $supports_tools = 1;
         }
         my $quantization = $m->{quantization};
 

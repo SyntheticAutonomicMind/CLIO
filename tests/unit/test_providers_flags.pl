@@ -53,7 +53,7 @@ my %PROVIDER_DEFAULT_CONTEXT = (
 
 # Each tier name + the providers that should belong to it.
 my @LOCAL_NAMES  = qw(sam lmstudio llama.cpp);
-my @CLOUD_NAMES  = qw(openai anthropic google minimax zai deepseek nvidia github_copilot openrouter ollama_cloud orca kilo);
+my @CLOUD_NAMES  = qw(openai anthropic google minimax zai deepseek nvidia github_copilot openrouter ollama_cloud orca kilo hyper);
 
 # ============================================================================
 # Registry must declare the flags on every named local provider
