@@ -1,7 +1,7 @@
 # AGENTS.md
 
-**Version:** 3.2
-**Date:** 2026-06-28
+**Version:** 3.3
+**Date:** 2026-09-10
 **Purpose:** Technical reference for CLIO development (methodology in .clio/instructions.md)
 
 ---
@@ -974,105 +974,35 @@ stashed error is surfaced as a proper retryable result.
 
 **Anthropic ITPM/OTPM/RPM awareness (added 2026-07-22):**
 
-Anthropic enforces three separate per-model per-minute caps (per
-https://docs.anthropic.com/en/api/rate-limits):
+Anthropic enforces three per-model per-minute caps — RPM (requests), ITPM
+(uncached input tokens), and OTPM (output tokens). These are token-bucket
+caps that continuously refill. CLIO handles them via:
 
-- **RPM** - requests per minute
-- **ITPM** - input tokens per minute. For most Claude models, only uncached
-  input tokens count (cached reads do NOT count toward ITPM). What counts:
-  `input_tokens + cache_creation_input_tokens`. The 250K ITPM per-minute
-  bucket is the one most often hit by large conversations when prompt
-  caching is off.
-- **OTPM** - output tokens per minute
+1. **Header parsing** — recognises `anthropic-ratelimit-{requests,tokens,input-tokens,output-tokens}-{limit,remaining,reset}` (RFC 3339 timestamps).
+2. **Snapshot learning** — stashes per-model bucket state on every response and 429; seeds ITPM ceiling from `anthropic-ratelimit-input-tokens-limit`.
+3. **Token-bucket preflight** — before each request, estimates pending input tokens and delays if `(used + pending) / limit >= 0.70`. Falls back to learned limits when no snapshot.
+4. **Cross-agent coordination** — Broker aggregates ITPM across sub-agents so parent + N agents can't collectively exceed the cap.
 
-These are token-bucket caps that continuously refill (NOT fixed-window resets).
-CLIO handles them via three coordinated layers:
+Prompt caching (`cache_control: ephemeral`) means `cache_creation_input_tokens`
+counts toward ITPM — the Anthropic provider handler extracts this from SSE
+`message_start.usage` and feeds it back into the sliding window.
 
-1. **Header parsing** (`API/ResponseHandler.process_rate_limit_headers`):
-   recognises `anthropic-ratelimit-{requests,tokens,input-tokens,output-tokens}-{limit,remaining,reset}`.
-   `*-reset` values are RFC 3339 timestamps - parse them with
-   `Util::RateLimit::parse_anthropic_reset_timestamp` (handles `Z` and
-   `+HH:MM`/`-HHMM` offset variants).
-
-2. **Snapshot learning** (`APIManager._apply_anthropic_rate_limit_headers`):
-   on every successful response and every 429, stashes the latest bucket
-   state per model under `$self->{_anthropic_rate_limits}{$model}` and seeds
-   the learned ITPM ceiling from `anthropic-ratelimit-input-tokens-limit`
-   (lower-only policy mirrors `_model_throttle_learn`).
-
-3. **Token-bucket preflight** (`APIManager._model_input_token_throttle_check`):
-   before each request, estimates pending input tokens with
-   `TokenEstimator::estimate_messages_tokens` and returns a delay in
-   seconds if `(used_in_last_60s + pending) / limit >= 0.70`. Token-bucket
-   refill math: `gap / (limit / 60)` per second until the reset moment.
-   Two layers, max() wins:
-   - Snapshot: precise against API-reported remaining capacity.
-   - Learned: fallback when no snapshot or it's older than 90s.
-   At `ratio >= 1.0` the delay is `effective_reset + 1` (waits for the
-   bucket to refill). `effective_reset` adjusts the snapshot's
-   `reset_in` for time elapsed since `observed_at` so we don't wait
-   longer than the bucket actually needs to refill.
-
-Real input token counts (`usage.prompt_tokens` + `cache_creation_input_tokens`)
-flow back into the sliding window via `_model_input_token_throttle_record`
-after each native streaming response. CLIO configures prompt caching
-(`cache_control: ephemeral` on system prompt + last tool), so every
-session's first request and any request after the 5-min cache TTL
-incur `cache_creation_input_tokens` that count toward ITPM - those
-must be included in the recorded amount or the throttle silently
-under-counts. The `parse_stream_event` handler in
-`Providers/Anthropic.pm` extracts `cache_creation_input_tokens` from
-the SSE `message_start.usage` event and it is accumulated in
-`usage_tracking{cache_creation_input_tokens}` alongside `input_tokens`.
-
-4. **Cross-agent ITPM coordination** (`Broker._calculate_api_token_delay`,
-   `Broker.handle_report_api_tokens`): when an APIManager has a
-   `broker_client` (i.e. it is a sub-agent or the parent of sub-agents),
-   the broker maintains a per-model sliding window aggregated across
-   every connected agent. Each agent reports its actual input tokens
-   (incl. cache creation) after every response via `report_api_tokens`,
-   and on `release_api_slot` the agent forwards Anthropic headers
-   (`anthropic_rate_limit_info`) so the broker's per-model snapshot
-   stays in sync. Slot requests now carry `model` + `pending_tokens`
-   so the broker can return an ITPM-aware delay even when no other
-   agent has reported yet. Without this layer, parent + N sub-agents
-   each consume their own ITPM budget independently and can
-   collectively blow `UserByModelByMinuteUncachedInputTokens` while
-   no single agent exceeds the limit. Two-layer logic (snapshot +
-   learned) mirrors the per-agent `_model_input_token_throttle_check`
-   but with broker-wide visibility.
-
-Code paths:
-- `lib/CLIO/Util/RateLimit.pm` - friendly-type mapping + RFC 3339 parser
-- `lib/CLIO/Core/API/ResponseHandler.pm` - `process_rate_limit_headers` extension,
-  `set_last_request_model` / `release_broker_slot` Anthropic forwarding
-- `lib/CLIO/Core/APIManager.pm` - `_apply_anthropic_rate_limit_headers`,
-  `_model_input_token_throttle_{record,check}`, `_learn_input_token_limit`,
-  `report_api_tokens` + `_pending_*_for_broker` plumbing
-- `lib/CLIO/Providers/Anthropic.pm` - `parse_stream_event` extracts
-  `cache_creation_input_tokens`
-- `lib/CLIO/Coordination/Broker.pm` - `_calculate_api_token_delay`,
-  `handle_report_api_tokens`, `_apply_api_token_headers`,
-  `handle_request_api_slot` ITPM gating
-- `lib/CLIO/Coordination/Client.pm` - `report_api_tokens`,
-  `request_api_slot($id, model=>, pending_tokens=)`,
-  `release_api_slot(anthropic_rate_limit_info =>)`
-- `lib/CLIO/Core/Diagnostics.pm` - `display_rate_limit_info` Anthropic branches
-
-Anthropic rate-limit error codes mapped to user-friendly names:
+**Rate-limit error codes (Anthropic):**
 - `RateLimitReached` -> "Anthropic rate limit"
 - `UserByModelByMinuteUncachedInputTokens` -> "Anthropic uncached input token limit (ITPM)"
-- `UserByModelByMinuteUncachedOutputTokens` -> "Anthropic uncached output token limit (OTPM)"
 - `UserByModelByMinuteInputTokens` -> "Anthropic input token limit (ITPM)"
+- `UserByModelByMinuteUncachedOutputTokens` -> "Anthropic uncached output token limit (OTPM)"
 - `UserByModelByMinuteOutputTokens` -> "Anthropic output token limit (OTPM)"
 - `UserByModelByMinuteRequests` -> "Anthropic request rate limit (RPM)"
 
-Tests:
-- `tests/unit/test_anthropic_rate_limit.pl` - header parsing + friendly codes
-- `tests/unit/test_anthropic_input_token_throttle.pl` - snapshot/learn layers,
-  stale reset_in adjustment, cache_creation extraction
-- `tests/unit/test_broker.pl` - cross-agent ITPM aggregation, snapshot/header
-  forwarding, slot gating with model+pending_tokens
+**Key code paths:**
+- `Util/RateLimit.pm` — RFC 3339 parsing
+- `Core/API/ResponseHandler.pm` — header processing
+- `Core/APIManager.pm` — `_model_input_token_throttle_check/record`, `report_api_tokens`
+- `Providers/Anthropic.pm` — `parse_stream_event` extracts `cache_creation_input_tokens`
+- `Coordination/Broker.pm` — cross-agent ITPM aggregation
+
+Tests: `test_anthropic_rate_limit.pl`, `test_anthropic_input_token_throttle.pl`, `test_broker.pl`
 
 ---
 
