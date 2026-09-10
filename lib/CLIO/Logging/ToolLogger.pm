@@ -335,38 +335,6 @@ sub search {
     return \@matches;
 }
 
-=head2 cleanup_old_logs
-
-Remove log files older than max_log_days.
-
-Returns: Number of files removed
-
-=cut
-
-sub cleanup_old_logs {
-    my ($self) = @_;
-    
-    my $max_age_seconds = $self->{max_log_days} * 86400;
-    my $now = time();
-    my $removed = 0;
-    
-    my @log_files = $self->_get_all_log_files();
-    
-    for my $log_file (@log_files) {
-        next unless -f $log_file;
-        
-        my $mtime = (stat($log_file))[9];
-        if ($now - $mtime > $max_age_seconds) {
-            if (unlink $log_file) {
-                $removed++;
-                log_debug('ToolLogger', "Removed old log file: $log_file");
-            }
-        }
-    }
-    
-    return $removed;
-}
-
 # Private methods
 
 sub _get_log_file {

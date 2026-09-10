@@ -2997,17 +2997,6 @@ sub writeln {
     return $self->writeline($text, %opts);
 }
 
-=head2 blank
-
-Output a blank line with pagination tracking.
-
-=cut
-
-sub blank {
-    my ($self) = @_;
-    return $self->writeline('', markdown => 0);
-}
-
 =head2 redraw_page
 
 Redraw a buffered page for arrow key navigation

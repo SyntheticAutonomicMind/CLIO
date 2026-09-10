@@ -8,7 +8,6 @@ use warnings;
 use utf8;
 use CLIO::UI::Terminal qw(ui_char);
 use CLIO::Core::Logger qw(log_debug log_warning should_log);
-use CLIO::Core::Logger qw(log_debug log_warning);
 use CLIO::Memory::TokenEstimator qw(estimate_tokens compute_prompt_budget);
 use CLIO::Util::RateLimit qw(get_rate_limit_type_name);
 use CLIO::Core::Diagnostics qw(dump_diagnostic display_rate_limit_info get_tool_specific_guidance);

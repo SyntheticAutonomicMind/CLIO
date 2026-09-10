@@ -68,17 +68,15 @@ as-is - it already contains its own section labels (Commits, Files,
 etc.) from YaRN.
 
 Prose rather than XML keeps the dynamic block ~27% smaller on an
-8-turn fragment (656 vs 895 tokens) and avoids the empty-body XML
-parse failures that the old format produced on first-turn sessions.
+8-turn fragment (656 vs 895 tokens) and avoids XML parse failures
+on first-turn sessions.
 
 Returns content that churns between turns (todo mutations, LTM
-rescore). WorkflowOrchestrator uses this as a block prepended to the
-user message, so its churn does not invalidate the cache-stable prefix. Environment info
-(working directory, language, date/time) is handled separately by
-PromptBuilder::get_user_context() and prepended to the user message
-— not rendered here. This avoids the date/time duplication that
-previously existed between ContextBuilder::_build_environment_hash
-and PromptBuilder::_generate_user_context_section.
+rescore). WorkflowOrchestrator prepends this to the user message, so
+its churn does not invalidate the cache-stable prefix. Environment info
+(working directory, language, date/time) is handled by
+PromptBuilder::get_user_context() — not rendered here — to avoid
+date/time duplication across the system prompt and the dynamic block.
 
 The compressed_tail, active_todos, and context_files_block fields are
 rendered as natural prose (no XML tags, no # headers). relevant_memory
@@ -106,14 +104,16 @@ sub messages_to_prose_dynamic {
     my $MAX_TODOS = 10;
     my $MAX_TODO_CHARS = 200;
 
+    # Lazily load ContextBuilder for the shared _truncate helper.
+    require CLIO::Core::ContextBuilder;
+
     my $out = '';
 
     # NOTE: Environment (working directory, language, date/time) is
     # rendered by PromptBuilder::get_user_context() and prepended to
     # the user message — NOT rendered here. This is the single source
-    # for environment info, avoiding the date/time duplication that
-    # previously existed between ContextBuilder::_build_environment_hash
-    # and PromptBuilder::_generate_user_context_section.
+    # for environment info, keeping it out of the noise-stripped
+    # compressed tail.
 
     # Active task is not rendered here. It is prepended to the user
     # input by WorkflowOrchestrator via PromptBuilder::get_user_context().
@@ -129,7 +129,7 @@ sub messages_to_prose_dynamic {
             last if $todo_count >= $MAX_TODOS;
             my $status = $todo->{status} // 'pending';
             my $content = $todo->{content} // '';
-            $content = _truncate_dynamic_uc($content, $MAX_TODO_CHARS);
+            $content = CLIO::Core::ContextBuilder::_truncate($content, $MAX_TODO_CHARS);
             push @rendered, "- [$status] $content";
             $todo_count++;
         }
@@ -161,26 +161,6 @@ sub messages_to_prose_dynamic {
     }
 
     return $out;
-}
-
-=head2 _truncate_dynamic_uc
-
-Truncate text for inclusion in the dynamic userContext (SMELL #5
-budget cap, QA review 2026-09-02). Strips trailing partial word
-to avoid rendering garbage, and adds a clear "..." marker so the
-model knows the entry was truncated.
-
-=cut
-
-sub _truncate_dynamic_uc {
-    my ($text, $max) = @_;
-    return '' unless defined $text;
-    return $text unless length($text) > $max;
-    my $truncated = substr($text, 0, $max);
-    # Strip the trailing partial word so the model does not see a
-    # half-word at the cut point (which it would try to fix).
-    $truncated =~ s/\s+\S*$//;
-    return $truncated . '...';
 }
 
 1;  # MANDATORY: End every .pm file with 1;

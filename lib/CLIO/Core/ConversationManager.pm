@@ -723,33 +723,11 @@ input arrayref if no changes needed)
 
 =cut
 
-my @CONT_PROMPT_PHRASES = (
-    qr/\Acontinue\.?\z/i,
-    qr/\Ago on\.?\z/i,
-    qr/\Aok\.?\z/i,
-    qr/\Aokay\.?\z/i,
-    qr/\Aproceed\.?\z/i,
-    qr/\Akeep going\.?\z/i,
-    qr/\Ayes\.?\z/i,
-    qr/\Ay\.?\z/i,
-    qr/\Aplease continue\.?\z/i,
-    qr/\Ago ahead\.?\z/i,
-    qr/\Asame as before\.?\z/i,
-    qr/\Aagain\.?\z/i,
-);
-
-sub _is_continuation_only {
-    my ($text) = @_;
-    return 0 unless defined $text;
-    $text = '' . $text;
-    return 0 if length($text) > 80;
-    return 1 if grep { $text =~ $_ } @CONT_PROMPT_PHRASES;
-    return 0;
-}
-
 sub filter_continuation_prompts {
     my ($messages) = @_;
     return $messages unless $messages && @$messages;
+
+    require CLIO::Core::ContextBuilder;
 
     # Identify the LAST user message index - keep it as-is even if
     # it's a continuation prompt (e.g. user types 'continue' as their
@@ -769,7 +747,7 @@ sub filter_continuation_prompts {
             && ($msg->{role} // '') eq 'user'
             && defined $last_user_idx
             && $i != $last_user_idx
-            && _is_continuation_only($msg->{content} // '')) {
+            && CLIO::Core::ContextBuilder::_is_continuation_prompt($msg->{content} // '', 1)) {
             $removed++;
             next;
         }

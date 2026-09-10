@@ -686,8 +686,9 @@ compression paths:
 1. B<MessageValidator> (proactive): C<_role_based_tail_walk> compresses
    dropped messages before an API call when the projected payload exceeds
    the token budget.
-2. B<State> (session trim): C<trim_context> compresses the dropped tail
-   when the session exceeds its hard message limit.
+2. B<State> (session trim): removed — storage-level trimming was
+   eliminated; the projection compresses dropped turns into
+   compressed_tail instead of mutating session history.
 3. B<WorkflowOrchestrator> (reactive): C<_compress_dropped_for_recovery>
    compresses dropped messages after a token-limit error from the provider.
 
