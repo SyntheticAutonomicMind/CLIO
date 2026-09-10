@@ -1199,7 +1199,7 @@ sub _build_turn_context {
 
     my $projection;
 
-    my $ltm_entries = $self->_read_ltm_entries_for_projection($session);
+    my $ltm_entries = $self->{skip_ltm} ? [] : $self->_read_ltm_entries_for_projection($session);
     $projection = CLIO::Core::ContextBuilder::build_projection(
         history             => $history,
         user_input          => $user_input,

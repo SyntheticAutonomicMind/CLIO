@@ -364,6 +364,8 @@ sub score_ltm {
             type       => $entry->{type},
             score      => $score,
             _is_meta   => ($input_is_meta && _category_match($content)) ? 1 : 0,
+            tier       => $entry->{entry}{tier} // 'unverified',
+            corroboration_count => $entry->{entry}{corroboration_count} // 0,
         };
     }
 

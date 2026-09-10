@@ -643,7 +643,12 @@ Persistent knowledge that survives across sessions. Three types:
 
 LTM entries have confidence scores (0.0-1.0) that increase when patterns are confirmed and decrease with age. Low-confidence entries are automatically pruned.
 
-**Every new session starts with your project's LTM automatically injected** into the system prompt. This means the AI remembers what it learned last time without you having to explain it again.
+**Every new session starts with relevant LTM entries injected** into the
+dynamic userContext (not the cache-stable system prompt). Entry relevance is
+scored per-request against the current query, so the agent only sees memories
+pertaining to its current task — not a blanket dump of everything ever
+learned. Entries carry [TRUSTED] or [UNVERIFIED] tier badges so the model can
+calibrate trust before acting on procedural suggestions.
 
 ### Cross-Session Recall
 
@@ -1584,7 +1589,8 @@ CLIO's power comes from how these components integrate. Here's what happens duri
 1. You run `clio --new` or `clio --resume`
 2. CLIO loads your **configuration** (provider, model, preferences)
 3. **Custom instructions** are read from `.clio/instructions.md` and `AGENTS.md`
-4. **Long-term memory** is loaded and injected into the system prompt
+4. **Long-term memory** is loaded; relevance scoring runs against the
+   session's context and matching entries are injected into the dynamic userContext
 5. **Session history** is restored (if resuming)
 6. **MCP servers** are connected (if configured)
 7. The terminal UI initializes with your chosen **theme** and **style**
