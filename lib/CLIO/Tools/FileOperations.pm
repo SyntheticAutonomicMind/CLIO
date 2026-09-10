@@ -161,11 +161,6 @@ familiar English form still dispatches correctly.
             rename_file
             create_directory
         )],
-        # Natural-language aliases. These are silently accepted as operation
-        # values (via validate_operation + dispatch_table keys) but are NOT
-        # included in the schema enum sent to the LLM, preventing the LLM from
-        # confusing them with tool names. Every alias listed here must also
-        # have an entry in dispatch_table() below.
         operation_aliases => [qw(
             read list_directory exists stat_file find_files search
             read_result create write append replace edit bulk_replace
