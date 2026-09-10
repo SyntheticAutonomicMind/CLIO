@@ -138,18 +138,47 @@ Each entry includes:
 - **Examples** - File paths demonstrating the pattern
 - **Application count** - How many times a solution has been used
 
-### Automatic Prompt Injection
+### Relevance-Based Injection into Dynamic User Context
 
-At the start of every session, LTM entries are formatted and injected into the system prompt by `PromptManager`. The AI sees all accumulated project knowledge before you even ask your first question.
+LTM entries are NOT injected into the system prompt as a static dump.
+Instead, `ContextBuilder::score_ltm` scores entries per-request against
+the current user input, active task, and unresolved error state using
+keyword overlap. Only entries meeting the relevance threshold
+(score >= 5, or >= 3 for framework-meta memories when the user is
+working on CLIO itself) are selected, capped at 5 entries maximum.
+
+The selected entries are rendered as prose — with **[TRUSTED]** or
+**[UNVERIFIED]** tier badges — into the dynamic userContext that is
+prepended to the user message. Because the dynamic userContext already
+churns every turn (active todos, compressed tail, context files),
+adding relevant LTM causes no additional cache invalidation against
+the stable system-prompt prefix.
+
+This means an agent only sees LTM entries relevant to its current
+question, not a blanket dump of everything ever learned. Stale memories
+from previous, unrelated work are unlikely to match the current
+query's keywords and won't be injected.
 
 The injection includes:
-- **Key Discoveries** - Up to 15 high-confidence facts, newest first
-- **Problem Solutions** - Up to 15 error/solution pairs with application counts
-- **Code Patterns** - Up to 10 verified patterns with example file paths
+- **Discoveries** - Facts about the codebase, tagged with trust tier
+- **Problem Solutions** - Error/solution pairs with application counts
+- **Code Patterns** - Verified conventions with example file paths
+- **Workflows** - Sequences of steps with success rates
+- **Failures** - What broke, the impact, and how to prevent it
 
-This means an agent starting a new session already knows: what coding conventions your project uses, what bugs have been fixed before and how, and what patterns to follow. No re-discovery needed.
+Entries tagged [TRUSTED] have been corroborated by two or more
+independent agent:session pairs (or manually promoted via `/memory
+promote`). Entries tagged [UNVERIFIED] are single-source — verify
+before acting on procedural patterns.
 
-LTM injection can be disabled with `--no-ltm` or `--incognito` flags for sessions where you want a clean slate.
+**Trust but Verify:** Check [TRUSTED] entries first, but validate
+[UNVERIFIED] entries — especially procedural patterns ("always do X")
+which bypass normal reasoning. After independently confirming an entry,
+call `memory_operations(operation: "add_corroboration", ...)` to
+increment its corroboration count.
+
+LTM scoring and injection can be disabled with `--no-ltm` or
+`--incognito` flags for sessions where you want a clean slate.
 
 ### How Agents Learn
 
@@ -534,9 +563,13 @@ The memory system isn't just infrastructure - it's actively used by agents throu
 
 ### Session Start
 
-1. **LTM injection** - All project knowledge is loaded into the system prompt
-2. The agent sees discoveries, solutions, and patterns before you type anything
-3. If resuming a session, YaRN threads and STM are restored from the session file
+1. **LTM relevance scoring** - LTM entries are loaded and scored against the
+   first user query using keyword overlap. Relevant entries (with tier
+   badges) are injected into the dynamic userContext before the agent
+   starts work. Uncorroborated [UNVERIFIED] entries get a 0.3x scoring
+   penalty so they rank below [TRUSTED] entries.
+2. If resuming a session, YaRN threads and STM are restored from the session file
+3. Session goals from `.clio/memory/` are loaded and injected as active todos
 
 ### During Work
 
@@ -555,7 +588,7 @@ The memory system isn't just infrastructure - it's actively used by agents throu
 ### After Context Recovery
 
 The recovery injection tells the agent:
-1. Check LTM patterns already in the system prompt
+1. Check LTM entries already in the dynamic userContext
 2. Use `recall_sessions` to search past sessions for specific information
 3. Retrieve the `session_progress` checkpoint for task state
 4. Use git log and todo state to understand current progress
@@ -566,7 +599,8 @@ The recovery injection tells the agent:
 1. LTM persists with all accumulated knowledge
 2. Session files contain the complete conversation archive
 3. Session-level memories in `.clio/memory/` remain available
-4. Next session gets all LTM entries injected automatically
+4. Next session: LTM relevance scoring runs on the first query and
+    injects matching entries into the dynamic userContext
 
 ---
 
@@ -575,14 +609,17 @@ The recovery injection tells the agent:
 ### Incognito Mode
 
 Running CLIO with `--incognito` disables all memory persistence:
-- No LTM injection into prompts
+- No LTM relevance scoring — no entries are injected into the dynamic userContext
 - No session saving
 - No memory writes
 - No user profile injection
 
 ### No-LTM Mode
 
-Running with `--no-ltm` skips just the LTM injection while keeping session persistence. Useful when you want a fresh perspective without accumulated assumptions.
+Running with `--no-ltm` skips LTM relevance scoring and injection
+while keeping session persistence. No entries are scored or rendered
+into the dynamic userContext. Useful when you want a fresh perspective
+without accumulated assumptions.
 
 ### Data Location
 

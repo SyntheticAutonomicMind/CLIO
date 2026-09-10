@@ -78,10 +78,12 @@ its churn does not invalidate the cache-stable prefix. Environment info
 PromptBuilder::get_user_context() — not rendered here — to avoid
 date/time duplication across the system prompt and the dynamic block.
 
-The compressed_tail, active_todos, and context_files_block fields are
-rendered as natural prose (no XML tags, no # headers). relevant_memory
-is intentionally NOT rendered — LTM is available on demand via
-memory_operations(search).
+The compressed_tail, active_todos, context_files_block, and
+relevant_memory fields are rendered as natural prose (no XML tags, no
+# headers). relevant_memory entries are scored per-request by
+ContextBuilder::score_ltm and appear with tier badges ([TRUSTED] or
+[UNVERIFIED]) so the model can calibrate trust before acting on
+procedural suggestions.
 
 Arguments:
 - $projection: Hashref from L<CLIO::Core::ContextBuilder/build_projection>.
@@ -89,6 +91,8 @@ Arguments:
     - compressed_tail   : string (YaRN-compressed summary of dropped turns) or ''
     - active_todos      : arrayref of {id, status, content} (optional)
     - context_files_block : string (optional, pre-rendered context files block)
+    - relevant_memory     : arrayref of {content, confidence, type, score,
+                          tier, corroboration_count} (optional)
 
 Returns:
 - Prose string suitable for use as a single system message content
@@ -157,6 +161,54 @@ sub messages_to_prose_dynamic {
         if (length $cf_block) {
             $out .= $cf_block;
             $out .= "\n" unless $cf_block =~ /\n\z/;
+        }
+    }
+
+    # Relevant memory: per-request LTM entries scored by
+    # ContextBuilder::score_ltm against the current input, active task,
+    # and unresolved state. These are relevance-filtered (not a blind
+    # dump), so stale memories from unrelated work are unlikely to
+    # match. Tier badges ([TRUSTED] / [UNVERIFIED]) let the model
+    # calibrate trust before acting on procedural suggestions.
+    #
+    # Sanitized lazily: pre-existing entries may contain
+    # framework-narration words written before the sanitizer existed.
+    # For pattern/solution entries we preserve tool/function names
+    # (drop-only sanitize); for other types we run the full sanitizer.
+    if (my $mems = $projection->{relevant_memory}) {
+        require CLIO::Memory::LongTerm;
+        # Reuse the same lazy sanitizer pattern as score_ltm: create
+        # a throwaway LongTerm object for sanitize_narration* calls,
+        # which are stateless (package-level @SANITIZE_* data).
+        my $sanitizer = CLIO::Memory::LongTerm->new();
+        require CLIO::Core::ContextBuilder;
+        my @rendered;
+        my $rendered_count = 0;
+        my $MAX_MEMORIES = 5;
+        my $MAX_MEM_CHARS = 500;
+        for my $mem (@$mems) {
+            next unless ref($mem) eq 'HASH';
+            last if $rendered_count >= $MAX_MEMORIES;
+            my $raw     = $mem->{content} // '';
+            my $type    = $mem->{type} // '';
+            my $tier    = $mem->{tier} // 'unverified';
+            my $conf    = $mem->{confidence} // 0.5;
+
+            if ($type eq 'pattern' || $type eq 'solution') {
+                $raw = $sanitizer->sanitize_narration_drop_only($raw);
+            } else {
+                $raw = $sanitizer->sanitize_narration($raw);
+            }
+            next unless length $raw;
+            $raw = CLIO::Core::ContextBuilder::_truncate($raw, $MAX_MEM_CHARS);
+
+            my $badge = $tier eq 'trusted' ? '[TRUSTED]' : '[UNVERIFIED]';
+            push @rendered, "- ${badge} $raw";
+            $rendered_count++;
+        }
+        if (@rendered) {
+            $out .= "Relevant context from previous sessions:\n"
+                 . join("\n", @rendered) . "\n\n";
         }
     }
 

@@ -137,10 +137,10 @@ sub build_system_prompt {
     # Dynamically add available tools section from tool registry
     my $tools_section = $self->generate_tools_section();
 
-    # LTM is handled by PromptManager (budgeted, scored, with index footer).
-    if ($self->{skip_ltm}) {
-        log_debug('PromptBuilder', "LTM injection skipped (--no-ltm or --incognito)");
-    }
+    # LTM relevance scoring is gated by --no-ltm/--incognito above
+    # (skip_ltm prevents LTM entries from reaching the projection).
+    # The relevant_memory field rendered by MessageHistory is empty
+    # in those modes.
 
     # Build user profile section if available AND not in incognito mode
     my $profile_section = '';

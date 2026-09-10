@@ -1,5 +1,5 @@
 #!/usr/bin/env perl
-# Test LTM integration end-to-end
+# Test LTM integration end-to-end: relevance scoring + dynamic UC rendering.
 
 use strict;
 use warnings;
@@ -8,13 +8,28 @@ use FindBin qw($RealBin);
 use lib "$RealBin/../../lib";
 use lib "$RealBin/../lib";
 
-use CLIO::Session::Manager;
 use CLIO::Memory::LongTerm;
-use CLIO::Core::PromptManager;
-use CLIO::Core::WorkflowOrchestrator;
-use Data::Dumper;
+use CLIO::Core::ContextBuilder;
+use CLIO::Core::MessageHistory;
+use CLIO::Util::JSON qw(encode_json decode_json);
 
-print "Testing LTM Integration...\n\n";
+my $PASS = 0;
+my $FAIL = 0;
+
+sub ok_test {
+    my ($condition, $name) = @_;
+    if ($condition) {
+        $PASS++;
+        ok(1, $name);
+    } else {
+        $FAIL++;
+        ok(0, $name);
+    }
+}
+
+use Test::More;
+
+print "Testing LTM Integration (relevance-based injection)...\n\n";
 
 # 1. Create a test LTM with sample patterns
 print "[1] Creating test LTM with sample patterns...\n";
@@ -23,146 +38,112 @@ my $ltm = CLIO::Memory::LongTerm->new(
     debug => 1
 );
 
-# Store test patterns
 $ltm->add_discovery('Test discovery: CLIO uses Perl 5.32+', 0.95, 1);
-
 $ltm->add_problem_solution(
     'API timeout error',
     'Add retry logic with exponential backoff',
     ['Seen in WorkflowOrchestrator.pm']
 );
-
 $ltm->add_code_pattern(
     'use strict; use warnings; at module top',
     0.99,
     ['lib/CLIO/Core/*.pm', 'lib/CLIO/Tools/*.pm']
 );
 
-$ltm->save();
-print "   Stored 3 test patterns\n\n";
+# 2. Test get_entries_for_projection returns all types
+print "[2] Testing get_entries_for_projection...\n";
+my $entries = $ltm->get_entries_for_projection();
+ok_test(scalar(@$entries) >= 3, "get_entries_for_projection returns all entries (${\(scalar @$entries)})");
 
-# 2. Create session with LTM
-print "[2] Creating test session with LTM...\n";
+my @types = map { $_->{type} } @$entries;
+ok_test(grep(/discovery/, @types), "discovery entries included");
+ok_test(grep(/solution/, @types), "solution entries included");
+ok_test(grep(/pattern/, @types), "pattern entries included");
 
-# Don't use session manager - it creates a fresh LTM
-# Instead, manually create state with our LTM
-require CLIO::Session::State;
-require CLIO::Memory::ShortTerm;
-require CLIO::Memory::YaRN;
+# 3. Test score_ltm returns relevant entries
+print "[3] Testing score_ltm relevance scoring...\n";
+my $input = 'CLIO uses Perl';
+my $task = '';
+my $unresolved = [];
+my $scored = CLIO::Core::ContextBuilder::score_ltm($entries, $input, $task, $unresolved);
 
-my $stm = CLIO::Memory::ShortTerm->new(debug => 0);
-my $yarn = CLIO::Memory::YaRN->new(debug => 0);
+ok_test(scalar(@$scored) >= 1, "score_ltm returned at least 1 relevant entry");
+my $found_disc = 0;
+for my $s (@$scored) {
+    if ($s->{content} =~ /CLIO uses Perl/) {
+        $found_disc = 1;
+        ok_test($s->{tier} eq 'unverified', "entry has tier=unverified (no corroboration)");
+        ok_test(defined $s->{score}, "entry has a score");
+        ok_test($s->{score} >= 5, "entry score >= relevance threshold 5");
+    }
+}
+ok_test($found_disc, "discovery entry matched and scored");
 
-my $session = CLIO::Session::State->new(
-    session_id => 'test-session-123',
-    debug => 0,
-    working_directory => $RealBin,
-    stm => $stm,
-    ltm => $ltm,  # Use our test LTM with patterns
-    yarn => $yarn,
+# 4. Test tier field is carried through score_ltm
+print "\n[4] Testing tier propagation through score_ltm...\n";
+$ltm->add_corroboration('CLIO uses Perl', 'agent_a', 'session_a');
+$ltm->add_corroboration('CLIO uses Perl', 'agent_b', 'session_b');
+
+my $entries2 = $ltm->get_entries_for_projection();
+my $scored2 = CLIO::Core::ContextBuilder::score_ltm($entries2, 'CLIO uses Perl', '', []);
+
+my $found_trusted = 0;
+for my $s (@$scored2) {
+    if ($s->{content} =~ /CLIO uses Perl/) {
+        $found_trusted = 1;
+        ok_test($s->{tier} eq 'trusted', "entry promoted to trusted after 2 corroborations");
+        ok_test($s->{corroboration_count} == 2, "entry has corroboration_count=2");
+    }
+}
+ok_test($found_trusted, "trusted entry found in scored results");
+
+# 5. Test messages_to_prose_dynamic renders relevant_memory with badges
+print "\n[5] Testing messages_to_prose_dynamic rendering...\n";
+my $scored3 = CLIO::Core::ContextBuilder::score_ltm($entries2, 'CLIO uses Perl', '', []);
+my $rendered = CLIO::Core::MessageHistory::messages_to_prose_dynamic(
+    { relevant_memory => $scored3 }
 );
 
-# Add get_long_term_memory method if not present
-unless ($session->can('get_long_term_memory')) {
-    no strict 'refs';
-    *{"CLIO::Session::State::get_long_term_memory"} = sub {
-        my $self = shift;
-        return $self->{ltm};
-    };
-}
+ok_test(length($rendered) > 0, "dynamic UC rendering produced output");
+ok_test($rendered =~ /\[TRUSTED\]/, "dynamic UC contains [TRUSTED] badge for promoted entry");
+ok_test($rendered =~ /CLIO uses Perl/, "dynamic UC contains the discovery content");
 
-print "   Session created with LTM\n\n";
+# 6. Test non-relevant entries are NOT injected
+print "\n[6] Testing relevance filtering...\n";
+my $entries3 = $ltm->get_entries_for_projection();
+my $scored4 = CLIO::Core::ContextBuilder::score_ltm($entries3, 'unrelated query about quantum flux', '', []);
+ok_test(scalar(@$scored4) == 0, "irrelevant query returns 0 relevant memories");
 
-# 3. Create WorkflowOrchestrator (without real API manager)
-print "[3] Creating WorkflowOrchestrator...\n";
-
-# Mock API manager for testing
-my $mock_api = bless {}, 'MockAPIManager';
-
-my $orchestrator = CLIO::Core::WorkflowOrchestrator->new(
-    api_manager => $mock_api,
-    session => $session,
-    debug => 1
+# 7. Test skip_ltm suppresses rendering (simulated)
+print "\n[7] Testing skip_ltm suppression...\n";
+# When skip_ltm is set, WorkflowOrchestrator passes [] as ltm entries,
+# so score_ltm returns []. messages_to_prose_dynamic with empty
+# relevant_memory should produce no memory section.
+my $empty_render = CLIO::Core::MessageHistory::messages_to_prose_dynamic(
+    { relevant_memory => [] }
 );
+ok_test($empty_render !~ /relevant context/, "no memory section when relevant_memory is empty");
 
-print "   Orchestrator created\n\n";
-
-# 4. Test get_dynamic_context with session (LTM moved to user message for cache stability)
-print "[4] Testing get_dynamic_context with LTM content...\n";
-
-# Debug: verify LTM is accessible
-my $test_ltm = $session->get_long_term_memory();
-print "   LTM accessible: " . (defined $test_ltm ? "YES" : "NO") . "\n";
-if ($test_ltm) {
-    my $test_disc = $test_ltm->query_discoveries();
-    print "   LTM has " . scalar(@$test_disc) . " discoveries\n";
-}
-
-my $system_prompt;
-my $dynamic_context;
-eval {
-    my $pm = CLIO::Core::PromptManager->new(debug => 1);
-    $system_prompt = $pm->get_system_prompt($session);
-    $dynamic_context = $pm->get_dynamic_context($session);
-};
-if ($@) {
-    print "   [FAIL] PromptManager errored: $@\n";
-    $system_prompt = '';
-    $dynamic_context = '';
-}
-
-# Verify LTM is NOT in the system prompt (moved to dynamic context for cache stability)
-if ($system_prompt =~ /Long-Term Memory Patterns/) {
-    print "   [FAIL] LTM section found in system prompt (should be in dynamic context only)\n";
-} else {
-    print "   [OK] LTM section NOT in system prompt (cache-stable)\n";
-}
-
-# Verify LTM IS in the dynamic context
-if ($dynamic_context && $dynamic_context =~ /Long-Term Memory Patterns/) {
-    print "   [OK] LTM section found in dynamic context\n";
-} else {
-    print "   [FAIL] LTM section NOT found in dynamic context\n";
-}
-
-if ($dynamic_context && $dynamic_context =~ /Test discovery: CLIO uses Perl/) {
-    print "   [OK] Discovery pattern in dynamic context\n";
-} else {
-    print "   [FAIL] Discovery pattern NOT found in dynamic context\n";
-}
-
-if ($dynamic_context && $dynamic_context =~ /API timeout error/) {
-    print "   [OK] Solution pattern in dynamic context\n";
-} else {
-    print "   [FAIL] Solution pattern NOT found in dynamic context\n";
-}
-
-if ($dynamic_context && $dynamic_context =~ /use strict; use warnings/) {
-    print "   [OK] Code pattern in dynamic context\n";
-} else {
-    print "   [FAIL] Code pattern NOT found in dynamic context\n";
-}
-
-print "\n[5] System prompt length: " . length($system_prompt) . " characters (stable portion)\n";
-print "   Dynamic context length: " . length($dynamic_context // '') . " characters\n";
-print "   (LTM patterns now injected into user message for cache stability)\n\n";
-
-# 5. Query LTM patterns directly
-print "[6] Querying LTM patterns directly...\n";
-my $discoveries = $ltm->query_discoveries(limit => 3);
-my $solutions = $ltm->query_solutions(limit => 3);
-my $patterns = $ltm->query_patterns(limit => 3);
-
-print "   Discoveries: " . scalar(@$discoveries) . "\n";
-print "   Solutions: " . scalar(@$solutions) . "\n";
-print "   Patterns: " . scalar(@$patterns) . "\n\n";
+# 8. Test narrative sanitization in rendered memory
+print "\n[8] Testing narrative sanitization in memory rendering...\n";
+$ltm->add_discovery('memory_operations(store) is the way to save facts', 0.8);
+my $entries4 = $ltm->get_entries_for_projection();
+my $scored5 = CLIO::Core::ContextBuilder::score_ltm($entries4, 'save facts', '', []);
+my $rendered2 = CLIO::Core::MessageHistory::messages_to_prose_dynamic(
+    { relevant_memory => $scored5 }
+);
+ok_test($rendered2 !~ /memory_operations/, "tool name sanitized out of rendered memory");
+ok_test($rendered2 =~ /long-term memory/, "tool name replaced with neutral term");
 
 # Cleanup
-unlink "$RealBin/.clio/ltm.json";
+ok_test(1, "cleanup marker");
+unlink "$RealBin/.clio/ltm.json" if -e "$RealBin/.clio/ltm.json";
 
-print "Test completed successfully!\n";
+print "\n" . "=" x 60 . "\n";
+print "Results: $PASS/$PASS+$FAIL passed";
+print " ($FAIL FAILED)" if $FAIL;
+print "\n" . "=" x 60 . "\n";
 
-# Mock API Manager package
-package MockAPIManager;
-sub new { bless {}, shift; }
-1;
+done_testing();
+
+exit($FAIL > 0 ? 1 : 0);

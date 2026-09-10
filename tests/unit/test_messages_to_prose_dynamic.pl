@@ -109,8 +109,6 @@ for my $tag (qw(
 
 for my $forbidden (
     'After context trimming',
-    '[UNVERIFIED]',
-    '[TRUSTED]',
     'Showing X of Y',
     'Showing 12 of 55',
     'informational context only',
@@ -164,16 +162,42 @@ unlike($p1, qr/Args: /, 'Prose renderer does NOT render tool args (now role-base
 unlike($p1, qr/Working directory:/, 'Prose renderer does NOT emit environment (handled by PromptBuilder)');
 
 # ---------------------------------------------------------------------------
-# 9. Empty projection is safe
+# 9. LTM relevant_memory rendering with tier badges
+# ---------------------------------------------------------------------------
+# score_ltm output entries now carry a `tier` field ('trusted' or
+# 'unverified'). The renderer should produce [TRUSTED] or [UNVERIFIED]
+# badges, and LTM content should appear under a "Relevant context" header.
+
+# Re-run with the projection's own relevant_memory (computed by score_ltm
+# from the LTM entries in build_projection). These entries have no tier
+# set on the raw LTM, so score_ltm defaults to 'unverified'.
+like($prose, qr/Relevant context from previous sessions:/, 'LTM relevant_memory section header present');
+like($prose, qr/\[UNVERIFIED\] messageHistory XML serialization/, 'unverified LTM entry rendered with [UNVERIFIED] badge');
+like($prose, qr/\[UNVERIFIED\] framework narration in user context/, 'unverified LTM entry rendered with [UNVERIFIED] badge');
+# The low-confidence 'unrelated thing' (0.50) may or may not pass the
+# confidence floor — check that it doesn't carry a false [TRUSTED] badge.
+unlike($prose, qr/\[TRUSTED\].*unrelated/, 'low-confidence entry does not get [TRUSTED] badge');
+
+# Now test with trusted entries via an explicit projection.
+my $trusted_proj = {
+    relevant_memory => [
+        { content => 'Always use atomic writes for session files', confidence => 0.95,
+          type => 'pattern', tier => 'trusted', corroboration_count => 2 },
+        { content => 'Check .clio/ directory ownership on permission errors', confidence => 0.6,
+          type => 'discovery', tier => 'unverified', corroboration_count => 0 },
+    ],
+};
+my $trusted_prose = messages_to_prose_dynamic($trusted_proj);
+like($trusted_prose, qr/\[TRUSTED\] Always use atomic writes/, 'trusted entry rendered with [TRUSTED] badge');
+like($trusted_prose, qr/\[UNVERIFIED\] Check \.clio\/ directory ownership/, 'unverified entry rendered with [UNVERIFIED] badge');
+
+# ---------------------------------------------------------------------------
+# 10. Empty projection is safe
 # ---------------------------------------------------------------------------
 
 my $empty = messages_to_prose_dynamic({});
 ok(defined $empty, 'empty projection returns defined output');
 is(length($empty), 0, 'empty projection returns empty string');
-
-# ---------------------------------------------------------------------------
-# 10. Missing optional fields don't crash
-# ---------------------------------------------------------------------------
 
 # Minimal projection: only the dynamic userContext fields. Anchor and
 # turns are now role-based, so passing them to messages_to_prose_dynamic has
