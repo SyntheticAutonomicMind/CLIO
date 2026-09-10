@@ -386,67 +386,15 @@ The harness categorises warnings by source. CLIO warnings (paths containing `lib
 
 When adding a test for a code path that you suspect might emit a warning, capture warnings via `$SIG{__WARN__}` and assert zero uninit warnings fired (see `tests/unit/test_command_handler.pl` for the pattern).
 
-### Adding Operation-Name Aliases to Tools
+### Operation-Name Aliases (Internal Only)
 
-When an LLM sends a tool call with a natural-language operation name that isn't in the canonical set (e.g. `list_directory` instead of `list_dir`), the tool returns `Unknown operation: ... Did you mean: list_dir?` and the call fails. The `dispatch_table` design in `lib/CLIO/Tools/Tool.pm:138-144` already supports aliases: "Aliases are supported by mapping multiple keys to the same method."
-
-To add an alias to a tool:
-
-1. Add the alias to `supported_operations` in the tool's `new()` method. This surfaces it in the JSON schema's `operation` enum and in error messages.
-2. Add the alias as a key in `dispatch_table` that maps to the same method name as the canonical entry.
-
-Example (in `lib/CLIO/Tools/FileOperations.pm`):
-
-```perl
-# supported_operations — CANONICAL NAMES ONLY.
-# These populate the JSON schema enum sent to the LLM. Do NOT include
-# natural-language aliases here (e.g. 'read', 'mkdir') — they are silently
-# accepted via operation_aliases + dispatch_table, but exposing them in the
-# enum causes the tool-call layer to strip the operation and use the alias
-# as the tool name, producing "Unknown tool" errors.
-supported_operations => [qw(
-    read_file
-    list_dir
-    ...
-)],
-
-# operation_aliases — natural-language aliases NOT sent in the schema enum.
-# These are silently accepted as operation values via validate_operation
-# (which checks supported_operations + operation_aliases + dispatch_table
-# keys) and dispatched via dispatch_table.
-operation_aliases => [qw(
-    read list_directory
-    ...
-)],
-
-# dispatch_table — maps every accepted operation name (canonical + alias)
-# to its handler method. Must include entries for all names in
-# supported_operations AND operation_aliases.
-sub dispatch_table {
-    return {
-        read_file      => 'read_file',
-        read           => 'read_file',       # alias
-        list_dir       => 'list_dir',
-        list_directory => 'list_dir',        # alias
-        ...
-    };
-}
-```
-
-Add tests under `tests/unit/test_<tool>_aliases.pl` that invoke each alias with realistic parameters and assert the dispatch produces the expected result. See `tests/unit/test_file_operations_aliases.pl` for the pattern.
-
-Guidelines for choosing aliases:
-
-- Prefer unambiguous mappings: a single alias should point to one operation.
-- Skip aliases that could be confused with another operation (e.g. `read` could mean `read_file` or `read_tool_result`; pick the most common).
-- Short Unix-style names (`mv`, `mkdir`, `rm`) are good aliases when the canonical name is verbose.
-- Do NOT add aliases to `supported_operations` — that field populates the JSON
-  schema `enum` sent to the LLM. Exposing aliases in the enum causes the
-  tool-call layer to strip the `operation` parameter and use the alias name as
-  the tool name (e.g. `read` instead of `file_operations` + `operation: read_file`),
-  producing "Unknown tool" errors. Put aliases in `operation_aliases` and
-  `dispatch_table` only. The `_suggest_operation` helper in `Tool.pm` uses both
-  `supported_operations` and `operation_aliases` to produce "Did you mean" hints.
+Aliases are an internal fallback mechanism — models should not be published
+with instructions to use them. The `_infer_operation_from_params` silent
+remediation in `Tool.pm` auto-resolves cases where the model passes an
+operation name as a parameter key (e.g. `{"exec": "ls", "command": "ls"}`
+instead of `{"operation": "exec", "command": "ls"}`). Single-operation
+tools auto-select when `operation` is missing entirely. Alias tests follow
+the `tests/unit/test_*_aliases.pl` pattern.
 
 
 ---
