@@ -19,10 +19,11 @@ use lib './lib';
 use Test::More;
 use CLIO::Providers qw(
     get_provider list_providers provider_exists
+    build_endpoint_config DEFAULT_MODEL provider_from_url
+    resolve_custom_provider list_all_providers
     is_local_inference exposes_props default_context_window
-    provider_from_url
     capability_fetcher default_reasoning_mode
-    quota_handler
+    quota_handler supports_cache_control
 );
 use CLIO::Core::Defaults qw(
     DEFAULT_LOCAL_CONTEXT_WINDOW DEFAULT_CONTEXT_WINDOW
@@ -267,6 +268,48 @@ for my $name (@CLOUD_NAMES) {
         is(quota_handler($name), undef,
             "$name has no quota API -> undef");
     }
+}
+
+# ============================================================================
+# supports_cache_control - which providers accept cache_control fields
+# ============================================================================
+# Cloud providers with automatic or explicit caching accept cache_control.
+# Local inference providers (SAM, llama.cpp, LM Studio, Ollama Cloud)
+# rely on automatic caching at the API level or local SSD-backed KV cache.
+my @CACHE_CONTROL_PROVIDERS = qw(
+    anthropic google openai deepseek github_copilot
+    openrouter vercel orca kilo
+);
+
+my @NO_CACHE_CONTROL_PROVIDERS = qw(
+    sam llama.cpp lmstudio ollama_cloud
+    minimax zai zai_coding nvidia minimax_token
+);
+
+for my $name (@CACHE_CONTROL_PROVIDERS) {
+    is(supports_cache_control($name), 1,
+        "supports_cache_control($name) == 1");
+}
+
+for my $name (@NO_CACHE_CONTROL_PROVIDERS) {
+    is(supports_cache_control($name), 0,
+        "supports_cache_control($name) == 0");
+}
+
+is(supports_cache_control('nonexistent'), 0,
+    "supports_cache_control(unknown) == 0");
+
+# Verify the flag propagates to endpoint config via build_endpoint_config
+for my $name (@CACHE_CONTROL_PROVIDERS) {
+    my $cfg = build_endpoint_config($name, 'test-key');
+    ok($cfg->{supports_cache_control},
+        "build_endpoint_config($name) propagates supports_cache_control");
+}
+
+for my $name (@NO_CACHE_CONTROL_PROVIDERS) {
+    my $cfg = build_endpoint_config($name, 'test-key');
+    ok(!$cfg->{supports_cache_control},
+        "build_endpoint_config($name) does NOT set supports_cache_control");
 }
 
 done_testing();

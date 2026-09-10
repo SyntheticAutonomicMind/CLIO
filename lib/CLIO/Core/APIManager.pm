@@ -1232,6 +1232,31 @@ sub adapt_request_for_endpoint {
         }
     }
 
+    # Strip cache_control fields from messages and tools for providers that
+    # don't support it. Most providers handle caching automatically (OpenAI,
+    # Google, DeepSeek, Grok, Moonshot, Groq, OpenRouter), so they don't
+    # need explicit cache_control markers. Only Anthropic (via its native
+    # provider module), Vercel, Orca, and Kilo (which set supports_cache_control)
+    # use explicit cache_control. Defensive: prevents invalid fields from
+    # reaching providers that would reject them.
+    unless ($endpoint_config->{supports_cache_control}) {
+        if ($payload->{messages}) {
+            for my $msg (@{$payload->{messages}}) {
+                delete $msg->{cache_control} if exists $msg->{cache_control};
+                if (defined $msg->{content} && ref($msg->{content}) eq 'ARRAY') {
+                    for my $block (@{$msg->{content}}) {
+                        delete $block->{cache_control} if ref($block) eq 'HASH' && exists $block->{cache_control};
+                    }
+                }
+            }
+        }
+        if ($payload->{tools}) {
+            for my $tool (@{$payload->{tools}}) {
+                delete $tool->{cache_control} if exists $tool->{cache_control};
+            }
+        }
+    }
+
     return $payload;
 }
 
