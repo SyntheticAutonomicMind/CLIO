@@ -3266,7 +3266,6 @@ sub _active_task_text {
     # full history. YaRN::find_substantive_task scans newest-first
     # (>=50 chars), so when no goals are set, the most recent
     # substantive user message wins - same precedence rule as above.
-    require CLIO::Memory::YaRN;
     return '' unless $session->can('get_conversation_history');
     my $history = eval { $session->get_conversation_history() };
     my $candidate = $user_input // '';

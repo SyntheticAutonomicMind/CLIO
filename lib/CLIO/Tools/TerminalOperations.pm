@@ -55,6 +55,11 @@ QUICK EXAMPLE:
 # and prevents premature kills of long-running commands that are silently
 # working (model loading, large compiles, DB queries, etc.).
         supported_operations => [qw(exec validate)],
+        # Natural-language aliases for exec and validate. These are silently
+        # accepted via validate_operation + dispatch_table keys but are NOT
+        # included in the schema enum (supported_operations) sent to the LLM,
+        # preventing the model from confusing them with tool names.
+        operation_aliases => [qw(run execute shell check)],
         %opts,
     );
 }
@@ -91,7 +96,11 @@ sub get_tool_definition {
 sub dispatch_table {
     return {
         exec     => 'execute_command',
+        run      => 'execute_command',
+        execute  => 'execute_command',
+        shell    => 'execute_command',
         validate => 'validate_command',
+        check    => 'validate_command',
     };
 }
 

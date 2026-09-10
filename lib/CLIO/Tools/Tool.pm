@@ -117,6 +117,22 @@ sub execute {
         }
     }
 
+    # Auto-select single operation when 'operation' is missing.
+    # Some tools expose exactly one supported operation. When the model
+    # forgets to send 'operation', silently default to that single
+    # operation instead of erroring. This eliminates an entire class of
+    # avoidable tool-call failures for single-op tools. The model is
+    # never informed — it just sees a successful result.
+    unless ($operation) {
+        my $ops = $self->{supported_operations} || [];
+        if (@$ops == 1) {
+            $operation = $ops->[0];
+            $params->{operation} = $operation;
+            log_debug("Tool:$self->{name}",
+                "Auto-selected single available operation '$operation'");
+        }
+    }
+
     unless ($operation) {
         my $available = join(', ', @{$self->{supported_operations}});
         log_debug("Tool:$self->{name}", "Missing 'operation' parameter. Available: $available");
