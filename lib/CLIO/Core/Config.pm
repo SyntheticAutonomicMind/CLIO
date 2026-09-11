@@ -454,11 +454,20 @@ Save ONLY user-explicitly-set values to file
 Provider defaults (api_base, model from provider) are NOT saved.
 Only saves what user explicitly configured via /api commands.
 
+Before overwriting an existing config.json, the current file is copied into
+a sibling C<config_backups/> directory with a date-stamped name
+(C<YYYYMMDD_HHMMSS.json>). Two saves that fall within the same second get a
+C<_1> / C<_2> ... suffix so neither is clobbered. Backups are best-effort
+(non-fatal on failure) and inherit the live file's 0600 permissions
+(because they contain API keys). The user's own hand-managed
+C<config.json.bak> / C<config.json.bak2> snapshots are never touched by
+this mechanism.
+
 =cut
 
 sub save {
     my ($self) = @_;
-    
+
     # TEST-MODE GUARD: a Config constructed in test mode (persist => 0) must
     # never write to disk. The config_dir is an ephemeral tempdir; writing
     # is pointless and, more importantly, we must never fall through to the
@@ -485,14 +494,59 @@ sub save {
     if (should_log('DEBUG')) {
         log_debug('Config', "Saving user-set values: " . join(', ', sort keys %config_to_save));
     }
-    
+
+    # Back up the existing config before overwriting it. We use a date-stamped
+    # filename in a sibling config_backups/ directory (one per save timestamp)
+    # rather than rotating a single .bak: this never clobbers the user's
+    # own manually-managed config.json.bak / .bak2 snapshots, and gives a
+    # recoverable history if a save truncates the live config. The backup is
+    # best-effort (failure is non-fatal) and inherits the live file's 0600
+    # perms via a chmod after copy.
+    if (-e $self->{config_file}) {
+        eval {
+            require File::Copy;
+            my $backup_dir = File::Spec->catdir($self->{config_dir}, 'config_backups');
+            unless (-d $backup_dir) {
+                make_path($backup_dir, { mode => 0700 })
+                    or die "Cannot create backup dir '$backup_dir': $!";
+            }
+            # Localize to avoid leaking into other code that formats time later.
+            my $stamp = (require POSIX)
+                    ? POSIX::strftime('%Y%m%d_%H%M%S', localtime)
+                    : sprintf('%04d%02d%02d_%02d%02d%02d',
+                              (localtime)[5] + 1900, (localtime)[4] + 1, (localtime)[3],
+                              (localtime)[2], (localtime)[1], (localtime)[0]);
+            my $name = $stamp . '.json';
+            my $dest = File::Spec->catfile($backup_dir, $name);
+            # Two saves within the same second would collide; disambiguate.
+            if (-e $dest) {
+                $dest = File::Spec->catfile($backup_dir, $stamp . '_1.json');
+                my $n = 2;
+                while (-e $dest) {
+                    $dest = File::Spec->catfile($backup_dir, $stamp . "_${n}.json");
+                    $n++;
+                }
+            }
+            File::Copy::copy($self->{config_file}, $dest)
+                or die "Backup copy failed: $!";
+            chmod 0600, $dest;
+            log_debug('Config', "Backed up config to $dest");
+        };
+        if ($@) {
+            # Non-fatal: we still want to attempt the live save. But if the
+            # backup failed because of a permissions/IO issue, the live write
+            # will likely fail too — surface both.
+            log_debug('Config', "Config backup skipped: $@");
+        }
+    }
+
     # Save config with secure permissions (contains API keys)
     eval {
         open my $fh, '>', $self->{config_file} or croak "Cannot write: $!";
         print $fh encode_json(\%config_to_save);
         close $fh;
         chmod 0600, $self->{config_file};
-        
+
         log_debug('Config', "Saved to $self->{config_file}");
     };
     
