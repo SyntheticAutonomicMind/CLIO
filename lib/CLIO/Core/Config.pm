@@ -808,12 +808,18 @@ User can override individual settings later.
 sub set_provider {
     my ($self, $provider) = @_;
     
-    # Check if provider exists in Providers.pm
-    unless (provider_exists($provider)) {
+    # Check if provider exists (built-in or custom alias)
+    unless (provider_exists($provider) || $self->is_custom_provider($provider)) {
         log_debug('Config', "Unknown provider: $provider");
         log_debug('Config', "Available providers: " . join(', ', list_providers()));
         return 0;
     }
+    
+    # Resolve custom provider aliases to their base provider type for
+    # registry lookups (get_provider only knows built-ins). The alias
+    # name itself is kept as the configured 'provider' so per-alias
+    # key/base resolution continues to work downstream.
+    my $base_provider = $self->resolve_custom_provider($provider);
     
     # Save outgoing provider's custom api_base before switching
     # If the user had set a custom api_base for the current provider,
@@ -827,7 +833,7 @@ sub set_provider {
         }
     }
     
-    my $provider_config = get_provider($provider);
+    my $provider_config = get_provider($base_provider);
     
     # Set provider name (this IS user-set - they chose the provider)
     $self->set('provider', $provider, 1);  # Mark as user-set
@@ -845,8 +851,15 @@ sub set_provider {
     # If provider has no default model (undef), we'll use the first available model from the API
     my $default_model = $provider_config->{model};
     if (defined $default_model) {
-        if ($default_model =~ m{^\Q$provider\E/}) {
-            $self->set("model", $default_model, 0);
+        # For providers whose default model already carries the base
+        # provider's prefix (e.g. nvidia's "nvidia/nemotron-...",
+        # keep_model_prefix=1), strip that base prefix and re-apply the
+        # actual provider name (alias for custom, built-in otherwise).
+        # For bare model names, simply prefix with the provider/alias.
+        if ($default_model =~ m{^\Q$base_provider\E/} || $provider_config->{keep_model_prefix}) {
+            my $stripped = $default_model;
+            $stripped =~ s{^\Q$base_provider\E/}{};
+            $self->set("model", "$provider/$stripped", 0);
         } else {
             $self->set("model", "$provider/$default_model", 0);
         }
@@ -1169,6 +1182,30 @@ sub is_custom_provider {
     $name = lc($name);
     my $custom = $self->{config}->{custom_providers} || {};
     return exists $custom->{$name} ? 1 : 0;
+}
+
+=head2 is_valid_provider($name)
+
+Check if a provider name is valid - either a built-in provider or a
+registered custom provider alias.
+
+This is the single check callers should use when they need to accept any
+provider the user can target (built-in or custom alias), rather than
+calling C<CLIO::Providers::provider_exists> directly, which only knows
+about built-ins and silently rejects custom aliases.
+
+Arguments:
+    $name: Provider name (built-in or custom alias)
+
+Returns: Boolean (1 if valid, 0 otherwise)
+
+=cut
+
+sub is_valid_provider {
+    my ($self, $name) = @_;
+    return 0 unless $name;
+    return CLIO::Providers::provider_exists($name)
+        || ($self->{config} && $self->is_custom_provider($name));
 }
 
 =head2 remove_custom_provider($name)
