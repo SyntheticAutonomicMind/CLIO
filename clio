@@ -196,7 +196,7 @@ for (my $i = 0; $i < @ARGV; $i++) {
 my $provider = $config->get('provider');
 if ((!$provider || $provider eq '') && $cli_model_override
     && $cli_model_override =~ m{^([a-z][a-z0-9_.-]*)/(.+)$}i
-    && CLIO::Providers::provider_exists($1)) {
+    && $config->is_valid_provider($1)) {
     my $derived_provider = $1;
     # Check config first, then fall back to CLIO_API_KEY env var.
     # Env var covers non-interactive/CI/CD launches where there's no
@@ -236,7 +236,7 @@ if (!$provider || $provider eq '') {
         } @configured;
 
         my $auto = $candidates[0];
-        if ($auto && CLIO::Providers::provider_exists($auto)) {
+        if ($auto && $config->is_valid_provider($auto)) {
             $config->set_provider($auto);
             $config->save();
             $provider = $auto;
@@ -375,7 +375,7 @@ if ($route_name && length($route_name)) {
             # Resolve provider from first model BEFORE setting the model,
             # because set_provider() overwrites model with the provider's
             # default model (e.g. OpenRouter defaults to meta-llama/...).
-            if ($models->[0] =~ m{^([a-z][a-z0-9_.-]*)/(.+)$}i && CLIO::Providers::provider_exists($1)) {
+            if ($models->[0] =~ m{^([a-z][a-z0-9_.-]*)/(.+)$}i && $config->is_valid_provider($1)) {
                 my $rp = $1;
                 my $rpkey = $config->get_provider_key($rp);
                 if ($rpkey) {
@@ -975,8 +975,7 @@ if ($mode eq 'new' || $mode eq 'chat') {
             if ($session_provider || $session_model) {
                 # Session has explicit overrides - apply them
                 if ($session_provider) {
-                    require CLIO::Providers;
-                    if (CLIO::Providers::provider_exists($session_provider)) {
+                    if ($config->is_valid_provider($session_provider)) {
                         $config->set_provider($session_provider);
                         delete $config->{user_set}->{provider};
                         delete $config->{user_set}->{api_base};
@@ -989,8 +988,7 @@ if ($mode eq 'new' || $mode eq 'chat') {
                     # If model has provider prefix, load that provider first
                     if (!$session_provider && $session_model =~ m{^([a-z][a-z0-9_.-]*)/}i) {
                         my $model_provider = $1;
-                        require CLIO::Providers;
-                        if (CLIO::Providers::provider_exists($model_provider)) {
+                        if ($config->is_valid_provider($model_provider)) {
                             $config->set_provider($model_provider);
                             delete $config->{user_set}->{provider};
                             delete $config->{user_set}->{api_base};
@@ -1069,16 +1067,15 @@ log_debug('Main', "LTM identity: CLIO_AGENT_ID=$ENV{CLIO_AGENT_ID} CLIO_SESSION_
     my $current_provider = $config->get('provider') || '';
     
     if ($current_model && $current_provider) {
-        require CLIO::Providers;
         my $has_prefix = 0;
         if ($current_model =~ m{^([a-z][a-z0-9_.-]*)/}i) {
-            $has_prefix = CLIO::Providers::provider_exists($1);
+            $has_prefix = $config->is_valid_provider($1);
         }
         
        unless ($has_prefix) {
             # If model is just a provider name (placeholder), don't double-prefix it.
             # APIManager::get_current_model will resolve it lazily via _resolve_model_placeholder.
-            if (CLIO::Providers::provider_exists($current_model) && $current_model eq $current_provider) {
+            if ($config->is_valid_provider($current_model) && $current_model eq $current_provider) {
                 log_debug('Main', "Model '$current_model' is a provider placeholder - letting APIManager resolve it");
             } else {
                my $full_model = "$current_provider/$current_model";
@@ -1096,7 +1093,7 @@ if ($model_override) {
     
     # Check for explicit provider prefix (e.g. "openrouter/deepseek-r1")
     if ($model_override =~ m{^([a-z][a-z0-9_.-]*)/(.+)$}i &&
-        CLIO::Providers::provider_exists($1)) {
+        $config->is_valid_provider($1)) {
         $target_provider = $1;
         $model_override = $2;  # Strip prefix; will be re-added below
     }
@@ -1115,7 +1112,12 @@ if ($model_override) {
         # set_provider() would mark provider as user_set, and deleting those
         # flags afterward also removes the ORIGINAL user-configured provider,
         # causing config.json to lose provider on next save.
-        my $pcfg = CLIO::Providers::get_provider($target_provider);
+        # Resolve custom provider aliases to their base type for the registry
+        # lookup (get_provider only knows built-ins). The alias name itself is
+        # kept as the configured provider so per-alias key/base resolution works.
+        my $pcfg = CLIO::Providers::get_provider(
+            $config->resolve_custom_provider($target_provider)
+        );
         $config->{config}->{provider} = $target_provider;
 
         # Load api_base: stored override first, then provider default
