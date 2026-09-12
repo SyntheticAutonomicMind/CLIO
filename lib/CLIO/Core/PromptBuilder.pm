@@ -473,7 +473,7 @@ sub generate_auto_skill_section {
 When you complete a substantial task that produces reusable knowledge or a
 workflow that could be useful in a future session, capture it as a skill.
 Skills are reusable prompt templates the agent loads on demand via
-skill_operations. You MUST:
+skill_operations. When capturing a skill:
 
 - **Check the catalog first** - the installed skills list above shows what's
   available. Load with skill_operations before creating something that
