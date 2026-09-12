@@ -289,8 +289,8 @@ sub _generate_agents_md_toc {
             next;
         }
         next if $in_code_block;
-        # Only parse ## and ### level headings (skip H1 and code-block ##)
-        if ($line =~ /^(##+|###+)\s+(.+)/) {
+        # Parse markdown headings (level 2 and above - skip H1 titles)
+        if ($line =~ /^(#{2,})\s+(.+)/) {
             my $level = length($1);
             my $title = $2;
             # Trim trailing whitespace

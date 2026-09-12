@@ -255,7 +255,7 @@ sub generate_tools_section {
 
     log_debug('PromptBuilder', "Generating tools section for $tool_count tools");
 
-    my $section = "CRITICAL: Always use the correct tool name and parameters as specified in the tool definitions.\n\n## Available Tools - READ THIS CAREFULLY\n\n";
+    my $section = "Always use the correct tool name and parameters as specified in the tool definitions.\n\n## Available Tools - READ THIS CAREFULLY\n\n";
     $section .= "You have access to exactly $tool_count function calling tools. ";
     $section .= "When users ask \"what tools do you have?\", list ALL $tool_count tools by name:\n\n";
 
@@ -283,8 +283,8 @@ sub generate_tools_section {
         $num++;
     }
 
-    $section .= "\n**Important:** You HAVE all $tool_count of these tools. ";
-    $section .= "Do NOT say you don't have a tool that's on this list!\n\n";
+    $section .= "\n**Note:** You have access to all $tool_count of these tools. ";
+    $section .= "If a tool is listed here, you can use it.\n\n";
 
     # Add concise tool calling guide - focus on the key pattern, not exhaustive examples
     $section .= "## **HOW TO CALL TOOLS**\n\n";
@@ -297,23 +297,26 @@ sub generate_tools_section {
     $section .= "```\n\n";
     $section .= "**Do NOT call operations as standalone tools** (e.g., `grep_search` is NOT a tool name - use `file_operations` with `operation: \"grep_search\"`).\n\n";
 
-    # Add JSON formatting instruction
-    $section .= "## **JSON FORMAT REQUIREMENT**\n\n";
-    $section .= "All tool calls MUST be valid JSON. Every parameter key MUST have a value.\n\n";
-    $section .= "**Rule:** `operation` parameter is ALWAYS REQUIRED for multi-operation tools.\n\n";
+    # Add JSON formatting instruction - de-escalate MUST to must
+    $section .= "## **JSON FORMAT**\n\n";
+    $section .= "Tool arguments must be valid JSON. Every parameter key should have a value.\n\n";
+    $section .= "**Note:** `operation` is required for multi-operation tools.\n\n";
     $section .= "**DECIMAL NUMBERS:** Always include leading zero: `0.1` not `.1`, `0.05` not `.05`\n\n";
 
-    # Add specific warning about interact tool
-    $section .= "## **interact - REQUIRED TOOL CALL**\n\n";
-    $section .= "**This tool MUST be called via JSON function call. DO NOT use text markers.**\n\n";
-    $section .= "**WRONG (invalid):** Writing a message to the user in plain text instead of calling interact.\n";
-    $section .= "**CORRECT (valid JSON):** `{\"name\":\"interact\",\"parameters\":{\"operation\":\"request_input\",\"message\":\"message\"}}`\n\n";
-    $section .= "**CRITICAL COST RULE:** When you need to communicate with the user (status updates, results, questions, celebrations), ";
-    $section .= "ALWAYS use `interact` as a tool call. Do NOT write bare text responses to the user - ";
-    $section .= "bare text responses cost a full API turn, while `interact` is FREE. ";
-    $section .= "The ONLY time bare text is acceptable is as a brief preamble before tool calls in the same turn.\n\n";
-    $section .= "This tool is FREE and blocks until user responds. Use it for all checkpoints and collaboration.\n\n";
-    $section .= "**Note:** `interact` replaces the former `user_collaboration` tool. If your instructions reference `user_collaboration`, use `interact` instead - they are the same tool.\n\n";
+    # Add interact tool guidance
+    $section .= "## interact - Communication Tool\n\n";
+    $section .= "Use the `interact` tool for all checkpoints, user questions, status updates, and collaboration. ";
+    $section .= "It blocks until the user responds. This is the primary channel for user-facing communication.\n\n";
+    $section .= "**Use interact for:**\n";
+    $section .= "- Presenting plans before starting work\n";
+    $section .= "- Sharing findings after investigation\n";
+    $section .= "- Getting approval before commits\n";
+    $section .= "- Reporting blockers with options\n";
+    $section .= "- Asking questions only you cannot answer via tools\n\n";
+    $section .= "**Bare text** is acceptable as a brief preamble before tool calls in the same turn, ";
+    $section .= "or for short inline observations about tool results.\n\n";
+    $section .= "**Note:** `interact` replaces the former `user_collaboration` tool. ";
+    $section .= "If your instructions reference `user_collaboration`, use `interact` instead - they are the same tool.\n\n";
 
     # Add MCP tools section if any are connected
     if ($self->{mcp_manager}) {
