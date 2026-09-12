@@ -262,15 +262,58 @@ Arguments:
 - $file_path: Path to AGENTS.md
 
 Returns:
-- TOC string with section headers and line ranges
+- TOC string with section headers, line ranges, and extracted keywords
 
 =cut
+
+# Stop words used for keyword extraction. These are common English words
+# that carry no semantic value for understanding a section's topic.
+my %_KEYWORD_STOP_WORDS = map { $_ => 1 } qw(
+    a an the and or but in on at to for of with by from is are was were be been
+    being have has had do does did will would could should may might can must
+    shall if then else when while during before after above below up down out off
+    over under again further once here there what which who whom whose this these
+    those are am i you he she it we they them us our their hers his theirs its
+    your yours mine myself myself
+    not no nor never more most some such only even also many much about across
+    against all an any around as at away because before being below between both
+    cannot couldn could did do does doing don't each few further had have having
+    her here hers herself him himself his how i if in into is it its itself let's
+    me might more most must my myself no nor not now of off on once one only or
+    other our ours ourselves out over own same she should so some such than that
+    the their theirs them themselves then there these they this those through to
+    too under until up used very was we were what when where which while who
+    whom why will with within without won't would wouldn't you your yours yourself
+    yourselves ain't aren aren't couldn couldn't didn amn't aren't isn't ma might
+    mustn't needn't shan't shouldn't wasn't weren weren't won't wouldn't above
+    after again all also although always among another any around as at away
+    be because been before being below between both but can could couldn't did
+    do does don't down during each few for from further had hadn't has haven't
+    have haven't having he her here hers herself him himself his how however i
+    if in into is it its itself just let's me might more most must my myself no
+    nor not now of off on once one only or other our ours ourselves out over
+    own same shan't she should shouldn't so some such than that the their theirs
+    them themselves then there these they this those through to too under unless
+    until up used very was wasn't we were what when where which while who whom
+    why will with within without won't would wouldn't you your yours herself
+    himself itself one another shall
+);
+
+# Words commonly found in project reference docs that are context-specific
+# but not useful as keywords for this purpose.
+my %_KEYWORD_SKIP = map { $_ => 1 } qw(
+    read write fix run test make build install config setup use using used
+    see also note important table figure example examples section reference
+    index the a an and or but to in on at for of with by from is are was
+);
 
 sub _generate_agents_md_toc {
     my ($self, $file_path) = @_;
 
     my $content = $self->_read_file($file_path);
     return undef unless $content && length $content;
+
+    my @lines = split /\n/, $content;
 
     # Parse markdown headings to build the TOC. We track line numbers
     # for each heading so the model can read specific sections with
@@ -281,7 +324,7 @@ sub _generate_agents_md_toc {
     my $line_num = 0;
     my $in_code_block = 0;
     my @headings;
-    for my $line (split /\n/, $content) {
+    for my $line (@lines) {
         $line_num++;
         # Track code block state
         if ($line =~ /^```/) {
@@ -301,13 +344,14 @@ sub _generate_agents_md_toc {
 
     return undef unless @headings;
 
-    # Build the TOC with line ranges (from heading line to the line
-    # before the next heading of the same or higher level).
+    # Build the TOC with line ranges and keywords for each section.
     my $toc = "## AGENTS.md (Project Reference)\n\n";
     $toc .= "Project-specific conventions, commands, and architecture. ";
     $toc .= "Read relevant sections on demand using file_operations:\n\n";
     $toc .= "    file_operations(operation: \"read_file\", path: \"AGENTS.md\", start_line: N, end_line: M)\n\n";
     $toc .= "### Sections:\n\n";
+
+    my $total_lines = scalar @lines;
 
     for my $i (0 .. $#headings) {
         my $h = $headings[$i];
@@ -320,15 +364,25 @@ sub _generate_agents_md_toc {
             }
         }
         # If no higher-level heading follows, end at the last line
-        $end_line //= scalar(split /\n/, $content);
+        $end_line //= $total_lines;
+
+        # Extract keywords from the section content (between this heading
+        # and the end of the section, excluding sub-sections).
+        my @keywords = $self->_extract_keywords(\@lines, $h->{line} + 1, $end_line);
 
         # Indent only for sub-headings (level > 2)
         my $indent = '';
         if ($h->{level} > 2) {
             $indent = "  " x ($h->{level} - 2);
         }
+
         $toc .= sprintf("%s- %s (%d-%d)\n", $indent, $h->{title},
             $h->{line}, $end_line);
+
+        # Append keywords if any were found
+        if (@keywords) {
+            $toc .= sprintf("%s  keywords: %s\n", $indent, join(', ', @keywords));
+        }
     }
 
     $toc .= "\n_This is a reference index. Read specific sections when you need ";
@@ -336,6 +390,109 @@ sub _generate_agents_md_toc {
 
     log_debug('InstructionsReader', "Generated AGENTS.md TOC (" . length($toc) . " chars, " . scalar(@headings) . " sections)");
     return $toc;
+}
+
+=head2 _extract_keywords
+
+Extract relevant keywords from a range of text lines. This performs
+simple frequency-based keyword extraction:
+
+1. Strip markdown formatting (code blocks, inline code, links)
+2. Tokenize text into words
+3. Filter out stop words and single characters
+4. Count word frequencies
+5. Return the top N words by frequency (those with count >= min_count)
+
+This works across any AGENTS.md without project-specific dictionaries.
+
+Arguments:
+- $lines: Arrayref of all lines in the file
+- $start_line: 1-indexed start line (inclusive, after the heading)
+- $end_line: 1-indexed end line (inclusive)
+
+Returns:
+- Array of keyword strings, sorted by frequency (descending)
+
+=cut
+
+sub _extract_keywords {
+    my ($self, $lines, $start_line, $end_line) = @_;
+
+    return () unless $lines && @$lines && $start_line && $end_line;
+
+    # Clamp to valid range
+    $start_line = 1 if $start_line < 1;
+    $end_line = scalar(@$lines) if $end_line > scalar(@$lines);
+    return () if $start_line > $end_line;
+
+    my $in_code_block = 0;
+    my %word_freq;
+
+    for my $i ($start_line - 1 .. $end_line - 1) {
+        last if $i >= @$lines;
+        my $line = $lines->[$i];
+
+        # Track code block state - skip content inside code blocks
+        if ($line =~ /^```/) {
+            $in_code_block = !$in_code_block;
+            next;
+        }
+        next if $in_code_block;
+
+        # Strip markdown inline code
+        $line =~ s/`[^`]*`//g;
+        # Strip markdown links: [text](url) -> text
+        $line =~ s/\[([^\]]+)\]\([^)]+\)/$1/g;
+        # Strip markdown tables
+        next if $line =~ /^\s*\|/;
+        # Strip markdown list markers
+        $line =~ s/^\s*[-*+]\s+//;
+        $line =~ s/^\s*\d+\.\s+//;
+        # Strip markdown bold/italic
+        $line =~ s/\*{1,2}([^*]+)\*{1,2}/$1/g;
+        $line =~ s/_([^_]+)_/$1/g;
+
+        # Tokenize: extract word tokens
+        while ($line =~ /([A-Za-z][A-Za-z0-9_-]+)/g) {
+            my $word = lc($1);
+
+            # Skip short words and stop words
+            next if length($word) < 4;
+            next if exists $_KEYWORD_STOP_WORDS{$word};
+            next if exists $_KEYWORD_SKIP{$word};
+
+            $word_freq{$word}++;
+        }
+    }
+
+    return () unless %word_freq;
+
+    # Sort by frequency (descending), then alphabetically for stability
+    my @sorted = sort {
+        $word_freq{$b} <=> $word_freq{$a} || $a cmp $b
+    } keys %word_freq;
+
+    # Return top 8 keywords (those with frequency >= 2 get priority,
+    # then fill remaining slots with single-occurrence words)
+    my @keywords;
+
+    # First pass: words appearing 2+ times
+    for my $word (@sorted) {
+        last if @keywords >= 8;
+        if ($word_freq{$word} >= 2) {
+            push @keywords, $word;
+        }
+    }
+
+    # Second pass: fill remaining slots with single-occurrence words
+    for my $word (@sorted) {
+        last if @keywords >= 8;
+        if ($word_freq{$word} == 1) {
+            push @keywords, $word;
+        }
+    }
+
+    return @keywords;
 }
 
 =head2 _read_file
