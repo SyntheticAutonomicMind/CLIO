@@ -1441,6 +1441,18 @@ Returns: Text with framework narration stripped
     qr/_- \d+ more (?:solutions|discoveries|patterns|memories)_/is,
     # The "Framework narration:" self-referential headers.
     qr/Framework narration[:.]?\s*[^.]*\./is,
+    # Protocol invocation instructions: "before responding to any
+    # user request, ALWAYS (1) run..." — these are framework protocol
+    # directives that instruct the model to take specific actions. They
+    # must not appear in LTM entries because the model follows them as
+    # literal commands (observed: model re-ran git status --short on a
+    # "hello" input because an LTM code-pattern entry contained this
+    # exact phrasing). The drop covers the protocol invocation and its
+    # numbered action steps (e.g. "(1) run ... (2) ... (3) ...").
+    qr/before responding to any user request[,.\s]* ALWAYS[^.]+\./is,
+    # "Failure mode this prevents:" — meta-commentary that frames
+    # content as a protocol justification rather than a code pattern.
+    qr/Failure mode (?:this|it) prevents:\s*[^.]+(?:,\s*[^.]+)*\./is,
 );
 
 # Word/phrase replacements: framework-internal names are replaced with

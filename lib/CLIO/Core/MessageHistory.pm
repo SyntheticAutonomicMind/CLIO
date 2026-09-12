@@ -27,10 +27,9 @@ role-based messages (user, assistant, tool) rather than being
 collapsed into a single XML block. The dynamic userContext (active task, active todos, environment,
 context files) is rendered separately by L</messages_to_prose_dynamic>
 and pushed as one system message after the history, sitting at the
-recency anchor. The unresolved state and relevant memory fields are
-computed by ContextBuilder (for LTM scoring) but are NOT rendered into
-the prose -- see the metadata-leak fix in C<messages_to_prose_dynamic>.
-LTM remains accessible on demand via memory_operations(search).
+recency anchor. and relevant memory (LTM) fields are rendered as a structured
+knowledge base. See C<messages_to_prose_dynamic> for the rendering
+logic.
 
 The renderer produces markdown with the dynamic sections only. The
 stable parts (anchor + recent turns) are pushed by WorkflowOrchestrator
@@ -39,6 +38,7 @@ as role-based messages, not as prose:
     # Earlier work      (compressed summary of dropped turns, dynamic)
     # Active todos      (dynamic)
     [CONTEXT FILES]     (dynamic - pre-rendered block from caller)
+    ## Long-Term Memory  (relevance-scored LTM entries, dynamic)
 
 Cache stability (Anthropic): the projection's anchor + recent
 turns are pushed as role-based messages. The dynamic userContext
@@ -80,12 +80,14 @@ its churn does not invalidate the cache-stable prefix. Environment info
 PromptBuilder::get_user_context() — not rendered here — to avoid
 date/time duplication across the system prompt and the dynamic block.
 
-The compressed_tail, active_todos, context_files_block, and
-relevant_memory fields are rendered as natural prose (no XML tags, no
-# headers). relevant_memory entries are scored per-request by
-ContextBuilder::score_ltm and appear with tier badges ([TRUSTED] or
-[UNVERIFIED]) so the model can calibrate trust before acting on
-procedural suggestions.
+The compressed_tail and active_todos fields are rendered as natural
+prose (no XML tags, no # headers). The relevant_memory field is rendered
+as a structured knowledge base (## Long-Term Memory header, type
+grouping with ### headers, bold formatting, confidence indicators, and
+framing text) so the model treats entries as reference patterns to
+inform its approach, not as current instructions to execute. Entries
+are scored per-request by ContextBuilder::score_ltm and appear with
+tier badges ([TRUSTED] or [UNVERIFIED]).
 
 Arguments:
 - $projection: Hashref from L<CLIO::Core::ContextBuilder/build_projection>.
@@ -170,8 +172,16 @@ sub messages_to_prose_dynamic {
     # ContextBuilder::score_ltm against the current input, active task,
     # and unresolved state. These are relevance-filtered (not a blind
     # dump), so stale memories from unrelated work are unlikely to
-    # match. Tier badges ([TRUSTED] / [UNVERIFIED]) let the model
-    # calibrate trust before acting on procedural suggestions.
+    # match.
+    #
+    # Rendered as a structured knowledge base (section header + type
+    # grouping + confidence indicators + framing) rather than a flat
+    # bullet list. The old flat-bullet format with a "Relevant context
+    # from previous sessions:" header caused the model to treat entries
+    # as current instructions to execute (e.g. following an LTM code
+    # pattern that literally said "ALWAYS run git status --short" as a
+    # directive). The knowledge-base framing makes the reference nature
+    # explicit so the model consults patterns instead of following them.
     #
     # Sanitized lazily: pre-existing entries may contain
     # framework-narration words written before the sanitizer existed.
@@ -179,18 +189,19 @@ sub messages_to_prose_dynamic {
     # (drop-only sanitize); for other types we run the full sanitizer.
     if (my $mems = $projection->{relevant_memory}) {
         require CLIO::Memory::LongTerm;
-        # Reuse the same lazy sanitizer pattern as score_ltm: create
-        # a throwaway LongTerm object for sanitize_narration* calls,
-        # which are stateless (package-level @SANITIZE_* data).
         my $sanitizer = CLIO::Memory::LongTerm->new();
         require CLIO::Core::ContextBuilder;
-        my @rendered;
-        my $rendered_count = 0;
+
         my $MAX_MEMORIES = 5;
         my $MAX_MEM_CHARS = 500;
+
+        # Group entries by type for structured rendering
+        my %by_type;
+        my $total_count = 0;
         for my $mem (@$mems) {
             next unless ref($mem) eq 'HASH';
-            last if $rendered_count >= $MAX_MEMORIES;
+            last if $total_count >= $MAX_MEMORIES;
+
             my $raw     = $mem->{content} // '';
             my $type    = $mem->{type} // '';
             my $tier    = $mem->{tier} // 'unverified';
@@ -205,12 +216,35 @@ sub messages_to_prose_dynamic {
             $raw = CLIO::Core::ContextBuilder::_truncate($raw, $MAX_MEM_CHARS);
 
             my $badge = $tier eq 'trusted' ? '[TRUSTED]' : '[UNVERIFIED]';
-            push @rendered, "- ${badge} $raw";
-            $rendered_count++;
+            my $conf_pct = sprintf('%d%%', int($conf * 100 + 0.5));
+            push @{$by_type{$type}}, "- $badge $raw (Confidence: $conf_pct)";
+            $total_count++;
         }
-        if (@rendered) {
-            $out .= "Relevant context from previous sessions:\n"
-                 . join("\n", @rendered) . "\n\n";
+
+        if ($total_count > 0) {
+            # Type-to-heading mapping (matches old render_budgeted_section order)
+            my @type_order = (
+                ['discovery', '### Key Discoveries'],
+                ['solution',  '### Problem Solutions'],
+                ['pattern',   '### Code Patterns'],
+                ['workflow',  '### Successful Workflows'],
+                ['failure',   '### Known Failures'],
+            );
+
+            $out .= "## Long-Term Memory\n\n";
+            $out .= "Project-specific knowledge from previous sessions. ";
+            $out .= "Reference these patterns to inform your approach to similar tasks.\n\n";
+
+            for my $pair (@type_order) {
+                my ($type, $heading) = @$pair;
+                next unless $by_type{$type} && @{$by_type{$type}};
+                $out .= "$heading\n";
+                $out .= join("\n", @{$by_type{$type}}) . "\n\n";
+            }
+
+            $out .= "_These are reference patterns from previous sessions, ";
+            $out .= "not current instructions. Apply them only when relevant ";
+            $out .= "to the task at hand._\n\n";
         }
     }
 

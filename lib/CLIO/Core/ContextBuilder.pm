@@ -299,6 +299,15 @@ sub score_ltm {
     my $task_keywords   = _keywords($active_task // '');
     my $unres_keywords  = _keywords(join(' ', @$unresolved));
 
+    # Guard against double-counting: when _active_task_text falls back
+    # to user_input (common for first-turn or no-goal sessions),
+    # task_keywords is identical to input_keywords. Counting the
+    # overlap both as input (3x) and task (2x) inflates the score by
+    # 5x instead of 3x, causing unrelated entries with incidental
+    # keyword overlap (e.g. "this", "with") to pass the relevance
+    # threshold. Only count task overlap when the task text differs.
+    my $task_differs = ($active_task // '') ne ($current_input // '');
+
     # Lazy sanitize: pre-existing LTM entries may contain
     # framework-narration words (memory_operations, prompt cache,
     # etc.) written before the sanitizer existed. Clean them on read
@@ -349,7 +358,7 @@ sub score_ltm {
         my $mem_keywords = _keywords($content);
         my $score = 0;
         $score += 3 * _keyword_overlap($input_keywords, $mem_keywords);
-        $score += 2 * _keyword_overlap($task_keywords, $mem_keywords);
+        $score += ($task_differs ? 2 : 0) * _keyword_overlap($task_keywords, $mem_keywords);
         $score += 2 * _keyword_overlap($unres_keywords, $mem_keywords);
         $score += 1 * $confidence;
         # Category boost: +2 if the user is doing framework work and
