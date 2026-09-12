@@ -166,12 +166,12 @@ unlike($p1, qr/Working directory:/, 'Prose renderer does NOT emit environment (h
 # ---------------------------------------------------------------------------
 # score_ltm output entries now carry a `tier` field ('trusted' or
 # 'unverified'). The renderer should produce [TRUSTED] or [UNVERIFIED]
-# badges, and LTM content should appear under a "Relevant context" header.
+# badges, and LTM content should appear under a "## Long-Term Memory" header.
 
 # Re-run with the projection's own relevant_memory (computed by score_ltm
 # from the LTM entries in build_projection). These entries have no tier
 # set on the raw LTM, so score_ltm defaults to 'unverified'.
-like($prose, qr/Relevant context from previous sessions:/, 'LTM relevant_memory section header present');
+like($prose, qr/## Long-Term Memory/, 'LTM relevant_memory section header present');
 like($prose, qr/\[UNVERIFIED\] messageHistory XML serialization/, 'unverified LTM entry rendered with [UNVERIFIED] badge');
 like($prose, qr/\[UNVERIFIED\] framework narration in user context/, 'unverified LTM entry rendered with [UNVERIFIED] badge');
 # The low-confidence 'unrelated thing' (0.50) may or may not pass the
