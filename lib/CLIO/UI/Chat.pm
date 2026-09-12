@@ -2517,6 +2517,9 @@ Process slash commands. Returns 0 to exit, 1 to continue
 sub handle_command {
     my ($self, $command) = @_;
     
+    # A new user command means the model is not actively calling tools.
+    $self->{_tools_invoked_this_request} = 0;
+    
     # Delegate to CommandHandler for routing
     return $self->{command_handler}->handle_command($command);
 }
