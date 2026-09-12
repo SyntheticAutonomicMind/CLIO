@@ -8,6 +8,11 @@
 #   - No "Active task:" label (emit task text as plain work product)
 #   - No "Unresolved:" section (no recycling of tool errors)
 #   - No "Relevant memory:" section (no self-referential LTM)
+#   - LTM entries that ARE injected (via relevance scoring) must
+#     appear under a "## Long-Term Memory" knowledge-base header
+#     with type grouping, confidence indicators, and framing text
+#     ("not current instructions"), NOT as flat "Relevant context"
+#     bullets that read like task items to execute
 #
 # Work product that IS preserved:
 #   - Working directory / Language / Date (environment info)
@@ -100,10 +105,12 @@ subtest 'metadata-leak regression: tool errors not recycled' => sub {
 };
 
 # ===========================================================================
-# Test 3: LTM entries do NOT leak into the prose
+# Test 3: LTM entries are properly scoped — relevant entries are
+# injected as structured KB (no metadata labels), irrelevant entries
+# are filtered out by scoring.
 # ===========================================================================
 
-subtest 'metadata-leak regression: LTM not injected into prose' => sub {
+subtest 'metadata-leak regression: LTM scoped to relevant entries only' => sub {
     my @ltm_entries = (
         { confidence => 0.9, content => 'Self-referential: this is a bug about context dumps', type => 'discovery' },
         { confidence => 0.8, content => 'Always run perl -c before commit', type => 'discovery' },
@@ -119,13 +126,24 @@ subtest 'metadata-leak regression: LTM not injected into prose' => sub {
 
     my $prose = messages_to_prose_dynamic($proj);
 
-    # No "Relevant memory:" label — section removed.
-    unlike($prose, qr/Relevant memory:/, 'No Relevant memory label');
+    # LTM IS injected (as a structured KB) when entries are relevant.
+    # But NO old-style metadata labels leak:
+    unlike($prose, qr/Relevant memory:/, 'No old "Relevant memory:" label');
+    unlike($prose, qr/Relevant context from previous sessions:/, 'No flat-bullet label');
 
-    # No LTM content leaked into the prose at all.
-    unlike($prose, qr/Self-referential/, 'Self-referential LTM not leaked');
-    unlike($prose, qr/Always run perl/, 'General LTM not leaked');
-    unlike($prose, qr/Framework internals/, 'Framework LTM not leaked');
+    # Structured KB format:
+    like($prose, qr/## Long-Term Memory/, 'Structured KB header present');
+    like($prose, qr/Reference these patterns to inform your approach/, 'Framing text present');
+    like($prose, qr/not current instructions/, 'Not-current-instructions framing present');
+
+    # Irrelevant entries are NOT injected (filtered by scoring):
+    unlike($prose, qr/Self-referential/, 'Irrelevant entry (no keyword overlap) not injected');
+    unlike($prose, qr/Always run perl/, 'Irrelevant entry (no keyword overlap) not injected');
+
+    # Relevant entry IS injected (keyword overlap with "framework"):
+    like($prose, qr/Framework internals/, 'Relevant entry (keyword "framework" overlap) injected');
+    like($prose, qr/Confidence:/, 'Injected entry has confidence indicator');
+    like($prose, qr/\[UNVERIFIED\]/, 'Injected entry has tier badge');
 };
 
 # ===========================================================================
