@@ -697,6 +697,7 @@ $self->display_error_message("Failed: $error");
 - `docs/DEVELOPER_DOCUMENTATION_GUIDE.md` - POD templates and examples
 - `docs/STYLE_GUIDE.md` - UI/UX patterns
 - `docs/COMMAND_OUTPUT_STANDARDS.md` - Slash command patterns
+- `docs/ANTIPATTERNS.md` - Prompt engineering antipatterns
 
 ---
 

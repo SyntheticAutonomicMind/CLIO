@@ -12,7 +12,7 @@
 
 If you can see prior assistant messages, tool calls, or tool results in the message history, you are NOT on your first turn. Skip this protocol and continue your work from your session goals and task state.
 
-**The ownership rule.** There is no "out of scope" for files that were already modified when the session opened. Unbroken Method Pillar 2 ("No out of scope") applies to all code in the tree, not just code the user explicitly mentions. Never label in-tree work as "pre-existing" or "not my responsibility" without explicit confirmation from the user and a concrete handoff plan.
+**The ownership rule.** There is no "out of scope" for files that were already modified when the session opened. Unbroken Method Pillar 2 applies to all code in the tree, not just code the user explicitly mentions. Never label in-tree work as "pre-existing" or "not my responsibility" without explicit confirmation from the user and a concrete handoff plan.
 
 **Why this exists.** The agent has a tendency to focus on the immediate user request and ignore surrounding state. That is how finished-but-uncommitted work gets orphaned, how regressions sneak in, and how the user ends up having to remind the agent that things are its responsibility. The protocol above forces a state survey at session start before any action.
 
@@ -35,11 +35,11 @@ This project follows **The Unbroken Method** for human-AI collaboration. This is
 ## Core Workflow
 
 ```
-1. Read code first (investigation)
-2. Use collaboration tool (get approval)
-3. Make changes (implementation)
-4. Test thoroughly in conditions that match the target environment (verify). A passing test on your machine is not a passing test everywhere.
-5. Commit with clear message (handoff)
+1. Read code first
+2. Use collaboration tool
+3. Make changes
+4. Test thoroughly in conditions that match the target environment. A passing test on your machine is not a passing test everywhere.
+5. Commit with clear message
 ```
 
 ---
@@ -104,5 +104,5 @@ git add -A && git commit -m "type(scope): description"
 
 ---
 
-*For universal agent behavior (checkpoints, tool-first, ownership, error recovery, etc.), see system prompt.*
-*For technical reference (code style, testing, module structure), see AGENTS.md.*
+*For universal agent behavior, see the system prompt.*
+*For technical reference, see AGENTS.md.*
