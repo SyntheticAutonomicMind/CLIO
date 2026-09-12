@@ -289,6 +289,36 @@ sub _category_match {
     return 0;
 }
 
+=head2 _meta_category_count
+
+Count how many distinct framework-category words appear in the content.
+Used to gate the category boost: the boost only fires when the entry
+contains multiple framework terms (not just one common word like
+"context" or "framework" that could appear in any context).
+
+Arguments:
+- $content: Text to check
+
+Returns: Integer count of distinct category words found
+
+=cut
+
+sub _meta_category_count {
+    my ($content) = @_;
+    return 0 unless defined $content && length $content;
+    my $lc = lc $content;
+    my %seen;
+    my $count = 0;
+    for my $word (@CATEGORY_WORDS) {
+        my $lc_word = lc $word;
+        next if $lc_word !~ /^[a-z]/;  # skip multi-word like "long-term memory"
+        next if $seen{$lc_word}++;     # deduplicate (e.g. "context" appears
+                                     # twice: standalone + from "user context"
+        $count++ if index($lc, $lc_word) >= 0;
+    }
+    return $count;
+}
+
 sub score_ltm {
     my ($ltm, $current_input, $active_task, $unresolved) = @_;
     $ltm ||= [];
@@ -364,15 +394,17 @@ sub score_ltm {
         # Category boost: +2 if the user is doing framework work and
         # the memory is about framework work. This rescues
         # meta-relevant memories that would otherwise be filtered
-        # out by pure lexical scoring.
-        $score += 2 if $input_is_meta && _category_match($content);
+        # out by pure lexical scoring. Requires 2+ distinct category
+        # words in the entry to avoid false positives from common
+        # words like "context" or "framework" that appear in any text.
+        $score += 2 if $input_is_meta && _meta_category_count($content) >= 2;
 
         push @scored, {
             content    => $content,
             confidence => $confidence,
             type       => $entry->{type},
             score      => $score,
-            _is_meta   => ($input_is_meta && _category_match($content)) ? 1 : 0,
+            _is_meta   => ($input_is_meta && _meta_category_count($content) >= 2) ? 1 : 0,
             tier       => $entry->{entry}{tier} // 'unverified',
             corroboration_count => $entry->{entry}{corroboration_count} // 0,
         };
