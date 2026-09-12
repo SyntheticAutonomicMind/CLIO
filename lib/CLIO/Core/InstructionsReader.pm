@@ -229,7 +229,7 @@ sub _find_and_read_agents_md {
         
         if (-f $agents_file) {
             log_debug('InstructionsReader', "Found AGENTS.md at: $agents_file");
-            return $self->_read_file($agents_file);
+            return $self->_generate_agents_md_toc($agents_file);
         }
         
         # Move up to parent directory
@@ -247,6 +247,95 @@ sub _find_and_read_agents_md {
     log_debug('InstructionsReader', "No AGENTS.md found in directory tree");
     
     return undef;
+}
+
+=head2 _generate_agents_md_toc
+
+Generate a table-of-contents from AGENTS.md instead of returning the
+full file content. AGENTS.md is a project-reference document that is
+read on demand; sending its full content (~1000 lines) on every API
+call wastes token budget and dilutes the system prompt. The TOC
+provides section headers with line ranges so the model can read
+specific sections on demand via file_operations.
+
+Arguments:
+- $file_path: Path to AGENTS.md
+
+Returns:
+- TOC string with section headers and line ranges
+
+=cut
+
+sub _generate_agents_md_toc {
+    my ($self, $file_path) = @_;
+
+    my $content = $self->_read_file($file_path);
+    return undef unless $content && length $content;
+
+    # Parse markdown headings to build the TOC. We track line numbers
+    # for each heading so the model can read specific sections with
+    # file_operations(start_line=N, end_line=M).
+    #
+    # We must skip headings inside code blocks (lines starting with #
+    # inside ``` fences are bash comments, not markdown headings).
+    my $line_num = 0;
+    my $in_code_block = 0;
+    my @headings;
+    for my $line (split /\n/, $content) {
+        $line_num++;
+        # Track code block state
+        if ($line =~ /^```/) {
+            $in_code_block = !$in_code_block;
+            next;
+        }
+        next if $in_code_block;
+        # Only parse ## and ### level headings (skip H1 and code-block ##)
+        if ($line =~ /^(##+|###+)\s+(.+)/) {
+            my $level = length($1);
+            my $title = $2;
+            # Trim trailing whitespace
+            $title =~ s/\s+$//;
+            push @headings, { level => $level, title => $title, line => $line_num };
+        }
+    }
+
+    return undef unless @headings;
+
+    # Build the TOC with line ranges (from heading line to the line
+    # before the next heading of the same or higher level).
+    my $toc = "## AGENTS.md (Project Reference)\n\n";
+    $toc .= "Project-specific conventions, commands, and architecture. ";
+    $toc .= "Read relevant sections on demand using file_operations:\n\n";
+    $toc .= "    file_operations(operation: \"read_file\", path: \"AGENTS.md\", start_line: N, end_line: M)\n\n";
+    $toc .= "### Sections:\n\n";
+
+    for my $i (0 .. $#headings) {
+        my $h = $headings[$i];
+        # End line: find the next heading at the same or higher level
+        my $end_line;
+        for my $j ($i + 1 .. $#headings) {
+            if ($headings[$j]{level} <= $h->{level}) {
+                $end_line = $headings[$j]{line} - 1;
+                last;
+            }
+        }
+        # If no higher-level heading follows, end at the last line
+        $end_line //= scalar(split /\n/, $content);
+
+        # Indent only for sub-headings (level > 2)
+        my $indent = '';
+        if ($h->{level} > 2) {
+            $indent = "  " x ($h->{level} - 2);
+        }
+        $toc .= sprintf("%s- %s (%d-%d)\n", $indent, $h->{title},
+            $h->{line}, $end_line);
+    }
+
+    $toc .= "\n_This is a reference index. Read specific sections when you need ";
+    $toc .= "project details (build commands, code style, testing, architecture)._\n";
+
+    log_debug('InstructionsReader', "Generated AGENTS.md TOC (" . length($toc) . " chars, " . scalar(@headings) . " sections)");
+    return $toc;
 }
 
 =head2 _read_file
