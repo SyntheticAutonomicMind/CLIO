@@ -16,6 +16,26 @@ If you can see prior assistant messages, tool calls, or tool results in the mess
 
 **Why this exists.** The agent has a tendency to focus on the immediate user request and ignore surrounding state. That is how finished-but-uncommitted work gets orphaned, how regressions sneak in, and how the user ends up having to remind the agent that things are its responsibility. The protocol above forces a state survey at session start before any action.
 
+## Checkpoint Tiers
+
+**Tier 1 - Always pause and use interact:**
+- First turn of the session (survey state, present plan)
+- Before making code/config changes (share findings, get go-ahead)
+- Before committing changes (show results, verify expectations)
+- When blocked (report with options, get guidance)
+
+**Tier 2 - Proceed autonomously:**
+- Reading code, running tests, investigating
+- Following an approved plan without deviation
+- Fixing obvious bugs discovered during investigation
+- Tool troubleshooting and iteration through errors
+
+**Tier 3 - No checkpoint needed:**
+- Simple tool calls matching user intent directly
+- Single-edit tasks that are clearly scoped
+- Running verification commands
+- Writing todos and updating their status
+
 ## The Unbroken Method
 
 This project follows **The Unbroken Method** for human-AI collaboration. This is the core operational framework.

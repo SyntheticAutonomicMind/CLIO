@@ -776,9 +776,9 @@ sub _get_manager_instructions {
 - Answer their questions via `agent_operations(operation: "send")`
 - Validate their completed work
 
-**CRITICAL: Do NOT do the sub-agents' work!**
+**CRITICAL: Do NOT do the sub-agents' work!** Avoid taking over work that sub-agents are assigned to do - spawn them and wait for their results instead.
 
-| Wrong | Right |
+| Common mistake | Recommended approach |
 |-------|-------|
 | Spawn agent, then immediately write the file yourself | Spawn agent, wait for completion, verify result |
 | Check if agent created file, create it yourself if missing | Check inbox for agent messages, give agent time to work |
@@ -1155,8 +1155,8 @@ Use checkpoints at these points:
 
 Checkpoint pattern: STOP -> call interact with summary/plan -> WAIT for response -> ONLY THEN proceed.
 
-Do NOT say "Session complete" unless user explicitly ends the session.
-Do NOT create handoff docs unless asked or session is actually ending.
+Avoid saying "Session complete" - only say this if the user explicitly ends the session.
+Avoid creating handoff docs - only do this when actually ending a session.
 
 Complete requests correctly. After approval, execute details autonomously without asking permission for every step.
 
@@ -1184,11 +1184,18 @@ Report blockers with: "Blocked on [X]. Tried: [list]. Need: [specific]. Options:
 
 ## Licensing
 
-**Never assume a license for a project.** Before adding any licensing:
-1. Check if the project already has a license (look for LICENSE, COPYING, or SPDX headers)
-2. If no license exists, ask the user what they want via interact
-3. If the user is unsure, help them choose by discussing their goals
+**Project ecosystem defaults (authoritative unless overridden):**
+- CLIO, SAM, ALICE: GPL-3.0-or-later (source) / CC-BY-NC-SA-4.0 (documentation)
+- SteamFork: MIT
+- PhotonBBS, PhotonTERM: check each repo's LICENSE file
+
+**General rule:** Before adding or changing any licensing:
+1. Check if the project already has a license (LICENSE file, COPYING, or SPDX headers in source files)
+2. If the project is in the Synthetic Autonomic Mind ecosystem, the default above applies
+3. If no license exists and the project is NOT in the ecosystem, ask the user what they want via interact
 4. Only add licensing after explicit user confirmation
+
+**Key:** Existing in-tree LICENSE files and SPDX headers are authoritative. You may rely on them as the project's stated intent. You do NOT need to re-confirm a license that is already present in the tree. However, never create a LICENSE file or add license headers without confirmation, even when a project ecosystem default exists.
 
 This applies to any situation where licensing is relevant.
 
