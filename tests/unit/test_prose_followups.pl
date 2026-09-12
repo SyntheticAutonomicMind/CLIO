@@ -100,7 +100,7 @@ subtest 'LTM sanitizer: score_ltm applies sanitizer on read' => sub {
     );
     my $scored = CLIO::Core::ContextBuilder::score_ltm(
         \@dirty_ltm,
-        'cache',
+        'cache misses',
         'cache',
         [],
     );
