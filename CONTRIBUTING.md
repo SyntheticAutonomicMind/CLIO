@@ -141,4 +141,4 @@ The test suite has ~126 tests across unit, integration, and e2e categories. All 
 
 ## License
 
-By contributing, you agree that your contributions will be licensed under the GPL-3.0 License.
+By contributing, you agree that your contributions will be licensed under the GPL-3.0-only License.

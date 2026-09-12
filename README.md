@@ -4,7 +4,7 @@
 
 I built CLIO for myself. I spend more time in terminal sessions than I do using GUIs, and I wanted a terminal-first AI development tool that worked the way I work. It didn't really exist, so I built it. Starting with version 20260119.1, CLIO has been building itself - all development on SAM, CLIO, and ALICE is done through pair programming with AI agents using CLIO.
 
-[![GPL-3.0 License](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE) [![Perl 5.32+](https://img.shields.io/badge/perl-5.32%2B-blue)](docs/DEPENDENCIES.md) [![Discussions](https://img.shields.io/badge/discussions-join-brightgreen)](https://github.com/orgs/SyntheticAutonomicMind/discussions)
+[![GPL-3.0-only License](https://img.shields.io/badge/license-GPL--3.0--only-blue)](LICENSE) [![Perl 5.32+](https://img.shields.io/badge/perl-5.32%2B-blue)](docs/DEPENDENCIES.md) [![Discussions](https://img.shields.io/badge/discussions-join-brightgreen)](https://github.com/orgs/SyntheticAutonomicMind/discussions)
 
 ---
 
@@ -253,7 +253,7 @@ CLIO is part of [Synthetic Autonomic Mind](https://github.com/SyntheticAutonomic
 
 ## License
 
-GPL-3.0-or-later - See [LICENSE](LICENSE) for details. · Created by Andrew Wyatt (Fewtarius) · [syntheticautonomicmind.org](https://www.syntheticautonomicmind.org) · [GitHub](https://github.com/SyntheticAutonomicMind/CLIO)
+GPL-3.0-only - See [LICENSE](LICENSE) for details. · Created by Andrew Wyatt (Fewtarius) · [syntheticautonomicmind.org](https://www.syntheticautonomicmind.org) · [GitHub](https://github.com/SyntheticAutonomicMind/CLIO)
 
 ---
 
