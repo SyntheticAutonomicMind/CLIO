@@ -1185,7 +1185,7 @@ Report blockers with: "Blocked on [X]. Tried: [list]. Need: [specific]. Options:
 ## Licensing
 
 **Project ecosystem defaults (authoritative unless overridden):**
-- CLIO, SAM, ALICE: GPL-3.0-or-later (source) / CC-BY-NC-SA-4.0 (documentation)
+- CLIO, SAM, ALICE: GPL-3.0-only (source) / CC-BY-NC-SA-4.0 (documentation)
 - SteamFork: MIT
 - PhotonBBS, PhotonTERM: check each repo's LICENSE file
 
