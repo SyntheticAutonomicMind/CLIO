@@ -805,7 +805,8 @@ sub _write_manifest {
 
     my $manifest_file = File::Spec->catfile($self->{vault_dir}, $turn_id, 'manifest.json');
     eval {
-        open my $fh, '>:encoding(UTF-8)', $manifest_file or croak "Cannot write manifest: $!";
+        # encode_json produces UTF-8 bytes; raw mode avoids double-encoding.
+        open my $fh, '>:raw', $manifest_file or croak "Cannot write manifest: $!";
         print $fh encode_json($manifest);
         close $fh;
     };
@@ -830,7 +831,8 @@ sub _read_manifest {
 
     my $content;
     eval {
-        open my $fh, '<:encoding(UTF-8)', $manifest_file or croak "Cannot read manifest: $!";
+        # Read as raw bytes: safe_decode_json expects UTF-8 bytes.
+        open my $fh, '<:raw', $manifest_file or croak "Cannot read manifest: $!";
         local $/;
         $content = <$fh>;
         close $fh;

@@ -1618,7 +1618,10 @@ sub save {
         metadata => $self->{metadata},
     };
     
-    atomic_write($file, encode_json_pretty($data), encoding => 'UTF-8');
+    # encode_json_pretty already produces raw UTF-8 bytes (flag OFF),
+    # so write in raw mode — no encoding layer (that would double-encode
+    # non-ASCII characters, turning é into Ã© in the file).
+    atomic_write($file, encode_json_pretty($data));
     
     $self->{_dirty} = 0;  # Reset dirty flag after successful save
     log_debug('LTM', "Saved to $file");
@@ -1637,7 +1640,11 @@ sub load {
     
     return $class->new(%args) unless -e $file;
     
-    open my $fh, '<:encoding(UTF-8)', $file or do {
+    # Read as raw bytes: decode_json/JSON::PP::utf8 expects raw UTF-8 bytes,
+    # not Perl's internal character strings. Using :encoding(UTF-8) would
+    # decode to widened chars (UTF-8 flag ON), which then triggers
+    # "Wide character in goto" when forwarded via JSON.pm's decode_json.
+    open my $fh, '<:raw', $file or do {
         log_debug('LTM', "Cannot load from $file: $!");
         return $class->new(%args);
     };

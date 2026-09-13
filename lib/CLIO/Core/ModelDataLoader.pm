@@ -108,7 +108,8 @@ sub _load_file {
         return {};
     }
 
-    open my $fh, '<:encoding(UTF-8)', $path or do {
+    # Read as raw bytes: safe_decode_json expects UTF-8 bytes.
+    open my $fh, '<:raw', $path or do {
         log_debug('ModelDataLoader', "Cannot read $path: $!");
         return {};
     };

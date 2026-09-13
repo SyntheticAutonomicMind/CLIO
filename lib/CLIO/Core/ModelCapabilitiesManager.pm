@@ -383,25 +383,26 @@ sub _ensure_cache_loaded {
     
     $self->{cache} = {};
     
-    if (-f $self->{cache_file}) {
-        eval {
-            open my $fh, '<:encoding(UTF-8)', $self->{cache_file};
-            if ($fh) {
-                my $data = do { local $/; <$fh> };
-                close $fh;
-                if ($data) {
-                    my $decoded = decode_json($data);
-                    # Validate cache version — stale entries from a
-                    # previous schema are discarded so bad data
-                    # (e.g. supports_tools=0 from a bug) doesn't persist.
-                    if ($decoded->{_cache_version} && $decoded->{_cache_version} eq $self->{cache_version}) {
-                        $self->{cache} = $decoded;
-                    } else {
-                        log_debug('ModelCapabilitiesManager', "Cache version mismatch (stored: " . ($decoded->{_cache_version} // 'none') . ", expected: $self->{cache_version}), discarding cache");
-                    }
+    my $cache;
+    eval {
+        # Read as raw bytes: decode_json expects UTF-8 bytes, not
+        # Perl's internal character strings.
+        open my $fh, '<:raw', $self->{cache_file};
+        if ($fh) {
+            my $data = do { local $/; <$fh> };
+            close $fh;
+            if ($data) {
+                my $decoded = decode_json($data);
+                # Validate cache version — stale entries from a
+                # previous schema are discarded so bad data
+                # (e.g. supports_tools=0 from a bug) doesn't persist.
+                if ($decoded->{_cache_version} && $decoded->{_cache_version} eq $self->{cache_version}) {
+                    $self->{cache} = $decoded;
+                } else {
+                    log_debug('ModelCapabilitiesManager', "Cache version mismatch (stored: " . ($decoded->{_cache_version} // 'none') . ", expected: $self->{cache_version}), discarding cache");
                 }
             }
-        };
+        }
         if ($@) {
             log_debug('ModelCapabilitiesManager', "Failed to load cache: $@");
             $self->{cache} = {};
@@ -421,7 +422,9 @@ sub _save_cache {
     my $temp = $self->{cache_file} . '.tmp';
     
     eval {
-        open my $fh, '>:encoding(UTF-8)', $temp or die "Cannot write $temp: $!";
+        # encode_json already produces UTF-8 bytes; use raw mode to avoid
+        # double-encoding non-ASCII characters (e.g. turning é into Ã©).
+        open my $fh, '>:raw', $temp or die "Cannot write $temp: $!";
         flock($fh, LOCK_EX | LOCK_NB) if $fh;
         # Store the cache version alongside the data so future loads
         # can detect and discard stale entries.

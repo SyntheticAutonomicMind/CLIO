@@ -380,7 +380,8 @@ sub _load_or_create_machine_id {
     my $cache_file = $self->{config_dir} . '/.copilot_machine_id';
     if (-e $cache_file) {
         my $fh;
-        if (open $fh, '<:encoding(UTF-8)', $cache_file) {
+        # Raw bytes are fine for UUID (ASCII only).
+        if (open $fh, '<:raw', $cache_file) {
             my $id = <$fh>;
             close $fh;
             $id =~ s/\s+$//;
@@ -390,7 +391,8 @@ sub _load_or_create_machine_id {
 
     my $id = uuid_v4();
     my $fh;
-    if (open $fh, '>:encoding(UTF-8)', $cache_file) {
+    # UUID is ASCII; raw mode avoids unnecessary encoding layer.
+    if (open $fh, '>:raw', $cache_file) {
         print $fh $id;
         close $fh;
     }
