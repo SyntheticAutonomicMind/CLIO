@@ -1678,11 +1678,26 @@ sub get_model_capabilities {
     # static maps/local fetchers (llama.cpp, SAM, LM Studio), openai-compatible
     # /models fetches (OpenAI, OpenRouter, Vercel, KiloCode, OrcaRouter), and
     # heuristics for unknown models.
+    # Resolve custom provider aliases (e.g. "nimo" -> "llama.cpp") so MCM
+    # can look up the provider in its registry. Without this, get_provider
+    # returns undef for custom aliases, $use_mcm stays 0, and the context
+    # window falls back to DEFAULT_CONTEXT_WINDOW (128K) instead of the
+    # actual runtime value from the server (e.g. 196K). This was the root
+    # cause of premature trimming on custom llama.cpp providers.
+    my $mcm_provider = $eff_provider;
+    if ($eff_provider && $self->{config} && $self->{config}->can('resolve_custom_provider')) {
+        my $base = $self->{config}->resolve_custom_provider($eff_provider);
+        if ($base && $base ne $eff_provider) {
+            $mcm_provider = $base;
+            log_debug('APIManager', "Resolved custom provider '$eff_provider' -> '$mcm_provider' for MCM lookup");
+        }
+    }
+
     my $use_mcm = 0;
-    if ($eff_provider) {
+    if ($mcm_provider) {
         eval {
             require CLIO::Providers;
-            my $pdef = CLIO::Providers::get_provider($eff_provider);
+            my $pdef = CLIO::Providers::get_provider($mcm_provider);
             # Use MCM for: static maps, native APIs, custom capability
             # fetchers, OR any apikey-based provider (the latter covers
             # OpenAI, OpenRouter, Vercel, Ollama Cloud, OrcaRouter, and
@@ -1701,8 +1716,11 @@ sub get_model_capabilities {
         my $normalized = eval {
             require CLIO::Core::ModelCapabilitiesManager;
             my $mcm = CLIO::Core::ModelCapabilitiesManager->new(debug => $self->{debug});
-            my $caps = $mcm->get_capabilities($eff_provider, $api_model);
-            log_debug('APIManager', "MCM get_capabilities for $eff_provider/$api_model: " . ($caps ? "found" : "undef"));
+            # Pass the resolved base provider and the actual api_base so MCM
+            # can query the correct server (critical for custom provider aliases
+            # like "nimo" where the api_base differs from the base provider's).
+            my $caps = $mcm->get_capabilities($mcm_provider, $api_model, $api_base);
+            log_debug('APIManager', "MCM get_capabilities for $mcm_provider/$api_model (api_base=$api_base): " . ($caps ? "found" : "undef"));
             if ($caps) {
                 # Cache stores RAW caps (without overrides). Overrides applied
                 # at get_model_capabilities return point so runtime changes
@@ -1738,7 +1756,7 @@ sub get_model_capabilities {
     # DEFAULT_LOCAL_CONTEXT_WINDOW constants based on whether the
     # provider is a local inference server.
     require CLIO::Providers;
-    my $eff_ctx = CLIO::Providers::default_context_window($eff_provider);
+    my $eff_ctx = CLIO::Providers::default_context_window($mcm_provider);
     if ($eff_ctx && $eff_ctx > 0) {
         require CLIO::Core::Defaults;
         my $capabilities = {
