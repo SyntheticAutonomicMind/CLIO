@@ -213,7 +213,8 @@ sub _save_cache {
     };
     
     eval {
-        open my $fh, '>:encoding(UTF-8)', $self->{cache_file}
+        # encode_json produces UTF-8 bytes; raw mode avoids double-encoding.
+        open my $fh, '>:raw', $self->{cache_file}
             or croak "Cannot write cache: $!";
         print $fh encode_json($cache);
         close $fh;
@@ -240,7 +241,8 @@ sub _load_cache {
     
     my $cache;
     eval {
-        open my $fh, '<:encoding(UTF-8)', $self->{cache_file}
+        # Read as raw bytes: decode_json expects UTF-8 bytes.
+        open my $fh, '<:raw', $self->{cache_file}
             or croak "Cannot read cache: $!";
         my $json = do { local $/; <$fh> };
         close $fh;

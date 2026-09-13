@@ -600,7 +600,10 @@ sub _find_artifact {
 
 sub _read_file {
     my ($path) = @_;
-    open my $fh, '<:encoding(UTF-8)', $path or croak "Cannot read $path: $!";
+    # Read as raw bytes: decode_json expects UTF-8 bytes, not Perl's
+    # internal character strings. Using :encoding(UTF-8) would decode
+    # to widened chars and trigger "Wide character in goto".
+    open my $fh, '<:raw', $path or croak "Cannot read $path: $!";
     my $content = do { local $/; <$fh> };
     close $fh;
     return $content;
@@ -612,7 +615,8 @@ sub _write_file {
     make_path($dir) unless -d $dir;
 
     my $tmp = "$path.tmp.$$";
-    open my $fh, '>:encoding(UTF-8)', $tmp or croak "Cannot write $tmp: $!";
+    # encode_json produces UTF-8 bytes; raw mode avoids double-encoding.
+    open my $fh, '>:raw', $tmp or croak "Cannot write $tmp: $!";
     print $fh $content;
     close $fh;
     rename($tmp, $path) or croak "Cannot rename $tmp -> $path: $!";

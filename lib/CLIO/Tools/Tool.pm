@@ -73,6 +73,11 @@ sub new {
         requires_blocking => $opts{requires_blocking} || 0,  # Tool must wait for completion before workflow continues
         requires_serial => $opts{requires_serial} || 0,      # Tool executes one-at-a-time (but doesn't block workflow)
         is_interactive => $opts{is_interactive} || 0,        # Tool needs terminal I/O by default (can be overridden per-call)
+        # default_operation: when the model omits 'operation' and it can't
+        # be inferred from params, silently default to this. Prevents
+        # error-loop deaths for tools where one operation is overwhelmingly
+        # the common case (e.g. terminal_operations -> exec).
+        default_operation => $opts{default_operation},
     }, $class;
 }
 
@@ -130,6 +135,19 @@ sub execute {
             $params->{operation} = $operation;
             log_debug("Tool:$self->{name}",
                 "Auto-selected single available operation '$operation'");
+        }
+    }
+
+    # Fall back to default_operation when 'operation' is still missing.
+    # This is the common case where models forget the field for tools
+    # with multiple operations (e.g. terminal_operations with exec/validate).
+    # The model is never informed — it just sees a successful result.
+    unless ($operation) {
+        if ($self->{default_operation} && $self->validate_operation($self->{default_operation})) {
+            $operation = $self->{default_operation};
+            $params->{operation} = $operation;
+            log_debug("Tool:$self->{name}",
+                "Applied default_operation '$operation' (operation field was missing)");
         }
     }
 

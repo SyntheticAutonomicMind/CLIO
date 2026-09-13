@@ -56,6 +56,10 @@ QUICK EXAMPLE:
 # working (model loading, large compiles, DB queries, etc.).
         supported_operations => [qw(exec validate)],
         operation_aliases => [qw(run execute shell check)],
+        # When the model provides 'command' but forgets 'operation',
+        # silently default to 'exec' — the overwhelmingly common case.
+        # This prevents error-loop deaths from a single forgotten field.
+        default_operation => 'exec',
         %opts,
     );
 }

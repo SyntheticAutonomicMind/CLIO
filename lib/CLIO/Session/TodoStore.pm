@@ -138,7 +138,9 @@ sub read {
     
     my $todos;
     eval {
-        open my $fh, '<:encoding(UTF-8)', $file or croak "Cannot read todos file: $!";
+        # Read as raw bytes: decode_json expects UTF-8 bytes, not
+        # Perl's internal character strings.
+        open my $fh, '<:raw', $file or croak "Cannot read todos file: $!";
         local $/;
         my $json = <$fh>;
         close $fh;
@@ -520,7 +522,9 @@ sub _save {
     my $file = $self->_todos_file();
     my $json = encode_json_pretty($data);
     
-    atomic_write($file, $json, encoding => 'UTF-8');
+    # encode_json_pretty produces UTF-8 bytes; no encoding layer needed
+    # (it would double-encode non-ASCII characters).
+    atomic_write($file, $json);
     
     log_debug('TodoStore', "Saved to $file");
 }

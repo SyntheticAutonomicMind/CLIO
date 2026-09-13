@@ -92,7 +92,13 @@ Decode a JSON string to a Perl data structure.
 =cut
 
 sub decode_json {
-    goto &$_decode;
+    # NOTE: We deliberately avoid `goto &$_decode` (magical goto / tail
+    # call) here.  On some Perl versions (notably the system Perl on
+    # macOS) the magical goto triggers "Wide character in goto" when any
+    # argument has the UTF-8 flag ON.  Using a regular method dispatch
+    # ($_decode->(@_)) forwards arguments identically without the
+    # internal string operations that goto &sub performs on the stack.
+    $_decode->(@_);
 }
 
 

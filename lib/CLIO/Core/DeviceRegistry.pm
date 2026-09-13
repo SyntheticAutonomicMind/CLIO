@@ -75,7 +75,7 @@ sub _load_registry {
     return unless -f $file;
     
     eval {
-        open my $fh, '<:encoding(UTF-8)', $file or croak "Cannot open $file: $!";
+        open my $fh, '<:raw', $file or croak "Cannot open $file: $!";
         my $content = do { local $/; <$fh> };
         close $fh;
         
@@ -103,7 +103,9 @@ sub _save_registry {
             updated_at => time(),
         };
         
-        open my $fh, '>:encoding(UTF-8)', $file or croak "Cannot write $file: $!";
+        # encode_json already produces UTF-8 bytes; raw mode avoids
+        # double-encoding non-ASCII characters.
+        open my $fh, '>:raw', $file or croak "Cannot write $file: $!";
         print $fh encode_json($data);
         close $fh;
     };

@@ -424,7 +424,8 @@ sub _load_plugin {
     my ($self, $name, $dir, $manifest_file) = @_;
 
     # Read manifest
-    open my $fh, '<:encoding(UTF-8)', $manifest_file
+    # Read manifest as raw bytes: decode_json expects UTF-8 bytes.
+    open my $fh, '<:raw', $manifest_file
         or croak "Cannot read $manifest_file: $!";
     my $json = do { local $/; <$fh> };
     close $fh;
@@ -768,7 +769,8 @@ sub _load_plugin_state {
 
     my $state;
     eval {
-        open my $fh, '<:encoding(UTF-8)', $state_file or die "Cannot open: $!";
+        # Read as raw bytes: decode_json expects UTF-8 bytes.
+        open my $fh, '<:raw', $state_file or die "Cannot open: $!";
         my $json = do { local $/; <$fh> };
         close $fh;
         $state = decode_json($json);
@@ -793,7 +795,8 @@ sub _save_plugin_state {
         my $dir = File::Spec->catdir($ENV{HOME} || '.', '.clio', 'plugin_state');
         make_path($dir) unless -d $dir;
 
-        atomic_write($state_file, encode_json($state), encoding => 'UTF-8');
+        # encode_json produces UTF-8 bytes; raw mode avoids double-encoding.
+        atomic_write($state_file, encode_json($state));
     };
 
     if ($@) {

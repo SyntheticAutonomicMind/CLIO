@@ -660,7 +660,8 @@ sub _load_metadata {
     my ($self) = @_;
     
     if (-f $self->{metadata_file}) {
-        open(my $fh, '<:encoding(UTF-8)', $self->{metadata_file}) or do {
+        # Read as raw bytes: decode_json expects UTF-8 bytes.
+        open(my $fh, '<:raw', $self->{metadata_file}) or do {
             log_error('PromptManager', "Cannot read metadata: $!");
             return;
         };
@@ -695,7 +696,8 @@ sub _save_metadata {
     
     my $json = encode_json($self->{metadata});
     
-    open(my $fh, '>:encoding(UTF-8)', $self->{metadata_file}) or do {
+    # encode_json produces UTF-8 bytes; raw mode avoids double-encoding.
+    open(my $fh, '>:raw', $self->{metadata_file}) or do {
         log_error('PromptManager', "Cannot write metadata: $!");
         return;
     };
