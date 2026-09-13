@@ -180,6 +180,10 @@ sub new {
         # tracks how many input rows are above the visible window.
         # Used by redraw_line to convert input rows to screen rows.
         scroll_offset => 0,
+        # How many rows the cursor is from the top of the input area
+        # (0 = first row). Used by redraw_line to compute rows_to_top
+        # without assuming the cursor is at the bottom of the input.
+        last_cursor_input_row => 0,
         # Performance caches (invalidated per-readline call)
         _prompt_disp_cache => undef,   # cached prompt display width
         _term_width_cache => undef,    # cached terminal width
@@ -340,6 +344,28 @@ sub _input_row_to_screen_row {
     my $scroll_offset = $self->{scroll_offset} || 0;
     my $screen_row = $input_row - $scroll_offset;
     return $screen_row > $max_row ? $max_row : ($screen_row < 0 ? 0 : $screen_row);
+}
+
+=head2 _compute_display_lines
+
+Compute the number of terminal rows that prompt + input text occupies,
+accounting for terminal autowrap when the content ends exactly at the
+last column: a character placed in the final column wraps the cursor
+to the next row, so the content occupies one extra row.
+
+Arguments:
+- $total_disp: Total display columns of prompt + input (ANSI-stripped).
+
+Returns: Number of terminal rows (at least 1).
+
+=cut
+
+sub _compute_display_lines {
+    my ($self, $total_disp) = @_;
+    return 1 unless $total_disp > 0;
+    my $term_width = $self->_get_term_width();
+    return int(($total_disp - 1) / $term_width) + 1
+         + (($total_disp % $term_width == 0) ? 1 : 0);
 }
 
 =head2 _emit_text
@@ -511,7 +537,7 @@ sub redraw_line {
     my $total_disp  = $prompt_disp + $input_disp;
 
     # How many terminal lines the new content occupies
-    my $new_lines_needed = $total_disp > 0 ? int(($total_disp - 1) / $term_width) + 1 : 1;
+    my $new_lines_needed = $self->_compute_display_lines($total_disp);
 
     my $old_display_lines = $self->{display_lines} || 1;
     my $max_lines = $old_display_lines > $new_lines_needed ? $old_display_lines : $new_lines_needed;
@@ -524,16 +550,21 @@ sub redraw_line {
     }
 
     # Move to (row 0, col 1) of the input area.
-    # Use display_lines (number of terminal rows the input occupies)
-    # rather than last_cursor_row to determine how far to move up.
-    # last_cursor_row can be stale after cursor movement across a wrap
-    # boundary (the wrap-model in _emit_text vs _cursor_at_codepoint can
-    # disagree by a row), causing redraw_line to not move far enough and
-    # re-emit the prompt on the wrong row. display_lines is always
-    # recomputed from actual content, so it is reliable.
+    # Move up by the cursor's actual distance from the top of the input
+    # (last_cursor_input_row), NOT by display_lines - 1 which assumes
+    # the cursor is at the bottom. When the user navigates back to a
+    # previous line with arrow keys, the cursor is on a middle row;
+    # using display_lines - 1 would overshoot past the top of the
+    # input, scrolling terminal content above the input upward by one
+    # row per keystroke.
     print "\r";
     $self->{last_cursor_col} = 1;
-    my $rows_to_top = ($old_display_lines > 1) ? ($old_display_lines - 1) : 0;
+    my $rows_to_top = $self->{last_cursor_input_row} || 0;
+    # Clamp to old_display_lines - 1 as a safety net for stale state.
+    if ($rows_to_top > $old_display_lines - 1) {
+        $rows_to_top = $old_display_lines - 1;
+    }
+    if ($rows_to_top < 0) { $rows_to_top = 0; }
     if ($rows_to_top > 0) {
         print "\e[${rows_to_top}A";
     }
@@ -582,6 +613,7 @@ sub redraw_line {
     $self->{last_cursor_row} = $desired_row;
     $self->{last_cursor_col} = $desired_col;
     $self->{last_cursor_disp} = $prompt_disp + _display_width(substr($$input_ref, 0, $$cursor_pos_ref));
+    $self->{last_cursor_input_row} = $desired_input_row;
 }
 
 =head2 _redraw_from_cursor
@@ -638,7 +670,8 @@ sub _redraw_from_cursor {
 
     # Update display_lines.
     my $total_disp = $prompt_disp + _display_width($$input_ref);
-    $self->{display_lines} = $total_disp > 0 ? int(($total_disp - 1) / $term_width) + 1 : 1;
+    $self->{display_lines} = $self->_compute_display_lines($total_disp);
+    $self->{last_cursor_input_row} = $target_input_row;
 }
 
 =head2 _redraw_line_external
@@ -667,6 +700,17 @@ sub _redraw_line_external {
     # Move to column 0 of current row, clear to end of screen,
     # then redraw prompt + input.
     print "\r";
+    # Move up to the top of the input area (same logic as redraw_line).
+    my $old_display_lines = $self->{display_lines} || 1;
+    my $rows_to_top = $self->{last_cursor_input_row} || 0;
+    if ($rows_to_top > $old_display_lines - 1) {
+        $rows_to_top = $old_display_lines - 1;
+    }
+    if ($rows_to_top > 0) {
+        print "\e[${rows_to_top}A";
+    }
+    $self->{last_cursor_col} = 1;
+    $self->{last_cursor_row} = 0;
     print "\e[J";
     $self->_emit_text($prompt);
     $self->_emit_text($$input_ref);
@@ -696,13 +740,14 @@ sub _redraw_line_external {
     my $term_width = $self->_get_term_width();
     my $prompt_disp = $self->_get_prompt_disp($prompt);
     my $total_disp = $prompt_disp + _display_width($$input_ref);
-    my $new_display_lines = $total_disp > 0 ? int(($total_disp - 1) / $term_width) + 1 : 1;
+    my $new_display_lines = $self->_compute_display_lines($total_disp);
     my $cursor_disp = $prompt_disp + _display_width(substr($$input_ref, 0, $$cursor_pos_ref));
 
     $self->{display_lines} = $new_display_lines;
     $self->{last_cursor_row} = $cursor_row;
     $self->{last_cursor_col} = $cursor_col;
     $self->{last_cursor_disp} = $cursor_disp;
+    $self->{last_cursor_input_row} = $cursor_input_row;
 }
 
 sub readline {
@@ -720,6 +765,7 @@ sub readline {
     $self->{last_cursor_col} = 1;
     $self->{last_cursor_disp} = 0;
     $self->{scroll_offset} = 0;
+    $self->{last_cursor_input_row} = 0;
 
     # Reset performance caches for this readline session
     $self->{_prompt_disp_cache} = undef;
@@ -750,6 +796,11 @@ sub readline {
     # If pre-filled, display the restored text
     if (length $prefill) {
         $self->_emit_text($prefill);
+        # Update display_lines to reflect how many terminal rows the
+        # prefilled input actually occupies (may be > 1 if it wraps).
+        my $total_disp = $self->_get_prompt_disp($prompt) + _display_width($prefill);
+        $self->{display_lines} = $self->_compute_display_lines($total_disp);
+        $self->{last_cursor_input_row} = $self->{display_lines} - 1;
     }
 
     while (1) {
@@ -894,7 +945,8 @@ sub readline {
 
                         # Update display_lines.
                         my $total_disp = $prompt_disp + $input_disp;
-                        $self->{display_lines} = $total_disp > 0 ? int(($total_disp - 1) / $term_width) + 1 : 1;
+                        $self->{display_lines} = $self->_compute_display_lines($total_disp);
+                        $self->{last_cursor_input_row} = $self->{display_lines} - 1;
                     } else {
                         $self->redraw_line(\$input, \$cursor_pos, $prompt);
                     }
@@ -983,21 +1035,19 @@ sub readline {
             if ($inserting_at_end) {
                 $self->_emit_text($char);
 
-                # Update display lines.
+                # Update display lines and cursor input row.
                 my $term_width = $self->_get_term_width();
-                if ($self->{last_cursor_row} >= $self->{display_lines}) {
+                if ($self->{last_cursor_row} >= $self->{display_lines} - 1) {
                     $self->{display_lines} = $self->{last_cursor_row} + 1;
                 }
+                $self->{last_cursor_input_row} = $self->{display_lines} - 1;
             } else {
-                # Mid-input insert: use a full redraw instead of
-                # _redraw_from_cursor.  _redraw_from_cursor relies on the
-                # last_cursor_* tracking state, which is stale after
-                # cursor movement (arrow keys) across a wrap boundary —
-                # it positions the cursor on the wrong row and leaves the
-                # line unpainted until the next keystroke.  redraw_line
-                # recomputes all positions from input state via
-                # _cursor_at_codepoint, so it is correct regardless of
-                # where the cursor came from.
+                # Mid-input insert: full redraw. redraw_line recomputes
+                # all positions from input state via _cursor_at_codepoint,
+                # so it is correct regardless of where the cursor came
+                # from. The rows_to_top fix ensures it moves up by the
+                # cursor's actual distance from the top of the input,
+                # not by display_lines - 1 (which assumes bottom).
                 $self->redraw_line(\$input, \$cursor_pos, $prompt);
             }
         }
@@ -1297,18 +1347,13 @@ sub reposition_cursor {
     $self->{last_cursor_col} = $new_col;
     $self->{last_cursor_disp} = $new_row * $term_width + ($new_col - 1);
 
-    # display_lines must also be updated here so redraw_line's
-    # "move to top" step (which uses display_lines - 1) moves the
-    # correct number of rows after cursor movement.
+    # display_lines and last_cursor_input_row should also be updated
+    # here so redraw_line and _redraw_line_external compute rows_to_top
+    # correctly after cursor movement.
     my $prompt_disp = $self->_get_prompt_disp($prompt);
     my $total_disp  = $prompt_disp + _display_width($$input_ref);
-    # Number of terminal rows the content occupies. When total_disp is
-    # an exact multiple of term_width, the last char fills the row exactly
-    # and the cursor autowraps to the next row — so count one extra row.
-    $self->{display_lines} = $total_disp > 0
-        ? (int(($total_disp - 1) / $term_width) + 1
-           + (($total_disp % $term_width == 0) ? 1 : 0))
-        : 1;
+    $self->{display_lines} = $self->_compute_display_lines($total_disp);
+    $self->{last_cursor_input_row} = $new_input_row;
 
     if (should_log('DEBUG')) {
         log_debug('ReadLine', "reposition_cursor: tracking set to ($new_row,$new_col)");
