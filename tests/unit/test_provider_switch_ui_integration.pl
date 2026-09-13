@@ -36,6 +36,8 @@ package MockChat {
     sub display_system_message { my ($s, $msg) = @_; print STDERR "[MSG] $msg\n"; }
     sub display_error_message { my ($s, $msg) = @_; print STDERR "[ERR] $msg\n"; }
     sub writeline { my ($s, $msg, %opts) = @_; print STDERR "[LINE] $msg\n"; }
+    sub display_success_message { my ($s, $msg) = @_; print STDERR "[OK] $msg\n"; }
+    sub display_command_header { my ($s, $msg) = @_; print STDERR "[HDR] $msg\n"; }
 }
 
 package MockAuthHelper {
@@ -90,6 +92,66 @@ subtest 'integration: /api set provider minimax -> thinking on -> provider nvidi
         'disk: minimax entry has show_thinking=1');
     is($disk2->{model_configs}{'minimax/MiniMax-M3'}{show_thinking}, 1,
         'disk: model_configs minimax intact after UI-level round-trip');
+};
+
+# =============================================================================
+# _provider_add: URL in 3rd arg is auto-detected as api_base, not api_key
+# =============================================================================
+subtest '_provider_add auto-detects URL as api_base' => sub {
+    my $tmpdir = tempdir(CLEANUP => 1);
+    my $config = CLIO::Core::Config->new(config_dir => $tmpdir);
+    my $session = MockSession->new();
+    my $chat = MockChat->new();
+    my $api = CLIO::UI::Commands::API::Config->new(
+        chat => $chat,
+        config => $config,
+        session => $session,
+        ai_agent => undef,
+        debug => 0,
+    );
+    no strict 'refs';
+    *{$api . '::_get_auth_helper'} = sub { MockAuthHelper->new() };
+
+    # /api provider add nimo llamo.cpp http://nimo:9090/v1/chat/completions
+    $api->_provider_add('nimo', 'llama.cpp', 'http://nimo:9090/v1/chat/completions');
+
+    is($config->get_provider_base('nimo'), 'http://nimo:9090/v1/chat/completions',
+        'custom API base stored (not treated as api_key)');
+    ok(!$config->get_provider_key('nimo'),
+        'no api_key stored when URL detected as api_base');
+    ok($config->is_custom_provider('nimo'),
+        'nimo registered as custom provider');
+
+    # Now set_provider should load the custom base
+    ok($config->set_provider('nimo'), 'set_provider nimo succeeds');
+    is($config->{config}{api_base}, 'http://nimo:9090/v1/chat/completions',
+        'set_provider loads custom api_base instead of llama.cpp default');
+    is($config->get('model'), 'nimo/local-model', 'model is alias-prefixed');
+};
+
+# =============================================================================
+# _provider_add: explicit key + base both stored
+# =============================================================================
+subtest '_provider_add accepts key and base as separate args' => sub {
+    my $tmpdir = tempdir(CLEANUP => 1);
+    my $config = CLIO::Core::Config->new(config_dir => $tmpdir);
+    my $session = MockSession->new();
+    my $chat = MockChat->new();
+    my $api = CLIO::UI::Commands::API::Config->new(
+        chat => $chat,
+        config => $config,
+        session => $session,
+        ai_agent => undef,
+        debug => 0,
+    );
+    no strict 'refs';
+    *{$api . '::_get_auth_helper'} = sub { MockAuthHelper->new() };
+
+    # /api provider add myllm llamo.cpp sk-key-123 http://my.llm/v1
+    $api->_provider_add('myllm', 'llama.cpp', 'sk-key-123', 'http://my.llm/v1');
+
+    is($config->get_provider_base('myllm'), 'http://my.llm/v1', 'explicit api_base stored');
+    is($config->get_provider_key('myllm'), 'sk-key-123', 'explicit api_key stored');
 };
 
 done_testing();

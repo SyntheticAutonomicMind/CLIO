@@ -2180,12 +2180,26 @@ sub _provider_list {
 sub _provider_add {
     my ($self, @args) = @_;
 
-    my ($name, $base_provider, $api_key) = @args;
+    my ($name, $base_provider, $arg3, $arg4) = @args;
+
+    # Auto-detect: if the 3rd positional arg looks like a URL, treat it
+    # as api_base rather than api_key. This lets users run:
+    #   /api provider add nimo llamo.cpp http://nimo:9090/v1/chat/completions
+    #   /api provider add nimo llamo.cpp <key> http://nimo:9090/v1/chat/completions
+    my ($api_key, $api_base);
+    if (defined $arg3 && $arg3 =~ m{^https?://}) {
+        $api_base = $arg3;
+        $api_key = $arg4;  # key may be in 4th slot if both provided
+    } else {
+        $api_key = $arg3;
+        $api_base = $arg4;
+    }
 
     unless ($name && $base_provider) {
-        $self->display_error_message("Usage: /api provider add <name> <base-provider> [api-key]");
+        $self->display_error_message("Usage: /api provider add <name> <base-provider> [api-key] [api-base]");
         $self->writeline("", markdown => 0);
-        $self->display_system_message("Example: /api provider add anthropic_test anthropic sk-ant-api-...");
+        $self->display_system_message("Example: /api provider add nimo llamo.cpp http://nimo:9090/v1/chat/completions");
+        $self->display_system_message("Example: /api provider add anthropic_test anthropic sk-ant-api-... https://api.anthropic.com");
         return;
     }
 
@@ -2215,7 +2229,7 @@ sub _provider_add {
     }
 
     eval {
-        $self->{config}->add_custom_provider($name, $base_provider, $api_key, undef);
+        $self->{config}->add_custom_provider($name, $base_provider, $api_key, $api_base);
     };
     if ($@) {
         $self->display_error_message("Failed to add custom provider: $@");
@@ -2229,6 +2243,9 @@ sub _provider_add {
         $self->display_system_message("API key stored for '$name'");
     } else {
         $self->display_system_message("Set API key: /api set key <value>  (with provider set to '$name')");
+    }
+    if ($api_base) {
+        $self->display_system_message("Custom API base stored for '$name'");
     }
 }
 
