@@ -124,7 +124,7 @@ ok(!defined $cached, "Old cache version (1) is discarded, not served");
 {
     my $src = do { local $/; open my $fh, '<', 'lib/CLIO/Core/ModelCapabilitiesManager.pm' or die; <$fh> };
     # The OpenAI-compatible fetcher should be called before the JSON loader fallback
-    my $api_idx = index($src, '_fetch_openai_compatible_capabilities($provider, $model)');
+    my $api_idx = index($src, '_fetch_openai_compatible_capabilities($base_provider, $model, $effective_api_base)');
     my $json_idx = index($src, 'JSON loader fallback hit');
     ok($api_idx >= 0, "_fetch_openai_compatible_capabilities call exists");
     ok($json_idx >= 0, 'JSON loader fallback path exists after API fetcher');

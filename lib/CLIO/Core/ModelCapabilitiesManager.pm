@@ -144,7 +144,7 @@ Returns:
 =cut
 
 sub get_capabilities {
-    my ($self, $provider, $model) = @_;
+    my ($self, $provider, $model, $api_base) = @_;
 
     return undef unless $provider && $model;
 
@@ -166,7 +166,7 @@ sub get_capabilities {
     # sessions, making the on-disk cache stale. APIManager already caches
     # results in-memory for within-session deduplication.
     my $cached;
-    unless (CLIO::Providers::is_local_inference($provider)) {
+    unless (CLIO::Providers::is_local_inference($provider) || $api_base) {
         $cached = $self->_get_cached($cache_key);
     }
     if ($cached) {
@@ -177,7 +177,7 @@ sub get_capabilities {
     log_debug('ModelCapabilitiesManager', "Cache miss for $cache_key, fetching");
     
     # Fetch from provider
-    my $capabilities = $self->_fetch_provider_capabilities($provider, $model);
+    my $capabilities = $self->_fetch_provider_capabilities($provider, $model, $api_base);
     
     if ($capabilities) {
         # Post-process: ensure reasoning_mode is populated
@@ -579,43 +579,69 @@ Returns:
 =cut
 
 sub _fetch_provider_capabilities {
-    my ($self, $provider, $model) = @_;
+    my ($self, $provider, $model, $api_base) = @_;
 
     log_debug('ModelCapabilitiesManager', "Fetching capabilities for ${provider}:${model}");
 
     my $loader = $self->_model_data_loader();
     require CLIO::Providers;
-    my $provider_def = CLIO::Providers::get_provider($provider);
-    my $is_local = $provider_def && CLIO::Providers::is_local_inference($provider);
 
-    # For local inference providers (llama.php, SAM, LM Studio): the
-    # JSON database is the primary source — these servers' /v1/models
-    # responses are sparse (no supported_parameters, no reasoning data).
-    # The /props endpoint provides the authoritative runtime context
-    # window that may differ from the model's training context.
-    # JSON-first + /props enrichment stays for local providers.
-    if ($is_local) {
-        if ($loader) {
-            my $json_caps = $loader->get_model_capabilities_by_provider($provider, $model);
-            if ($json_caps) {
-                log_debug('ModelCapabilitiesManager', "JSON loader hit for ${provider}:${model}");
-                my $caps = $self->_build_caps_from_json($json_caps, $provider, $model);
-
-                my $props_ctx = $self->_query_llama_props_for_provider($provider);
-                if ($props_ctx && $props_ctx > 0) {
-                    $caps->{context_window} = $props_ctx;
-                    $caps->{max_prompt_tokens} = $props_ctx;
-                    log_debug('ModelCapabilitiesManager', "${provider} /props n_ctx=$props_ctx for $model (overriding training context)");
-                }
-
-                return $caps;
+    # Resolve the effective provider: if $provider is a custom alias
+    # (e.g. "nimo" with base_provider "llama.cpp"), look up the base
+    # provider for registry checks (is_local_inference, capability_fetcher,
+    # requires_auth). The original $provider name is still used for JSON
+    # database lookups and /props api_base resolution where appropriate.
+    my $base_provider = $provider;
+    if (!CLIO::Providers::provider_exists($provider)) {
+        require CLIO::Core::Config;
+        my $config = CLIO::Core::Config->new();
+        if ($config->can('resolve_custom_provider')) {
+            my $resolved = $config->resolve_custom_provider($provider);
+            if ($resolved && $resolved ne $provider) {
+                $base_provider = $resolved;
+                log_debug('ModelCapabilitiesManager', "Resolved custom provider '$provider' -> base '$base_provider'");
             }
         }
+    }
 
-        # JSON miss: try /props-only for runtime context
-        my $props_ctx = $self->_query_llama_props_for_provider($provider);
+    my $provider_def = CLIO::Providers::get_provider($base_provider);
+    my $is_local = $provider_def && CLIO::Providers::is_local_inference($base_provider);
+
+    # Determine the api_base to use for API queries. If passed by APIManager
+    # (for custom providers), use it directly. Otherwise, resolve from config
+    # using the original provider name (which may be a custom alias like "nimo"
+    # that has its own api_base in api_bases).
+    my $effective_api_base = $api_base;
+    if (!$effective_api_base) {
+        $effective_api_base = $self->_get_api_base_for_provider($provider);
+    }
+    if ($effective_api_base) {
+        log_debug('ModelCapabilitiesManager', "Using api_base for $provider: $effective_api_base");
+    }
+
+    # For local inference providers (llama.cpp, SAM, LM Studio, and any
+    # custom aliases based on them): the API is the primary source for the
+    # runtime context window. We query /v1/models and /props first, then
+    # fall back to the JSON database for model metadata (supports_reasoning,
+    # max_output_tokens, architecture) that the API doesn't report.
+    if ($is_local) {
+        # 1. Try the dedicated llama.cpp /v1/models + /props fetcher first.
+        # This queries the live server for model metadata and runtime n_ctx.
+        my $props_ctx = $self->_query_llama_props($effective_api_base)
+            if $effective_api_base;
         if ($props_ctx && $props_ctx > 0) {
-            log_debug('ModelCapabilitiesManager', "${provider} /props n_ctx=$props_ctx for $model (JSON miss, props-only)");
+            log_debug('ModelCapabilitiesManager', "${provider} /props n_ctx=$props_ctx for $model");
+            my $json_caps = $loader->get_model_capabilities_by_provider($base_provider, $model)
+                if $loader;
+            if ($json_caps) {
+                log_debug('ModelCapabilitiesManager', "JSON loader hit (with /props) for ${provider}:${model}");
+                my $caps = $self->_build_caps_from_json($json_caps, $base_provider, $model);
+                $caps->{context_window} = $props_ctx;
+                $caps->{max_prompt_tokens} = $props_ctx;
+                log_debug('ModelCapabilitiesManager', "${provider} /props overrode context to $props_ctx for $model");
+                return $caps;
+            }
+            # /props only (no JSON match)
             return {
                 context_window       => $props_ctx,
                 max_prompt_tokens    => $props_ctx,
@@ -626,7 +652,18 @@ sub _fetch_provider_capabilities {
                 supports_reasoning   => 0,
             };
         }
-        log_debug('ModelCapabilitiesManager', "${provider} /props query failed for $model");
+        log_debug('ModelCapabilitiesManager', "${provider} /props query failed, falling back to JSON for $model");
+
+        # 2. Fallback: JSON database (without /props override since /props failed)
+        if ($loader) {
+            my $json_caps = $loader->get_model_capabilities_by_provider($base_provider, $model);
+            if ($json_caps) {
+                log_debug('ModelCapabilitiesManager', "JSON loader hit for ${provider}:${model}");
+                my $caps = $self->_build_caps_from_json($json_caps, $base_provider, $model);
+                return $caps;
+            }
+        }
+        log_debug('ModelCapabilitiesManager', "${provider} /props and JSON both failed for $model");
     }
 
     # For all other providers: the API is the source of truth. Try the
@@ -640,15 +677,15 @@ sub _fetch_provider_capabilities {
     # be available via OpenRouter with a different context window).
 
     # 1. Dedicated provider fetcher (Anthropic, Google, DeepSeek, NVIDIA,
-    #    MiniMax, Z.AI, GitHub Copilot). These have native API endpoints
+    #    MiniMax, Z.A.I, GitHub Copilot). These have native API endpoints
     #    that return authoritative capability data.
     if ($provider_def) {
-        my $fetcher = CLIO::Providers::capability_fetcher($provider);
+        my $fetcher = CLIO::Providers::capability_fetcher($base_provider);
         if ($fetcher) {
             my $method = "_fetch_${fetcher}_capabilities";
             if ($self->can($method)) {
                 log_debug('ModelCapabilitiesManager', "Using provider fetcher for ${provider}:${model}");
-                my $api_caps = $self->$method($provider, $model);
+                my $api_caps = $self->$method($base_provider, $model, $effective_api_base);
                 if ($api_caps) {
                     return $api_caps;
                 }
@@ -671,9 +708,9 @@ sub _fetch_provider_capabilities {
 
         # Skip the OpenAI-compatible path if we already tried a dedicated
         # fetcher above (those providers aren't OpenAI-compatible).
-        my $fetcher = CLIO::Providers::capability_fetcher($provider);
+        my $fetcher = CLIO::Providers::capability_fetcher($base_provider);
         unless ($fetcher) {
-            my $api_caps = $self->_fetch_openai_compatible_capabilities($provider, $model);
+            my $api_caps = $self->_fetch_openai_compatible_capabilities($base_provider, $model, $effective_api_base);
             if ($api_caps) {
                 return $api_caps;
             }
@@ -686,10 +723,10 @@ sub _fetch_provider_capabilities {
     #    failed (network error, no auth, model not on the API) to provide
     #    a best-effort guess so the session can still proceed.
     if ($loader) {
-        my $json_caps = $loader->get_model_capabilities_by_provider($provider, $model);
+        my $json_caps = $loader->get_model_capabilities_by_provider($base_provider, $model);
         if ($json_caps) {
             log_debug('ModelCapabilitiesManager', "JSON loader fallback hit for ${provider}:${model}");
-            return $self->_build_caps_from_json($json_caps, $provider, $model);
+            return $self->_build_caps_from_json($json_caps, $base_provider, $model);
         }
     }
 
@@ -2506,6 +2543,10 @@ C<max_output_tokens>) that neither endpoint reports.
 Arguments:
 - $provider: Provider name ('llama.cpp', 'sam', 'lmstudio')
 - $model: Model identifier (resolved from sentinel if needed)
+- $api_base: Optional. If provided, used instead of config lookup for
+  the server URL. This is needed for custom provider aliases (e.g.
+  "nimo" -> "llama.cpp") where the api_base is stored under the
+  custom provider's name in config.
 
 Returns:
 - Hashref with capability data, or undef if the server is unavailable
@@ -2514,16 +2555,18 @@ Returns:
 =cut
 
 sub _fetch_llama_cpp_capabilities {
-    my ($self, $provider, $model) = @_;
+    my ($self, $provider, $model, $api_base) = @_;
     $provider ||= 'llama.cpp';
 
-    # Read api_base from config for this provider
-    my $api_base;
-    eval {
-        require CLIO::Core::Config;
-        my $config = CLIO::Core::Config->new();
-        $api_base = $config->get_provider_base($provider);
-    };
+    # Use the passed api_base if provided (e.g. from a custom provider
+    # alias), otherwise read from config for this provider.
+    unless ($api_base) {
+        eval {
+            require CLIO::Core::Config;
+            my $config = CLIO::Core::Config->new();
+            $api_base = $config->get_provider_base($provider);
+        };
+    }
     return undef unless $api_base;
 
     my $http = $self->get_http();
@@ -2734,6 +2777,10 @@ Fetch capabilities from OpenAI-compatible APIs.
 Arguments:
 - $provider: Provider name
 - $model: Model identifier
+- $api_base: Optional. If provided, used instead of config lookup for
+  the server URL. This is needed for custom provider aliases (e.g.
+  "nimo" -> "llama.cpp") where the api_base is stored under the
+  custom provider's name in config.
 
 Returns:
 - Hashref with capability data
@@ -2741,24 +2788,22 @@ Returns:
 =cut
 
 sub _fetch_openai_compatible_capabilities {
-    my ($self, $provider, $model) = @_;
+    my ($self, $provider, $model, $api_base) = @_;
 
     require CLIO::Providers;
     my $provider_def = CLIO::Providers::get_provider($provider);
     return undef unless $provider_def;
 
-    # Read the user's configured api_base if any. Most local providers
-    # (llama.cpp, LM Studio, SAM) and most OpenAI-compatible providers
-    # have the user override api_base to point at a LAN IP, a non-default
-    # port, or a proxy. MCM must honor that override; otherwise the call
-    # goes to the provider's default host which the user is not actually
-    # using, and returns stale data or fails silently.
-    my $user_api_base;
-    eval {
-        require CLIO::Core::Config;
-        my $config = CLIO::Core::Config->new();
-        $user_api_base = $config->get_provider_base($provider);
-    };
+    # Use the passed api_base if provided (e.g. from a custom provider
+    # alias), otherwise read from config.
+    my $user_api_base = $api_base;
+    unless ($user_api_base) {
+        eval {
+            require CLIO::Core::Config;
+            my $config = CLIO::Core::Config->new();
+            $user_api_base = $config->get_provider_base($provider);
+        };
+    }
 
     # Use the user's override when present, otherwise fall back to the
     # provider's default. Either way, derive the models URL correctly:
@@ -2767,10 +2812,10 @@ sub _fetch_openai_compatible_capabilities {
     # previous code appended /models to the full chat URL, producing
     # an invalid path like /v1/chat/completions/models.
     my $raw_api_base = $user_api_base || $provider_def->{api_base};
-    my $api_base = $raw_api_base;
-    $api_base =~ s{/+$}{};
-    $api_base =~ s{/chat/completions/?$}{};
-    $api_base =~ s{/chat/?$}{};
+    my $models_api_base = $raw_api_base;
+    $models_api_base =~ s{/+$}{};
+    $models_api_base =~ s{/chat/completions/?$}{};
+    $models_api_base =~ s{/chat/?$}{};
     my $api_type = $provider;  # Used for /props gating via CLIO::Providers::is_local_inference
 
     # Get API key
@@ -2790,7 +2835,7 @@ sub _fetch_openai_compatible_capabilities {
     return undef unless $api_key;
 
     my $http = $self->get_http();
-    my $models_url = "$api_base/models";
+    my $models_url = "$models_api_base/models";
     log_debug('ModelCapabilitiesManager', "OpenAI-compatible MCM ($provider) using models_url=$models_url") if $user_api_base;
     
     my $resp = $http->get($models_url, 
@@ -2865,7 +2910,7 @@ sub _fetch_openai_compatible_capabilities {
         my $is_local = CLIO::Providers::is_local_inference($api_type);
         my $props_data;
         if (!$context_window || $is_local || $api_type eq 'generic') {
-            $props_data = $self->_query_llama_props_data($api_base);
+            $props_data = $self->_query_llama_props_data($models_api_base);
             if ($props_data) {
                 my $props_ctx = $props_data->{default_generation_settings}{n_ctx}
                              || $props_data->{n_ctx};
@@ -3235,6 +3280,50 @@ sub _get_llama_cpp_props_ctx {
     return $self->_query_llama_props($api_base);
 }
 
+=head2 _get_api_base_for_provider (Internal)
+
+Resolve the api_base for a provider, handling custom provider aliases.
+
+For custom provider aliases (e.g. "nimo" with base_provider "llama.cpp"),
+the api_base is stored under the custom provider's name in api_bases.
+For built-in providers, it falls back to the provider's default api_base.
+
+Arguments:
+- $provider: Provider name (may be a custom alias)
+
+Returns: api_base URL string, or undef if not found.
+
+=cut
+
+sub _get_api_base_for_provider {
+    my ($self, $provider) = @_;
+    return undef unless $provider;
+
+    require CLIO::Core::Config;
+    my $config = CLIO::Core::Config->new();
+
+    # First try the provider name as-is (custom providers store api_base
+    # under their own name in api_bases).
+    my $api_base = $config->get_provider_base($provider);
+    return $api_base if $api_base;
+
+    # If the provider is a custom alias, try the base provider's api_base.
+    if ($config->can('resolve_custom_provider')) {
+        my $base = $config->resolve_custom_provider($provider);
+        if ($base && $base ne $provider) {
+            $api_base = $config->get_provider_base($base);
+            return $api_base if $api_base;
+
+            # Fall back to the built-in provider's default api_base.
+            require CLIO::Providers;
+            my $def = CLIO::Providers::get_provider($base);
+            return $def->{api_base} if $def && $def->{api_base};
+        }
+    }
+
+    return undef;
+}
+
 =head2 _query_llama_props_for_provider (Internal)
 
 Query the /props endpoint for a local inference provider (llama.cpp, SAM, LM Studio).
@@ -3249,13 +3338,8 @@ Returns the integer n_ctx value on success, or undef if unavailable.
 
 sub _query_llama_props_for_provider {
     my ($self, $provider) = @_;
-    
-    my $api_base;
-    eval {
-        require CLIO::Core::Config;
-        my $config = CLIO::Core::Config->new();
-        $api_base = $config->get_provider_base($provider);
-    };
+
+    my $api_base = $self->_get_api_base_for_provider($provider);
     return undef unless $api_base;
 
     return $self->_query_llama_props($api_base);
