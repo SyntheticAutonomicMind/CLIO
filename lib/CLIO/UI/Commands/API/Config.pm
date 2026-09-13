@@ -1120,7 +1120,8 @@ sub _activate_model_with_provider {
                 $state->{api_config} ||= {};
                 $state->{api_config}{provider} = $target_provider;
                 my $stored_base = $self->{config}->get_provider_base($target_provider);
-                my $provider_config = CLIO::Providers::get_provider($target_provider);
+                my $base_provider = $self->{config}->resolve_custom_provider($target_provider);
+                my $provider_config = CLIO::Providers::get_provider($base_provider);
                 if ($provider_config) {
                     $state->{api_config}{api_base} = $stored_base || $provider_config->{api_base};
                     my $provider_key = $self->{config}->get_provider_key($target_provider);
@@ -1152,6 +1153,13 @@ are present OR when the provider does not require explicit credentials
 sub _check_provider_auth {
     my ($self, $provider) = @_;
 
+    # Resolve custom alias to base provider so built-in flags apply
+    # (e.g. 'nimo' -> 'llama.cpp' so local-inference auth check works)
+    my $base_provider = $provider;
+    if ($self->{config} && $self->{config}->can('resolve_custom_provider')) {
+        $base_provider = $self->{config}->resolve_custom_provider($provider);
+    }
+
     # Providers that don't need an API key in CLIO config
     my %NO_KEY_NEEDED = map { $_ => 1 } qw(
         github_copilot
@@ -1160,7 +1168,15 @@ sub _check_provider_auth {
         lmstudio
     );
 
-    return (1, '') if $NO_KEY_NEEDED{$provider};
+    return (1, '') if $NO_KEY_NEEDED{$base_provider};
+
+    # If the base provider's requires_auth is 'copilot' or 'none',
+    # it doesn't need a stored API key.
+    require CLIO::Providers;
+    my $pdef = CLIO::Providers::get_provider($base_provider);
+    if ($pdef && $pdef->{requires_auth} && ($pdef->{requires_auth} eq 'copilot' || $pdef->{requires_auth} eq 'none')) {
+        return (1, '');
+    }
 
     my $provider_key = $self->{config}->get_provider_key($provider);
     if ($provider_key) {
@@ -1216,7 +1232,7 @@ sub _set_provider {
     my ($self, $value, $session_only) = @_;
 
     require CLIO::Providers;
-    my ($valid, $error) = CLIO::Providers::validate_provider($value);
+    my ($valid, $error) = CLIO::Providers::validate_provider($value, $self->{config});
     unless ($valid) {
         $self->display_error_message($error);
         return;
@@ -1229,9 +1245,13 @@ sub _set_provider {
             $state->{api_config}{provider} = $value;
 
             # Load the provider's api_base (per-provider stored or default) and api_key
-            # so the session can actually use this provider
+            # so the session can actually use this provider.
+            # Resolve custom aliases to their base provider for registry lookups
+            # (get_provider only knows built-ins), while keeping stored
+            # api_base/api_key keyed under the alias name.
             my $stored_base = $self->{config}->get_provider_base($value);
-            my $provider_config = CLIO::Providers::get_provider($value);
+            my $base_provider = $self->{config}->resolve_custom_provider($value);
+            my $provider_config = CLIO::Providers::get_provider($base_provider);
             if ($provider_config) {
                 $state->{api_config}{api_base} = $stored_base || $provider_config->{api_base};
                 # Load per-provider API key
