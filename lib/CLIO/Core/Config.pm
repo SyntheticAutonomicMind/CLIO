@@ -316,7 +316,22 @@ sub load {
     
     # Apply provider defaults if provider is set and user hasn't overridden
     if ($config{provider}) {
-        my $provider_config = get_provider($config{provider});
+        # Resolve custom aliases to base provider for registry lookups
+        # (get_provider only knows built-ins). The alias name itself
+        # remains the configured 'provider' for key/base resolution.
+        #
+        # NOTE: we must NOT call $self->resolve_custom_provider() here
+        # because $self->{config} is not yet assigned (that happens at
+        # the end of load()). Instead, look up custom_providers from the
+        # local %config hash that was just populated from disk.
+        my $lookup_provider = $config{provider};
+        if ($config{custom_providers}) {
+            my $cp = $config{custom_providers}{$config{provider}};
+            if ($cp && $cp->{base_provider}) {
+                $lookup_provider = $cp->{base_provider};
+            }
+        }
+        my $provider_config = get_provider($lookup_provider);
         if ($provider_config) {
             # Apply provider's api_base unless user explicitly set it
             unless ($self->{user_set}->{api_base}) {
@@ -362,7 +377,15 @@ sub load {
                     # Use the saved model if it's already properly prefixed (has "/"),
                     # otherwise apply the provider's default
                     unless ($config{model} && $config{model} =~ m{/}) {
-                        $config{model} = $default_model;
+                        # Strip the base provider prefix if present and re-apply
+                        # the alias name (custom) or base name (built-in), so
+                        # the model is consistently aliased. Mirrors set_provider's
+                        # prefix logic.
+                        my $stripped = $default_model;
+                        if ($stripped =~ m{^\Q$lookup_provider\E/}) {
+                            $stripped =~ s{^\Q$lookup_provider\E/}{};
+                        }
+                        $config{model} = "$config{provider}/$stripped";
                     }
                     log_debug('Config', "Using model from provider '$config{provider}': $config{model}");
                 } else {

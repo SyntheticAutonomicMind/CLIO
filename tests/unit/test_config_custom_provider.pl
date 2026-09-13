@@ -114,4 +114,49 @@ subtest 'set_provider rejects genuinely unknown providers' => sub {
         'provider unchanged after failed set_provider');
 };
 
+# =============================================================================
+# load(): config with a custom provider alias reloads api_base correctly
+# (This is the startup crash bug: get_provider(alias) returned undef,
+# so load() never set api_base, and APIManager->new crashed.)
+# =============================================================================
+subtest 'load sets api_base from stored per-provider base for custom alias' => sub {
+    my $tmpdir_load = tempdir(CLEANUP => 1);
+    my $c1 = CLIO::Core::Config->new(config_dir => $tmpdir_load);
+    $c1->add_custom_provider('nimo', 'llama.cpp', 'sk-test-key',
+        'http://nimo:9090/v1/chat/completions');
+    $c1->set_provider('nimo');
+    $c1->save();
+
+    # Simulate CLIO startup: fresh config load from disk
+    my $c2 = CLIO::Core::Config->new(config_dir => $tmpdir_load);
+    is($c2->get('provider'), 'nimo', 'reloaded provider is nimo');
+    is($c2->{config}{api_base}, 'http://nimo:9090/v1/chat/completions',
+        'reloaded api_base is the custom stored base (not llama.cpp default)');
+    is($c2->get('model'), 'nimo/local-model',
+        'reloaded model is alias-prefixed');
+    is($c2->{config}{api_key}, 'sk-test-key',
+        'reloaded api_key is the custom provider key');
+
+    # APIManager should be able to construct without crashing
+    require CLIO::Core::APIManager;
+    my $api = CLIO::Core::APIManager->new(config => $c2, debug => 0);
+    ok($api, 'APIManager constructs successfully with custom provider alias');
+};
+
+# =============================================================================
+# load(): custom alias without stored base falls back to provider default
+# =============================================================================
+subtest 'load falls back to base provider default when no stored base' => sub {
+    my $tmpdir_fb = tempdir(CLEANUP => 1);
+    my $c1 = CLIO::Core::Config->new(config_dir => $tmpdir_fb);
+    $c1->add_custom_provider('nimo_default', 'llama.cpp', undef, undef);
+    $c1->set_provider('nimo_default');
+    $c1->save();
+
+    my $c2 = CLIO::Core::Config->new(config_dir => $tmpdir_fb);
+    my $llama_default = CLIO::Providers::get_provider('llama.cpp')->{api_base};
+    is($c2->{config}{api_base}, $llama_default,
+        'falls back to llama.cpp default api_base when no custom base stored');
+};
+
 done_testing();
