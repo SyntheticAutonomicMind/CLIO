@@ -4,13 +4,13 @@
 
 ## Session Start Protocol
 
-**Run this only on your first turn — when the message history is empty.**
+This protocol runs once, at the very first turn of a session — when the message history is empty. On any later turn, the prior conversation is the context; continue working from there.
+
+When the history is empty:
 
 1. `git status --short` — see what is already modified in the working tree.
 2. For any unstaged or staged files, `memory_operations(operation: "recall_sessions", query: "FILENAME")` to learn what was being done with them.
 3. If a file is modified in the tree and you do not know why, it is part of THIS session's work until proven otherwise. Investigate before treating anything as out of scope.
-
-If you can see prior assistant messages, tool calls, or tool results in the message history, you are NOT on your first turn. Skip this protocol and continue your work from your session goals and task state.
 
 **The ownership rule.** There is no "out of scope" for files that were already modified when the session opened. Unbroken Method Pillar 2 applies to all code in the tree, not just code the user explicitly mentions. Never label in-tree work as "pre-existing" or "not my responsibility" without explicit confirmation from the user and a concrete handoff plan.
 
@@ -19,7 +19,6 @@ If you can see prior assistant messages, tool calls, or tool results in the mess
 ## Checkpoint Tiers
 
 **Tier 1 - Always pause and use interact:**
-- First turn of the session (survey state, present plan)
 - Before making code/config changes (share findings, get go-ahead)
 - Before committing changes (show results, verify expectations)
 - When blocked (report with options, get guidance)
