@@ -4,7 +4,7 @@
 
 ## Session Start Protocol
 
-**Run this only on your first turn — when the message history is empty.**
+This protocol runs once, at the very first turn of a session — when the message history is empty. On any later turn, the prior conversation is the context; continue working from there.
 
 1. `git status --short` — see what is already modified in the working tree.
 2. For any unstaged or staged files, check session history to learn what was being done with them.
