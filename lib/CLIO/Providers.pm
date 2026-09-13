@@ -16,6 +16,7 @@ our @EXPORT_OK = qw(
     is_local_inference exposes_props default_context_window
     capability_fetcher default_reasoning_mode
     quota_handler supports_cache_control
+    validate_provider
 );
 
 # Fallback model when no model is configured anywhere.
@@ -862,6 +863,11 @@ Validate that a provider exists.
 
 Arguments:
   - provider_name: Provider identifier (e.g., 'openai')
+  - config: (optional) CLIO::Core::Config instance. When provided,
+    custom provider aliases registered via
+    Config::add_custom_provider (e.g. 'anthropic_test', 'nimo') are
+    recognized. When omitted, a fresh Config is loaded lazily (same
+    pattern as resolve_custom_provider below).
 
 Returns:
   - (1, '') if valid
@@ -870,7 +876,7 @@ Returns:
 =cut
 
 sub validate_provider {
-    my ($provider_name) = @_;
+    my ($provider_name, $config) = @_;
 
     unless (defined $provider_name && length($provider_name)) {
         return (0, "Provider name cannot be empty");
@@ -880,7 +886,24 @@ sub validate_provider {
         return (1, '');
     }
 
-    my @providers = list_providers();
+    # Check custom provider aliases (e.g., 'anthropic_test', 'nimo').
+    # These are stored in Config under 'custom_providers' and are not
+    # in the static $PROVIDERS registry.
+    my $is_custom = 0;
+    if ($config && ref($config) eq 'CLIO::Core::Config') {
+        $is_custom = $config->is_custom_provider($provider_name);
+    } else {
+        eval {
+            require CLIO::Core::Config;
+            $config = CLIO::Core::Config->new();
+            $is_custom = $config->is_custom_provider($provider_name);
+        };
+        # Config load failed - fall through; $is_custom stays 0
+    }
+
+    return (1, '') if $is_custom;
+
+    my @providers = list_all_providers();
     my $providers_str = join(', ', @providers);
     return (0, "Provider '$provider_name' not found. Available: $providers_str");
 }
