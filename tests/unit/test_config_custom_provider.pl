@@ -144,7 +144,71 @@ subtest 'load sets api_base from stored per-provider base for custom alias' => s
 };
 
 # =============================================================================
-# load(): custom alias without stored base falls back to provider default
+# add_custom_provider: stale URL stored as api_key is cleaned up
+# (Old _provider_add stored URLs as api_key; re-adding with api_base
+# should clear the stale URL from both api_keys and the flat api_key.)
+# =============================================================================
+subtest 'add_custom_provider clears stale URL stored as api_key' => sub {
+    my $tmpdir_stale = tempdir(CLEANUP => 1);
+
+    # Simulate old behavior: URL stored as api_key (not api_base)
+    my $c1 = CLIO::Core::Config->new(config_dir => $tmpdir_stale);
+    $c1->{config}{custom_providers}{stale} = {
+        base_provider => 'llama.cpp', display_name => 'llama.cpp (stale)',
+        created_at => time()
+    };
+    $c1->{config}{api_keys}{stale} = 'http://old-server:9090/v1';
+    $c1->{user_set}{custom_providers} = 1;
+    $c1->{user_set}{api_keys} = 1;
+    $c1->set('provider', 'stale', 1);
+    $c1->save();
+
+    # Reload — load() should NOT use the URL as api_key
+    my $c2 = CLIO::Core::Config->new(config_dir => $tmpdir_stale);
+    ok(!($c2->{config}{api_key} && $c2->{config}{api_key} =~ m{^https?://}),
+        'load() does not use URL as flat api_key');
+    ok(!($c2->{config}{api_key} && $c2->{config}{api_key} eq 'http://old-server:9090/v1'),
+        'flat api_key is not the stale URL after load');
+
+    # Now re-add via add_custom_provider with correct api_base
+    $c2->add_custom_provider('stale', 'llama.cpp', undef,
+        'http://nimo:9090/v1/chat/completions');
+    ok(!$c2->get_provider_key('stale'),
+        'stale URL cleared from api_keys after re-add');
+    is($c2->get_provider_base('stale'), 'http://nimo:9090/v1/chat/completions',
+        'new api_base stored');
+
+    $c2->set_provider('stale');
+    ok(!$c2->{config}->{api_key},
+        'api_key is not set to the stale URL after set_provider');
+    is($c2->{config}->{api_base}, 'http://nimo:9090/v1/chat/completions',
+        'api_base loaded correctly after set_provider');
+};
+
+# =============================================================================
+# set_provider: stale URL key is not loaded as api_key
+# =============================================================================
+subtest 'set_provider does not load URL as api_key' => sub {
+    my $tmpdir_sp = tempdir(CLEANUP => 1);
+
+    # Register a custom provider with a stale URL as key
+    my $c1 = CLIO::Core::Config->new(config_dir => $tmpdir_sp);
+    $c1->add_custom_provider('myllm', 'llama.cpp', undef, undef);
+    # Manually inject stale URL as key
+    $c1->{config}{api_keys}{myllm} = 'http://nimo:9090/v1/chat/completions';
+    $c1->set('provider', 'myllm', 1);
+    $c1->save();
+
+    my $c2 = CLIO::Core::Config->new(config_dir => $tmpdir_sp);
+    $c2->set_provider('myllm');
+    ok(!$c2->{config}->{api_key},
+        'api_key not set when per-provider key is a URL');
+    ok(!$c2->{config}->{api_key} || $c2->{config}->{api_key} !~ /^https?:\/\//,
+        'api_key does not contain the URL');
+};
+
+# =============================================================================
+# load falls back to base provider default when no stored base
 # =============================================================================
 subtest 'load falls back to base provider default when no stored base' => sub {
     my $tmpdir_fb = tempdir(CLEANUP => 1);
