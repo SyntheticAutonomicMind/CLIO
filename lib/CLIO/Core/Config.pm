@@ -396,13 +396,22 @@ sub load {
             }
             
             # Load the provider's api_key if one exists in the api_keys
-            # store. Use the local %config hash directly -
-            # $self->{config} isn't set until later.
             my $api_keys = $config{api_keys} || {};
             my $provider_key = $api_keys->{$config{provider}};
             if ($provider_key) {
-                $config{api_key} = $provider_key;
-                log_debug('Config', "Loaded api_key for provider '$config{provider}'");
+                # If the stored key looks like a URL, it was accidentally
+                # stored as a key (old _provider_add behavior before URL
+                # auto-detection). Do NOT use it as an api_key — the URL
+                # belongs in api_base, not api_key. The user should set a
+                # real key via /api set key.
+                if ($provider_key =~ m{^https?://}) {
+                    log_debug('Config', "WARNING: Per-provider key for '$config{provider}' looks like a URL ("
+                        . substr($provider_key, 0, 20) . "...) — ignoring it as a key. "
+                        . "Run /api set key <value> to provide a real API key.");
+                } else {
+                    $config{api_key} = $provider_key;
+                    log_debug('Config', "Loaded api_key for provider '$config{provider}'");
+                }
             }
             
             # Cache the provider config (without user-set values)
@@ -958,8 +967,15 @@ sub set_provider {
     # Switching between providers with stored keys
     my $provider_key = $self->get_provider_key($provider);
     if ($provider_key) {
-        $self->{config}->{api_key} = $provider_key;
-        log_debug('Config', "Loaded API key for provider '$provider' from api_keys");
+        # If the stored key looks like a URL, it was accidentally stored
+        # as a key (old _provider_add behavior). Do NOT use it as an api_key.
+        if ($provider_key =~ m{^https?://}) {
+            log_debug('Config', "WARNING: Per-provider key for '$provider' looks like a URL — " .
+                "it should be an API key, not a base URL. Run /api set key <value> to fix.");
+        } else {
+            $self->{config}->{api_key} = $provider_key;
+            log_debug('Config', "Loaded API key for provider '$provider' from api_keys");
+        }
     }
     # When no per-provider key exists, keep existing api_key.
     # It may be valid for the new provider. Providers that use other
@@ -1151,7 +1167,24 @@ sub add_custom_provider {
     };
     $self->{user_set}->{custom_providers} = 1;
 
-    # Store per-provider API key and base if provided
+    # Store per-provider API key and base if provided.
+    # If api_base is provided, clear any stale api_key for this provider —
+    # the old _provider_add stored URLs as api_key, so a re-registration
+    # with the corrected flow should not keep a URL masquerading as a key.
+    if (defined $api_base && length($api_base)) {
+        $self->set_provider_base($name, $api_base);
+        # Clear stale key that may have been a URL from old behavior
+        my $api_keys = $self->{config}->{api_keys} || {};
+        my $stale_key = $api_keys->{$name};
+        if ($stale_key && $stale_key =~ m{^https?://}) {
+            delete $api_keys->{$name};
+            # Also clear the flat api_key if it currently holds this URL
+            if ($self->{config}->{api_key} && $self->{config}->{api_key} eq $stale_key) {
+                delete $self->{config}->{api_key};
+            }
+            log_debug('Config', "Cleared stale api_key (was a URL) for provider '$name'");
+        }
+    }
     if (defined $api_key && length($api_key)) {
         $self->set_provider_key($name, $api_key);
     }
