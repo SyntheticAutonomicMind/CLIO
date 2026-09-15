@@ -1,12 +1,13 @@
 #!/usr/bin/env perl
 # test_interact_user_framing.pl - Verify interact tool returns raw user replies
-# (no [USER REPLY] tagging) and stores interaction history in the session log.
+# (no [USER REPLY] tagging) and does NOT store redundant session history
+# (the caller handles session storage atomically).
 
 use strict;
 use warnings;
 use utf8;
 use lib './lib';
-use Test::More tests => 12;
+use Test::More tests => 14;
 use CLIO::Tools::Interact;
 
 # Minimal mock UI. request_collaboration returns a hashref matching the
@@ -18,12 +19,14 @@ sub new {
     return bless {
         next_input  => $args{next_input}  // 'test user reply',
         next_result => $args{next_result} // undef,
+        cancel      => $args{cancel}     // 0,   # When set, request_collaboration returns undef
         spinner     => undef,
         theme_mgr   => undef,
     }, $class;
 }
 sub request_collaboration {
     my ($self, $message, $context, $options) = @_;
+    return undef if $self->{cancel};
     if ($options && $options->{listen_broker}) {
         return $self->{next_result} if defined $self->{next_result};
         return {
@@ -76,11 +79,9 @@ sub make_session { return FakeSession->new; }
     );
     is(
         scalar(@{$sess->{messages}}),
-        2,
-        'standard mode: interaction stored as 2 messages in session log'
+        0,
+        'standard mode: NO redundant session messages (caller handles storage)'
     );
-    is($sess->{messages}[0]{role}, 'assistant', 'standard mode: request stored as assistant message');
-    is($sess->{messages}[1]{role}, 'user', 'standard mode: response stored as user message');
 }
 
 # === Test 2: listen_broker mode (user source) returns raw user reply ===
@@ -107,11 +108,16 @@ sub make_session { return FakeSession->new; }
         'user',
         'listen_broker user source: metadata.source is "user"'
     );
+    is(
+        $result->{metadata}{user_response},
+        'quick question before I start',
+        'listen_broker user source: metadata.user_response carries the raw text'
+    );
 }
 
-# === Test 3: listen_broker mode (agent_event source) does NOT include user reply ===
+# === Test 3: listen_broker mode (agent_event source) does NOT frame ===
 # When the request_collaboration returns an agent_event, the output is
-# purely agent messages — no user reply text.
+# purely agent messages — no user reply text, so no framing prefix.
 {
     my $ui = MockUI->new(
         next_input  => undef,
@@ -137,7 +143,7 @@ sub make_session { return FakeSession->new; }
     ok($result->{success}, 'listen_broker agent_event: success=1');
     unlike(
         $result->{output},
-        qr/\[USER REPLY\]/,
+        qr/User response:/,
         'listen_broker agent_event: output is NOT framed (no user reply)'
     );
     like(
@@ -145,4 +151,19 @@ sub make_session { return FakeSession->new; }
         qr/Agent message received:/,
         'listen_broker agent_event: output contains agent message header'
     );
+}
+
+# === Test 4: cancellation (UI returns undef) produces error ===
+{
+    # Use a mock that returns undef to simulate cancel/EOF
+    my $ui = MockUI->new(next_input => 'cancel_signal', cancel => 1);
+    my $sess = make_session;
+    my $tool = CLIO::Tools::Interact->new(debug => 0);
+    my $result = $tool->execute(
+        { operation => 'request_input', message => 'Continue?' },
+        { ui => $ui, session => $sess }
+    );
+    ok(!$result->{success}, 'cancel: success=0');
+    like($result->{error}, qr/cancel/, 'cancel: error mentions cancellation');
+    is(scalar(@{$sess->{messages}}), 0, 'cancel: no session messages stored');
 }

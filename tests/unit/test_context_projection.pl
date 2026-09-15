@@ -269,6 +269,17 @@ sub make_history {
     is(length(digest('hello')), 16, "digest returns 16 hex chars");
     is(digest('hello'), digest('hello'), "digest is deterministic");
     isnt(digest('hello'), digest('world'), "digest differs for different input");
+
+    # digest() handles wide characters without dying.
+    # Tool results may contain emoji, accented text, or other non-ASCII
+    # characters - sha256_hex expects raw bytes, so encode_utf8 is needed.
+    # The original bug was a fatal "Wide character in subroutine entry".
+    my $wide = "Hello \x{1F600} \x{00E9}\x{00E8}\x{00EA}";
+    my $wide_result = eval { length(digest($wide)) };
+    is($wide_result, 16, "digest handles wide characters without dying");
+    ok(!$@, "no error thrown for wide characters");
+    is(digest($wide), digest($wide), "digest is deterministic with wide chars");
+    isnt(digest($wide), digest('hello'), "digest differs for wide vs ASCII input");
 }
 
 done_testing();

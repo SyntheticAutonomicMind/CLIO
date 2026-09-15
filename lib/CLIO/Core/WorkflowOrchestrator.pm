@@ -2696,7 +2696,13 @@ sub _handle_interrupt {
             );
             
             if ($result && $result->{success} && $result->{output}) {
-                my $user_response = $result->{output};
+                # Use metadata.user_response (raw) for the user message
+                # content. The output field carries the raw response
+                # (no framework narration prefix) for model-driven tool
+                # results; the interrupt path pushes a role='user' message
+                # directly so the model sees it as a proper user turn.
+                my $user_response = $result->{metadata}{user_response}
+                    // $result->{output};
                 
                 # Add user's response as a user message
                 push @$messages_ref, {

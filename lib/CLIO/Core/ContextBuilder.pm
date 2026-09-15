@@ -14,6 +14,7 @@ use CLIO::Core::Logger qw(log_debug log_warning log_error);
 use CLIO::Memory::TokenEstimator qw(estimate_messages_tokens);
 use CLIO::Memory::LongTerm ();
 use Digest::SHA qw(sha256_hex);
+use Encode qw(encode_utf8);
 # YaRN does not use Exporter; call its subs via fully-qualified name.
 # Loading the module here ensures the symbol is defined before
 # _select_turns tries to call recover_substantive_task.
@@ -605,7 +606,7 @@ for within-session dedup, cheap to serialize.
 
 sub digest {
     my ($content) = @_;
-    return substr(sha256_hex($content // ''), 0, 16);
+    return substr(sha256_hex(encode_utf8($content // '')), 0, 16);
 }
 
 # ============================================================================
