@@ -287,15 +287,16 @@ sub request_input {
                 }
             }
             
-            # Store collaboration in session history
-            if ($context->{session} && defined $user_response && $source ne 'agent_event') {
-                $context->{session}->add_message(
-                    'assistant',
-                    $message . ($user_context ? "\n\nContext: $user_context" : ""),
-                    { collaboration => 'request_input' }
-                );
-                $context->{session}->add_message('user', $user_response);
-            }
+            # NOTE: Session history for the interact exchange (assistant
+            # question + user response) is handled by
+            # WorkflowOrchestrator::_execute_tool_round, which saves the
+            # assistant message with tool_calls and the tool result
+            # atomically. Adding redundant assistant+user messages here
+            # caused duplication and message-merging bugs (the user
+            # response from here would be merged with the next user input
+            # by enforce_message_alternation). The tool_call/tool_result
+            # batch is preserved atomically by _role_based_tail_walk, so
+            # trim safety is handled at the batch level.
             
             return {
                 success => 1,
@@ -304,6 +305,7 @@ sub request_input {
                     source => $source,
                     agent_id => $result->{agent_id},
                     events => \@events,
+                    user_response => $user_response,
                     collaboration_type => 'request_input',
                 },
             };
@@ -322,21 +324,16 @@ sub request_input {
     
     log_debug('Interact', "User responded: $user_response");
     
-    # Store collaboration in session history
-    if ($context->{session}) {
-        # Add agent message (the request)
-        $context->{session}->add_message(
-            'assistant',
-            $message . ($user_context ? "\n\nContext: $user_context" : ""),
-            { collaboration => 'request_input' }
-        );
-        
-        # Add user response
-        $context->{session}->add_message(
-            'user',
-            $user_response
-        );
-    }
+    # NOTE: Session history for the interact exchange (assistant
+    # question + user response) is handled by
+    # WorkflowOrchestrator::_execute_tool_round, which saves the
+    # assistant message with tool_calls and the tool result
+    # atomically. Adding redundant assistant+user messages here
+    # caused duplication and message-merging bugs (the user
+    # response from here would be merged with the next user input
+    # by enforce_message_alternation). The tool_call/tool_result
+    # batch is preserved atomically by _role_based_tail_walk, so
+    # trim safety is handled at the batch level.
     
     return {
         success => 1,
@@ -433,17 +430,9 @@ sub _request_via_broker {
         return $self->error_result("Timeout waiting for user response via broker (waited ${timeout}s)");
     }
     
-    # Store in session if available
-    if ($context->{session}) {
-        $context->{session}->add_message(
-            'assistant',
-            "[BROKER QUESTION] $message"
-        );
-        $context->{session}->add_message(
-            'user', 
-            $response
-        );
-    }
+    # NOTE: Session storage handled by _execute_tool_round (atomic batch
+    # preservation). See request_input for the full rationale on why
+    # redundant assistant+user messages were removed.
     
     return {
         success => 1,

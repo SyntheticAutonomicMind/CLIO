@@ -2249,6 +2249,18 @@ sub request_collaboration {
         
         # Regular response - display and return
         # Return user response without echoing
+        
+        # Sync readline history to session state for persistence so
+        # interact responses are recallable via up-arrow history on
+        # resume. Without this sync, the response lives in the in-memory
+        # readline history but is lost from persisted input_history if
+        # the session saves before the next main-line input.
+        if ($self->{readline} && $self->{session} && $self->{session}->state()) {
+            my @hist = @{$self->{readline}->{history}};
+            splice(@hist, 0, @hist - 500) if @hist > 500;
+            $self->{session}->state()->{input_history} = \@hist;
+        }
+        
         if ($listen_broker) {
             return { source => 'user', input => $response, events => \@accumulated_events };
         }

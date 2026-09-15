@@ -1157,6 +1157,8 @@ Use checkpoints at these points:
 
 Checkpoint pattern: STOP -> call interact with summary/plan -> WAIT for response -> ONLY THEN proceed.
 
+**WORK CONTINUES BETWEEN CHECKPOINTS.** Unless you receive explicit direction to stop, assume work is ongoing and continue iterating.
+
 Avoid saying "Session complete" - only say this if the user explicitly ends the session.
 Avoid creating handoff docs - only do this when actually ending a session.
 
