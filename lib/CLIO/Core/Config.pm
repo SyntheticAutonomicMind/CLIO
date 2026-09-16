@@ -113,7 +113,7 @@ use constant DEFAULT_CONFIG => {
     # Falls back to HTTPS_PROXY, HTTP_PROXY, ALL_PROXY environment variables
     http_proxy => '',
     # Reasoning/thinking display
-    show_thinking => 0,         # Show model's reasoning/thinking output (default: off)
+    show_thinking => 1,         # Show model's reasoning/thinking output (default: on)
     thinking_effort => 'medium', # Reasoning effort level: low, medium, high, xhigh (default: medium)
     # Accepted values depend on provider+model:
     # - Anthropic adaptive (4.6+): low|medium|high|xhigh|max

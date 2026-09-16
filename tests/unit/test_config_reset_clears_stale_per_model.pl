@@ -138,6 +138,9 @@ subtest 'set() to default value still creates per-model override (regression for
                 show_thinking => 1,
             },
         },
+        model_configs_explicit => {
+            'minimax/MiniMax-M3' => { show_thinking => 1 },
+        },
     });
 
     my $config = CLIO::Core::Config->new(config_dir => $tmpdir);

@@ -184,7 +184,6 @@ sub _get_operation_aliases {
         'ask'               => { tool => 'interact', operation => 'request_input' },
         'collab'            => { tool => 'interact', operation => 'request_input' },
         'interact'          => { tool => 'interact', operation => 'request_input' },
-        'user_collaboration' => { tool => 'interact', operation => 'request_input' },
         'ask_user'          => { tool => 'interact', operation => 'request_input' },
         'confirm'           => { tool => 'interact', operation => 'request_input' },
         'question'          => { tool => 'interact', operation => 'request_input' },
