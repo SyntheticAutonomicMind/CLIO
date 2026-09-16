@@ -80,9 +80,9 @@ use CLIO::Providers qw(build_endpoint_config get_provider);
 # Verify that the timeout selection logic in APIManager would pick the
 # correct value based on the propagated flags.
 {
-    my $cloud_timeout = 90;
-    my $route_timeout = 120;
-    my $slow_timeout  = 600;
+    my $cloud_timeout = 300;
+    my $route_timeout = 300;
+    my $slow_timeout  = 900;
 
     # Simulate APIManager's timeout selection logic
     my sub check_timeout {
@@ -93,20 +93,20 @@ use CLIO::Providers qw(build_endpoint_config get_provider);
     }
 
     my $llama_cfg = build_endpoint_config('llama.cpp', 'key');
-    is(check_timeout($llama_cfg), 600,
-        "llama.cpp selects slow_timeout (600s)");
+    is(check_timeout($llama_cfg), 900,
+        "llama.cpp selects slow_timeout (900s)");
 
     my $openrouter_cfg = build_endpoint_config('openrouter', 'key');
-    is(check_timeout($openrouter_cfg), 120,
-        "openrouter selects route_timeout (120s)");
+    is(check_timeout($openrouter_cfg), 300,
+        "openrouter selects route_timeout (300s)");
 
     my $openai_cfg = build_endpoint_config('openai', 'key');
-    is(check_timeout($openai_cfg), 90,
-        "openai selects cloud_timeout (90s)");
+    is(check_timeout($openai_cfg), 300,
+        "openai selects cloud_timeout (300s)");
 
     my $anthropic_cfg = build_endpoint_config('anthropic', 'key');
-    is(check_timeout($anthropic_cfg), 90,
-        "anthropic selects cloud_timeout (90s)");
+    is(check_timeout($anthropic_cfg), 300,
+        "anthropic selects cloud_timeout (300s)");
 }
 
 done_testing();

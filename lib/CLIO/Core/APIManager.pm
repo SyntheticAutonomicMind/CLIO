@@ -3318,13 +3318,13 @@ sub _prepare_api_request {
 
     # Create HTTP client with appropriate timeout for the provider tier.
     # Tiered timeouts via curl's --max-time:
-    #   - Local inference (slow_api): 600s — llama.cpp/SAM/LM Studio are CPU-bound
-    #   - Route-based (route_timeout):  120s — OpenRouter/OrcaRouter add upstream hop latency
-    #   - Direct cloud (default):       90s  — OpenAI, Anthropic, Google, Copilot respond fast
+    #   - Local inference (slow_api): 900s — llama.cpp/SAM/LM Studio are CPU-bound
+    #   - Route-based (route_timeout): 300s — OpenRouter/OrcaRouter add upstream hop latency
+    #   - Direct cloud (default):     300s — OpenAI, Anthropic, Google, Copilot respond fast
     # Use shared client for connection pooling (keep-alive)
-    my $cloud_timeout = 90;
-    my $route_timeout = 120;
-    my $slow_timeout  = 600;
+    my $cloud_timeout = 300;
+    my $route_timeout = 300;
+    my $slow_timeout  = 900;
     my $ua_timeout = $endpoint_config->{slow_api} ? $slow_timeout
                 : $endpoint_config->{route_timeout} ? $route_timeout
                 : $cloud_timeout;
@@ -5732,12 +5732,12 @@ sub _send_native_streaming {
     );
     
     # Create HTTP client with tiered timeout matching the OpenAI-compatible path.
-    # Native providers (Anthropic, Google, NVIDIA NIM) use cloud-tier 90s by default,
-    # but respect slow_api/route_timeout flags for consistency if a native provider
-    # is ever added to a local or route-based tier.
-    my $cloud_timeout = 90;
-    my $route_timeout = 120;
-    my $slow_timeout  = 600;
+    # Native providers (Anthropic, Google, NVIDIA NIM) use cloud-tier 300s by
+    # default, but respect slow_api/route_timeout flags for consistency if a
+    # native provider is ever added to a local or route-based tier.
+    my $cloud_timeout = 300;
+    my $route_timeout = 300;
+    my $slow_timeout  = 900;
     my $ua_timeout;
     {
         my ($native_provider_name) = $self->_parse_model_provider($full_model);

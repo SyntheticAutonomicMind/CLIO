@@ -54,7 +54,7 @@ Users can override any setting via /api commands, but these are the defaults.
 #   - supports_tools: Whether provider supports function calling
 #   - supports_streaming: Whether provider supports streaming responses
 #   - chat_endpoint_suffix: Path to append to api_base for chat (if not already in api_base)
-#   - slow_api: Flag for local inference providers requiring longer HTTP timeouts (cloud: 90s, route-based: 120s, slow_api: 600s)
+#   - slow_api: Flag for local inference providers requiring longer HTTP timeouts (cloud: 300s, route-based: 300s, slow_api: 900s)
 
 my %PROVIDERS = (
     sam => {
