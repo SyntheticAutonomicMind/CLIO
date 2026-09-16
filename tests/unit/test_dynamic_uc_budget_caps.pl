@@ -42,13 +42,20 @@ my $len = length($prose);
 # SMELL #5 regression guard: total dynamic UC bounded
 ok($len < 15000, "dynamic UC bounded (was ~88K before caps, now $len chars)");
 
-# Active todos capped at 10
-my $todos_in_output = () = $prose =~ /^- \[/gm;
+# Both todos and LTM entries render as "- [...]" bullets, so a bare /^- \[/
+# counts them together. Split them by the todo status vocabulary instead.
+my @bullets = $prose =~ /^- \[.*?\]/gm;
+my $is_todo = qr/^- \[(?:not-started|pending|in-progress|completed|blocked)\]/;
+my @todo_bullets = grep { /$is_todo/ } @bullets;
+my @ltm_bullets  = grep { !/$is_todo/ } @bullets;
+
+my $todos_in_output = scalar @todo_bullets;
 ok($todos_in_output <= 10, "active todos capped at 10 (rendered: $todos_in_output)");
 
-# LTM not rendered (metadata-leak fix removed the Relevant memory: section)
-my $ltm_in_output = () = $prose =~ /^- \(\d+\.\d+\)/gm;
-ok($ltm_in_output == 0, "no LTM entries in prose (Relevant memory section removed, rendered: $ltm_in_output)");
+# LTM renders (it belongs in the tail) but is capped at MAX_MEMORIES = 5.
+my $ltm_in_output = scalar @ltm_bullets;
+ok($ltm_in_output > 0 && $ltm_in_output <= 5,
+   "LTM entries render and are capped at 5 (rendered: $ltm_in_output)");
 
 # Overflow hint
 like($prose, qr/...and \d+ more/, "overflow hint shown when items exceed cap");

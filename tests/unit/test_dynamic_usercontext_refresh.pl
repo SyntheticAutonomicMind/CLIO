@@ -48,7 +48,7 @@ subtest 'H3: empty relevant_memory → no Relevant memory section' => sub {
     unlike($prose, qr/\(0\.90\)|\(0\.70\)/, 'No confidence scores in prose');
 };
 
-subtest 'H3: relevant_memory NOT in dynamic userContext (metadata-leak fix)' => sub {
+subtest 'H3: relevant LTM entries are projected into the userContext tail' => sub {
     my $ltm = CLIO::Memory::LongTerm->new();
     # 5 LTM entries; some relevant, some not
     $ltm->add_discovery('Model-facing prompt paths must NEVER tell the model about framework internals.', 0.9);
@@ -66,19 +66,34 @@ subtest 'H3: relevant_memory NOT in dynamic userContext (metadata-leak fix)' => 
     );
 
     my $prose = messages_to_prose_dynamic($proj);
-    # Post-metadata-leak fix: the Relevant memory section is removed
-    # entirely. LTM entries are not injected into the dynamic
-    # userContext — the model can search LTM on demand via
-    # memory_operations(search).
-    unlike($prose, qr/Relevant memory:/, 'No Relevant memory label in prose');
-    unlike($prose, qr/Model-facing prompt paths/, 'No LTM content leaked into dynamic userContext');
-    unlike($prose, qr/Cache stability requires/, 'No LTM content leaked into dynamic userContext');
-    unlike($prose, qr/Always run perl/, 'No LTM content leaked into dynamic userContext');
+    # Relevant LTM entries ARE projected into the dynamic userContext, in the
+    # tail, as a knowledge base ("## Long-Term Memory" + type-grouped
+    # subsections). The knowledge-base framing is what keeps the model
+    # consulting entries as reference instead of executing them as
+    # instructions; the old flat-bullet "Relevant memory:" label is gone.
+    like($prose, qr/^## Long-Term Memory/m,
+        'LTM projected into dynamic userContext under a knowledge-base header');
+    like($prose, qr/Model-facing prompt paths/,
+        'Relevant LTM content is projected');
+    # Scoring is relevance-gated, not a blind dump: of the five entries above,
+    # only the ones matching the input/active task survive.
+    unlike($prose, qr/file_operations\(read_file\)/,
+        'Unrelated LTM entry is not projected (relevance filtering)');
+    unlike($prose, qr/Relevant memory:/,
+        'Legacy flat-bullet "Relevant memory:" label is not used');
+
+    # LTM is the tail section: nothing may be rendered after it, or cache
+    # ordering and the "reference material sits last" contract both break.
+    my @headers = $prose =~ /^#{1,3} .*$/mg;
+    ok(@headers, 'prose contains section headers');
+    like($headers[-1], qr/Long-Term Memory|Key Discoveries|Discoveries/,
+        'LTM section is the last section in the dynamic userContext');
+
     # Design: no "N more available" count, no framework instructions,
-    # no confidence scores.
+    # no raw decimal confidence scores.
     unlike($prose, qr/more memories available/, 'No "more available" count');
     unlike($prose, qr/memory_operations\(operation: "search"/, 'No search affordance (no framework instructions)');
-    unlike($prose, qr/\(0\.\d+\)/, 'No confidence scores in prose');
+    unlike($prose, qr/\(0\.\d+\)/, 'No raw decimal confidence scores in prose');
 };
 
 subtest 'H3: no LTM -> no relevant memory section' => sub {

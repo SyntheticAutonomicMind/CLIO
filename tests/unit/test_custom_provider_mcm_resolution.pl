@@ -69,7 +69,12 @@ plan(tests => 7);
 
 # --- Test 1: resolve_custom_provider maps "nimo" to "llama.cpp" ---
 require CLIO::Core::Config;
-my $config = CLIO::Core::Config->new();
+# Register the alias in a private config dir: this must not depend on a
+# custom provider that happens to exist in the developer's real ~/.clio.
+require File::Temp;
+my $config = CLIO::Core::Config->new(
+    config_dir => File::Temp::tempdir(CLEANUP => 1));
+$config->add_custom_provider('nimo', 'llama.cpp', 'test-key', undef);
 my $resolved = $config->resolve_custom_provider("nimo");
 is($resolved, "llama.cpp", "resolve_custom_provider('nimo') returns 'llama.cpp'");
 

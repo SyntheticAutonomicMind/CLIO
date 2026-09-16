@@ -30,27 +30,6 @@ use CLIO::Core::Defaults qw(
 );
 use CLIO::Core::ModelDataLoader;
 
-# JSON defaults per provider (centralized model data inserts these).
-# The function checks JSON defaults first, then falls back to
-# DEFAULT_LOCAL_CONTEXT_WINDOW / DEFAULT_CONTEXT_WINDOW constants.
-my %PROVIDER_DEFAULT_CONTEXT = (
-    'sam'           => 32000,
-    'lmstudio'      => 32000,
-    'llama.cpp'     => 32000,
-    'openai'        => 128000,
-    'anthropic'     => 200000,
-    'google'        => 1048576,
-    'minimax'       => 1000000,
-    'zai'           => 200000,
-    'deepseek'      => 1048576,
-    'nvidia'        => 1048576,
-    'github_copilot' => 128000,
-    'openrouter'    => 128000,
-    'orca'          => 1000000,
-    'kilo'          => 1000000,
-    'ollama_cloud'  => 128000,
-);
-
 # Each tier name + the providers that should belong to it.
 my @LOCAL_NAMES  = qw(sam lmstudio llama.cpp);
 my @CLOUD_NAMES  = qw(openai anthropic google minimax zai deepseek nvidia github_copilot openrouter ollama_cloud orca kilo hyper);
@@ -104,12 +83,13 @@ for my $name (@LOCAL_NAMES) {
         "default_context_window($name) == DEFAULT_LOCAL_CONTEXT_WINDOW");
 }
 for my $name (@CLOUD_NAMES) {
-    # anthropic (200000) and minimax (1000000) ship explicit
+    # anthropic (200000), minimax (1000000) and openrouter (200000) ship explicit
     # max_context_tokens in provider-defaults.json, which override the
     # DEFAULT_CONTEXT_WINDOW (128000) fallback. Every other cloud
     # provider has no override and falls back to the constant.
     my $expected = ($name eq 'anthropic') ? 200000
                 : ($name eq 'minimax')    ? 1000000
+                : ($name eq 'openrouter') ? 200000
                 :                           DEFAULT_CONTEXT_WINDOW();
     is(default_context_window($name), $expected,
         "default_context_window($name) == $expected");
@@ -204,6 +184,11 @@ for my $name (@CLOUD_NAMES) {
         'minimax_token'  => 'minimax',
         'deepseek'       => 'deepseek',
         'github_copilot' => 'github_copilot',
+        # Local llama.cpp-compatible servers share the llama_cpp fetcher:
+        # SAM is a llama.cpp fork, LM Studio exposes /props.
+        'sam'            => 'llama_cpp',
+        'lmstudio'       => 'llama_cpp',
+        'llama.cpp'      => 'llama_cpp',
     );
     for my $name (sort keys %EXPECTED_FETCHER) {
         is(capability_fetcher($name), $EXPECTED_FETCHER{$name},
@@ -212,7 +197,7 @@ for my $name (@CLOUD_NAMES) {
 
     # Providers without a dedicated fetcher return undef so the caller
     # can fall back to the generic OpenAI-compatible path.
-    for my $name (qw(openai ollama_cloud openrouter orca kilo sam lmstudio)) {
+    for my $name (qw(openai ollama_cloud openrouter orca kilo hyper)) {
         is(capability_fetcher($name), undef,
             "$name has no dedicated fetcher -> undef (caller falls back)");
     }

@@ -236,7 +236,15 @@ pollute the real ~/.clio.
 sub _config_in_test_mode {
     return 1 if $ENV{CLIO_TEST};
     my $caller_file = (caller(1))[1] // '';
-    return 1 if $caller_file =~ m{/tests/} || $caller_file =~ m{^\.\.?/tests/};
+    return 0 unless length $caller_file;
+
+    # Match the resolved path, not the literal string the interpreter was
+    # handed. "tests/unit/x.pl", "./tests/unit/x.pl" and
+    # "/abs/tests/unit/x.pl" name the same file and must isolate identically;
+    # matching the raw string made isolation depend on how the path was
+    # typed, so `perl -Ilib tests/unit/x.pl` wrote to the real ~/.clio.
+    my $path = eval { File::Spec->rel2abs($caller_file) } || $caller_file;
+    return 1 if $path =~ m{(?:^|/)tests/};
     return 0;
 }
 

@@ -1319,11 +1319,14 @@ sub grep_search {
                 return;
             }
 
-            # Resolve to an absolute path so the search loop's abs-path check
-            # skips the catfile reconstruction (which assumes $file->{path}
-            # is relative to $directory — true in directory mode, wrong here).
+            # Make the path absolute so the search loop's abs-path check skips
+            # the catfile reconstruction (which assumes $file->{path} is
+            # relative to $directory - true in directory mode, wrong here).
+            # rel2abs, not abs_path: abs_path resolves symlinks, so a caller
+            # under a symlinked tree (macOS /var -> /private/var) would get
+            # back a different path than the one it passed.
             my $resolved = expand_tilde($directory);
-            $resolved = abs_path($resolved) || $resolved;
+            $resolved = File::Spec->rel2abs($resolved);
 
             push @files, {
                 path      => $resolved,

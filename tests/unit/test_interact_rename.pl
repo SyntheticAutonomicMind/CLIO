@@ -46,8 +46,10 @@ find(sub {
         if ($line =~ /user_collaboration|UserCollaboration/) {
             # Allow backward-compat alias in Registry
             next if $File::Find::name =~ /Registry\.pm$/ && $line =~ /=> \{ tool => 'interact'/;
-            # Allow migration note in PromptBuilder
-            next if $File::Find::name =~ /PromptBuilder\.pm$/ && $line =~ /replaces the former/;
+            # Allow the two-line migration note in PromptBuilder (renamed tool
+            # is documented to models so stale instructions still resolve).
+            next if $File::Find::name =~ /PromptBuilder\.pm$/
+                 && $line =~ /replaces the former|use `interact` instead/;
             push @violations, "$File::Find::name:$line_num: $line";
         }
     }
