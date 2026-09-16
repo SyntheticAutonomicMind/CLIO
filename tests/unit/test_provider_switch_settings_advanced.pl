@@ -66,7 +66,7 @@ subtest 'B: /api set model moves settings between models' => sub {
 
     # Switch to a different model via set() with mark_user_set=1
     $config->set('model', 'nvidia/nemotron-3-ultra-550b-a55b', 1);
-    is($config->{config}{show_thinking}, 0,
+    is($config->{config}{show_thinking}, 1,
         'B: show_thinking reset to default on different model (no entry)');
 
     # Switch BACK to minimax

@@ -2,11 +2,11 @@
 
 =head1 NAME
 
-test_user_collaboration_broker.pl - Test interact tool broker routing
+test_interact_broker_routing.pl - Test interact tool broker routing
 
 =head1 DESCRIPTION
 
-Tests that Interact tool correctly routes to broker when running
+Tests that the interact tool correctly routes to the broker when running
 in sub-agent mode (broker_client present in context).
 
 =cut

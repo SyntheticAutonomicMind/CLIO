@@ -477,21 +477,16 @@ use_ok('CLIO::Core::APIManager');
     is($blocks->[0]{signature}, 'sig_multi', 'Google: signature captured from same chunk');
 }
 
-# ── 20. show_thinking=0 does not pass thinking_opt for native providers ─
+# ── 20. show_thinking=1 default is surfaced for native providers ─
 {
     my $config = build_provider_config('anthropic');
-    # show_thinking defaults to 0
+    # show_thinking defaults to on in Config.
     my $mgr = CLIO::Core::APIManager->new(
         provider => 'anthropic',
         model => 'claude-sonnet-4.5',
         config => $config,
     );
-    # _endpoint_supports_thinking returns true for anthropic, but
-    # show_thinking=0 means no thinking_opt should be built.
-    # We can't directly test the private method, but we verify the
-    # config default.
-    # show_thinking defaults to off in Config (user enables it per model).
-    is($config->get('show_thinking'), 0, 'Config: show_thinking defaults to 0');
+    is($config->get('show_thinking'), 1, 'Config: show_thinking defaults to 1');
     ok($mgr->_endpoint_supports_thinking(), 'APIManager: anthropic supports thinking');
 }
 

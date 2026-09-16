@@ -10,8 +10,8 @@
 #
 # Example before the fix (user's actual config):
 #   Top-level:           show_thinking=1, cap_context_window=64000  (user's intent)
-#   model_configs:       show_thinking=0, cap_context_window=0       (stale defaults)
-#   After load():        show_thinking=0, cap_context_window=0       (clobbered!)
+#   model_configs:       show_thinking=1, cap_context_window=0       (stale defaults)
+#   After load():        show_thinking=1, cap_context_window=0       (clobbered!)
 #
 # Fix: load()'s Restore block only applies model_configs values that
 # DIFFER from DEFAULT_CONFIG. Stale default-value entries are ignored.
@@ -50,7 +50,7 @@ subtest 'Global /api set thinking on survives new session (stale model_configs e
         thinking_mode   => 'auto',
         model_configs   => {
             'minimax/MiniMax-M3' => {
-                show_thinking   => 0,           # stale default - should NOT override top-level
+                show_thinking   => 1,           # stale default - should NOT override top-level
                 thinking_effort => 'medium',    # stale default - should NOT override top-level
                 thinking_mode   => 'auto',
                 cap_context_window => 0,        # stale default - should NOT override top-level
@@ -108,7 +108,7 @@ subtest 'Explicit per-model overrides still apply (regression for the fix)' => s
         api_keys  => {},
         model     => 'minimax/MiniMax-M3',
         provider  => 'minimax',
-        show_thinking   => 0,   # global default
+        show_thinking   => 0,   # global (user deliberately turned it off globally)
         thinking_effort => 'medium',
         thinking_mode   => 'auto',
         model_configs => {
@@ -126,6 +126,9 @@ subtest 'Explicit per-model overrides still apply (regression for the fix)' => s
                 sampling_top_p => '',
                 sampling_top_k => '',
             },
+        },
+        model_configs_explicit => {
+            'minimax/MiniMax-M3' => { show_thinking => 1 },
         },
     );
     my ($config) = load_with_disk(%disk);

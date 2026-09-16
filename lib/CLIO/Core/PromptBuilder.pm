@@ -54,7 +54,7 @@ sub new {
         enable_subagents => $opts{enable_subagents} // 1,  # Sub-agent spawning feature flag
         auto_discover_skills => $opts{auto_discover_skills} // 1,  # Skill auto-discovery
         auto_create_skills => $opts{auto_create_skills} // 1,  # Auto-skill creation prompt section
-        show_thinking   => $opts{show_thinking} // 0,  # Surface thinking stream and append steering paragraph
+        show_thinking   => $opts{show_thinking} // 1,  # Surface thinking stream and append steering paragraph
         needs_thinking_steering => $opts{needs_thinking_steering} // 0,  # Inject "Reasoning Visibility" paragraph
         # (Anthropic adaptive summarizer only - see generate_thinking_steering_section)
         _tools_section_cache => undef,
@@ -315,8 +315,6 @@ sub generate_tools_section {
     $section .= "- Asking questions only you cannot answer via tools\n\n";
     $section .= "**Bare text** is acceptable as a brief preamble before tool calls in the same turn, ";
     $section .= "or for short inline observations about tool results.\n\n";
-    $section .= "**Note:** `interact` replaces the former `user_collaboration` tool. ";
-    $section .= "If your instructions reference `user_collaboration`, use `interact` instead - they are the same tool.\n\n";
 
     # Add MCP tools section if any are connected
     if ($self->{mcp_manager}) {

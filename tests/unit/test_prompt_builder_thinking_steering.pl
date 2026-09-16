@@ -64,8 +64,8 @@ subtest 'constructor - show_thinking flag stored' => sub {
         'show_thinking=0 stored on builder');
 
     my $default = CLIO::Core::PromptBuilder->new();
-    is($default->{show_thinking}, 0,
-        'show_thinking defaults to 0 when not provided');
+    is($default->{show_thinking}, 1,
+        'show_thinking defaults to 1 when not provided');
 };
 
 # ---------------------------------------------------------------------------

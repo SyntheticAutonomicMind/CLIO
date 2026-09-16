@@ -67,13 +67,13 @@ subtest 'multiple Config instances with same provider see independent model_conf
 
     my $a = CLIO::Core::Config->new(config_dir => $dir_a);
     $a->set_provider('minimax');
-    $a->set('show_thinking', 1, 1);
+    $a->set('show_thinking', 0, 1);
 
     my $b = CLIO::Core::Config->new(config_dir => $dir_b);
     $b->set_provider('minimax');
 
-    # B did not inherit A's show_thinking=1
-    is($b->{config}{show_thinking}, 0,
+    # B's show_thinking is the fresh default (1), not A's explicit 0.
+    is($b->{config}{show_thinking}, 1,
         'fresh Config does not inherit another Config user-set values');
 };
 
