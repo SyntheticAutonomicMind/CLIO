@@ -12,20 +12,6 @@ use CLIO::Memory::YaRN;
 use CLIO::Core::API::MessageValidator qw(validate_and_truncate);
 use CLIO::Memory::TokenEstimator qw(estimate_tokens);
 
-my $passed = 0;
-my $failed = 0;
-
-sub ok_test {
-    my ($cond, $desc) = @_;
-    if ($cond) {
-        $passed++;
-        print "ok - $desc\n";
-    } else {
-        $failed++;
-        print "NOT OK - $desc\n";
-    }
-}
-
 # Test 1: YaRN preserves previous_summary content
 {
     my $yarn = CLIO::Memory::YaRN->new();
@@ -68,27 +54,21 @@ END
         previous_summary => $old_summary,
     );
     
-    ok_test($result && $result->{content}, "YaRN compress with previous_summary returns content");
+    ok($result && $result->{content}, "YaRN compress with previous_summary returns content");
     
     my $content = $result->{content} || '';
     
-    # Previous commits should be preserved
-    ok_test($content =~ /abc1234/, "Previous commit abc1234 preserved in new summary");
-    ok_test($content =~ /def5678/, "Previous commit def5678 preserved in new summary");
-    
-    # Previous files should be preserved
-    ok_test($content =~ /Widget\.pm/, "Previous file Widget.pm preserved");
-    ok_test($content =~ /WidgetRenderer\.pm/, "Previous file WidgetRenderer.pm preserved");
-    
-    # Previous decisions should be preserved
-    ok_test($content =~ /composition over inheritance/, "Previous decision preserved");
-    
-    # New content should also be present
-    ok_test($content =~ /test_widget/, "New file from current messages included");
-    ok_test($content =~ /1234567/, "New commit from current messages included");
-    
-    # Tool counts should be accumulated
-    ok_test($content =~ /file_operations:\s*2[56]/, "file_operations count accumulated (25 + 1 = 26)");
+    # Minimal-summary design (see YaRN::compress_messages): only the current
+    # task and recent user requests survive across trim cycles. Per-turn noise
+    # (commits, files, tool calls, counts, decisions) is intentionally NOT
+    # carried over so the stable prefix stays byte-stable for KV caching.
+    like($content, qr/<thread_summary>/, "Summary wrapped in thread_summary tags");
+    like($content, qr/Build a widget system/, "Original task preserved as current task");
+    like($content, qr/Now add tests for the widget system/, "Recent user request preserved");
+    # And the dropped content must stay dropped (negative guards).
+    unlike($content, qr/abc1234/, "Commits not carried over across trim cycles");
+    unlike($content, qr/Widget\.pm/, "File paths not carried over");
+    unlike($content, qr/file_operations:\s*2[56]/, "Tool counts not carried over");
 }
 
 # Test 2: YaRN without previous_summary still works
@@ -104,8 +84,8 @@ END
     );
     
     my $result = $yarn->compress_messages(\@messages, original_task => 'Test task');
-    ok_test($result && $result->{content}, "Compression without previous_summary works");
-    ok_test($result->{content} =~ /terminal_operations/, "Tool usage tracked without previous summary");
+    ok($result && $result->{content}, "Compression without previous_summary works");
+    like($result->{content}, qr/Do something/, "Recent user request preserved without previous_summary");
 }
 
 # Test 3: _parse_previous_summary handles empty/missing content
@@ -121,14 +101,14 @@ END
         original_task    => 'Test',
         previous_summary => '',
     );
-    ok_test($result && $result->{content}, "Empty previous_summary handled gracefully");
+    ok($result && $result->{content}, "Empty previous_summary handled gracefully");
     
     # undef previous_summary
     $result = $yarn->compress_messages(\@messages,
         original_task    => 'Test',
         previous_summary => undef,
     );
-    ok_test($result && $result->{content}, "undef previous_summary handled gracefully");
+    ok($result && $result->{content}, "undef previous_summary handled gracefully");
 }
 
 # Test 4: validate_and_truncate preserves thread_summary (legacy no-op path)
@@ -153,7 +133,7 @@ END
     );
     
     # The result should exist and have a thread_summary
-    ok_test($result && ref($result) eq 'ARRAY', "validate_and_truncate returns array");
+    ok($result && ref($result) eq 'ARRAY', "validate_and_truncate returns array");
     
     if ($result && @$result) {
         # Check that the result has a thread_summary message
@@ -164,7 +144,7 @@ END
                 last;
             }
         }
-        ok_test($has_summary, "Result contains a thread_summary after trimming");
+        ok($has_summary, "Result contains a thread_summary after trimming");
     }
 }
 
@@ -186,7 +166,7 @@ END
         model              => 'test-model',
     );
     
-    ok_test($result && ref($result) eq 'ARRAY', "No-drop scenario returns array");
+    ok($result && ref($result) eq 'ARRAY', "No-drop scenario returns array");
     
     if ($result && @$result) {
         # The summary should pass through unchanged (no trimming needed)
@@ -197,9 +177,8 @@ END
                 last;
             }
         }
-        ok_test($found_summary, "Summary preserved unchanged when no trimming needed");
+        ok($found_summary, "Summary preserved unchanged when no trimming needed");
     }
 }
 
-print "\n$passed passed, $failed failed\n";
-exit($failed > 0 ? 1 : 0);
+done_testing();

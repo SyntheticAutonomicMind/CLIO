@@ -148,7 +148,13 @@ sub _ec {
 
 # 8. Config sampling_temperature override is still honored.
 {
-    my $config = CLIO::Core::Config->new();
+    # APIManager->new validates api_base, so this config has to carry one:
+    # the provider registry default is only applied by set_provider().
+    require File::Temp;
+    my $config = CLIO::Core::Config->new(
+        config_dir => File::Temp::tempdir(CLEANUP => 1));
+    $config->set('api_base', 'https://api.example.com/v1');
+    $config->set('api_key',  'sk-test');
     $config->set('sampling_temperature', '0.55');
     my $mgr = _make_mgr(config => $config);
     my $ec  = _ec(provider => 'openai');

@@ -7,9 +7,8 @@
 # CLIO::Providers::provider_exists), silently rejecting custom aliases and
 # double-prefixing models with the wrong provider.
 #
-# Isolation: an explicit tempdir config_dir is used so the real ~/.clio is
-# never touched (mirrors test_config_set_provider.pl's pattern, NOT the
-# broken "isolated => 1" param that is silently ignored).
+# Isolation: an explicit tempdir config_dir keeps the real ~/.clio untouched
+# (same pattern as test_config_set_provider.pl).
 
 use strict;
 use warnings;

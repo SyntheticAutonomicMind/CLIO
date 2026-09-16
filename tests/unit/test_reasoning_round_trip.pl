@@ -20,6 +20,19 @@ use Test::More;
 use JSON::PP qw(encode_json decode_json);
 
 use_ok('CLIO::Providers::Anthropic');
+
+# APIManager->new validates api_base up front. set_provider() resolves it from
+# the provider registry (set('provider', ...) would leave it unset), so these
+# subtests build a self-sufficient config instead of relying on a saved one.
+sub build_provider_config {
+    my ($provider) = @_;
+    require File::Temp;
+    require CLIO::Core::Config;
+    my $c = CLIO::Core::Config->new(
+        config_dir => File::Temp::tempdir(CLEANUP => 1));
+    $c->set_provider($provider) if $provider;
+    return $c;
+}
 use_ok('CLIO::Providers::Google');
 use_ok('CLIO::Core::APIManager');
 
@@ -155,8 +168,7 @@ use_ok('CLIO::Core::APIManager');
 # ── 6. APIManager _endpoint_supports_thinking() ───────────────────────
 {
     require CLIO::Core::Config;
-    my $config = CLIO::Core::Config->new();
-    $config->set('provider', 'anthropic');
+    my $config = build_provider_config('anthropic');
     my $mgr = CLIO::Core::APIManager->new(
         provider => 'anthropic',
         model => 'claude-sonnet-4.5',
@@ -184,7 +196,7 @@ use_ok('CLIO::Core::APIManager');
 
 # ── 7. APIManager _extract_response_content returns 4 values ───────────
 {
-    my $config = CLIO::Core::Config->new();
+    my $config = build_provider_config('github_copilot');
     my $mgr = CLIO::Core::APIManager->new(
         provider => 'github_copilot',
         model => 'gpt-5',
@@ -214,7 +226,7 @@ use_ok('CLIO::Core::APIManager');
 
 # ── 8. APIManager _build_responses_api_payload replays reasoning items ─
 {
-    my $config = CLIO::Core::Config->new();
+    my $config = build_provider_config('github_copilot');
     my $mgr = CLIO::Core::APIManager->new(
         provider => 'github_copilot',
         model => 'gpt-5',
@@ -467,9 +479,7 @@ use_ok('CLIO::Core::APIManager');
 
 # ── 20. show_thinking=0 does not pass thinking_opt for native providers ─
 {
-    require CLIO::Core::Config;
-    my $config = CLIO::Core::Config->new();
-    $config->set('provider', 'anthropic');
+    my $config = build_provider_config('anthropic');
     # show_thinking defaults to 0
     my $mgr = CLIO::Core::APIManager->new(
         provider => 'anthropic',
@@ -480,8 +490,8 @@ use_ok('CLIO::Core::APIManager');
     # show_thinking=0 means no thinking_opt should be built.
     # We can't directly test the private method, but we verify the
     # config default.
-    # show_thinking defaults to 1 in Config (user can disable it)
-    is($config->get('show_thinking'), 1, 'Config: show_thinking defaults to 1');
+    # show_thinking defaults to off in Config (user enables it per model).
+    is($config->get('show_thinking'), 0, 'Config: show_thinking defaults to 0');
     ok($mgr->_endpoint_supports_thinking(), 'APIManager: anthropic supports thinking');
 }
 

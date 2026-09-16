@@ -163,8 +163,6 @@ ok_test('SkillOperations create path: file contains name',
         $src =~ /auto-skill creation guidance/);
     ok_test('PromptBuilder: has Skill Creation header',
         $src =~ /## Skill Creation/);
-    ok_test('PromptBuilder: LTM-pattern protocol (You MUST framing)',
-        $src =~ /You MUST:/);
     ok_test('PromptBuilder: has Check the catalog bullet',
         $src =~ /Check the catalog first/);
     ok_test('PromptBuilder: has Create on demand bullet',

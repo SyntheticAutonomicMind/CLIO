@@ -85,11 +85,10 @@ subtest 'validate_provider accepts custom alias when config passed in' => sub {
 # (lazy Config load)
 # =============================================================================
 subtest 'validate_provider accepts custom alias via lazy Config load' => sub {
-    # The lazy-load path creates a fresh Config->new() which reads the
-    # real config dir. We verify it does not crash and falls back to
-    # list_all_providers error. If an 'anthropic_test' alias happens to
-    # be registered in the real config, it'll be accepted; otherwise we
-    # get the error message. Either way, no crash.
+    # The lazy-load path creates a fresh Config->new(); under tests/ that
+    # resolves to an isolated tempdir (so it does not depend on or touch
+    # the developer's real ~/.clio). We verify it does not crash and
+    # falls back to a list_all_providers error.
     my ($ok, $err) = validate_provider('anthropic_test');
     if ($ok) {
         pass('custom alias accepted via lazy Config load (found in real config)');
@@ -133,9 +132,9 @@ subtest 'validate_provider error lists custom providers too' => sub {
 # Smoke test: list_all_providers includes built-ins
 # =============================================================================
 subtest 'list_all_providers includes built-ins' => sub {
-    # list_all_providers creates its own Config->new() (real config dir),
-    # so we can't control custom aliases here. Just verify built-ins are
-    # present and the function doesn't crash.
+    # list_all_providers creates its own Config->new(), which is isolated
+    # under tests/. We can't control custom aliases here; just verify the
+    # built-ins are present and the function doesn't crash.
     my @all = list_all_providers();
     ok(grep(/^openai$/, @all), 'built-in openai appears in list_all_providers');
     ok(grep(/^anthropic$/, @all), 'built-in anthropic appears in list_all_providers');

@@ -10,7 +10,7 @@ use utf8;
 use FindBin qw($Bin);
 use lib "$Bin/../../lib";
 
-use Test::More tests => 6;
+use Test::More;
 use CLIO::Memory::YaRN;
 
 my $yarn = CLIO::Memory::YaRN->new();

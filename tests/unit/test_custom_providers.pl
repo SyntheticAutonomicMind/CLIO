@@ -4,11 +4,12 @@ use strict;
 use warnings;
 use lib '../../lib';
 use Test::More;
+use File::Temp qw(tempdir);
 use CLIO::Core::Config;
 use CLIO::Providers;
 
-# Create an isolated config for testing
-my $config = CLIO::Core::Config->new(isolated => 1);
+# Isolate in an explicit tempdir so the real ~/.clio is never touched.
+my $config = CLIO::Core::Config->new(config_dir => tempdir(CLEANUP => 1));
 
 # Clean up any pre-existing state
 $config->remove_custom_provider('anthropic_test') if $config->is_custom_provider('anthropic_test');
@@ -35,11 +36,13 @@ is($config->get_provider_key('anthropic_test'), 'sk-test-key-123',
     'Per-provider key stored for custom provider');
 
 # Test 4: resolve_custom_provider in Providers.pm
-is(CLIO::Providers::resolve_custom_provider('anthropic_test'), 'anthropic',
+# Pass $config explicitly: without it these helpers construct their own
+# Config instance, which resolves to a different store than this test's.
+is(CLIO::Providers::resolve_custom_provider('anthropic_test', $config), 'anthropic',
     'CLIO::Providers::resolve_custom_provider works');
 
 # Test 5: build_endpoint_config resolves custom provider
-my $ep = CLIO::Providers::build_endpoint_config('anthropic_test', 'sk-test-key-123');
+my $ep = CLIO::Providers::build_endpoint_config('anthropic_test', 'sk-test-key-123', $config);
 ok($ep->{anthropic}, 'Endpoint config has anthropic flag for custom provider');
 
 # Test 6: list_custom_providers

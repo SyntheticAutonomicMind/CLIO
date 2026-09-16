@@ -136,7 +136,10 @@ if ($sock) {
 # Test 6: Custom provider integration with Copilot
 {
     require CLIO::Core::Config;
-    my $config = CLIO::Core::Config->new(isolated => 1);
+    require File::Temp;
+    # Explicit tempdir: the real ~/.clio must not gain a mock provider.
+    my $config = CLIO::Core::Config->new(
+        config_dir => File::Temp::tempdir(CLEANUP => 1));
 
     # Add a custom provider pointing to our mock server
     $config->add_custom_provider('copilot_mock', 'github_copilot', 'mock-token', "http://127.0.0.1:$port");

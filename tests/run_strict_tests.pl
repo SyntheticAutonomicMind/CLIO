@@ -169,7 +169,14 @@ for my $test (@targets) {
             }
         }
         if (@clio) {
-            push @clio_findings, { label => $label, count => scalar @clio };
+            # Keep the distinct warning lines: a count alone does not tell
+            # you which module and line to go fix.
+            my %seen;
+            push @clio_findings, {
+                label => $label,
+                count => scalar @clio,
+                lines => [ grep { $seen{$_}++ == 0 } @clio ],
+            };
         }
         if (@vendor) {
             push @vendor_findings, { label => $label, count => scalar @vendor };
@@ -190,6 +197,14 @@ for my $test (@targets) {
         printf "   %s (exit=%d)\n", $test, $exit_code;
         for my $f (@clio_findings) {
             printf "      %d × %s  [CLIO]\n", $f->{count}, $f->{label};
+            my @wl = @{ $f->{lines} || [] };
+            my $show_w = @wl > 4 ? 3 : $#wl;
+            for my $i (0 .. $show_w) {
+                my $w = $wl[$i];
+                $w =~ s/\e\[[0-9;]*m//g;
+                print "          $w\n";
+            }
+            printf "          (%d distinct)\n", scalar @wl if @wl > 4;
         }
         if ($test_failed) {
             # Show a small preview of stderr.

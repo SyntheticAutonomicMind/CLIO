@@ -32,6 +32,10 @@ require CLIO::Core::WorkflowOrchestrator;
 # ---------------------------------------------------------------------------
 # Mock session: minimal object that satisfies _active_task_text's interface
 # (state() -> ref with session_goals() method, get_conversation_history()).
+# Only the methods listed here exist. Capability probes must see that: a
+# blanket can() override makes every can() probe succeed and then dies when
+# the caller dispatches the method it just "confirmed" (e.g. YaRN's
+# can('yarn') guard followed by ->yarn).
 # ---------------------------------------------------------------------------
 
 package MockSession {
@@ -44,7 +48,6 @@ package MockSession {
     }
     sub state { return $_[0]->{state}; }
     sub get_conversation_history { return $_[0]->{history}; }
-    sub can { return 1; }  # all methods exist
 }
 
 package main;

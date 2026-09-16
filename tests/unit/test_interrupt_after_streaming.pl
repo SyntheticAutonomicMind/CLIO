@@ -27,6 +27,7 @@ BEGIN {
 }
 
 use Test::More tests => 4;
+use File::Temp qw(tempdir);
 use CLIO::Core::WorkflowOrchestrator;
 use CLIO::Core::Config;
 use CLIO::Core::APIManager;
@@ -38,7 +39,10 @@ use CLIO::Core::Interrupt;
 # alone when _interrupt_pending is set. The method returns 1 immediately
 # (short-circuit) without calling _handle_interrupt - that's the bug.
 test('check_and_handle short-circuits on _interrupt_pending', sub {
-    my $config = CLIO::Core::Config->new();
+    my $config = CLIO::Core::Config->new(
+        config_dir => File::Temp::tempdir(CLEANUP => 1));
+    # APIManager->new requires a valid api_base; set_provider supplies it.
+    $config->set_provider('openai');
     my $api_manager = CLIO::Core::APIManager->new(config => $config);
     my $session = CLIO::Session::Manager->new();
 
@@ -72,7 +76,9 @@ test('check_and_handle short-circuits on _interrupt_pending', sub {
 #       next;
 #   }
 test('orchestrator calls _handle_interrupt directly when _interrupt_pending is set', sub {
-    my $config = CLIO::Core::Config->new();
+    my $config = CLIO::Core::Config->new(
+        config_dir => tempdir(CLEANUP => 1));
+    $config->set_provider('openai');
     my $api_manager = CLIO::Core::APIManager->new(config => $config);
     my $session = CLIO::Session::Manager->new();
 
