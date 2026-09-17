@@ -80,13 +80,16 @@ sub new {
     # Ensure log directory exists
     unless (-d $self->{log_dir}) {
         eval {
-            make_path($self->{log_dir});
+            make_path($self->{log_dir}, { mode => 0700 });
         };
         if ($@) {
             log_error('ToolLogger', "Failed to create log directory $self->{log_dir}: $@");
             # Continue anyway - logging is not critical to operation
         } else {
             log_debug('ToolLogger', "Created log directory: $self->{log_dir}");
+            # Security: enforce restrictive permissions on log directory
+            # even if make_path created parent dirs with wider perms
+            chmod(0700, $self->{log_dir});
         }
     }
     
@@ -146,6 +149,11 @@ sub log {
         print $fh $json_line, "\n";
         flock($fh, 8);  # LOCK_UN = 8
         close $fh;
+
+        # Security: enforce restrictive permissions on log file to prevent
+        # other system users from reading tool parameters and output that
+        # may contain secrets (defense-in-depth alongside redaction).
+        chmod(0600, $log_file);
     };
     if ($@) {
         log_error('ToolLogger', "Failed to write log entry: $@");
@@ -343,7 +351,8 @@ sub _get_log_file {
     # Ensure log directory exists (create if missing)
     if (!-d $self->{log_dir}) {
         require File::Path;
-        File::Path::make_path($self->{log_dir});
+        File::Path::make_path($self->{log_dir}, { mode => 0700 });
+        chmod(0700, $self->{log_dir});
     }
     
     my $date = strftime("%Y-%m-%d", localtime(time()));
