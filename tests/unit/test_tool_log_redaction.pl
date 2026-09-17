@@ -200,6 +200,109 @@ $log_content = '';
 
 ok(index($log_content, $secret_value) == -1, "Secret in nested hash parameter is redacted in log");
 
+# ── Test 5: Log redaction works at default pii level ──
+# The default redact_level is 'pii' (only PII patterns).  At pii level,
+# API keys are NOT redacted for AI-facing output — but logs must always
+# use strict level to prevent secrets persisting on disk.  This test
+# verifies that an executor with NO config (defaults to pii) still
+# redacts API keys in logs.
+my $executor_no_config = CLIO::Core::ToolExecutor->new(
+    session => { session_id => 'test-no-config', working_directory => $tmp },
+    debug => 0,
+    config => undef,  # No config -> _get_redact_level returns 'pii'
+);
+my $tool_logger_no_config = CLIO::Logging::ToolLogger->new(
+    session_id => 'test-no-config',
+    debug => 0,
+    log_dir => "$tmp/.clio/logs_noconfig",
+);
+$executor_no_config->{tool_logger} = $tool_logger_no_config;
+
+my $default_level = $executor_no_config->_get_redact_level();
+ok($default_level eq 'pii', "Default redact level is pii (as configured)");
+
+my $api_key_default = 'sk-proj-' . ('z' x 48);
+$executor_no_config->_log_tool_operation({
+    tool_call_id => 'test-call-5',
+    tool_name => 'terminal_operations',
+    operation => 'execute',
+    parameters => { command => "curl -H 'Authorization: Bearer $api_key_default' https://api.example.com" },
+    output => { text => "HTTP/1.1 200 OK", exit_code => 0 },
+    action_description => "Executing: curl command",
+    sent_to_ai => "HTTP/1.1 200 OK",
+    success => 1,
+    execution_time_ms => 42,
+});
+
+my $log_file_no_config = $tool_logger_no_config->_get_log_file();
+my $log_content_no_config = '';
+if (-f $log_file_no_config) {
+    open my $lfh, '<', $log_file_no_config or die;
+    local $/;
+    $log_content_no_config = <$lfh>;
+    close $lfh;
+}
+
+ok(index($log_content_no_config, $api_key_default) == -1,
+   "At default pii level: API key NOT in log (log redaction overrides to strict)");
+
+# ── Test 6: ARRAY parameters are also redacted ──
+my $array_secret = 'ghp_' . ('y' x 36);
+$executor->_log_tool_operation({
+    tool_call_id => 'test-call-6',
+    tool_name => 'terminal_operations',
+    operation => 'execute',
+    parameters => ["echo $array_secret", "safe_command"],
+    output => '',
+    action_description => "Executing commands",
+    sent_to_ai => '',
+    success => 1,
+    execution_time_ms => 10,
+});
+
+$log_content = '';
+{
+    open my $lfh, '<', $log_file or die "Cannot read log: $!";
+    local $/;
+    $log_content = <$lfh>;
+    close $lfh;
+}
+
+ok(index($log_content, $array_secret) == -1, "ARRAY parameters: secret redacted in log");
+
+# ── Test 7: Output field as HASH ref is redacted ──
+my $hash_output_secret = 'AKIA' . 'IOSFODNN7' . 'EXAMPLE';
+$executor->_log_tool_operation({
+    tool_call_id => 'test-call-7',
+    tool_name => 'file_operations',
+    operation => 'read',
+    parameters => { path => '/etc/hostname' },
+    output => { text => "Found key: $hash_output_secret in environment", exit_code => 0 },
+    action_description => "reading file",
+    sent_to_ai => "Found key: $hash_output_secret in environment",
+    success => 1,
+    execution_time_ms => 5,
+});
+
+$log_content = '';
+{
+    open my $lfh, '<', $log_file or die "Cannot read log: $!";
+    local $/;
+    $log_content = <$lfh>;
+    close $lfh;
+}
+
+ok(index($log_content, $hash_output_secret) == -1, "HASH output ref: secret redacted in log");
+
+# ── Test 8: Log files have restrictive permissions (0600) ──
+my @fstat = stat($log_file);
+my $file_perms = @fstat ? ($fstat[2] & 07777) : -1;
+ok($file_perms == 0600, "Log file has 0600 permissions (got " . sprintf("%04o", $file_perms) . ")");
+
+my @dstat = stat("$tmp/.clio/logs");
+my $dir_perms = @dstat ? ($dstat[2] & 07777) : -1;
+ok($dir_perms == 0700, "Log directory has 0700 permissions (got " . sprintf("%04o", $dir_perms) . ")");
+
 print "\n----------------------------------------\n";
 print "PASS: $pass  FAIL: $fail\n";
 if ($fail > 0) {

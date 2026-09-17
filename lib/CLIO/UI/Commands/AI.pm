@@ -10,6 +10,7 @@ use parent 'CLIO::UI::Commands::Base';
 
 use Carp qw(croak);
 use Cwd;
+use POSIX ();  # For _exit() in child process after fork (avoids END blocks)
 
 =head1 NAME
 
@@ -268,8 +269,30 @@ sub handle_fix_command {
     my $code = do { local $/; <$fh> };
     close $fh;
     
-    # Get errors/diagnostics (Perl only for now)
-    my $errors = `perl -c $file 2>&1`;
+    # SECURITY: Execute perl -c via fork+pipe with list-form exec.
+    # The old backtick form `perl -c $file 2>&1` passed $file through
+    # /bin/sh, where shell metacharacters like $(), backticks, and $VAR
+    # expansion could enable command injection via crafted filenames.
+    # By forking and using list-form exec, $file is a single argv element
+    # with zero shell interpretation.  We redirect child STDERR->STDOUT
+    # before exec so both streams are captured (perl -c reports to STDERR).
+    my $errors;
+    my $pid = open(my $syntax_fh, '-|');
+    if (!defined $pid) {
+        croak "Failed to fork for syntax check: $!";
+    }
+    if ($pid == 0) {
+        # Child: merge stderr into stdout, then exec perl with list args
+        open(STDERR, '>&', 'STDOUT') or POSIX::_exit(127);
+        exec('perl', '-c', $file) or POSIX::_exit(127);
+    }
+    # Parent: read combined output, then reap child
+    {
+        local $/;
+        $errors = <$syntax_fh> // '';
+    }
+    close($syntax_fh);
+    waitpid($pid, 0);
     
     # Build prompt
     my $prompt = <<"PROMPT";

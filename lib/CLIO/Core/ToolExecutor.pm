@@ -622,17 +622,38 @@ sub _log_tool_operation {
     # redaction, parameters containing API keys (terminal_operations command
     # strings), file contents (write_file), database connection strings, etc.
     # would be persisted to disk in cleartext — a side-channel data leak.
-    # This mirrors the redaction already applied to tool output before it
-    # reaches the AI (see execute_tool).
-    my $redact_level = $self->_get_redact_level();
+    #
+    # Logs are a persistent, on-disk side channel that outlives the AI
+    # context.  Even when the user configures redact_level=pii (so the AI
+    # can see API keys in tool output), log files must always use strict
+    # redaction to prevent secrets from accumulating on disk.  This is a
+    # one-way ratchet: the AI-facing redaction level may be relaxed for
+    # workflow convenience, but logs are always maximally redacted.
+    my $ai_redact_level = $self->_get_redact_level();
+    # Override to 'strict' for log persistence — logs outlive the AI context
+    # and must always be maximally redacted regardless of AI-facing level.
+    my $redact_level = ($ai_redact_level eq 'off') ? 'off' : 'strict';
     if ($redact_level ne 'off') {
-        if (exists $entry->{parameters} && ref($entry->{parameters}) eq 'HASH') {
-            $entry->{parameters} = redact_any($entry->{parameters}, level => $redact_level);
+        # Redact parameters regardless of ref type: HASH (tool args),
+        # ARRAY (list-style args), SCALAR (string ref), or scalar string.
+        # Previously only HASH refs were redacted, leaving ARRAY and
+        # SCALAR ref parameters unprotected.
+        if (exists $entry->{parameters} && defined $entry->{parameters}) {
+            if (ref($entry->{parameters})) {
+                $entry->{parameters} = redact_any($entry->{parameters}, level => $redact_level);
+            } else {
+                $entry->{parameters} = redact($entry->{parameters}, level => $redact_level);
+            }
         }
-        # Also redact scalar string fields that may contain secrets
+        # Also redact scalar string fields, and any ref-valued fields
+        # via redact_any (handles HASH/ARRAY/SCALAR refs in output, etc.)
         for my $field (qw(output sent_to_ai error)) {
-            if (exists $entry->{$field} && !ref($entry->{$field})) {
-                $entry->{$field} = redact($entry->{$field}, level => $redact_level);
+            if (exists $entry->{$field} && defined $entry->{$field}) {
+                if (ref($entry->{$field})) {
+                    $entry->{$field} = redact_any($entry->{$field}, level => $redact_level);
+                } else {
+                    $entry->{$field} = redact($entry->{$field}, level => $redact_level);
+                }
             }
         }
     }
