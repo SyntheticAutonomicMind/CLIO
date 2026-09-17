@@ -38,7 +38,7 @@
 User Input
     |
     v
-Terminal UI (Chat.pm)
+Terminal UI (Chat.pm, SessionReplay)
     |
     v
 AI Agent (APIManager -> Provider)
@@ -90,8 +90,8 @@ Terminal Output (with color/theme)
 | `lib/CLIO/Code/` | Code intelligence primitives (TreeSitter) |
 | `lib/CLIO/Test/` | Test infrastructure (MockAPI) |
 | `lib/CLIO/Tools/` | AI-callable tools (16 modules) |
-| `lib/CLIO/UI/` | Terminal UI (Chat, Markdown, Theme, Commands, Multiplexer) |
-| `lib/CLIO/UI/Commands/` | Slash command handlers (23 command modules across multiple categories) |
+| `lib/CLIO/UI/` | Terminal UI (Chat, Markdown, Theme, Commands, SessionReplay, Multiplexer) |
+| `lib/CLIO/UI/Commands/` | Slash command handlers (23 command modules across multiple categories, plus SessionReplay integration) |
 | `lib/CLIO/UI/Multiplexer/` | Terminal multiplexer support |
 | `lib/CLIO/Session/` | Session management (Manager, State, FileVault, Lock, Export, TodoStore, ToolResultStore) |
 | `lib/CLIO/Memory/` | Context/memory system (YaRN, TokenEstimator, ShortTerm, LongTerm) |
@@ -133,6 +133,7 @@ Terminal Output (with color/theme)
 - `lib/CLIO/Core/WorkflowOrchestrator.pm` - Tool orchestration, message array construction, role-based history push
 - `lib/CLIO/Core/APIManager.pm` - AI provider integration
 - `lib/CLIO/UI/Chat.pm` - Terminal interface
+- `lib/CLIO/UI/SessionReplay.pm` - Session history visual replay renderer
 - `lib/CLIO/Core/ToolExecutor.pm` - Tool invocation
 - `lib/CLIO/Tools/FileOperations.pm` - File system operations (17 ops)
 - `lib/CLIO/Tools/Registry.pm` - Tool registration
