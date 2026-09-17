@@ -76,14 +76,11 @@ my @NETWORK_COMMANDS = qw(
     whois
     traceroute tracepath mtr
     ncftp
-    lftp
     wget2
     fetch
     http
     https
     websocat
-    ncat
-    netcat
 );
 
 # Interpreter patterns that might do network I/O

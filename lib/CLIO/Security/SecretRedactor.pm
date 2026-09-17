@@ -372,9 +372,19 @@ sub redact_text {
     my $result = $text;
     my @patterns = $self->_get_patterns_for_level($level);
     
-    # Apply each pattern - simple full-match replacement
+    # Apply each pattern.  We use the /e modifier so the replacement is
+    # evaluated per-match, allowing a whitelist check per individual match.
+    # Whitelisted values (added via add_whitelist) are returned unchanged;
+    # everything else is replaced with the redaction token.
     for my $pattern (@patterns) {
-        $result =~ s/$pattern/$redaction/g;
+        $result =~ s/($pattern)/
+            my $matched = $1;
+            if (exists $self->{whitelist}{lc($matched)}) {
+                $matched;               # Whitelisted — keep as-is
+            } else {
+                $redaction;             # Not whitelisted — redact
+            }
+        /ge;
     }
     
     return $result;

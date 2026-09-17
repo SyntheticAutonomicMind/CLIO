@@ -617,6 +617,26 @@ sub _log_tool_operation {
     # Only log if ToolLogger is available
     return unless $self->{tool_logger};
     
+    # SECURITY: Redact secrets and PII from logged parameters and output.
+    # ToolLogger writes to .clio/logs/ in plaintext on disk.  Without this
+    # redaction, parameters containing API keys (terminal_operations command
+    # strings), file contents (write_file), database connection strings, etc.
+    # would be persisted to disk in cleartext — a side-channel data leak.
+    # This mirrors the redaction already applied to tool output before it
+    # reaches the AI (see execute_tool).
+    my $redact_level = $self->_get_redact_level();
+    if ($redact_level ne 'off') {
+        if (exists $entry->{parameters} && ref($entry->{parameters}) eq 'HASH') {
+            $entry->{parameters} = redact_any($entry->{parameters}, level => $redact_level);
+        }
+        # Also redact scalar string fields that may contain secrets
+        for my $field (qw(output sent_to_ai error)) {
+            if (exists $entry->{$field} && !ref($entry->{$field})) {
+                $entry->{$field} = redact($entry->{$field}, level => $redact_level);
+            }
+        }
+    }
+    
     eval {
         $self->{tool_logger}->log($entry);
     };

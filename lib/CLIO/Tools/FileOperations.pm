@@ -20,6 +20,7 @@ use Cwd qw(abs_path getcwd);
 use Encode qw(decode);
 use File::Glob qw(:bsd_glob);
 use CLIO::Core::WorkflowOrchestrator;
+use POSIX ();  # For _exit() in child process after fork (avoids END blocks)
 use JSON::PP ();  # For JSON::PP::false default in get_additional_parameters()
 
 =head1 NAME
@@ -1023,8 +1024,31 @@ sub _check_one_file_errors {
         );
     }
 
-    # Run perl -c to check syntax
-    my $output = `perl -Ilib -c "$path" 2>&1`;
+    # SECURITY: Execute perl -c via fork+pipe with list-form exec.
+    # The old backtick form `perl -Ilib -c "$path" 2>&1` passed $path
+    # through /bin/sh, where double quotes still allow $(), backticks,
+    # and $VAR expansion — enabling command injection via crafted
+    # filenames (e.g. "foo$(whoami).pm" or "foo`whoami`.pm").  By
+    # forking and using list-form exec, $path is a single argv element
+    # with zero shell interpretation.  We redirect child STDERR->STDOUT
+    # before exec so both streams are captured (perl -c reports to STDERR).
+    my $output;
+    my $pid = open(my $syntax_fh, '-|');
+    if (!defined $pid) {
+        croak "Failed to fork for syntax check: $!";
+    }
+    if ($pid == 0) {
+        # Child: merge stderr into stdout, then exec perl with list args
+        open(STDERR, '>&', 'STDOUT') or POSIX::_exit(127);
+        exec('perl', '-Ilib', '-c', $path) or POSIX::_exit(127);
+    }
+    # Parent: read combined output, then reap child
+    {
+        local $/;
+        $output = <$syntax_fh> // '';
+    }
+    close($syntax_fh);
+    waitpid($pid, 0);
     my $exit_code = $? >> 8;
 
     my @errors;
@@ -1926,17 +1950,16 @@ sub write_file {
     my ($lock_acquired, $lock_error) = $self->_acquire_file_lock($path, $context);
     return $self->error_result($lock_error) if $lock_error;
 
-    # Snapshot the existence state BEFORE the write so we can pick the
-    # right vault mode. 'create' lets undo delete the new file; 'modify'
-    # lets undo restore the original content.
-    my $file_existed = -f $path;
-    my $vault_type = $file_existed ? 'modify' : 'create';
-    $self->_vault_capture($path, $vault_type, $context);
+    # Vault capture and mode determination are done INSIDE the eval block
+    # (right before the write) to minimize the TOCTOU window.  Previously
+    # $file_existed was checked before the eval, creating a race where
+    # another process could create or delete the file between the check
+    # and the vault capture + write, causing the vault to capture an
+    # incorrect before-state for undo.
+    my $file_existed;
+    my $vault_type;
 
-    # Choose verb for log + action_description based on mode
-    my $verb = $append ? 'appending to' : ($file_existed ? 'overwriting' : 'creating');
-
-    log_debug('FileOp', "Write file: $path (mode=$verb, authorized: $auth_result->{reason})");
+    log_debug('FileOp', "Write file: $path (authorized: $auth_result->{reason})");
 
     my $result;
     my $written_size;
@@ -1948,6 +1971,18 @@ sub write_file {
         unless (-d $dir) {
             $self->_secure_mkdir($dir, 0700, $context);
         }
+
+        # Re-check existence right before vault capture + write to minimize
+        # the TOCTOU window. The atomic-rename in _secure_close still makes
+        # the actual write safe regardless, but this ensures the vault's
+        # before-state and the verb ('creating' vs 'overwriting') are
+        # accurate at the moment of the write.
+        $file_existed = -f $path;
+        $vault_type = $file_existed ? 'modify' : 'create';
+        $self->_vault_capture($path, $vault_type, $context);
+
+        # Determine action verb from the re-checked existence state
+        my $verb = $append ? 'appending to' : ($file_existed ? 'overwriting' : 'creating');
 
         if ($append) {
             # Append mode: opens the file directly with >> semantics. If
@@ -2339,7 +2374,12 @@ sub delete_file {
     
     my $result;
     eval {
-        if (-d $path) {
+        # Determine type BEFORE deletion: any intervening stat/open call
+        # (e.g. inside log_debug) can invalidate Perl's _ filehandle cache,
+        # making a post-delete -d _ unreliable.
+        my $is_dir = -d $path;
+
+        if ($is_dir) {
             if ($recursive) {
                 use File::Path qw(remove_tree);
                 remove_tree($path) or croak "Cannot remove directory tree $path: $!";
@@ -2352,7 +2392,7 @@ sub delete_file {
         
         log_debug('FileOp', "Deleted: $path");
         
-        my $type = -d _ ? 'directory' : 'file';  # Use cached stat from -d check
+        my $type = $is_dir ? 'directory' : 'file';
         my $action_desc = $recursive ? "deleting $path recursively ($type)" : "deleting $path ($type)";
         
         $result = $self->success_result(
@@ -2555,10 +2595,28 @@ sub _scan_script_content {
     my %seen_categories;
 
     for my $line (split /\n/, $content) {
-        # Skip comments and empty lines
+        # Skip comments, empty lines, and JS/C++ style comments
         next if $line =~ /^\s*#/;
         next if $line =~ /^\s*$/;
-        next if $line =~ /^\s*\/\//;  # JS/C++ comments
+        next if $line =~ /^\s*\/\//;
+        next if $line =~ /^\s*\/\*/;  # JS/C++ block comment start
+
+        # Strip trailing inline comments to avoid false positives where
+        # a string or comment contains a command name (e.g.
+        # `print "curl is useful"  # uses curl` triggers network detection
+        # on the inline comment).  We strip shell/# comments first, then
+        # JS-style // comments.  Block comment closers (*/) on the line
+        # are preserved since they're not a security concern.
+        $line =~ s/\s*#.*$//;
+        $line =~ s/\s*\/\/[^\n]*$//;
+        next if $line =~ /^\s*$/;  # Line was only a comment
+
+        # Skip declaration lines that merely mention command names in
+        # string/assignment context.  These are the most common false
+        # positives: variable assignments like `desc = "network tool curl"`
+        # or import statements that reference commands by name.
+        next if $line =~ /^\s*(?:let|var|const|my|local|our)\s+\$?\w+\s*[=:]/;
+        next if $line =~ /^\s*(?:use|import|require|from)\s+/i;
 
         my $analysis = analyze_command($line,
             sandbox        => $sandbox,
@@ -2725,7 +2783,8 @@ sub _get_umask {
 
 Determine the appropriate permission mode for a file.
 
-For existing files: preserves current permissions.
+For existing files: preserves current permissions, clamped to remove
+group-write/world-write bits for safety.
 For new files: returns 0644 for regular files, 0755 for scripts.
 
 Parameters:
@@ -2739,11 +2798,18 @@ Returns: Permission mode as octal integer
 sub _get_file_mode {
     my ($self, $path, $content) = @_;
 
-    # Existing file: preserve its current permissions
+    # Existing file: preserve its current permissions, but clamp to prevent
+    # preserving overly permissive modes (e.g. 0666 world-writable or
+    # 0664 group-writable).  Never allow group-write (020) or world-write
+    # (002) on files that CLIO overwrites, as this would let other users
+    # on the system modify the file after CLIO writes it.
     if (-e $path) {
         my @stat = stat($path);
         if (@stat) {
-            return $stat[2] & 07777;
+            my $existing_mode = $stat[2] & 07777;
+            # Strip group-write and world-write bits as a safety floor
+            $existing_mode &= ~0022;
+            return $existing_mode;
         }
     }
 
