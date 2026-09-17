@@ -1397,10 +1397,17 @@ sub grep_search {
             # the query contains things like Perl hash dereferences ({type}).
             # Valid quantifiers ({n}, {n,}, {n,m}) are preserved by the helper.
             my $safe_query = $self->_escape_unescaped_braces($query);
-            # Wrap in eval to catch invalid patterns. Note: eval catches die
-            # but not compile-time regex warnings - the brace escaping above is
-            # what suppresses the noisy "Unescaped left brace" warning.
-            $search_regex = eval { qr/$safe_query/i };
+            # eval{} catches fatal regex errors (e.g. unbalanced parens) and
+            # surfaces them as an error_result below. It does NOT catch the
+            # compile-time "Unescaped left brace..." warning, which fires during
+            # qr/$var/ op-tree construction. The helper above preserves
+            # quantifier semantics; "no warnings 'regexp'" is the guarantee
+            # that no such warning ever leaks to STDERR regardless of Perl
+            # version or a helper edge case. Genuine syntax errors still die.
+            $search_regex = eval {
+                no warnings 'regexp';
+                qr/$safe_query/i;
+            };
             if ($@) {
                 my $err = $@;
                 $err =~ s/ at .* line \d+.*//;  # Clean up error message

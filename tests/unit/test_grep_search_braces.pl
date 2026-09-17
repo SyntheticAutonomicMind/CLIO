@@ -137,6 +137,31 @@ ok($result->{success}, 'literal {3} regex compiles');
 ok(scalar(@{$result->{output}}) == 2,
    'literal {3} matches the 2 lines containing the literal text {3} (got ' . scalar(@{$result->{output}}) . ')');
 
+# ---- grep_search integration: no warning leaks for brace-heavy regexes ----
+# The helper escapes most literal braces, but it intentionally PRESERVES valid
+# quantifier syntax ({n}, {n,}, {n,m}). On some Perl versions (e.g. 5.20-5.27)
+# a preserved { that is not in a valid quantifier position (a bare {2}, or
+# {,5}) still emits "Unescaped left brace in regex is passed through" at
+# qr// compile time, and eval{} cannot catch it (qr/$var/ compiles at runtime).
+# grep_search suppresses this with "no warnings 'regexp'". The query below mixes
+# preserved quantifiers and nested/literal braces so this holds on every Perl.
+my $brace_warn = '';
+my $brace_result;
+{
+    local $SIG{__WARN__} = sub { $brace_warn .= $_[0] };
+    $brace_result = $tool->grep_search({
+        query     => '{2}|{type}|{,5}|{1,}|{{a}}|{a{b}c}',
+        directory => $tmp,
+        is_regex  => 1,
+    });
+    ok($brace_result->{success},
+       'grep_search compiles a brace-heavy regex (preserved quantifiers + nested literal braces) without failing');
+}
+ok(index($brace_warn, 'Unescaped left brace') == -1,
+   'no "Unescaped left brace" warning leaks for brace-heavy regex');
+ok(index($brace_warn, 'passed through') == -1,
+   'no "passed through" regexp warning leaks either');
+
 print "\n";
 print "Pass: $pass\n";
 print "Fail: $fail\n";
