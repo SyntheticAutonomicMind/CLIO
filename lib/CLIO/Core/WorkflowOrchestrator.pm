@@ -1019,7 +1019,13 @@ sub process_input {
             elapsed_time => $elapsed_time,
             # All messages are saved during workflow execution. This flag
             # prevents Chat.pm from saving duplicates.
-            messages_saved_during_workflow => (@tool_calls_made > 0) ? 1 : 0
+            messages_saved_during_workflow => (@tool_calls_made > 0) ? 1 : 0,
+            # Pass reasoning_content so Chat.pm can persist it when saving
+            # the final assistant message for non-tool-calling turns.
+            reasoning_content => $api_response->{reasoning_content} // $api_response->{accumulated_reasoning},
+            reasoning_details => $api_response->{reasoning_details},
+            reasoning_blocks => $api_response->{reasoning_blocks},
+            responses_reasoning_items => $api_response->{responses_reasoning_items},
         };
 
         # Session is already saved via add_message calls in _execute_tool_round
@@ -1927,7 +1933,22 @@ sub _execute_tool_round {
                 $session->add_message(
                     'tool',
                     $session_content,
-                    { tool_call_id => $tool_call->{id} }
+                    {
+                        tool_call_id => $tool_call->{id},
+                        tool_name => $tool_name,
+                        action_description => ($action_detail && $action_detail ne '' && !$pre_action_printed)
+                            ? $action_detail
+                            : ($result_data->{action_description} || undef),
+                        pre_action_description => $pre_action_printed
+                            ? ($result_data && $result_data->{pre_action_description}
+                                || ($tool_name eq 'terminal_operations' && $tool_args->{command})
+                                || ($tool_name eq 'apply_patch' && $tool_args->{patch} && (join(',', $tool_args->{patch} =~ /\*\*\* (?:Add|Update|Delete) File:\s*(.+)/g))))
+                            : undef,
+                        expanded_content => ($result_data && $result_data->{expanded_content} && ref($result_data->{expanded_content}) eq 'ARRAY') ? $result_data->{expanded_content} : undef,
+                        suppressed_display => $suppress_display ? 1 : 0,
+                        is_error => $is_error ? 1 : 0,
+                        error_message => $is_error ? ($result_data->{error} || '') : undef,
+                    }
                 );
                 log_debug('WorkflowOrchestrator', "Saved tool result to session (tool_call_id=" . $tool_call->{id} . ")");
             };

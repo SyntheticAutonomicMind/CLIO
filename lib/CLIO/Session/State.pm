@@ -777,6 +777,36 @@ sub add_message {
         $message->{metadata}{providerResponseId} = $self->{lastGitHubCopilotResponseId};
     }
     
+    # Add display metadata for tool result messages (for 100% accurate session replay)
+    # These fields preserve the exact rendering that was shown during the live
+    # session: action_description (what the tool did), expanded_content (formatted
+    # output blocks), pre_action_description (command/preview shown before execution),
+    # suppressed_display (tools hidden from view, e.g. interact/validate),
+    # and tool_name (internal name for header rendering).
+    if ($role eq 'tool' && $opts) {
+        if (defined $opts->{tool_name}) {
+            $message->{tool_name} = $opts->{tool_name};
+        }
+        if (defined $opts->{action_description}) {
+            $message->{action_description} = $opts->{action_description};
+        }
+        if (defined $opts->{pre_action_description}) {
+            $message->{pre_action_description} = $opts->{pre_action_description};
+        }
+        if (defined $opts->{expanded_content} && ref($opts->{expanded_content}) eq 'ARRAY') {
+            $message->{expanded_content} = $opts->{expanded_content};
+        }
+        if (defined $opts->{suppressed_display}) {
+            $message->{suppressed_display} = $opts->{suppressed_display} ? 1 : 0;
+        }
+        if (defined $opts->{is_error}) {
+            $message->{is_error} = $opts->{is_error} ? 1 : 0;
+        }
+        if (defined $opts->{error_message}) {
+            $message->{error_message} = $opts->{error_message};
+        }
+    }
+    
     # DEBUG: Log final message structure
     if (($ENV{CLIO_DEBUG} || $self->{debug}) && $role eq 'tool') {
         log_debug('SessionState', "State::add_message] Final tool message structure: " . "role=$message->{role}, " .

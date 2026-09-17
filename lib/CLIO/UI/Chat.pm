@@ -450,6 +450,11 @@ sub run {
     # Prepopulate session data from API (quota, model info)
     $self->_prepopulate_session_data();
     
+    # Render session history into the terminal (if enabled and interactive).
+    # This provides a visual replay of the conversation when resuming a
+    # session, so the user can see the previous context before continuing.
+    $self->_replay_session_history() if $self->{session};
+    
     # Background update check (non-blocking)
     $self->check_for_updates_async();
     
@@ -948,7 +953,12 @@ sub _handle_ai_response {
         } elsif ($result && $result->{final_response}) {
             log_debug('Chat', "Storing final_response in session (length=" . length($result->{final_response}) . ")");
             my $sanitized = sanitize_text($result->{final_response});
-            $self->{session}->add_message('assistant', $sanitized);
+            $self->{session}->add_message('assistant', $sanitized, {
+                reasoning_content => $result->{reasoning_content},
+                reasoning_details => $result->{reasoning_details},
+                reasoning_blocks  => $result->{reasoning_blocks},
+                responses_reasoning_items => $result->{responses_reasoning_items},
+            });
             my $display_response = $self->_strip_session_markers($result->{final_response});
             $display_response = $self->_detect_system_warning_references($display_response);
             $display_response = $self->_detect_and_display_images($display_response);
@@ -956,7 +966,12 @@ sub _handle_ai_response {
         } elsif ($accumulated_content) {
             log_debug('Chat', "Storing accumulated_content in session (length=" . length($accumulated_content) . ")");
             my $sanitized = sanitize_text($accumulated_content);
-            $self->{session}->add_message('assistant', $sanitized);
+            $self->{session}->add_message('assistant', $sanitized, {
+                reasoning_content => $result->{reasoning_content},
+                reasoning_details => $result->{reasoning_details},
+                reasoning_blocks  => $result->{reasoning_blocks},
+                responses_reasoning_items => $result->{responses_reasoning_items},
+            });
             $accumulated_content = $self->_detect_and_display_images($accumulated_content);
             $accumulated_content = $self->_detect_system_warning_references($accumulated_content);
             $self->add_to_buffer('assistant', $accumulated_content);
@@ -2559,6 +2574,66 @@ sub clear_screen {
     
     # Clear screen using ANSI code
     print "\e[2J\e[H";  # Clear screen + home cursor
+}
+
+=head2 _replay_session_history
+
+Render the current session's history into the terminal for visual replay.
+This is called after the header is displayed on session resume, and after
+session switch in /session switch.
+
+Respects the session_replay and session_replay_max config options.
+Auto-disabled in non-interactive mode (--input / piped stdin).
+
+=cut
+
+sub _replay_session_history {
+    my ($self) = @_;
+    
+    # Auto-disable in non-interactive mode
+    return if $self->{non_interactive};
+    
+    my $config = $self->{config};
+    return unless $config;
+    
+    # Read session_replay config (default: on)
+    my $replay_enabled = $config->get('session_replay');
+    $replay_enabled = 1 unless defined $replay_enabled;
+    return unless $replay_enabled;
+    
+    my $state = $self->{session}->state();
+    my $history = $state->{history} || [];
+    return unless @$history;
+    
+    my $max = $config->get('session_replay_max') // 100;
+    $max = 100 unless defined $max;
+    
+    eval {
+        require CLIO::UI::SessionReplay;
+        my $replay = CLIO::UI::SessionReplay->new(
+            chat => $self,
+            debug => $self->{debug},
+            max_messages => $max,
+        );
+        
+        my $rendered = $replay->render_history($history, max_messages => $max);
+        
+        if ($rendered > 0) {
+            my $remaining = scalar(@$history) - $rendered;
+            if ($remaining > 0) {
+                $self->display_system_message(
+                    "Replaying last $rendered of " . scalar(@$history) . " messages "
+                    . "($remaining more available via /session view all)"
+                );
+            } else {
+                $self->display_system_message("Replaying $rendered messages from history.");
+            }
+            $self->writeline("", markdown => 0);
+        }
+    };
+    if ($@) {
+        log_warning('Chat', "Session replay failed: $@");
+    }
 }
 
 sub display_usage_summary {

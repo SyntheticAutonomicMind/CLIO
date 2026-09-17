@@ -98,6 +98,9 @@ use constant DEFAULT_CONFIG => {
     # Session auto-pruning configuration
     session_auto_prune => 0,    # Enable automatic session pruning on startup (default: off)
     session_prune_days => 30,   # Delete sessions older than this many days (default: 30)
+    # Session history replay on resume/switch (configurable, auto-disabled in --input mode)
+    session_replay => 1,        # Auto-render conversation history when resuming/switching sessions (1=on, 0=off)
+    session_replay_max => 100,  # Max messages to replay before pagination (0 = no limit)
     # Security configuration
     redact_level => 'pii',      # Redaction level: strict, standard, api_permissive, pii, off (default: pii)
     # Command security analysis level

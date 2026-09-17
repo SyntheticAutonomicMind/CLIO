@@ -573,10 +573,42 @@ clio --sessions         # List all sessions from the command line
 |---------|-------------|
 | `/session list` | Show all saved sessions |
 | `/session switch <id>` | Switch to a different session |
+| `/session view [N\|all]` | Replay session history into the terminal |
 | `/session rename <name>` | Give the current session a friendly name |
 | `/session delete <id>` | Delete a session |
 | `/session info` | Show current session details |
 | `/session export` | Export session data |
+
+### Session History Replay
+
+When you resume a session (`--resume` or `/session switch`), CLIO automatically
+renders the conversation history into the terminal. This gives you full visual
+context of what happened before, including tool call headers, action details,
+and formatted output — identical to what you saw during the original session.
+
+Replay is **on by default** and can be configured:
+
+```bash
+# Disable replay for this session only (not persisted):
+./clio --no-session-replay --resume
+
+# Disable replay permanently:
+/config set session_replay off
+
+# Set a message limit (default: 100, 0 = unlimited):
+/config set session_replay_max 50
+
+# Explicitly replay history at any time:
+/session view          # Replay up to session_replay_max messages
+/session view 50       # Replay last 50 messages
+/session view all      # Replay entire session
+```
+
+Replay is automatically disabled in non-interactive mode (`--input`), since
+terminal rendering is not useful when output is piped or captured.
+
+For sessions saved before replay support, CLIO reconstructs the display from
+the raw message data — results may differ slightly from the original rendering.
 
 ### What's Saved
 

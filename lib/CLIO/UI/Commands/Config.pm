@@ -206,6 +206,8 @@ sub _display_config_help {
     $self->display_key_value("enable_subagents", "Enable/disable sub-agent spawning (on/off)", 25);
     $self->display_key_value("enable_remote", "Enable/disable remote execution (on/off)", 25);
     $self->display_key_value("auto_discover_skills", "Inject installed skill catalog into system prompt (on/off)", 25);
+    $self->display_key_value("session_replay", "Render conversation history on session switch/resume (on/off)", 25);
+    $self->display_key_value("session_replay_max", "Max messages to replay before paginating (0 = unlimited)", 25);
     $self->display_key_value("log_level", "Log level: ERROR, WARNING, INFO, DEBUG", 25);
     $self->writeline("", markdown => 0);
     
@@ -235,6 +237,8 @@ sub _display_config_help {
     $self->display_command_row("/config set log_level ERROR", "Set log level (ERROR/WARNING/INFO/DEBUG)", 35);
     $self->display_command_row("/config set auto_discover_skills off", "Hide skill catalog and disable skill_operations tool", 35);
     $self->display_command_row("/config set show_banner off", "Suppress the startup banner", 35);
+    $self->display_command_row("/config set session_replay off", "Disable history replay on resume/switch", 35);
+    $self->display_command_row("/config set session_replay_max 200", "Set max messages to replay", 35);
     $self->writeline("", markdown => 0);
     
     $self->display_section_header("TIPS");
@@ -258,7 +262,7 @@ sub _handle_config_set {
     
     unless ($key) {
         $self->display_error_message("Usage: /config set <key> <value>");
-        $self->writeline("Keys: style, theme, show_banner, working_directory, terminal_passthrough, terminal_autodetect, redact_level, security_level, sanitize_mode, enable_subagents, enable_remote, auto_discover_skills", markdown => 0);
+        $self->writeline("Keys: style, theme, show_banner, working_directory, terminal_passthrough, terminal_autodetect, redact_level, security_level, sanitize_mode, enable_subagents, enable_remote, auto_discover_skills, session_replay, session_replay_max", markdown => 0);
         return;
     }
     
@@ -281,6 +285,8 @@ sub _handle_config_set {
         enable_subagents => 1,
         enable_remote => 1,
         auto_discover_skills => 1,
+        session_replay => 1,
+        session_replay_max => 1,
         log_level => 1,
     );
     
@@ -391,7 +397,7 @@ sub _handle_config_set {
     }
     
     # Handle boolean values for terminal toggle settings
-    if ($key =~ /^(terminal_|enable_|show_)/) {
+    if ($key =~ /^(terminal_|enable_|show_|session_replay)/) {
         if ($value =~ /^(true|1|yes|on)$/i) {
             $value = 1;
         } elsif ($value =~ /^(false|0|no|off)$/i) {
@@ -446,6 +452,15 @@ sub _handle_config_set {
             $self->{config}->save();
             $self->display_system_message("Restart session for changes to take effect");
             return;
+        } elsif ($key eq 'session_replay') {
+            if ($value) {
+                $self->display_info_message("Session replay enabled: history will be rendered when resuming/switching sessions");
+            } else {
+                $self->display_info_message("Session replay disabled: history will NOT be rendered on resume/switch");
+            }
+            $self->{config}->set($key, $value);
+            $self->{config}->save();
+            return;
         } elsif ($key eq 'show_banner') {
             if ($value) {
                 $self->display_info_message("Startup banner will be shown on next session");
@@ -456,6 +471,22 @@ sub _handle_config_set {
             $self->{config}->save();
             return;
         }
+    }
+    
+    # Handle numeric config keys
+    if ($key eq 'session_replay_max') {
+        unless ($value =~ /^\d+$/) {
+            $self->display_error_message("Invalid session_replay_max: must be a number (0 for no limit)");
+            return;
+        }
+        $self->{config}->set($key, int($value));
+        $self->{config}->save();
+        if (int($value) == 0) {
+            $self->display_system_message("Session replay message limit set to: unlimited");
+        } else {
+            $self->display_system_message("Session replay message limit set to: $value messages");
+        }
+        return;
     }
     
     # Handle style separately
@@ -629,6 +660,10 @@ sub show_global_config {
     $self->display_key_value("Sub-agents", $subagents ? 'enabled' : 'disabled', 18);
     $self->display_key_value("Remote Exec", $remote ? 'enabled' : 'disabled', 18);
     $self->display_key_value("Skill Auto-Discover", $auto_discover_skills ? 'enabled' : 'disabled', 18);
+    
+    my $session_replay = $self->{config}->get('session_replay');
+    $session_replay = 1 unless defined $session_replay;
+    $self->display_key_value("Session Replay", $session_replay ? 'enabled' : 'disabled', 18);
     
     # Paths
     $self->writeline("", markdown => 0);

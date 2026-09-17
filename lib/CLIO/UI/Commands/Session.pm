@@ -189,6 +189,12 @@ sub handle_session_command {
         return;
     }
     
+    # /session view [N|all] - replay session history into the terminal
+    if ($action eq 'view' || $action eq 'replay') {
+        $self->_handle_view_command(@args);
+        return;
+    }
+    
     # Unknown action
     $self->display_error_message("Unknown action: /session $action");
     $self->_display_session_help();
@@ -213,6 +219,7 @@ sub _display_session_help {
     $self->display_command_row("/session name [name]", "Show or set session name", 30);
     $self->display_command_row("/session new", "Show how to create new session", 30);
     $self->display_command_row("/session clear", "Clear current session history", 30);
+    $self->display_command_row("/session view [N|all]", "Replay history into terminal", 30);
     $self->display_command_row("/session trim [days]", "Remove old sessions (default: 30)", 30);
     $self->display_command_row("/session export [file]", "Export current session to HTML", 30);
     $self->writeline("", markdown => 0);
@@ -222,6 +229,8 @@ sub _display_session_help {
     $self->display_command_row("/session list", "See all sessions", 35);
     $self->display_command_row("/session switch abc123", "Switch by ID", 35);
     $self->display_command_row("/session name \"My project\"", "Set friendly name", 35);
+    $self->display_command_row("/session view 50", "Replay last 50 messages", 35);
+    $self->display_command_row("/session view all", "Replay full session history", 35);
     $self->writeline("", markdown => 0);
 }
 
@@ -521,6 +530,70 @@ sub _export_session {
     }
     
     $self->display_system_message("Session exported to: $filename");
+}
+
+=head2 _handle_view_command([N|all])
+
+Replay session history into the terminal.
+
+Arguments:
+- $arg: Optional. A number N to show the last N messages, or "all" for
+  the full history (no pagination limit).
+
+=cut
+
+sub _handle_view_command {
+    my ($self, $arg) = @_;
+    
+    my $session = $self->{chat}->{session};
+    unless ($session) {
+        $self->display_error_message("No active session to view.");
+        return;
+    }
+    
+    my $state = $session->state();
+    unless ($state && $state->{history} && @{$state->{history}}) {
+        $self->display_error_message("Session has no messages to view.");
+        return;
+    }
+    
+    my $history = $state->{history};
+    my $total = scalar(@$history);
+    
+    my $max;
+    if (!defined $arg || $arg eq '' || $arg eq 'all') {
+        $max = $total;  # No limit
+    } elsif ($arg =~ /^(\d+)$/) {
+        $max = $1;
+        if ($max > $total) {
+            $max = $total;
+        }
+    } else {
+        $self->display_error_message("Usage: /session view [N|all]");
+        $self->writeline("  N    - Show last N messages", markdown => 0);
+        $self->writeline("  all  - Show all messages (no limit)", markdown => 0);
+        return;
+    }
+    
+    eval {
+        require CLIO::UI::SessionReplay;
+        my $replay = CLIO::UI::SessionReplay->new(
+            chat => $self->{chat},
+            debug => $self->{debug},
+        );
+        
+        my $rendered = $replay->render_history($history, max_messages => $max);
+        
+        if ($rendered > 0) {
+            $self->writeline("", markdown => 0);
+            $self->display_system_message("Replaying $rendered message" . ($rendered == 1 ? '' : 's') . ".");
+        } else {
+            $self->display_system_message("No messages to replay.");
+        }
+    };
+    if ($@) {
+        $self->display_error_message("Replay failed: $@");
+    }
 }
 
 =head2 _trim_sessions($days_arg)
@@ -928,6 +1001,66 @@ sub handle_switch_command {
     $self->display_system_message("  Working directory: " . ($state->{working_directory} || '.'));
     if ($new_session->session_name()) {
         $self->display_system_message("  Session ID: " . substr($target_session_id, 0, 12) . "...");
+    }
+    
+    # Render session history into the terminal (if enabled and interactive)
+    $self->_maybe_replay_session_history();
+}
+
+=head2 _maybe_replay_session_history
+
+Render the current session's history into the terminal if session_replay
+is enabled and we are in interactive mode. Also prints a system message
+indicating how many messages were replayed.
+
+=cut
+
+sub _maybe_replay_session_history {
+    my ($self) = @_;
+    
+    my $config = $self->{chat}->{config} || return;
+    
+    # Read session_replay config (default: on)
+    my $replay_enabled = $config->get('session_replay');
+    $replay_enabled = 1 unless defined $replay_enabled;
+    
+    # Auto-disable in non-interactive mode (--input / piped stdin)
+    return if $self->{chat}->{non_interactive};
+    
+    return unless $replay_enabled;
+    
+    my $state = $self->{session}->state();
+    my $history = $state->{history} || [];
+    return unless @$history;
+    
+    my $max = $config->get('session_replay_max') // 100;
+    $max = 100 unless defined $max;
+    
+    eval {
+        require CLIO::UI::SessionReplay;
+        my $replay = CLIO::UI::SessionReplay->new(
+            chat => $self->{chat},
+            debug => $self->{debug},
+            max_messages => $max,
+        );
+        
+        my $rendered = $replay->render_history($history, max_messages => $max);
+        
+        if ($rendered > 0) {
+            my $remaining = scalar(@$history) - $rendered;
+            if ($remaining > 0) {
+                $self->display_system_message(
+                    "Replaying last $rendered of " . scalar(@$history) . " messages "
+                    . "($remaining more available via /session view all)"
+                );
+            } else {
+                $self->display_system_message("Replaying $rendered messages from history.");
+            }
+            $self->writeline("", markdown => 0);
+        }
+    };
+    if ($@) {
+        log_warning('Session', "Session replay failed: $@");
     }
 }
 

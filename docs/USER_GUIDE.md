@@ -473,6 +473,7 @@ CLIO provides 35+ slash commands. Type `/help` in any session to see the full li
 |---------|---------|
 | `/session list` | List all saved sessions |
 | `/session switch <id>` | Resume a specific session |
+| `/session view [N|all]` | Replay session history into the terminal |
 | `/session export [path]` | Export session as self-contained HTML |
 | `/session trim [days]` | Remove sessions older than N days (default: 30) |
 

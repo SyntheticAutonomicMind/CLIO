@@ -29,6 +29,7 @@ my $config_dir_override;
 my $no_color = 0;
 my $no_banner = 0;
 my $reduced_motion = 0;
+my $no_session_replay = 0;
 for (my $i = 0; $i < @ARGV; $i++) {
     if ($ARGV[$i] eq '--config' && defined $ARGV[$i+1]) {
         $config_dir_override = $ARGV[$i+1];
@@ -42,6 +43,9 @@ for (my $i = 0; $i < @ARGV; $i++) {
     }
     if ($ARGV[$i] eq '--reduced-motion') {
         $reduced_motion = 1;
+    }
+    if ($ARGV[$i] eq '--no-session-replay') {
+        $no_session_replay = 1;
     }
 }
 
@@ -89,6 +93,7 @@ OPTIONS:
     --config <path>    Use custom config directory (for isolated testing)
     --no-color         Disable ANSI color output (for CI/workflows)
     --no-banner        Suppress the startup banner
+    --no-session-replay  Disable history replay on session switch/resume
     --reduced-motion   Use static indicators instead of animated spinners
     --no-custom-instructions  Skip .clio/instructions.md
     --no-ltm           Skip long-term memory pattern injection
@@ -166,6 +171,11 @@ my $config = CLIO::Core::Config->new(debug => $debug);
 # --no-banner overrides show_banner for this session only (not persisted).
 if ($no_banner) {
     $config->set('show_banner', 0, 0);
+}
+
+# --no-session-replay overrides session_replay for this session only (not persisted).
+if ($no_session_replay) {
+    $config->set('session_replay', 0, 0);
 }
 
 # --reduced-motion overrides the style key for this session
@@ -484,6 +494,15 @@ if ($input && !-t STDOUT && !$no_color) {
     $no_color = 1;
     $ENV{NO_COLOR} = 1;
     log_debug('Main', 'Auto-disabled color: non-interactive output (STDOUT is not a TTY)');
+}
+
+# Auto-disable session replay in non-interactive (--input or piped stdin) mode.
+# Replay renders full conversation history with box-drawing and color - it is
+# a visual UX feature for interactive terminals, not meaningful for batch/pipe
+# usage where the user just wants the final response.
+if ($input && !$no_session_replay) {
+    $config->set('session_replay', 0, 0);
+    log_debug('Main', 'Auto-disabled session_replay: non-interactive mode');
 }
 
 # Default to 'new' mode if not specified
