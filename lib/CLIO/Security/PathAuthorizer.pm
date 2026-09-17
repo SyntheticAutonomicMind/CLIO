@@ -117,9 +117,10 @@ sub checkPathAuthorization {
     # Expand and normalize working directory path
     my $working_dir_path = $self->resolvePath($working_directory, undef);
     
-    # Proper subdirectory containment check
-    # BUG: hasPrefix() alone is insufficient - "/workspace/conv-123" would match "/workspace/conv-123-other"
-    # SOLUTION: Check for exact match OR prefix with trailing slash to ensure directory boundary
+    # Proper subdirectory containment check: exact match OR prefix with
+    # trailing slash.  This ensures "/workspace/conv-123" does NOT match
+    # "/workspace/conv-123-other" (the directory-boundary bug that a naive
+    # hasPrefix() check would introduce).
     my $is_inside_working_directory = ($normalized_path eq $working_dir_path) ||
                                        ($normalized_path =~ /^\Q$working_dir_path\E\//);
     
