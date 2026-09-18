@@ -1665,12 +1665,21 @@ sub _execute_tool_round {
                         eval { $attempted_params = decode_json($tool_call->{function}->{arguments}); };
                     }
 
-                    $enhanced_error_for_ai = $self->{error_guidance}->enhance_tool_error(
-                        error => $error_msg,
-                        tool_name => $tool_name,
-                        tool_definition => $tool_def,
-                        attempted_params => $attempted_params
-                    );
+                    # For interact tool errors, skip the enhanced error with
+                    # schema reference — the user already sees the question they
+                    # asked, and the error ("User cancelled", "timeout", etc.)
+                    # doesn't need schema correction guidance. Just pass a
+                    # concise message to the AI.
+                    if ($tool_name eq 'interact') {
+                        $enhanced_error_for_ai = $error_msg;
+                    } else {
+                        $enhanced_error_for_ai = $self->{error_guidance}->enhance_tool_error(
+                            error => $error_msg,
+                            tool_name => $tool_name,
+                            tool_definition => $tool_def,
+                            attempted_params => $attempted_params
+                        );
+                    }
 
                     log_debug('WorkflowOrchestrator', "Enhanced error for AI: " . substr($enhanced_error_for_ai, 0, 100) . "...");
                 } elsif ($result_data->{action_description}) {
