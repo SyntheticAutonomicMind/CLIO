@@ -5513,12 +5513,26 @@ sub _get_native_provider {
     my $provider_name = $target_provider;
     $provider_name //= $self->{config} ? $self->{config}->get('provider') : undef;
     $provider_name //= $self->{provider};
-    my $provider_config = get_provider($provider_name);
+
+    # Resolve custom provider aliases (e.g. "anthropic_test" -> "anthropic")
+    # so get_provider can find the built-in provider definition. Without this,
+    # custom aliases return undef from get_provider and we silently fall back
+    # to the OpenAI-compatible path even for native providers like Anthropic.
+    my $lookup_name = $provider_name;
+    if ($provider_name && $self->{config} && $self->{config}->can('resolve_custom_provider')) {
+        $lookup_name = $self->{config}->resolve_custom_provider($provider_name);
+    }
+
+    my $provider_config = get_provider($lookup_name);
     
     return undef unless $provider_config;
     return undef unless $provider_config->{native_api};
     
-    log_debug('APIManager', "_get_native_provider: provider=$provider_name, native_api=1");
+    if ($lookup_name ne $provider_name) {
+        log_debug('APIManager', "_get_native_provider: provider=$provider_name (custom alias) -> resolved=$lookup_name, native_api=1");
+    } else {
+        log_debug('APIManager', "_get_native_provider: provider=$provider_name, native_api=1");
+    }
     
     my $module = $provider_config->{provider_module};
     return undef unless $module;
