@@ -516,7 +516,7 @@ sub _handle_error_response_impl {
         # Handle Z.AI usage limit (codes 1308 and 1310) - non-retryable, resets at specific time
         # Error message format: "Usage limit reached for 5 hour. Your limit will reset at 2026-04-17 07:03:43"
         # Code 1310: "Weekly/Monthly Limit Exhausted. Your limit will reset at 2026-04-24 02:02:21"
-        elsif ($detected_rate_limit_code && ($detected_rate_limit_code == 1308 || $detected_rate_limit_code == 1310)) {
+        elsif ($detected_rate_limit_code =~ /^\d+$/ && ($detected_rate_limit_code == 1308 || $detected_rate_limit_code == 1310)) {
             my $actual_retry_after;
             my $reset_str;
             
@@ -623,7 +623,7 @@ sub _handle_error_response_impl {
         # 1302 = High concurrency, 1303 = High frequency -> short retry (3-5s)
         # 1305 = General rate limit -> medium retry (30s)
         # These are retryable with shorter backoff than the default 60s
-        elsif ($detected_rate_limit_code &&
+        elsif ($detected_rate_limit_code =~ /^\d+$/ &&
                ($detected_rate_limit_code == 1302 ||
                 $detected_rate_limit_code == 1303 ||
                 $detected_rate_limit_code == 1305)) {
