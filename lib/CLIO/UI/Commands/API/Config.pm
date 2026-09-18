@@ -1042,7 +1042,13 @@ sub _resolve_model_details {
 
     if ($value =~ m{^([a-z][a-z0-9_.-]*)/(.+)$}i) {
         my ($prefix, $rest) = ($1, $2);
-        if (CLIO::Providers::provider_exists($prefix)) {
+        # Accept both built-in provider prefixes (e.g. "openai") and custom
+        # provider aliases (e.g. "anthropic_test"). Without the
+        # is_custom_provider check, custom-prefix model strings were silently
+        # treated as belonging to the current provider.
+        if (CLIO::Providers::provider_exists($prefix) ||
+            ($self->{config} && $self->{config}->can('is_custom_provider') &&
+             $self->{config}->is_custom_provider($prefix))) {
             $has_provider_prefix = 1;
             $target_provider = $prefix;
             $api_model = $rest;
@@ -2101,10 +2107,15 @@ type (e.g., two Anthropic accounts). Each custom provider stores its own
 API key and optional base URL override.
 
 Examples:
-    /api provider add <name> <base_provider>        Register a custom provider
-    /api provider add <name> <base_provider> <key>  ...with an API key
-    /api provider list                              List all custom providers
-    /api provider remove <name>                     Remove a custom provider
+    /api provider add <name> <base-provider>               Register a custom provider
+    /api provider add <name> <base-provider> <api-key>     ...with an API key
+    /api provider add <name> <base-provider> <api-base>    ...with a custom base URL
+    /api provider add <name> <base-provider> <api-key> <api-base>  ...with both
+    /api provider list                                     List all custom providers
+    /api provider remove <name>                            Remove a custom provider
+
+The API key and base URL may be passed in either order; a value starting
+with a URL scheme (http:// or https://) is detected automatically.
 
 =cut
 
@@ -2116,9 +2127,10 @@ sub handle_provider {
     unless ($sub) {
         $self->display_error_message("Usage: /api provider <add|list|remove> [args...]");
         $self->writeline("", markdown => 0);
-        $self->writeline("  /api provider add <name> <base-provider> [api-key]", markdown => 0);
+        $self->writeline("  /api provider add <name> <base-provider> [api-key | base-url | both]", markdown => 0);
         $self->writeline("    Register a custom provider alias, e.g.:", markdown => 0);
         $self->writeline("    /api provider add anthropic_test anthropic sk-ant-api-...", markdown => 0);
+        $self->writeline("    /api provider add nimo llamo.cpp http://nimo:9090/v1/chat/completions", markdown => 0);
         $self->writeline("  /api provider list", markdown => 0);
         $self->writeline("    List all custom providers", markdown => 0);
         $self->writeline("  /api provider remove <name>", markdown => 0);
@@ -2180,23 +2192,26 @@ sub _provider_list {
 sub _provider_add {
     my ($self, @args) = @_;
 
-    my ($name, $base_provider, $arg3, $arg4) = @args;
+    my ($name, $base_provider, @rest) = @args;
 
-    # Auto-detect: if the 3rd positional arg looks like a URL, treat it
-    # as api_base rather than api_key. This lets users run:
+    # Parse trailing args order-independently: any value matching a URL
+    # scheme is treated as api_base, everything else as api_key. This lets
+    # users pass them in either order:
     #   /api provider add nimo llamo.cpp http://nimo:9090/v1/chat/completions
     #   /api provider add nimo llamo.cpp <key> http://nimo:9090/v1/chat/completions
+    #   /api provider add nimo llamo.cpp http://nimo:9090/v1/chat/completions <key>
     my ($api_key, $api_base);
-    if (defined $arg3 && $arg3 =~ m{^https?://}) {
-        $api_base = $arg3;
-        $api_key = $arg4;  # key may be in 4th slot if both provided
-    } else {
-        $api_key = $arg3;
-        $api_base = $arg4;
+    for my $val (@rest) {
+        next unless defined $val && length($val);
+        if ($val =~ m{^[a-z][a-z0-9+\-.]*://}i) {
+            $api_base = $val;
+        } else {
+            $api_key = $val;
+        }
     }
 
     unless ($name && $base_provider) {
-        $self->display_error_message("Usage: /api provider add <name> <base-provider> [api-key] [api-base]");
+        $self->display_error_message("Usage: /api provider add <name> <base-provider> [api-key | api-base | both]");
         $self->writeline("", markdown => 0);
         $self->display_system_message("Example: /api provider add nimo llamo.cpp http://nimo:9090/v1/chat/completions");
         $self->display_system_message("Example: /api provider add anthropic_test anthropic sk-ant-api-... https://api.anthropic.com");
