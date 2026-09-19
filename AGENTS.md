@@ -41,7 +41,7 @@ User Input -> Terminal UI (Chat.pm, SessionReplay) -> AI Agent (APIManager -> Pr
 
 Tools: file_operations, version_control, terminal_operations, memory_operations,
 todo_operations, web_operations, code_intelligence, interact, apply_patch,
-remote_execution [conditional], agent_operations [conditional], skill_operations [conditional],
+remote_execution, agent_operations, skill_operations [conditional],
 MCPBridge [dynamic], PluginBridge [dynamic]
 
 ---
@@ -68,9 +68,8 @@ MCPBridge [dynamic], PluginBridge [dynamic]
 | `lib/CLIO/Profile/` | User personality profile (Analyzer, Manager) |
 | `lib/CLIO/Protocols/` | Complex workflows (Puppeteer) |
 | `lib/CLIO/Providers/` | Direct API providers (Anthropic, Google, NVIDIA, Base, DeepSeek, MiniMax, Z.A.I, OpenRouter, OrcaRouter, KiloCode, Ollama Cloud, GitHub Copilot, SAM, llama.cpp, LM Studio) |
-| `lib/CLIO/Coordination/` | Multi-agent coordination (Broker, Client, SubAgent) [conditional] |
+| `lib/CLIO/Coordination/` | Multi-agent coordination (Broker, Client, SubAgent) |
 | `lib/CLIO/MCP/` | Model Context Protocol (Manager, Client, Transport::HTTP, Transport::Stdio, Auth::OAuth) |
-| `lib/CLIO/Security/` | Auth/authz (Auth, Authz, AuthorizationRelay, CommandAnalyzer, InvisibleCharFilter, PathAuthorizer, SecretRedactor) |
 | `lib/CLIO/Logging/` | Structured logging (Logger, ProcessStats, ToolLogger) |
 | `lib/CLIO/Compat/` | Compatibility layers (Terminal, HTTP) |
 | `lib/CLIO/Util/` | Utilities (PathResolver, TextSanitizer, JSON, JSONRepair, YAML, ImageAttachment, ImageDisplay, ConfigPath, AtomicWrite, RateLimit, GitIgnore, AnthropicXMLParser, CABundle, Curl, InputHelpers, Proxy, UUID) |
@@ -82,7 +81,7 @@ MCPBridge [dynamic], PluginBridge [dynamic]
 | `themes/` | UI themes (compact, console, default, verbose) |
 | `tools/` | Repo-local tooling (assess_codebase.pl, cache_health.pl, context_inspector.pl, prompt_diff.pl, session_stats.pl, trim_dryrun.pl, etc.) |
 | `tests/unit/` | Single module tests |
-| `tests/integration/` | Cross-module tests (e2e, subagent [conditional], broker [conditional]) |
+| `tests/integration/` | Cross-module tests (e2e, subagent, broker) |
 | `tests/manual/` | Manual test scripts |
 | `tests/performance/` | Long-running performance tests |
 | `tests/benchmark.pl` | Performance benchmark suite |
@@ -137,17 +136,6 @@ Terminal.pm detects terminal image support.
 **Message Handling:** ConversationManager handles arrayref content in merging/truncation
 
 **Investigate, don't assume:** Use `git log --oneline -20`, `find lib -name "*.pm"`, read actual code.
-
----
-
-## Model Selection
-
-**Use MiniMax M3 for sub-agents:**
-```
-agent_operations(operation: "spawn", task: "...", working_dir: "./CLIO", model: "minimax/MiniMax-M3")
-```
-
-MiniMax-M3 via MiniMax is the recommended default for all standard tasks: investigation, QA, implementation, code review, refactoring, documentation.
 
 ---
 
@@ -214,13 +202,13 @@ If the system handles the condition (retry, reroute, fallback), use `log_debug`,
 |--------|---------|----------|
 | `CLIO::Core::` | System core | APIManager, WorkflowOrchestrator, ToolExecutor, Config, PromptManager, ContextBuilder, MessageHistory, ConversationManager |
 | `CLIO::Core::API::` | API sub-modules | ResponseHandler, MessageValidator, ErrorHandler, PayloadSanitizer |
-| `CLIO::Tools::` | AI-callable tools | FileOperations, VersionControl, TerminalOperations, MemoryOperations, Interact, ApplyPatch, CodeIntelligence, RemoteExecution [conditional], SubAgentOperations [conditional], TodoList, WebOperations, SkillOperations [conditional], MCPBridge [dynamic], PluginBridge [dynamic], Registry, Tool |
+| `CLIO::Tools::` | AI-callable tools | FileOperations, VersionControl, TerminalOperations, MemoryOperations, Interact, ApplyPatch, CodeIntelligence, RemoteExecution, SubAgentOperations, TodoList, WebOperations, SkillOperations, MCPBridge, PluginBridge, Registry, Tool |
 | `CLIO::UI::` | Terminal interface | Chat, Markdown, Theme, ANSI, CommandHandler, DiffRenderer, Display, HostProtocol, Multiplexer, PaginationManager, ProgressSpinner, StreamingController, Terminal, ToolOutputFormatter |
-| `CLIO::UI::Commands::` | Slash command handlers | AI, API, Billing, Config, Context, Device, File, Git, Log, Memory, Mux, Profile, Project, Prompt, Session, Skills, Spec, Stats, SubAgent [conditional], System, Todo, Update |
+| `CLIO::UI::Commands::` | Slash command handlers | AI, API, Billing, Config, Context, Device, File, Git, Log, Memory, Mux, Profile, Project, Prompt, Session, Skills, Spec, Stats, SubAgent, System, Todo, Update |
 | `CLIO::Session::` | Session management | Manager, State, FileVault, Lock, Export, TodoStore, ToolResultStore |
 | `CLIO::Memory::` | Context/memory | ShortTerm, LongTerm, YaRN, TokenEstimator |
 | `CLIO::Providers::` | Provider registry + native providers | Anthropic, Google, NVIDIA, Base, DeepSeek, MiniMax, Z.A.I, OpenRouter, OrcaRouter, KiloCode, Ollama Cloud, GitHub Copilot, SAM, llama.cpp, LM Studio (18 providers in Providers.pm) |
-| `CLIO::Coordination::` | Multi-agent [conditional] | Broker, Client, SubAgent |
+| `CLIO::Coordination::` | Multi-agent | Broker, Client, SubAgent |
 | `CLIO::MCP::` | Model Context Protocol | Manager, Client, Transport::Stdio, Transport::HTTP, Auth::OAuth |
 | `CLIO::Profile::` | User profiling | Analyzer, Manager |
 | `CLIO::Protocols::` | Complex workflows | Puppeteer |
