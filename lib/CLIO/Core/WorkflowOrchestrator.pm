@@ -3336,10 +3336,12 @@ fall back to `content` for backwards compatibility with any
 non-TodoStore data sources.
 
 Also: TodoStore's constructor takes `sessions_dir`, NOT `clio_dir`.
-Passing `clio_dir` was silently dropped and TodoStore read from
-`<cwd>/sessions/<id>/todos.json`, which is empty for puppeteer child
-projects (tests/, scratch/) whose session data lives under their own
-`.clio/`. Fixed: derive sessions_dir from clio_dir.
+Using `find_clio_dir` + `/sessions` produced `<project>/sessions`
+instead of `<project>/.clio/sessions` — the session JSON files live
+in `.clio/sessions/` (saved via PathResolver::get_sessions_dir), so
+todos written to `./sessions/` were orphaned and never loaded on
+resume. Fixed: use PathResolver::get_sessions_dir() for consistency
+with State.pm's session-file resolution.
 
 =cut
 
@@ -3349,14 +3351,15 @@ sub _read_active_todos_for_projection {
 
     eval {
         require CLIO::Session::TodoStore;
-        require Cwd;
         require CLIO::Util::PathResolver;
     };
     return [] if $@;
 
-    my $clio_dir = CLIO::Util::PathResolver::find_clio_dir(Cwd::getcwd());
+    my $sessions_dir = eval { CLIO::Util::PathResolver::get_sessions_dir() };
+    return [] if $@;
+
     my $store = CLIO::Session::TodoStore->new(
-        sessions_dir => "$clio_dir/sessions",
+        sessions_dir => $sessions_dir,
         session_id   => $session->can('id') ? $session->id() : undef,
     );
     my $todos = eval { $store->read() };
@@ -3434,11 +3437,10 @@ sub _collect_unresolved_state {
     my @unresolved;
     eval {
         require CLIO::Session::TodoStore;
-        require Cwd;
         require CLIO::Util::PathResolver;
-        my $clio_dir = CLIO::Util::PathResolver::find_clio_dir(Cwd::getcwd());
+        my $sessions_dir = CLIO::Util::PathResolver::get_sessions_dir();
         my $store = CLIO::Session::TodoStore->new(
-            sessions_dir => "$clio_dir/sessions",
+            sessions_dir => $sessions_dir,
             session_id   => $session && $session->can('id') ? $session->id() : undef,
         );
         my $todos = $store->read();

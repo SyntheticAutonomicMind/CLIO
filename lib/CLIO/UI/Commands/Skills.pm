@@ -91,7 +91,7 @@ sub _get_skill_manager {
         debug => $self->{debug},
         project_skills_file => $project_skills_file,
         session_skills_file => $self->{session} ?
-            File::Spec->catfile('sessions', $self->{session}{session_id}, 'skills.json') :
+            File::Spec->catfile('.clio', 'sessions', $self->{session}{session_id}, 'skills.json') :
             undef,
     );
 }
@@ -295,7 +295,7 @@ sub _show_help {
     $self->display_section_header("SCOPES");
     $self->writeline("  user       - ~/.clio/skills.json (visible in all projects)", markdown => 0);
     $self->writeline("  project    - .clio/skills.json in the current project", markdown => 0);
-    $self->writeline("  session    - sessions/<id>/skills.json (cleared on session end)", markdown => 0);
+    $self->writeline("  session    - .clio/sessions/<id>/skills.json (cleared on session end)", markdown => 0);
     $self->writeline("  freeform   - .clio/skills/*.md files (edit the .md to modify)", markdown => 0);
     $self->writeline("  repository - skills pulled from a configured git repository", markdown => 0);
     $self->writeline("  builtin    - read-only skills shipped with CLIO", markdown => 0);

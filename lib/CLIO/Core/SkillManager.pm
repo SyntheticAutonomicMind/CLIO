@@ -26,7 +26,7 @@ and user/project/session-level prompt hierarchies.
 
     my $pm = CLIO::Core::SkillManager->new(
         debug => 1,
-        session_skills_file => 'sessions/abc123/skills.json'
+        session_skills_file => '.clio/sessions/abc123/skills.json'
     );
     
     # Add custom skill
@@ -434,7 +434,7 @@ Skill storage is organized in three writable scopes plus read-only sources:
 
 =item B<project>  - C<.clio/skills.json> and C<.clio/skills/*.md>
 
-=item B<session>  - C<sessions/<id>/skills.json>
+=item B<session>  - C<.clio/sessions/<id>/skills.json>
 
 =item B<repository> - Git-cached SKILL.md files in C<~/.clio/skill-cache/>
 

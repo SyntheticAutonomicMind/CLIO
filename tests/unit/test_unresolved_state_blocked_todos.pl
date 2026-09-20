@@ -10,6 +10,10 @@
 # with session_id => undef and silently returned an empty array. The
 # blocked-todo surfacing path was completely dead.
 #
+# Additionally, the TodoStore was constructed with sessions_dir from
+# find_clio_dir + "/sessions" which produced <project>/sessions instead
+# of <project>/.clio/sessions, orphaning todos in ./sessions/.
+#
 # Fix: signature changed to _collect_unresolved_state($self, $history,
 # $session). Call sites pass $session explicitly. This test exercises
 # the fix end-to-end through the public method.
@@ -17,20 +21,27 @@
 use strict;
 use warnings;
 use utf8;
-use lib './lib';
+use FindBin qw($RealBin);
+use lib "$RealBin/../../lib";
+use Cwd qw(chdir getcwd);
 
 use Test::More;
 use File::Temp qw(tempdir);
 use CLIO::Session::TodoStore;
 
-# Set up a fake .clio directory with sessions subdir (puppeteer-child
-# layout). Without this the TodoStore constructor reads from <cwd>/
-# sessions/<id>/todos.json which is empty for tests/.
+# Save original cwd so we can restore it after the test
+my $orig_cwd = getcwd();
+
+# Set up a fake .clio directory with sessions subdir.
+# We chdir into the temp dir so get_sessions_dir() resolves to our
+# temp directory, matching the real production behavior.
 my $tmp = tempdir(CLEANUP => 1);
 my $fake_clio = "$tmp/.clio";
 mkdir $fake_clio or die "Cannot create $fake_clio: $!";
 my $sessions_dir = "$fake_clio/sessions";
 mkdir $sessions_dir or die "Cannot create $sessions_dir: $!";
+
+chdir $tmp or die "Cannot chdir to $tmp: $!";
 
 my $session_id = 'test-unresolved-blocked';
 my $store = CLIO::Session::TodoStore->new(
@@ -77,13 +88,6 @@ my $session = FakeSession->new($session_id);
 require CLIO::Core::WorkflowOrchestrator;
 my $wf = bless {}, 'CLIO::Core::WorkflowOrchestrator';
 
-# Override PathResolver::find_clio_dir to return our fake clio dir.
-require CLIO::Util::PathResolver;
-{
-    no warnings 'redefine';
-    *CLIO::Util::PathResolver::find_clio_dir = sub { $fake_clio };
-}
-
 # Empty history - we only care about the blocked-todo path.
 my @history;
 my $unresolved = $wf->_collect_unresolved_state(\@history, $session);
@@ -109,5 +113,8 @@ is($has_completed, 0, 'completed todo NOT surfaced as unresolved');
 # still happens but with session_id=undef, no blocked todos surface).
 my $unresolved_no_session = $wf->_collect_unresolved_state(\@history, undef);
 ok(ref($unresolved_no_session) eq 'ARRAY', 'No session arg still returns arrayref (no crash)');
+
+# Restore original working directory
+chdir $orig_cwd;
 
 done_testing();

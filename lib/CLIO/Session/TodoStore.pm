@@ -23,7 +23,7 @@ CLIO::Session::TodoStore - Per-session todo list storage backend
 Manages persistence and validation of todo lists for sessions.
 Based on SAM's TodoManager pattern.
 
-**Storage Location**: sessions/<session_id>/todos.json
+**Storage Location**: .clio/sessions/<session_id>/todos.json
 
 **Todo Item Structure**:
 - id: Integer (sequential, starts at 1, auto-assigned if omitted)
@@ -66,7 +66,7 @@ sub new {
     my $self = {
         session_id => $opts{session_id},
         debug => $opts{debug} || 0,
-        sessions_dir => $opts{sessions_dir} || 'sessions',
+        sessions_dir => $opts{sessions_dir} || '.clio/sessions',
         # Invalidates any downstream caches (e.g. PromptBuilder's
         # user_context TTL cache) when a todo mutation lands. The model
         # must see its new todo state on the very next turn, not 60s

@@ -71,8 +71,8 @@ sub _get_skill_manager {
     my $session_file;
     if ($self->{chat}->{session} && $self->{chat}->{session}{session_id}) {
         $session_file = File::Spec->catfile(
-            'sessions', 
-            $self->{chat}->{session}{session_id}, 
+            '.clio', 'sessions',
+            $self->{chat}->{session}{session_id},
             'skills.json'
         );
     }

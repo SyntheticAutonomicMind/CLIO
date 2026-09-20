@@ -8,27 +8,38 @@
 # Bugs B2 and B3:
 #   - B2: the function read $todo->{content}, but TodoStore writes
 #     title/description. Result: every todo's content was empty.
-#   - B3: the function passed clio_dir to TodoStore, which silently
-#     dropped it (TodoStore uses sessions_dir). Result: the store
-#     read from <cwd>/sessions/<id>/todos.json regardless of where
-#     the project actually stored todos.
+#   - B3: the function used find_clio_dir + "/sessions", which produced
+#     <project>/sessions instead of <project>/.clio/sessions.
+#     Result: todos written to ./sessions/ were orphaned and never loaded.
+#
+# Fix: WorkflowOrchestrator now uses PathResolver::get_sessions_dir()
+# (the same function State.pm uses for session-file resolution), ensuring
+# todos and session JSON live in the same .clio/sessions/ directory.
 
 use strict;
 use warnings;
 use utf8;
-use lib './lib';
+use FindBin qw($RealBin);
+use lib "$RealBin/../../lib";
+use Cwd qw(chdir getcwd);
 
 use Test::More;
 use File::Temp qw(tempdir);
 use CLIO::Session::TodoStore;
 
-# Set up a fake .clio directory with a sessions subdir to simulate
-# the puppeteer child project layout.
+# Save original cwd so we can restore it after the test
+my $orig_cwd = getcwd();
+
+# Set up a fake .clio directory with a sessions subdir.
+# We chdir into the temp dir so get_sessions_dir() (which uses getcwd())
+# resolves to our temp directory, matching the real production behavior.
 my $tmp = tempdir(CLEANUP => 1);
 my $fake_clio = "$tmp/.clio";
 mkdir $fake_clio or die "Cannot create $fake_clio: $!";
 my $sessions_dir = "$fake_clio/sessions";
 mkdir $sessions_dir or die "Cannot create $sessions_dir: $!";
+
+chdir $tmp or die "Cannot chdir to $tmp: $!";
 
 my $session_id = 'test-b2-b3-session';
 my $store = CLIO::Session::TodoStore->new(
@@ -61,15 +72,6 @@ $store->write([
 require CLIO::Core::WorkflowOrchestrator;
 my $self = bless {}, 'CLIO::Core::WorkflowOrchestrator';
 
-# Override PathResolver::find_clio_dir to return our fake clio dir
-# so the function reads from $fake_clio/sessions, not the real CLIO cwd.
-require CLIO::Util::PathResolver;
-my $orig = \&CLIO::Util::PathResolver::find_clio_dir;
-{
-    no warnings 'redefine';
-    *CLIO::Util::PathResolver::find_clio_dir = sub { $fake_clio };
-}
-
 # Mock the session object
 package MockSession;
 sub new { bless { id => $session_id }, shift }
@@ -79,12 +81,6 @@ package main;
 my $session = MockSession->new();
 
 my $todos = $self->_read_active_todos_for_projection($session);
-
-# Restore original
-{
-    no warnings 'redefine';
-    *CLIO::Util::PathResolver::find_clio_dir = $orig;
-}
 
 # Bug B2: 3 todos were written; completed is excluded.
 is(scalar(@$todos), 2,
@@ -128,17 +124,7 @@ open my $fh, '>', $json_file or die;
 print $fh $json_text;
 close $fh;
 
-# Re-install override since the previous block restored $orig.
-{
-    no warnings 'redefine';
-    *CLIO::Util::PathResolver::find_clio_dir = sub { $fake_clio };
-}
-
 my $todos2 = $self->_read_active_todos_for_projection($session);
-{
-    no warnings 'redefine';
-    *CLIO::Util::PathResolver::find_clio_dir = $orig;
-}
 ok(@$todos2, 'Legacy todo with content field still readable')
     or diag("Got: " . scalar(@$todos2) . " todos");
 is($todos2->[0]{content}, 'Legacy todo with content field only',
@@ -147,10 +133,8 @@ is($todos2->[0]{content}, 'Legacy todo with content field only',
 
 # Verify sessions_dir is actually used (B3 fix). If sessions_dir was
 # wrong, we'd find zero todos even though TodoStore has them.
-{
-    no warnings 'redefine';
-    *CLIO::Util::PathResolver::find_clio_dir = sub { $fake_clio };
-}
+# The WorkflowOrchestrator now uses get_sessions_dir() which resolves to
+# getcwd()/.clio/sessions — the same path the test TodoStore uses.
 $store = CLIO::Session::TodoStore->new(
     sessions_dir => $sessions_dir,
     session_id   => $session_id,
@@ -168,9 +152,7 @@ is(scalar(@$todos3), 1,
 is($todos3->[0]{content}, 'In correct dir: Reachable',
     'title from puppeteer-child sessions_dir is read correctly');
 
-{
-    no warnings 'redefine';
-    *CLIO::Util::PathResolver::find_clio_dir = $orig;
-}
+# Restore original working directory
+chdir $orig_cwd;
 
 done_testing();

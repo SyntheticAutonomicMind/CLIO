@@ -674,7 +674,7 @@ sub show_global_config {
     
     $self->display_key_value("Working Dir", $workdir, 18);
     $self->display_key_value("Config File", $config_file, 18);
-    $self->display_key_value("Sessions Dir", File::Spec->catdir('.', 'sessions'), 18);
+    $self->display_key_value("Sessions Dir", File::Spec->catdir('.clio', 'sessions'), 18);
     $self->display_key_value("Styles Dir", File::Spec->catdir('.', 'styles'), 18);
     $self->display_key_value("Themes Dir", File::Spec->catdir('.', 'themes'), 18);
     
