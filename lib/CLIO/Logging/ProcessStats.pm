@@ -24,7 +24,7 @@ Captures RSS (resident set size) and VSZ (virtual size) at key lifecycle
 points during CLIO execution. Tracks baseline, deltas, and per-phase
 memory growth to help identify memory creep over time.
 
-Stats are logged as JSONL to .clio/logs/process_stats_YYYY-MM-DD.log,
+Stats are logged as JSONL to ~/.clio/projects/<uuid>/logs/process_stats_YYYY-MM-DD.log,
 one entry per capture point.
 
 No CPAN dependencies - uses ps(1) on macOS/Linux and /proc/self/status
@@ -67,7 +67,10 @@ sub new {
     my $self = {
         session_id    => $args{session_id} || 'unknown',
         debug         => $args{debug} || 0,
-        log_dir       => $args{log_dir} || File::Spec->catdir('.clio', 'logs'),
+        log_dir       => $args{log_dir} || do {
+            require CLIO::Util::PathResolver;
+            eval { CLIO::Util::PathResolver::get_project_logs_dir() } || File::Spec->catdir('.clio', 'logs');
+        },
         pid           => $$,
         baseline_rss  => undef,    # KB, set on first capture
         baseline_vsz  => undef,    # KB, set on first capture

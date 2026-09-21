@@ -19,13 +19,12 @@ use lib "$FindBin::Bin/../lib";
 use Test::More;
 use File::Temp qw(tempdir);
 use JSON::PP qw(encode_json decode_json);
+use CLIO::Util::PathResolver;
 
 # Setup test environment
 my $test_dir = tempdir(CLEANUP => 1);
 chdir $test_dir;
-mkdir '.clio';
-mkdir '.clio/sessions';
-
+CLIO::Util::PathResolver::init(base_dir => $test_dir);
 print "=" x 60 . "\n";
 print "WorkflowOrchestrator Component Test\n";
 print "=" x 60 . "\n\n";

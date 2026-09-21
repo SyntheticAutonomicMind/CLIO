@@ -31,7 +31,7 @@ rather than snapshotting the entire work tree. This approach:
 - Requires no safety guards (works from home dir, project dir, anywhere)
 
 Each AI turn gets a unique turn ID. Before CLIO modifies a file, the original
-content is backed up to .clio/vault/<turn_id>/. Only the FIRST backup per file
+content is backed up to ~/.clio/projects/<uuid>/vault/<turn_id>/. Only the FIRST backup per file
 per turn is kept - subsequent modifications to the same file in the same turn
 don't overwrite the original pre-turn state.
 
@@ -77,7 +77,17 @@ sub new {
     my ($class, %args) = @_;
 
     my $work_tree = $args{work_tree} || getcwd();
-    my $vault_dir = File::Spec->catdir($work_tree, '.clio', 'vault');
+
+    # Vault is stored in the project data directory (~/.clio/projects/<uuid>/vault/)
+    # to keep file backups out of the project tree.
+    my $vault_dir;
+    eval {
+        require CLIO::Util::PathResolver;
+        $vault_dir = CLIO::Util::PathResolver::get_project_vault_dir();
+    };
+    # Fallback for environments where PathResolver can't resolve (e.g. tests
+    # without init) - keeps the old project-local path as a safety net.
+    $vault_dir = File::Spec->catdir($work_tree, '.clio', 'vault') unless $vault_dir;
 
     my $self = {
         work_tree  => $work_tree,

@@ -27,7 +27,7 @@ sub create_session {
     my $sessions_dir = File::Spec->catdir($project_dir, '.clio', 'sessions');
     make_path($sessions_dir);
 
-    my $data = { history => $messages };
+    my $data = { history => $messages, working_directory => $project_dir };
     my $json = encode_json($data);
 
     my $path = File::Spec->catfile($sessions_dir, $filename);

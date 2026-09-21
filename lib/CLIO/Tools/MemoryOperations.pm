@@ -33,7 +33,7 @@ sub new {
         name => 'memory_operations',
         description => q{Memory and Long-Term Memory (LTM) operations.
 
-SESSION MEMORY (key-value, stored in .clio/memory/):
+SESSION MEMORY (key-value, stored in ~/.clio/projects/<uuid>/memory/):
 -  store: key (required), content (required)
 -  retrieve: key (required)
 -  search: query (required)
@@ -47,9 +47,9 @@ LTM RECALL:
     match +2pts, assistant/user role +0.3/+0.2.
 
 LTM STORAGE (persist facts across sessions):
--  add_discovery: fact (required), confidence (optional). Stores to .clio/ltm.json. Returns success confirmation.
--  add_solution: error + solution (required), examples (optional). Stores to .clio/ltm.json. Returns success confirmation.
--  add_pattern: pattern (required), confidence (optional). Stores to .clio/ltm.json. Returns success confirmation.
+-  add_discovery: fact (required), confidence (optional). Stores to ~/.clio/projects/<uuid>/ltm.json. Returns success confirmation.
+-  add_solution: error + solution (required), examples (optional). Stores to ~/.clio/projects/<uuid>/ltm.json. Returns success confirmation.
+-  add_pattern: pattern (required), confidence (optional). Stores to ~/.clio/projects/<uuid>/ltm.json. Returns success confirmation.
 
 LTM CORROBORATION (trust tier promotion):
 -  add_corroboration: search_text (required), source_agent (optional), source_session (optional), entry_type (optional). 
@@ -119,7 +119,7 @@ sub get_additional_parameters {
         },
         fact => {
             type => "string",
-            description => "[REQUIRED for add_discovery] Discovery fact to store in LTM. Auto-saves to .clio/ltm.json.",
+            description => "[REQUIRED for add_discovery] Discovery fact to store in LTM. Auto-saves to ~/.clio/projects/<uuid>/ltm.json.",
         },
         confidence => {
             type => "number",
@@ -127,11 +127,11 @@ sub get_additional_parameters {
         },
         error => {
             type => "string",
-            description => "[REQUIRED for add_solution] Error/problem description. Stored in .clio/ltm.json.",
+            description => "[REQUIRED for add_solution] Error/problem description. Stored in ~/.clio/projects/<uuid>/ltm.json.",
         },
         solution => {
             type => "string",
-            description => "[REQUIRED for add_solution] Solution description. Stored in .clio/ltm.json.",
+            description => "[REQUIRED for add_solution] Solution description. Stored in ~/.clio/projects/<uuid>/ltm.json.",
         },
         pattern => {
             type => "string",
@@ -190,7 +190,7 @@ sub store {
 
     my $key = $params->{key};
     my $content = $params->{content};
-    my $memory_dir = strip_path_quotes($params->{memory_dir}) || '.clio/memory';
+    my $memory_dir = strip_path_quotes($params->{memory_dir}) || do { require CLIO::Util::PathResolver; eval { CLIO::Util::PathResolver::get_project_memory_dir() } || '.clio/memory'; };
 
     return $self->error_result("Missing 'key' parameter") unless $key;
     return $self->error_result("Missing 'content' parameter") unless $content;
@@ -257,7 +257,7 @@ sub retrieve {
     my ($self, $params, $context) = @_;
 
     my $key = $params->{key};
-    my $memory_dir = strip_path_quotes($params->{memory_dir}) || '.clio/memory';
+    my $memory_dir = strip_path_quotes($params->{memory_dir}) || do { require CLIO::Util::PathResolver; eval { CLIO::Util::PathResolver::get_project_memory_dir() } || '.clio/memory'; };
 
     return $self->error_result("Missing 'key' parameter") unless $key;
 
@@ -317,7 +317,7 @@ sub search {
     my ($self, $params, $context) = @_;
     
     my $query = $params->{query};
-    my $memory_dir = strip_path_quotes($params->{memory_dir}) || '.clio/memory';
+    my $memory_dir = strip_path_quotes($params->{memory_dir}) || do { require CLIO::Util::PathResolver; eval { CLIO::Util::PathResolver::get_project_memory_dir() } || '.clio/memory'; };
     
     return $self->error_result("Missing required parameter: query") unless $query;
     
@@ -405,7 +405,7 @@ sub search {
 sub list_memories {
     my ($self, $params, $context) = @_;
     
-    my $memory_dir = strip_path_quotes($params->{memory_dir}) || '.clio/memory';
+    my $memory_dir = strip_path_quotes($params->{memory_dir}) || do { require CLIO::Util::PathResolver; eval { CLIO::Util::PathResolver::get_project_memory_dir() } || '.clio/memory'; };
     
     my $result;
     eval {
@@ -442,7 +442,7 @@ sub delete {
     my ($self, $params, $context) = @_;
     
     my $key = $params->{key};
-    my $memory_dir = strip_path_quotes($params->{memory_dir}) || '.clio/memory';
+    my $memory_dir = strip_path_quotes($params->{memory_dir}) || do { require CLIO::Util::PathResolver; eval { CLIO::Util::PathResolver::get_project_memory_dir() } || '.clio/memory'; };
     
     return $self->error_result("Missing required parameter: key") unless $key;
     
@@ -497,7 +497,7 @@ sub recall_sessions {
     
  return $self->error_result("Missing required parameter: query") unless $query;
     
-    my $sessions_dir = '.clio/sessions';
+    my $sessions_dir = do { require CLIO::Util::PathResolver; eval { CLIO::Util::PathResolver::get_sessions_dir() } || '.clio/sessions'; };
     return $self->error_result("Sessions directory not found") unless -d $sessions_dir;
 
     my $result;

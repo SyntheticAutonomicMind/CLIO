@@ -154,8 +154,8 @@ When a child agent starts in a project directory:
 
 1. **Working directory** is set to the project root
 2. **`.clio/instructions.md`** is loaded as project-specific instructions
-3. **`.clio/ltm.json`** is loaded as project-specific long-term memory
-4. **`.clio/memory/`** is available for session memory
+3. **`~/.clio/projects/<uuid>/ltm.json`** is loaded as project-specific long-term memory
+4. **`~/.clio/projects/<uuid>/memory/`** is available for session memory
 5. **`CLIO_PUPPETEER`** environment variable is set, telling the agent it was delegated
 6. The agent's system prompt includes delegation context about who spawned it and why
 

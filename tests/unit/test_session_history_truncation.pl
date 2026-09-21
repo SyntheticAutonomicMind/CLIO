@@ -10,6 +10,7 @@ use lib "$RealBin/../../lib";
 use lib "$RealBin/../lib";
 use Test::More tests => 3;
 use CLIO::Session::Manager;
+use CLIO::Util::PathResolver;
 use File::Temp qw(tempdir);
 use Cwd qw(getcwd);
 
@@ -17,8 +18,7 @@ use Cwd qw(getcwd);
 my $orig_dir = getcwd();
 my $temp_dir = tempdir(CLEANUP => 1);
 chdir($temp_dir) or die "Cannot chdir to $temp_dir: $!";
-mkdir('.clio') or die "Cannot create .clio: $!";
-mkdir('.clio/sessions') or die "Cannot create .clio/sessions: $!";
+CLIO::Util::PathResolver::init(base_dir => $temp_dir);
 
 print "# Test: Session history truncation bug fix\n";
 print "# Creating session with 20 messages...\n";

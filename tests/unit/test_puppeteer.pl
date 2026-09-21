@@ -68,6 +68,9 @@ subtest 'Detects .clio/ child directories' => sub {
     # Create a child project with .clio/
     my $child = File::Spec->catdir($root, 'project-alpha');
     make_path(File::Spec->catdir($child, '.clio'));
+    require CLIO::Util::UUID;
+    my $child_uuid = CLIO::Util::UUID::uuid_v4();
+    write_file(File::Spec->catfile(File::Spec->catdir($child, '.clio'), 'project_uuid'), $child_uuid);
     
     my $pup = CLIO::Protocols::Puppeteer->new(root => $root);
     my $topo = $pup->detect_topology();
@@ -87,6 +90,9 @@ subtest 'Detects LTM and instructions files' => sub {
     my $root = setup_tree();
     my $child = File::Spec->catdir($root, 'project-beta');
     make_path(File::Spec->catdir($child, '.clio'));
+    require CLIO::Util::UUID;
+    my $child_uuid = CLIO::Util::UUID::uuid_v4();
+    write_file(File::Spec->catfile(File::Spec->catdir($child, '.clio'), 'project_uuid'), $child_uuid);
     
     write_file(File::Spec->catfile($child, '.clio', 'ltm.json'), '{"discoveries":[]}');
     write_file(File::Spec->catfile($child, '.clio', 'instructions.md'), '# Beta Instructions');
@@ -119,6 +125,9 @@ EOF
     # Create the submodule dirs with .clio/ in one
     my $sam = File::Spec->catdir($root, 'libs', 'sam-core');
     make_path(File::Spec->catdir($sam, '.clio'));
+    require CLIO::Util::UUID;
+    my $sam_uuid = CLIO::Util::UUID::uuid_v4();
+    write_file(File::Spec->catfile(File::Spec->catdir($sam, '.clio'), 'project_uuid'), $sam_uuid);
     write_file(File::Spec->catfile($sam, '.clio', 'ltm.json'), '{}');
     
     my $clio_plugins = File::Spec->catdir($root, 'libs', 'clio-plugins');
@@ -164,6 +173,9 @@ subtest 'project_summary generates markdown' => sub {
     my $root = setup_tree();
     my $child = File::Spec->catdir($root, 'myproject');
     make_path(File::Spec->catdir($child, '.clio'));
+    require CLIO::Util::UUID;
+    my $child_uuid = CLIO::Util::UUID::uuid_v4();
+    write_file(File::Spec->catfile(File::Spec->catdir($child, '.clio'), 'project_uuid'), $child_uuid);
     write_file(File::Spec->catfile($child, '.clio', 'ltm.json'), '{}');
     write_file(File::Spec->catfile($child, '.clio', 'instructions.md'), '# Instructions');
     
@@ -183,6 +195,9 @@ subtest 'get_project lookup' => sub {
     my $root = setup_tree();
     my $child = File::Spec->catdir($root, 'target-project');
     make_path(File::Spec->catdir($child, '.clio'));
+    require CLIO::Util::UUID;
+    my $child_uuid = CLIO::Util::UUID::uuid_v4();
+    write_file(File::Spec->catfile(File::Spec->catdir($child, '.clio'), 'project_uuid'), $child_uuid);
     
     my $pup = CLIO::Protocols::Puppeteer->new(root => $root);
     
@@ -230,6 +245,9 @@ subtest 'read_project_instructions' => sub {
     my $root = setup_tree();
     my $child = File::Spec->catdir($root, 'documented');
     make_path(File::Spec->catdir($child, '.clio'));
+    require CLIO::Util::UUID;
+    my $child_uuid = CLIO::Util::UUID::uuid_v4();
+    write_file(File::Spec->catfile(File::Spec->catdir($child, '.clio'), 'project_uuid'), $child_uuid);
     write_file(File::Spec->catfile($child, '.clio', 'instructions.md'), "# My Project\n\nBuild with: make");
     
     my $pup = CLIO::Protocols::Puppeteer->new(root => $root);

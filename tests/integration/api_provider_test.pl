@@ -26,9 +26,7 @@ use CLIO::Session::Manager;
 use File::Temp qw(tempdir);
 my $test_dir = tempdir(CLEANUP => 1);
 chdir $test_dir;
-mkdir '.clio';
-mkdir '.clio/sessions';
-
+CLIO::Util::PathResolver::init(base_dir => $test_dir);
 my $session = CLIO::Session::Manager->create(debug => 0);
 ok($session, "Session created");
 ok($session->{session_id}, "Session has ID: " . $session->{session_id});

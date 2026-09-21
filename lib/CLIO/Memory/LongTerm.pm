@@ -55,7 +55,7 @@ Syntax: memory_operations(operation: "add_discovery", fact: "...", confidence: 0
 
 This keeps LTM clean and prevents noise from heuristic auto-capture.
 
-Storage: Per-project in .clio/ltm.json
+Storage: Per-project in ~/.clio/projects/<uuid>/ltm.json (resolved via PathResolver)
 
 =head1 SYNOPSIS
 
@@ -75,8 +75,8 @@ Storage: Per-project in .clio/ltm.json
     my $patterns = $ltm->get_patterns_for_context("lib/CLIO/Core/");
     
     # Save/load
-    $ltm->save(".clio/ltm.json");
-    my $ltm = CLIO::Memory::LongTerm->load(".clio/ltm.json");
+    $ltm->save(CLIO::Util::PathResolver::get_project_ltm_file());
+    my $ltm = CLIO::Memory::LongTerm->load(CLIO::Util::PathResolver::get_project_ltm_file());
 
 =cut
 
@@ -1590,7 +1590,7 @@ sub get_stats {
 
 Save LTM to JSON file
 
-    $ltm->save(".clio/ltm.json");
+    $ltm->save(CLIO::Util::PathResolver::get_project_ltm_file());
 
 =cut
 
@@ -1631,7 +1631,7 @@ sub save {
 
 Load LTM from JSON file
 
-    my $ltm = CLIO::Memory::LongTerm->load(".clio/ltm.json");
+    my $ltm = CLIO::Memory::LongTerm->load(CLIO::Util::PathResolver::get_project_ltm_file());
 
 =cut
 

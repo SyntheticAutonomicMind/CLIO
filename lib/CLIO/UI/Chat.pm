@@ -3220,7 +3220,7 @@ sub _prompt_session_learnings {
     
     # Save LTM - use current working directory for cross-platform compatibility
     eval {
-        my $ltm_file = File::Spec->catfile(Cwd::getcwd(), '.clio', 'ltm.json');
+        my $ltm_file = do { require CLIO::Util::PathResolver; CLIO::Util::PathResolver::get_project_ltm_file() };
         $ltm->save($ltm_file);
     };
     

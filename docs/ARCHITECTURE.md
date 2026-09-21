@@ -172,7 +172,7 @@ Tools can be restricted via `--enable` (allowlist) or `--disable` (blocklist) CL
 | Component | File | Purpose |
 |-----------------------------------------------------------------------------------------------------------------------------------------------------------|------------------------------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------|
 | Short-Term | `ShortTerm.pm` | Session context (sliding window) |
-| Long-Term | `LongTerm.pm` | Project-level knowledge (.clio/ltm.json) |
+| Long-Term | `LongTerm.pm` | Project-level knowledge (~/.clio/projects/<uuid>/ltm.json) |
 | YaRN | `YaRN.pm` | Conversation archival and compression |
 | Token Estimator | `TokenEstimator.pm` | Token count estimation with learned ratio |
 
@@ -193,7 +193,7 @@ Tools can be restricted via `--enable` (allowlist) or `--disable` (blocklist) CL
 
 **How it works:**
 - Profile stored at `~/.clio/profile.md` (global, never in git)
-- Analyzer scans `.clio/sessions/` across sibling projects
+- Analyzer scans `~/.clio/projects/<uuid>/sessions/` across sibling projects
 - Manager injects profile into system prompt via PromptBuilder
 - `/profile build` triggers analysis + AI-assisted collaborative refinement
 

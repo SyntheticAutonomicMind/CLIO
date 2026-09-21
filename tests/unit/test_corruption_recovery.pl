@@ -43,13 +43,13 @@ use Cwd;
 # Pre-load modules before chdir
 use CLIO::Session::Manager;
 use CLIO::Session::State;
+use CLIO::Util::PathResolver;
 use CLIO::Core::ConversationManager;
 
 # Setup
 my $test_dir = tempdir(CLEANUP => 1);
 chdir $test_dir or die "Cannot chdir to $test_dir: $!";
-mkdir '.clio' or die "Cannot mkdir .clio: $!";
-mkdir '.clio/sessions' or die "Cannot mkdir .clio/sessions: $!";
+CLIO::Util::PathResolver::init(base_dir => $test_dir);
 
 # =============================================================================
 # Helper: write a corrupted session JSON to disk
@@ -62,7 +62,7 @@ sub write_corrupted_session {
         yarn    => {},
         created_at => time(),
     };
-    my $path = ".clio/sessions/$session_id.json";
+    my $path = CLIO::Util::PathResolver::get_session_file(${session_id});
     open my $fh, '>:raw', $path or die "Cannot write $path: $!";
     print $fh encode_json($data);
     close $fh;
@@ -145,7 +145,7 @@ sub write_corrupted_session {
     ok($state1, 'first load succeeded');
 
     # Verify file on disk has the marker (not raw hash ref)
-    open my $fh, '<:raw', ".clio/sessions/$sid.json" or die;
+    open my $fh, '<:raw', CLIO::Util::PathResolver::get_session_file(${sid}) or die;
     my $disk = do { local $/; <$fh> };
     close $fh;
     like($disk, qr/\[CORRUPTED INPUT: HASH type='__TIMEOUT__' - migrated by session loader\]/,

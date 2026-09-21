@@ -31,7 +31,7 @@ Logs ALL tool operations with complete transparency:
 - Execution time, success/failure
 - Searchable newline-delimited JSON format
 
-Logs are stored in .clio/logs/ in the working directory (project-specific),
+Logs are stored in ~/.clio/projects/<uuid>/logs/ (project-specific),
 not in ~/.clio/ (which is for user configuration).
 
 This enables users to review what tools actually did via the /log command.
@@ -71,7 +71,10 @@ sub new {
     my $self = {
         session_id => $args{session_id} || 'unknown',
         debug => $args{debug} || 0,
-        log_dir => $args{log_dir} || File::Spec->catdir('.clio', 'logs'),
+        log_dir => $args{log_dir} || do {
+            require CLIO::Util::PathResolver;
+            eval { CLIO::Util::PathResolver::get_project_logs_dir() } || File::Spec->catdir('.clio', 'logs');
+        },
         max_log_days => $args{max_log_days} || 30,
     };
     
