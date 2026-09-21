@@ -31,8 +31,7 @@ my $test_dir = tempdir(CLEANUP => 1);
 chdir $test_dir or die "Cannot chdir to $test_dir: $!";
 
 # Create minimal session directory structure
-mkdir '.clio' or die "Cannot mkdir .clio: $!";
-mkdir '.clio/sessions' or die "Cannot mkdir .clio/sessions: $!";
+CLIO::Util::PathResolver::init(base_dir => $test_dir);
 
 # Test modules loaded successfully
 ok(1, 'Session Manager module loads');

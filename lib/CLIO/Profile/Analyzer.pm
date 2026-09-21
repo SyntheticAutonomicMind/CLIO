@@ -236,13 +236,14 @@ sub _scan_for_sessions {
     return if $depth > 4;  # Max recursion depth
     return if $seen_dirs->{$dir}++;
 
-    # Check for .clio/sessions/ in this directory
-    my $sessions_dir = File::Spec->catdir($dir, '.clio', 'sessions');
-    if (-d $sessions_dir) {
-        if (opendir(my $dh, $sessions_dir)) {
+    # Check for sessions/ directory directly in this directory (new location).
+    # This matches ~/.clio/projects/<uuid>/sessions/ layout.
+    my $new_sessions_dir = File::Spec->catdir($dir, 'sessions');
+    if (-d $new_sessions_dir) {
+        if (opendir(my $dh, $new_sessions_dir)) {
             while (my $entry = readdir($dh)) {
                 next unless $entry =~ /\.json$/ && $entry ne 'todos.json';
-                my $path = File::Spec->catfile($sessions_dir, $entry);
+                my $path = File::Spec->catfile($new_sessions_dir, $entry);
                 next if $seen->{$path}++;
                 push @$files, $path;
             }
@@ -250,11 +251,43 @@ sub _scan_for_sessions {
         }
     }
 
-    # For home directory, don't recurse (we only want ~/.clio/sessions/)
+    # Also check for .clio/sessions/ (legacy location - projects that
+    # haven't been migrated yet).
+    my $old_sessions_dir = File::Spec->catdir($dir, '.clio', 'sessions');
+    if (-d $old_sessions_dir && $old_sessions_dir ne $new_sessions_dir) {
+        if (opendir(my $dh, $old_sessions_dir)) {
+            while (my $entry = readdir($dh)) {
+                next unless $entry =~ /\.json$/ && $entry ne 'todos.json';
+                my $path = File::Spec->catfile($old_sessions_dir, $entry);
+                next if $seen->{$path}++;
+                push @$files, $path;
+            }
+            closedir($dh);
+        }
+    }
+
+    # For home directory, don't recurse (we only want ~/.clio/projects/ and ~/.clio/sessions/)
     my $home = $ENV{HOME} || '';
     return if $dir eq $home;
 
-    # Recurse into subdirectories that have their own .clio/ directories
+    # For the projects/ directory (new layout), recurse into all subdirectories
+    # (each UUID directory contains sessions/)
+    my $config_base = File::Spec->catdir($home, '.clio');
+    my $projects_dir = File::Spec->catdir($config_base, 'projects');
+    if ($dir eq $projects_dir) {
+        if (opendir(my $dh, $dir)) {
+            while (my $entry = readdir($dh)) {
+                next if $entry =~ /^\./;
+                my $subdir = File::Spec->catdir($dir, $entry);
+                next unless -d $subdir;
+                $self->_scan_for_sessions($subdir, $files, $seen, $seen_dirs, $depth + 1);
+            }
+            closedir($dh);
+        }
+        return;
+    }
+
+    # Recurse into subdirectories that have their own .clio/ directories (legacy)
     if (opendir(my $dh, $dir)) {
         my @entries = readdir($dh);
         closedir($dh);
@@ -265,8 +298,9 @@ sub _scan_for_sessions {
             next if $entry =~ /^(node_modules|__pycache__|build|dist|vendor|target|venv|\.build|Pods|DerivedData|python_env|lib|src)$/;
             my $subdir = File::Spec->catdir($dir, $entry);
             next unless -d $subdir;
-            # Only recurse if this subdir has .clio/
-            next unless -d File::Spec->catdir($subdir, '.clio');
+            # Only recurse if this subdir has .clio/ or sessions/
+            next unless -d File::Spec->catdir($subdir, '.clio')
+                || -d File::Spec->catdir($subdir, 'sessions');
             $self->_scan_for_sessions($subdir, $files, $seen, $seen_dirs, $depth + 1);
         }
     }
@@ -279,11 +313,19 @@ sub _scan_for_sessions {
 sub _default_search_paths {
     my ($self) = @_;
 
-    my @paths;
+    require CLIO::Util::PathResolver;
+    # Primary: the projects/ directory under config base.
+    # All projects' sessions live here as <uuid>/sessions/.
+    my $config_base = CLIO::Util::PathResolver::_get_config_base_dir();
+    my $projects_dir = File::Spec->catdir($config_base, 'projects');
 
-    # Current directory (project level)
+    my @paths = ($projects_dir);
+
+    # Also scan the current working directory for legacy .clio/sessions/
+    # (projects that haven't been migrated yet still have runtime data
+    # in their .clio/ directory).
     my $cwd = getcwd();
-    push @paths, $cwd;
+    push @paths, $cwd unless grep { $_ eq $cwd } @paths;
 
     # If we're in a repo collection, scan siblings for .clio/sessions/
     if ($cwd =~ m{^(.+)/[^/]+$}) {
@@ -301,7 +343,7 @@ sub _default_search_paths {
         }
     }
 
-    # Home .clio/sessions/ directory (global sessions only - don't scan home recursively)
+    # Home .clio/sessions/ directory (legacy global sessions)
     my $home = $ENV{HOME} || '';
     my $home_sessions = File::Spec->catdir($home, '.clio', 'sessions');
     if (-d $home_sessions && !grep { $_ eq $home } @paths) {
@@ -343,13 +385,17 @@ sub _analyze_session_file {
 
     $results->{total_sessions}++;
 
-    # Extract project name from path
-    my $project = $file;
-    if ($file =~ m{/([^/]+)/\.clio/sessions/}) {
-        $project = $1;
-    } else {
-        $project = '(global)';
+    # Extract project name from session's working_directory field.
+    # With centralized storage (~/.clio/projects/<uuid>/sessions/),
+    # the file path contains a UUID, not a project name. We use the
+    # session's stored working_directory instead.
+    my $project;
+    if ($data->{working_directory}) {
+        $project = $data->{working_directory};
+        $project =~ s{/+\z}{};  # strip trailing slashes
+        $project =~ s{.*/}{};   # keep basename only
     }
+    $project ||= '(unknown)';
 
     $results->{projects}{$project}{sessions}++;
 

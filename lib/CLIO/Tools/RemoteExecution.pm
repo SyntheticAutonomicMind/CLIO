@@ -1502,7 +1502,7 @@ sub _copy_local_clio_to_remote {
     # it can delete files on the remote that don't exist locally.
     my $rsync_cmd = "rsync -az -e " . $self->_shell_quote($ssh_opts);
     $rsync_cmd .= " --exclude='.git'";
-    $rsync_cmd .= " --exclude='.clio/sessions'";
+    $rsync_cmd .= " --exclude='.clio/sessions'";  # Old paths (kept for transition)
     $rsync_cmd .= " --exclude='ai-assisted'";
     $rsync_cmd .= " --exclude='scratch'";
     $rsync_cmd .= " --exclude='*.log'";

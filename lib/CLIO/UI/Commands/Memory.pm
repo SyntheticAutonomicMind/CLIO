@@ -395,7 +395,7 @@ sub _prune_patterns {
     } else {
         # Save the pruned LTM
         eval {
-            my $ltm_file = $ltm->{_file_path} || '.clio/ltm.json';
+            my $ltm_file = $ltm->{_file_path} || do { require CLIO::Util::PathResolver; CLIO::Util::PathResolver::get_project_ltm_file() };
             $ltm->save($ltm_file);
         };
         
@@ -447,7 +447,7 @@ sub _corroborate_entry {
         
         # Save LTM
         eval {
-            my $ltm_file = $ltm->{_file_path} || '.clio/ltm.json';
+            my $ltm_file = $ltm->{_file_path} || do { require CLIO::Util::PathResolver; CLIO::Util::PathResolver::get_project_ltm_file() };
             $ltm->save($ltm_file);
         };
         $self->display_warning_message("Corroborated but failed to save: $@") if $@;
@@ -477,7 +477,7 @@ sub _promote_entry {
         
         # Save LTM
         eval {
-            my $ltm_file = $ltm->{_file_path} || '.clio/ltm.json';
+            my $ltm_file = $ltm->{_file_path} || do { require CLIO::Util::PathResolver; CLIO::Util::PathResolver::get_project_ltm_file() };
             $ltm->save($ltm_file);
         };
         $self->display_warning_message("Promoted but failed to save: $@") if $@;

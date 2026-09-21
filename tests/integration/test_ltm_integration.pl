@@ -9,6 +9,7 @@ use lib "$RealBin/../../lib";
 use lib "$RealBin/../lib";
 
 use CLIO::Memory::LongTerm;
+use CLIO::Util::PathResolver;
 use CLIO::Core::ContextBuilder;
 use CLIO::Core::MessageHistory;
 use CLIO::Util::JSON qw(encode_json decode_json);
@@ -137,7 +138,7 @@ ok_test($rendered2 =~ /long-term memory/, "tool name replaced with neutral term"
 
 # Cleanup
 ok_test(1, "cleanup marker");
-unlink "$RealBin/.clio/ltm.json" if -e "$RealBin/.clio/ltm.json";
+unlink CLIO::Util::PathResolver::get_project_ltm_file() if -e CLIO::Util::PathResolver::get_project_ltm_file();
 
 print "\n" . "=" x 60 . "\n";
 print "Results: $PASS/$PASS+$FAIL passed";

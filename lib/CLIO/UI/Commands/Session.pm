@@ -82,7 +82,7 @@ sub auto_prune_sessions {
     
     my $days = $config->get('session_prune_days') || 30;
     
-    my $sessions_dir = '.clio/sessions';
+    my $sessions_dir = do { CLIO::Util::PathResolver::get_sessions_dir() };
     return 0 unless -d $sessions_dir;
     
     opendir(my $dh, $sessions_dir) or return 0;
@@ -301,7 +301,7 @@ List all available sessions
 sub _list_sessions {
     my ($self) = @_;
     
-    my $sessions_dir = '.clio/sessions';
+    my $sessions_dir = do { CLIO::Util::PathResolver::get_sessions_dir() };
     unless (-d $sessions_dir) {
         $self->display_error_message("Sessions directory not found");
         return;
@@ -617,7 +617,7 @@ sub _trim_sessions {
         return;
     }
     
-    my $sessions_dir = '.clio/sessions';
+    my $sessions_dir = do { CLIO::Util::PathResolver::get_sessions_dir() };
     unless (-d $sessions_dir) {
         $self->display_error_message("Sessions directory not found");
         return;
@@ -813,7 +813,7 @@ sub handle_switch_command {
     require CLIO::Session::Manager;
     
     # List available sessions
-    my $sessions_dir = '.clio/sessions';
+    my $sessions_dir = do { CLIO::Util::PathResolver::get_sessions_dir() };
     unless (-d $sessions_dir) {
         $self->display_error_message("Sessions directory not found");
         return;

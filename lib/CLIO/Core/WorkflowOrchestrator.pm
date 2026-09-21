@@ -2923,7 +2923,7 @@ sub _checkpoint_session_progress {
     my ($session, $tool_calls_made, $iteration, $messages) = @_;
 
     eval {
-        my $memory_dir = '.clio/memory';
+        my $memory_dir = do { require CLIO::Util::PathResolver; eval { CLIO::Util::PathResolver::get_project_memory_dir() } || '.clio/memory'; };
         unless (-d $memory_dir) {
             require File::Path;
             File::Path::make_path($memory_dir);

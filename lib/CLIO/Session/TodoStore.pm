@@ -66,7 +66,7 @@ sub new {
     my $self = {
         session_id => $opts{session_id},
         debug => $opts{debug} || 0,
-        sessions_dir => $opts{sessions_dir} || '.clio/sessions',
+        sessions_dir => $opts{sessions_dir} || do { require CLIO::Util::PathResolver; CLIO::Util::PathResolver::get_sessions_dir(); },
         # Invalidates any downstream caches (e.g. PromptBuilder's
         # user_context TTL cache) when a todo mutation lands. The model
         # must see its new todo state on the very next turn, not 60s

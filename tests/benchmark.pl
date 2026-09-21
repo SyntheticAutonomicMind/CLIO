@@ -98,9 +98,7 @@ print "-" x 40 . "\n";
     
     my $test_dir = tempdir(CLEANUP => 1);
     chdir $test_dir;
-    mkdir '.clio';
-    mkdir '.clio/sessions';
-    
+    CLIO::Util::PathResolver::init(base_dir => $test_dir);
     my $session = CLIO::Session::Manager->create(working_directory => $test_dir, debug => 0);
     my $registry = CLIO::Tools::Registry->new(debug => 0);
     $registry->register_tool(CLIO::Tools::FileOperations->new());
@@ -195,9 +193,7 @@ print "-" x 40 . "\n";
     
     my $test_dir = tempdir(CLEANUP => 1);
     chdir $test_dir;
-    mkdir '.clio';
-    mkdir '.clio/sessions';
-    
+    CLIO::Util::PathResolver::init(base_dir => $test_dir);
     # Create session with some history
     my $session = CLIO::Session::Manager->create(working_directory => $test_dir, debug => 0);
     my $state = $session->state();

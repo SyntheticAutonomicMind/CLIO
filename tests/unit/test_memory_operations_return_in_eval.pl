@@ -122,15 +122,21 @@ sub make_mock_session {
     like($result->{error}, qr/Memory not found/, 'delete error mentions Memory not found');
 }
 
-# ─── 6. recall_sessions: nonexistent sessions dir ─────────────────────
-# The recall_sessions method hardcodes '.clio/sessions' as the sessions
-# directory. We run this test from a temp dir where that doesn't exist,
-# to verify the method returns a proper error_result (not undef) when the
-# directory is missing -- the exact bug this test suite was written for.
+# ─── 6. recall_sessions: empty sessions dir ─────────────────────
+# With the centralized project data directory (~/.clio/projects/<uuid>/sessions/),
+# get_sessions_dir() always creates the directory. So an empty sessions
+# dir is the normal "no sessions yet" case. We verify recall_sessions
+# handles this gracefully (returns empty results, not a crash).
 {
     my $tmpdir = File::Temp->newdir();
     my $orig_cwd = Cwd::getcwd();
     chdir $tmpdir->dirname or die "Cannot chdir to $tmpdir: $!";
+
+    # Isolate config so project data goes in the temp dir
+    local $ENV{CLIO_CONFIG_DIR} = $tmpdir->dirname;
+    # Clear cached PathResolver state for test isolation
+    local $CLIO::Util::PathResolver::PROJECT_DATA_DIR = undef;
+    local $CLIO::Util::PathResolver::PROJECT_UUID = undef;
 
     my $params = {
         operation => "recall_sessions",
@@ -139,9 +145,8 @@ sub make_mock_session {
     my $context = {};
 
     my $result = $tool->execute($params, $context);
-    ok(ref($result) eq 'HASH', 'recall_sessions returns HASH when sessions dir missing');
-    ok($result->{success} == 0, 'recall_sessions returns error result');
-    like($result->{error}, qr/Sessions directory not found/, 'recall_sessions error mentions directory not found');
+    ok(ref($result) eq 'HASH', 'recall_sessions returns HASH with empty sessions dir');
+    ok(defined $result, 'recall_sessions does not crash on empty sessions dir');
 
     chdir $orig_cwd or die "Cannot chdir back to $orig_cwd: $!";
 }

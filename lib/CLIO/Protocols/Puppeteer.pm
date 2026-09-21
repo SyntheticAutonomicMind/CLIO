@@ -64,6 +64,11 @@ Scans the current project for git submodules and directories containing
 sub detect_topology {
     my ($self) = @_;
     
+    # Lazily require PathResolver to resolve project data dirs for LTM checks
+    require CLIO::Util::PathResolver;
+    
+    # Return cached result if already scanned
+    
     my $root = $self->{root};
     log_debug('Puppeteer', "Scanning topology at: $root");
     
@@ -86,7 +91,7 @@ sub detect_topology {
                 source     => 'submodule',
                 url        => $sm->{url},
                 has_clio   => (-d File::Spec->catdir($path, '.clio') ? 1 : 0),
-                has_ltm    => (-f File::Spec->catfile($path, '.clio', 'ltm.json') ? 1 : 0),
+                has_ltm    => (-f File::Spec->catfile($path, '.clio', 'ltm.json') || do { my $dd = CLIO::Util::PathResolver::get_project_data_dir_for(abs_path($path)); $dd && -f File::Spec->catfile($dd, 'ltm.json') } ? 1 : 0),
                 has_instructions => (-f File::Spec->catfile($path, '.clio', 'instructions.md') ? 1 : 0),
             };
         }
@@ -107,7 +112,7 @@ sub detect_topology {
                     abs_path   => abs_path($path),
                     source     => 'directory',
                     has_clio   => 1,
-                    has_ltm    => (-f File::Spec->catfile($clio_dir, 'ltm.json') ? 1 : 0),
+                    has_ltm    => (-f File::Spec->catfile($clio_dir, 'ltm.json') || do { my $dd = CLIO::Util::PathResolver::get_project_data_dir_for(abs_path($path)); $dd && -f File::Spec->catfile($dd, 'ltm.json') } ? 1 : 0),
                     has_instructions => (-f File::Spec->catfile($clio_dir, 'instructions.md') ? 1 : 0),
                 };
             }
@@ -228,8 +233,10 @@ sub read_project_ltm {
     my $project = $self->get_project($name);
     return undef unless $project && $project->{has_ltm};
     
-    my $path = File::Spec->catfile($project->{abs_path}, '.clio', 'ltm.json');
-    return undef unless -f $path;
+    # Try new location (via project UUID) first, fall back to old .clio/ltm.json
+    my $data_dir = CLIO::Util::PathResolver::get_project_data_dir_for($project->{abs_path});
+    my $path = $data_dir ? File::Spec->catfile($data_dir, 'ltm.json') : undef;
+    $path = File::Spec->catfile($project->{abs_path}, '.clio', 'ltm.json') unless $path && -f $path;
     
     open my $fh, '<:encoding(UTF-8)', $path or return undef;
     my $content = do { local $/; <$fh> };

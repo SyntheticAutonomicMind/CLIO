@@ -14,7 +14,10 @@ use Cwd qw(abs_path);
 use File::Path qw(make_path);
 use Exporter 'import';
 
-our @EXPORT_OK = qw(expand_tilde shell_quote strip_path_quotes find_ltm_path find_clio_dir);
+our @EXPORT_OK = qw(expand_tilde shell_quote strip_path_quotes find_ltm_path
+    find_clio_dir get_project_data_dir get_project_data_dir_for
+    get_project_sessions_dir get_project_session_file get_project_ltm_file
+    get_project_memory_dir get_project_vault_dir get_project_logs_dir);
 
 =head1 NAME
 
@@ -39,6 +42,10 @@ and installed (in ~/.clio or system-wide) modes.
 # Global base directory (initialized once)
 our $BASE_DIR;
 our $CONFIG_DIR;
+
+# Cached project data directory (resolved once via UUID from .clio/project_uuid)
+our $PROJECT_DATA_DIR;
+our $PROJECT_UUID;
 
 =head2 init
 
@@ -132,26 +139,425 @@ sub get_config_dir {
 
 Get the sessions directory path. Creates it if it doesn't exist.
 
-**Important:** Sessions are PROJECT-SCOPED, not global.  
-Uses current working directory's .clio/sessions/, not ~/.clio/sessions/
+Sessions are stored under the project data directory (~/.clio/projects/<uuid>/sessions/)
+so they don't pollute the project tree. The project UUID is resolved from
+.clio/project_uuid in the project root (generated on first launch).
 
-Returns: Absolute path to sessions directory (in current project)
+Returns: Absolute path to sessions directory
 
 =cut
 
 sub get_sessions_dir {
-    # Use current working directory for project-local sessions
-    use Cwd qw(getcwd);
-    my $project_dir = getcwd();
-    
-    my $sessions_dir = File::Spec->catdir($project_dir, '.clio', 'sessions');
-    
-    # Create if doesn't exist with secure permissions (0700 = owner only)
-    if (!-d $sessions_dir) {
-        make_path($sessions_dir, { mode => 0700 }) or croak "Cannot create sessions directory: $!";
-    }
-    
+    my $sessions_dir = get_project_sessions_dir();
     return $sessions_dir;
+}
+
+=head2 get_project_data_dir
+
+Get the project data directory. All CLIO runtime data (sessions, LTM,
+memory, vault, logs) lives here, keyed by a project UUID stored in
+C<.clio/project_uuid>. This keeps runtime data out of the project tree
+so it doesn't pollute grep/ripgrep searches.
+
+On first launch, a UUID v4 is generated and written to
+C<.clio/project_uuid> in the project root. Subsequent launches read
+the same UUID, so data persists even if the project directory moves
+(the C<project_uuid> file moves with the project).
+
+A one-time migration runs on first launch: if old runtime data is found
+in the project's C<.clio/> directory (sessions/, ltm.json, memory/, vault/,
+logs/), it is moved to the new project data directory.
+
+Returns: Absolute path to project data directory (e.g. ~/.clio/projects/<uuid>/)
+
+=cut
+
+sub get_project_data_dir {
+    return $PROJECT_DATA_DIR if defined $PROJECT_DATA_DIR;
+
+    init() unless defined $CONFIG_DIR;
+
+    my $project_root = find_clio_dir();
+    my $clio_dir = File::Spec->catdir($project_root, '.clio');
+
+    # Ensure .clio/ exists at the project root (create on first launch)
+    unless (-d $clio_dir) {
+        make_path($clio_dir, { mode => 0700 });
+    }
+
+    # Read or generate project UUID
+    my $uuid_file = File::Spec->catfile($clio_dir, 'project_uuid');
+    my $uuid;
+
+    if (-f $uuid_file) {
+        eval {
+            open my $fh, '<', $uuid_file or die "Cannot read: $!";
+            $uuid = <$fh>;
+            close $fh;
+            chomp $uuid;
+        };
+        # Validate UUID format
+        if ($uuid && $uuid !~ /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/) {
+            log_debug('PathResolver', "Stale/invalid project_uuid, will regenerate");
+            $uuid = undef;
+        }
+    }
+
+    my $config_base = _get_config_base_dir();
+    $PROJECT_DATA_DIR = File::Spec->catdir($config_base, 'projects');
+
+    unless (defined $uuid && length $uuid) {
+        # Generate new UUID v4
+        require CLIO::Util::UUID;
+        $uuid = CLIO::Util::UUID::uuid_v4();
+
+        # Write UUID file
+        eval {
+            open my $fh, '>:utf8', $uuid_file or die "Cannot write: $!";
+            print $fh $uuid;
+            close $fh;
+            chmod 0600, $uuid_file;
+        };
+        if ($@) {
+            log_debug('PathResolver', "Failed to write project_uuid: $@");
+        }
+
+        log_debug('PathResolver', "Generated new project UUID: $uuid for $clio_dir");
+
+        # One-time migration: move old runtime data from .clio/ to project data dir
+        $PROJECT_UUID = $uuid;
+        $PROJECT_DATA_DIR = File::Spec->catdir($config_base, 'projects', $uuid);
+        make_path($PROJECT_DATA_DIR, { mode => 0700 }) unless -d $PROJECT_DATA_DIR;
+        _migrate_old_project_data($clio_dir, $PROJECT_DATA_DIR);
+        return $PROJECT_DATA_DIR;
+    }
+
+    $PROJECT_UUID = $uuid;
+    $PROJECT_DATA_DIR = File::Spec->catdir($config_base, 'projects', $uuid);
+    make_path($PROJECT_DATA_DIR, { mode => 0700 }) unless -d $PROJECT_DATA_DIR;
+
+    return $PROJECT_DATA_DIR;
+}
+
+=head2 get_project_data_dir_for($project_root)
+
+Resolve the project data directory for an arbitrary project root
+(not just the current working directory). Used by cross-project
+discovery tools (e.g. Puppeteer) that scan sibling projects.
+
+Arguments:
+- $project_root: Absolute path to the project's .clio/ parent directory
+
+Returns: Project data directory path, or undef if the project has no UUID
+
+=cut
+
+sub get_project_data_dir_for {
+    my ($project_root) = @_;
+
+    return undef unless $project_root && -d $project_root;
+
+    init() unless defined $CONFIG_DIR;
+
+    my $uuid_file = File::Spec->catfile($project_root, '.clio', 'project_uuid');
+    return undef unless -f $uuid_file;
+
+    my $uuid;
+    eval {
+        open my $fh, '<', $uuid_file or die "Cannot read: $!";
+        $uuid = <$fh>;
+        close $fh;
+        chomp $uuid;
+    };
+    return undef unless $uuid && $uuid =~ /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+
+    my $config_base = _get_config_base_dir();
+    return File::Spec->catdir($config_base, 'projects', $uuid);
+}
+
+=head2 _get_config_base_dir (Internal)
+
+Resolve the base directory for ~/.clio (respects --config override and
+CLIO_CONFIG_DIR env var for test isolation).
+
+=cut
+
+sub _get_config_base_dir {
+    # Priority 1: --config override (sets CONFIG_DIR via init)
+    if (defined $CONFIG_DIR) {
+        return $CONFIG_DIR;
+    }
+    # Priority 2: CLIO_CONFIG_DIR env var (set by test harness)
+    if (defined $ENV{CLIO_CONFIG_DIR} && -d $ENV{CLIO_CONFIG_DIR}) {
+        return $ENV{CLIO_CONFIG_DIR};
+    }
+    # Priority 3: Default ~/.clio
+    my $home = $ENV{HOME} || $ENV{USERPROFILE} || '.';
+    return File::Spec->catdir($home, '.clio');
+}
+
+=head2 _migrate_old_project_data (Internal)
+
+One-time migration: move runtime data from the old project-local .clio/
+layout (<project>/.clio/sessions/, <project>/.clio/ltm.json, etc.) to
+the new centralized project data directory (~/.clio/projects/<uuid>/).
+
+This only runs once per project, when a new UUID is first generated.
+After migration, only user-authored files remain in .clio/ (instructions.md,
+skills/, skills.json, devices.json, project_uuid).
+
+=cut
+
+sub _migrate_old_project_data {
+    my ($clio_dir, $data_dir) = @_;
+
+    my $changed = 0;
+
+    # Helper: move a directory tree
+    my $move_dir = sub {
+        my ($src, $dst) = @_;
+        return 0 unless -d $src;
+        return 0 if -d $dst && _dir_has_content($dst);
+        my $result = make_path($dst, { mode => 0700 });
+        unless ($result) {
+            log_debug('PathResolver', "Migration: failed to create $dst: $!");
+            return 0;
+        }
+        eval {
+            my $copied = _copy_tree($src, $dst);
+            # Even if the dir was empty (0 files copied), we still want
+            # to remove the source to avoid leaving stale empty dirs
+            # in the project tree.
+            require File::Path;
+            File::Path::remove_tree($src);
+            if ($copied) {
+                log_debug('PathResolver', "Migration: moved $src -> $dst ($copied files)");
+                return 1;
+            } else {
+                log_debug('PathResolver', "Migration: moved empty $src -> $dst");
+                return 1;
+            }
+        };
+        if ($@) {
+            log_debug('PathResolver', "Migration: error moving $src: $@");
+            return 0;
+        }
+        return 0;
+    };
+
+    my $move_file = sub {
+        my ($src, $dst) = @_;
+        return 0 unless -f $src;
+        return 0 if -f $dst;
+        require File::Copy;
+        if (File::Copy::copy($src, $dst)) {
+            chmod 0600, $dst;
+            unlink $src;
+            log_debug('PathResolver', "Migration: moved $src -> $dst");
+            return 1;
+        } else {
+            log_debug('PathResolver', "Migration: copy failed for $src: $!");
+            return 0;
+        }
+    };
+
+    # Migrate sessions/
+    my $old_sessions = File::Spec->catdir($clio_dir, 'sessions');
+    my $new_sessions = File::Spec->catdir($data_dir, 'sessions');
+    if (-d $old_sessions) {
+        if ($move_dir->($old_sessions, $new_sessions)) { $changed++; }
+    }
+
+    # Migrate ltm.json
+    my $old_ltm = File::Spec->catfile($clio_dir, 'ltm.json');
+    my $new_ltm = File::Spec->catfile($data_dir, 'ltm.json');
+    if (-f $old_ltm) {
+        if ($move_file->($old_ltm, $new_ltm)) { $changed++; }
+    }
+
+    # Migrate memory/
+    my $old_memory = File::Spec->catdir($clio_dir, 'memory');
+    my $new_memory = File::Spec->catdir($data_dir, 'memory');
+    if (-d $old_memory) {
+        if ($move_dir->($old_memory, $new_memory)) { $changed++; }
+    }
+
+    # Migrate vault/
+    my $old_vault = File::Spec->catdir($clio_dir, 'vault');
+    my $new_vault = File::Spec->catdir($data_dir, 'vault');
+    if (-d $old_vault) {
+        if ($move_dir->($old_vault, $new_vault)) { $changed++; }
+    }
+
+    # Migrate logs/
+    my $old_logs = File::Spec->catdir($clio_dir, 'logs');
+    my $new_logs = File::Spec->catdir($data_dir, 'logs');
+    if (-d $old_logs) {
+        if ($move_dir->($old_logs, $new_logs)) { $changed++; }
+    }
+
+    if ($changed) {
+        log_debug('PathResolver', "Migration complete: moved $changed data component(s) to $data_dir");
+    }
+}
+
+=head2 _dir_has_content (Internal)
+
+Check if a directory has any non-hidden content.
+
+=cut
+
+sub _dir_has_content {
+    my ($dir) = @_;
+    return 0 unless -d $dir;
+    if (opendir(my $dh, $dir)) {
+        while (my $entry = readdir($dh)) {
+            next if $entry eq '.' || $entry eq '..';
+            return 1;
+        }
+        closedir($dh);
+    }
+    return 0;
+}
+
+=head2 _copy_tree (Internal)
+
+Copy a directory tree recursively. Minimal implementation using
+core Perl only (no File::Copy::Recursive dependency).
+
+Arguments:
+- $src: Source directory
+- $dst: Destination directory
+
+Returns: Number of files copied, 0 on failure
+
+=cut
+
+sub _copy_tree {
+    my ($src, $dst) = @_;
+
+    unless (-d $src) {
+        return 0;
+    }
+
+    unless (-d $dst) {
+        make_path($dst, { mode => 0700 }) or return 0;
+    }
+
+    my $count = 0;
+    if (opendir(my $dh, $src)) {
+        while (my $entry = readdir($dh)) {
+            next if $entry eq '.' || $entry eq '..';
+            my $src_path = File::Spec->catfile($src, $entry);
+            my $dst_path = File::Spec->catfile($dst, $entry);
+            if (-d $src_path) {
+                $count += _copy_tree($src_path, $dst_path);
+            } elsif (-f $src_path) {
+                require File::Copy;
+                if (File::Copy::copy($src_path, $dst_path)) {
+                    chmod((stat($src_path))[2] & 0777, $dst_path);
+                    $count++;
+                }
+            }
+        }
+        closedir $dh;
+    }
+
+    return $count;
+}
+
+=head2 get_project_sessions_dir
+
+Get the project sessions directory. Sessions are stored under
+~/.clio/projects/<uuid>/sessions/ to keep them out of the project tree.
+
+Returns: Absolute path to project sessions directory
+
+=cut
+
+sub get_project_sessions_dir {
+    my $data_dir = get_project_data_dir();
+    my $sessions_dir = File::Spec->catdir($data_dir, 'sessions');
+    make_path($sessions_dir, { mode => 0700 }) unless -d $sessions_dir;
+    return $sessions_dir;
+}
+
+=head2 get_project_session_file
+
+Get the full path to a session file in the project data directory.
+
+Arguments:
+- $session_id: Session identifier
+
+Returns: Absolute path to session file
+
+=cut
+
+sub get_project_session_file {
+    my ($session_id) = @_;
+
+    croak "Session ID required" unless $session_id;
+
+    my $sessions_dir = get_project_sessions_dir();
+    return File::Spec->catfile($sessions_dir, "$session_id.json");
+}
+
+=head2 get_project_ltm_file
+
+Get the project-level long-term memory file path.
+
+Returns: Absolute path to project LTM file
+
+=cut
+
+sub get_project_ltm_file {
+    my $data_dir = get_project_data_dir();
+    return File::Spec->catfile($data_dir, 'ltm.json');
+}
+
+=head2 get_project_memory_dir
+
+Get the project session-memory directory for key-value storage.
+
+Returns: Absolute path to project memory directory
+
+=cut
+
+sub get_project_memory_dir {
+    my $data_dir = get_project_data_dir();
+    my $memory_dir = File::Spec->catdir($data_dir, 'memory');
+    make_path($memory_dir, { mode => 0700 }) unless -d $memory_dir;
+    return $memory_dir;
+}
+
+=head2 get_project_vault_dir
+
+Get the project FileVault directory for file backup/undo.
+
+Returns: Absolute path to project vault directory
+
+=cut
+
+sub get_project_vault_dir {
+    my $data_dir = get_project_data_dir();
+    my $vault_dir = File::Spec->catdir($data_dir, 'vault');
+    make_path($vault_dir, { mode => 0700 }) unless -d $vault_dir;
+    return $vault_dir;
+}
+
+=head2 get_project_logs_dir
+
+Get the project logs directory for tool logs and process stats.
+
+Returns: Absolute path to project logs directory
+
+=cut
+
+sub get_project_logs_dir {
+    my $data_dir = get_project_data_dir();
+    my $logs_dir = File::Spec->catdir($data_dir, 'logs');
+    make_path($logs_dir, { mode => 0700 }) unless -d $logs_dir;
+    return $logs_dir;
 }
 
 =head2 get_session_file
@@ -346,61 +752,38 @@ sub strip_path_quotes {
 
 Resolve the canonical project-level LTM file path.
 
-Walks up from $working_dir looking for .clio/ltm.json, stopping at the
-project boundary (the directory containing a .git directory or filesystem
-root). Returns the highest existing .clio/ltm.json within the project tree,
-which prevents shadow LTM files from being created at intermediate paths
-when sessions are started from subdirectories.
+Delegates to L</get_project_ltm_file>, which resolves the project UUID
+from C<.clio/project_uuid> and returns the path under
+C<~/.clio/projects/<uuid>/ltm.json>. The project data directory is
+shared across all sessions in the same project and does not pollute
+the project tree.
 
-The walk is bounded by the project root (.git) and never crosses into
-the user's home directory - so a session in /Users/me/projects/foo won't
-accidentally resolve to /Users/me/.clio/ltm.json.
-
-If no .clio/ltm.json exists anywhere in the project tree, returns
-$working_dir + .clio/ltm.json (which will be created on first save).
+The $working_dir argument is accepted for backward compatibility but
+is no longer used for path resolution - the project is determined by
+the working directory at first launch (cached for the process lifetime).
 
 Arguments:
-  $working_dir - Directory to start the walk-up from (absolute preferred)
+  $working_dir - (ignored, kept for backward compatibility)
 
 Returns:
-  String path to the canonical .clio/ltm.json
+  String path to the project LTM file
 
 =cut
 
 sub find_ltm_path {
-    my ($working_dir) = @_;
-
-    $working_dir = abs_path($working_dir) || $working_dir;
-
-    my $dir = $working_dir;
-    my $canonical;
-    my %visited;
-    while ($dir && !defined $visited{$dir}) {
-        $visited{$dir} = 1;
-        my $candidate = File::Spec->catfile($dir, '.clio', 'ltm.json');
-        if (-e $candidate) {
-            $canonical = $candidate;
-        }
-        # Stop at project boundary - the dir containing .git - so we never
-        # walk past the repo root into user-home/global config territory.
-        last if -d File::Spec->catdir($dir, '.git');
-        # File::Spec->catdir($dir, '..') does NOT simplify - just appends '/..'.
-        # Use abs_path to canonicalize the parent so the loop converges on '/'.
-        my $parent = abs_path(File::Spec->catdir($dir, '..'));
-        last if !$parent || $parent eq $dir;
-        $dir = $parent;
-    }
-
-    return $canonical || File::Spec->catfile($working_dir, '.clio', 'ltm.json');
+    return get_project_ltm_file();
 }
 
 =head2 find_clio_dir($working_dir)
 
 Walk upward from $working_dir looking for a directory containing a
-`.clio/` subdirectory. Returns the path to the directory containing
-.clio/ (i.e. the project root), or $working_dir if none found.
+C<.clio/> subdirectory. Returns the path to the directory containing
+.clio/ (i.e. the project root), or the directory containing C<.git/>
+(the repository root) if no .clio/ is found within the project boundary.
 
-Stops at the project boundary (directory containing `.git`) so the
+If neither .clio/ nor .git/ is found, returns $working_dir.
+
+Stops at the project boundary (directory containing C<.git/>) so the
 search never walks past the repo root into user-home territory.
 
 Used by PromptBuilder, PromptManager, and MemoryOperations to anchor
@@ -411,22 +794,25 @@ Arguments:
 - $working_dir: Directory to start searching from (default: current dir)
 
 Returns:
-- String path to the directory containing .clio/, or $working_dir as
-  fallback if no .clio/ found within the project boundary.
+- String path to the project root directory
 
 =cut
 
 sub find_clio_dir {
     my ($working_dir) = @_;
 
-    $working_dir = abs_path($working_dir) || $working_dir || Cwd::getcwd();
+    $working_dir = defined $working_dir ? abs_path($working_dir) : undef;
+    $working_dir ||= Cwd::getcwd();
 
     my $dir = $working_dir;
     my %visited;
     while ($dir && !defined $visited{$dir}) {
         $visited{$dir} = 1;
         return $dir if -d File::Spec->catdir($dir, '.clio');
-        last if -d File::Spec->catdir($dir, '.git');
+        # Return the git root when .clio/ is not found - this is the
+        # project boundary and the correct place to create .clio/ on
+        # first launch.
+        return $dir if -d File::Spec->catdir($dir, '.git');
         my $parent = abs_path(File::Spec->catdir($dir, '..'));
         last if !$parent || $parent eq $dir;
         $dir = $parent;

@@ -487,7 +487,7 @@ sub _check_local_history {
     return '' unless $context && $context->{session};
     
     # Try to search previous sessions
-    my $sessions_dir = '.clio/sessions';
+    my $sessions_dir = do { require CLIO::Util::PathResolver; CLIO::Util::PathResolver::get_sessions_dir() };
     return '' unless -d $sessions_dir;
     
     # Quick grep through recent session files

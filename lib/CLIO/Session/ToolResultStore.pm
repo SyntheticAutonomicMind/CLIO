@@ -71,7 +71,7 @@ sub new {
     my ($class, %opts) = @_;
     
     my $self = {
-        sessions_dir => $opts{sessions_dir} || '.clio/sessions',
+        sessions_dir => $opts{sessions_dir} || do { require CLIO::Util::PathResolver; CLIO::Util::PathResolver::get_sessions_dir(); },
         debug => $opts{debug} || 0,
     };
     

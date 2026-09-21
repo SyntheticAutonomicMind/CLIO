@@ -25,21 +25,21 @@ use Cwd qw(chdir getcwd);
 
 use Test::More;
 use File::Temp qw(tempdir);
+use CLIO::Util::PathResolver;
 use CLIO::Session::TodoStore;
 
 # Save original cwd so we can restore it after the test
 my $orig_cwd = getcwd();
 
-# Set up a fake .clio directory with a sessions subdir.
-# We chdir into the temp dir so get_sessions_dir() (which uses getcwd())
-# resolves to our temp directory, matching the real production behavior.
+# Set up test environment with PathResolver init so get_sessions_dir()
+# resolves to our temp directory, matching real production behavior.
 my $tmp = tempdir(CLEANUP => 1);
-my $fake_clio = "$tmp/.clio";
-mkdir $fake_clio or die "Cannot create $fake_clio: $!";
-my $sessions_dir = "$fake_clio/sessions";
-mkdir $sessions_dir or die "Cannot create $sessions_dir: $!";
+CLIO::Util::PathResolver::init(base_dir => $tmp);
 
 chdir $tmp or die "Cannot chdir to $tmp: $!";
+
+# Get the sessions dir from PathResolver (resolves to <tmp>/projects/<uuid>/sessions/)
+my $sessions_dir = CLIO::Util::PathResolver::get_sessions_dir();
 
 my $session_id = 'test-b2-b3-session';
 my $store = CLIO::Session::TodoStore->new(
@@ -111,7 +111,7 @@ $store->write([
     },
 ]);
 # Manually patch the on-disk JSON to use `content` (legacy shape)
-my $json_file = "$sessions_dir/$session_id/todos.json";
+my $json_file = "$sessions_dir/$session_id/todos.json";  # sessions_dir now from PathResolver
 my $data = {
     session_id => $session_id,
     todos      => [
