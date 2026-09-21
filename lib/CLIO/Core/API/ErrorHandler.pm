@@ -173,13 +173,14 @@ sub _routing_should_skip {
     my $rl_code    = $api_response->{rate_limit_code} || '';
 
     # Account/identity/availability issues that no other model in the
-    # route can fix.
+    # route can fix. Note: provider_unavailable is NOT in this list -
+    # when a model is unavailable on one provider, a different provider
+    # in the route may still serve it, so routing SHOULD cycle.
     return 1 if $error_type eq 'model_not_found';
     return 1 if $error_type eq 'billing_error';
     return 1 if $error_type eq 'auth_failed';
     return 1 if $error_type eq 'account_disabled';
     return 1 if $error_type eq 'region_unavailable';
-    return 1 if $error_type eq 'provider_unavailable';
     return 1 if $error_type eq 'user_interrupt';
 
     # Weekly/monthly usage caps - per-account, not per-model, and
@@ -277,10 +278,12 @@ sub handle_api_error {
     #   route_verbose       - show rerouting system messages (default 1)
     #
     # Non-actionable error types (model_not_found, billing_error,
-    # auth_failed, account_disabled, region_unavailable, provider_unavailable,
-    # user_interrupt, weekly/monthly rate caps) are passed through to the
-    # normal error path so we don't burn attempts on errors no other
-    # model in the route can satisfy.
+    # auth_failed, account_disabled, region_unavailable, user_interrupt,
+    # weekly/monthly rate caps) are passed through to the normal error
+    # path so we don't burn attempts on errors no other model in the
+    # route can satisfy.
+    # provider_unavailable IS routable: when a model is unavailable on
+    # one provider, a different provider in the route may still serve it.
     if ($wo->{api_manager} && $wo->{api_manager}->can('model_routing_active')) {
         my $num_candidates = $wo->{api_manager}->model_routing_active();
         if ($num_candidates > 1) {
@@ -793,6 +796,11 @@ sub handle_api_error {
     # The model itself is unavailable on the provider's infrastructure. Returning immediately
     # avoids the misleading "Token limit exceeded" fallback that the retry/escalate path would
     # produce for a problem that retrying or trimming context cannot fix.
+    #
+    # This handler is only reached when model routing is NOT active (single-model
+    # config). When routing IS active, provider_unavailable errors are intercepted
+    # by the routing block above and trigger failover to the next provider in the
+    # route.
     if (defined($api_response->{error_type}) && $api_response->{error_type} eq 'provider_unavailable') {
         # Demoted from log_warning -> log_debug. The themed error display path
         # surfaces the user-facing message; this log was duplicating it on

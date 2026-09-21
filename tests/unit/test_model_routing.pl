@@ -1229,4 +1229,105 @@ subtest 'non-rate-limit errors still cycle without rate-limit tracking' => sub {
     `rm -rf $dir`;
 };
 
+# =============================================================================
+# ErrorHandler: provider_unavailable triggers routing failover when active,
+# but returns immediately when routing is not active (single model)
+# =============================================================================
+
+subtest 'provider_unavailable cycles models when routing is active' => sub {
+    my $dir = "/tmp/clio-test-provider-unavailable-routing";
+    `rm -rf $dir`;
+
+    my $config = CLIO::Core::Config->new(config_dir => $dir);
+    $config->set("provider", "openrouter", 0);
+    $config->set("api_base", "https://openrouter.ai/api/v1/chat/completions", 0);
+    $config->set("api_key", "k", 0);
+    $config->set_route_retry_delay(0);
+
+    my $api = CLIO::Core::APIManager->new(debug => 0, config => $config);
+    my @models = ('openrouter/foo', 'kilo/bar', 'vercel/baz');
+    $config->set("model_candidates", \@models, 0);
+    $config->set("model_routing_index", 0, 0);
+    $config->set("model", 'openrouter/foo', 0);
+
+    my $wo = bless { api_manager => $api }, "CLIO::Core::WorkflowOrchestrator";
+    my $session = { routing_attempts => 0 };
+    my @sys_msgs;
+    my $on_system_message = sub { push @sys_msgs, $_[0]; };
+
+    # Simulate a 503 Service Unavailable (the exact scenario from the bug report)
+    my $api_response = {
+        success => 0,
+        error => "The AI provider reports this model is currently unavailable on their infrastructure. Try a different model, or wait and retry later.\n\nProvider detail: Service Unavailable",
+        retryable => 0,
+        error_type => 'provider_unavailable',
+    };
+
+    my $ctx = {
+        messages => [], retry_count => \my $rc, session_error_count => \my $sec,
+        iteration => 1, tool_calls_made => [], session => $session,
+        on_system_message => $on_system_message,
+        max_retries => 3, max_server_retries => 3, max_session_errors => 10, max_rate_limit_retries => 3,
+    };
+
+    my $result = CLIO::Core::API::ErrorHandler::handle_api_error($wo, $api_response, $ctx);
+
+    is($result, 'retry', 'provider_unavailable returns retry when routing active');
+    is($api->get_current_model(), 'kilo/bar', 'model cycled from openrouter/foo to kilo/bar');
+    is($config->get_model_routing_index(), 1, 'routing index advanced to 1');
+    is($session->{routing_attempts}, 1, 'routing attempts incremented to 1');
+    is(scalar(@sys_msgs), 1, 'rerouting system message emitted');
+    like($sys_msgs[0], qr/Provider Unavailable \(503\)/, 'system message includes error label with status');
+    like($sys_msgs[0], qr/rerouting to kilo\/bar/, 'system message includes new model name');
+    is($rc, 0, 'retry_count reset after routing');
+
+    `rm -rf $dir`;
+};
+
+subtest 'provider_unavailable does NOT cycle when routing is not active' => sub {
+    my $dir = "/tmp/clio-test-provider-unavailable-no-routing";
+    `rm -rf $dir`;
+
+    my $config = CLIO::Core::Config->new(config_dir => $dir);
+    $config->set("provider", "openrouter", 0);
+    $config->set("api_base", "https://openrouter.ai/api/v1/chat/completions", 0);
+    $config->set("api_key", "k", 0);
+    $config->set_route_retry_delay(0);
+
+    my $api = CLIO::Core::APIManager->new(debug => 0, config => $config);
+    # Only one model - no routing candidates
+    $config->set("model", 'openrouter/foo', 0);
+
+    ok($api->model_routing_active() == 0, 'routing not active (single model)');
+
+    my $wo = bless { api_manager => $api }, "CLIO::Core::WorkflowOrchestrator";
+    my $session = { routing_attempts => 0 };
+    my @sys_msgs;
+    my $on_system_message = sub { push @sys_msgs, $_[0]; };
+
+    my $api_response = {
+        success => 0,
+        error => "The AI provider reports this model is currently unavailable on their infrastructure. Try a different model, or wait and retry later.\n\nProvider detail: Service Unavailable",
+        retryable => 0,
+        error_type => 'provider_unavailable',
+    };
+
+    my $ctx = {
+        messages => [], retry_count => \my $rc, session_error_count => \my $sec,
+        iteration => 1, tool_calls_made => [], session => $session,
+        on_system_message => $on_system_message,
+        max_retries => 3, max_server_retries => 3, max_session_errors => 10, max_rate_limit_retries => 3,
+    };
+
+    my $result = CLIO::Core::API::ErrorHandler::handle_api_error($wo, $api_response, $ctx);
+
+    ok(ref($result) eq 'HASH', 'returns fatal hash (not retry) when routing not active');
+    is($result->{success}, 0, 'result success=0');
+    is($api->get_current_model(), 'openrouter/foo', 'model did NOT cycle (single model)');
+    is($session->{routing_attempts} // 0, 0, 'routing attempts not incremented');
+    is(scalar(@sys_msgs), 0, 'no rerouting system message');
+
+    `rm -rf $dir`;
+};
+
 done_testing();
