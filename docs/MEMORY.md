@@ -124,6 +124,27 @@ With YaRN compression plus the recovery injection system, CLIO agents maintain c
 
 Long-Term Memory is CLIO's project-level knowledge base. It persists across all sessions and accumulates knowledge about your specific codebase and workflows.
 
+### Project Data Isolation
+
+CLIO stores all runtime data (sessions, LTM, memory, vault, logs) under a per-project
+data directory at `~/.clio/projects/<uuid>/`, where `<uuid>` is a per-project identifier
+stored in `.clio/project_uuid` at the project root.
+
+- **First launch:** A UUID v4 is generated and written to `.clio/project_uuid`
+- **Subsequent launches:** The UUID is read from `.clio/project_uuid`, giving a stable,
+  repeatable directory path
+- **Project moves:** Since the UUID file travels with the project, moving the project
+  directory doesn't break data continuity
+- **Migration:** On first launch with the new CLIO, existing `.clio/sessions/`,
+  `.clio/ltm.json`, `.clio/memory/`, `.clio/vault/`, and `.clio/logs/` are automatically
+  moved to the new location. The project tree stays clean of runtime data.
+
+**What stays in the project `.clio/` directory:**
+- `instructions.md` (user-authored)
+- `skills.json`, `skills/` (user-authored)
+- `devices.json` (user-authored)
+- `project_uuid` (the UUID mapping file)
+
 ### What Gets Stored
 
 | Type | Purpose | Example |
