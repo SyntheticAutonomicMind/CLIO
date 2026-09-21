@@ -188,8 +188,8 @@ See [PROVIDERS.md](PROVIDERS.md) for setup instructions for all 18 providers.
 **Optional Environment Variables**
 
 ```bash
-# Set custom session directory
-export CLIO_SESSION_DIR="$HOME/.clio/sessions"
+# Set custom config/data directory
+export CLIO_CONFIG_DIR="$HOME/.clio"  # Overrides the base config/data directory
 ```
 
 **Debug Output**
@@ -1826,7 +1826,7 @@ clio --debug --resume
 
 ```bash
 # Custom session storage directory
-export CLIO_SESSION_DIR="$HOME/.clio/sessions"
+export CLIO_CONFIG_DIR="$HOME/.clio"  # Overrides the base config/data directory
 
 # Session auto-save interval (seconds)
 export CLIO_AUTOSAVE_INTERVAL=60
@@ -1884,7 +1884,7 @@ ai_provider: github_copilot
 model: claude-sonnet-4
 
 session:
-  directory: ~/.clio/sessions
+  directory: ~/.clio/projects/<uuid>/sessions
   autosave_interval: 60
 
 tools:
@@ -1901,7 +1901,7 @@ network:
 
 logging:
   level: info
-  file: ~/.clio/logs/clio.log
+  file: ~/.clio/projects/<uuid>/logs/clio.log
 
 ui:
   theme: photon

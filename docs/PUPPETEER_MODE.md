@@ -205,7 +205,7 @@ Check on running agents:
 ### How Delegation Works Under the Hood
 
 1. CLIO spawns a new process with its working directory set to the child project
-2. The child agent loads that project's `.clio/instructions.md` and `.clio/ltm.json`
+2. The child agent loads that project's `.clio/instructions.md` and `~/.clio/projects/<uuid>/ltm.json`
 3. Communication happens through CLIO's coordination broker (Unix socket message bus)
 4. The child agent works autonomously - reading files, running commands, making changes
 5. When done (or if it has questions), it sends a message back through the broker

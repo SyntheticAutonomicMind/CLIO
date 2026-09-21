@@ -32,7 +32,7 @@ This ensures:
 - No dependency on GitHub releases or network connectivity from the remote
 - Works on air-gapped networks (only needs SSH between local and remote)
 
-Rsync excludes `.git/`, `.clio/sessions/`, and other non-essential files.
+Rsync excludes `.git/`, `~/.clio/projects/<uuid>/sessions/`, and other non-essential files.
 
 ---
 

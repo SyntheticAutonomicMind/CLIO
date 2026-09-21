@@ -20,10 +20,10 @@ Unlike most AI assistants that start fresh every conversation, CLIO accumulates 
  - Sliding window of recent          - Discoveries about the codebase
    messages                          - Problem-solution pairs
  - Working context for the AI        - Code patterns and conventions
- - Auto-pruned when full             - Persisted in .clio/ltm.json
+ - Auto-pruned when full             - Persisted in ~/.clio/projects/<uuid>/ltm.json
 
  YaRN Threads                        Session-Level Store
- - Full conversation archive          - Key-value pairs in .clio/memory/
+ - Full conversation archive          - Key-value pairs in ~/.clio/projects/<uuid>/memory/
  - Compression for recovery          - Investigation notes, checkpoints
  - Never loses messages              - Available via recall_sessions
 ```
@@ -120,7 +120,7 @@ With YaRN compression plus the recovery injection system, CLIO agents maintain c
 ## Long-Term Memory (LTM)
 
 **Module:** `lib/CLIO/Memory/LongTerm.pm`  
-**Storage:** `.clio/ltm.json` (per project)
+**Storage:** `~/.clio/projects/<uuid>/ltm.json` (per project)
 
 Long-Term Memory is CLIO's project-level knowledge base. It persists across all sessions and accumulates knowledge about your specific codebase and workflows.
 
@@ -268,7 +268,7 @@ LTM saves are atomic: data is written to a temporary file (with PID suffix to ha
 ## Session-Level Store
 
 **Module:** `lib/CLIO/Tools/MemoryOperations.pm`  
-**Storage:** `.clio/memory/<key>.json`
+**Storage:** `~/.clio/projects/<uuid>/memory/<key>.json`
 
 The session-level store is a simple key-value system for temporary notes, investigation findings, and working data. Unlike LTM (which accumulates project knowledge), the session store is for per-task scratch data that an agent needs to reference during a session.
 
@@ -296,7 +296,7 @@ memory_operations(operation: "list")
 
 | Operation | Description |
 |-----------|-------------|
-| `store` | Write a key-value pair to `.clio/memory/` |
+| `store` | Write a key-value pair to `~/.clio/projects/<uuid>/memory/` |
 | `retrieve` | Read a stored value by key |
 | `search` | Find memories matching a keyword |
 | `list` | List all stored memory keys |
@@ -314,7 +314,7 @@ Cross-session recall lets agents search through **all previous session transcrip
 
 ### How It Works
 
-1. CLIO reads all session files from `.clio/sessions/`, sorted newest-first
+1. CLIO reads all session files from `~/.clio/projects/<uuid>/sessions/`, sorted newest-first
 2. For each session (up to `max_sessions`), it loads the message history
 3. Messages are scored against the search query using:
    - **Exact match boost** (+3) - Query appears verbatim in the message
@@ -489,7 +489,7 @@ Each session JSON file contains:
 
 ### LTM File Format
 
-The `.clio/ltm.json` file contains:
+The `~/.clio/projects/<uuid>/ltm.json` file contains:
 
 ```json
 {
@@ -569,7 +569,7 @@ The memory system isn't just infrastructure - it's actively used by agents throu
    starts work. Uncorroborated [UNVERIFIED] entries get a 0.3x scoring
    penalty so they rank below [TRUSTED] entries.
 2. If resuming a session, YaRN threads and STM are restored from the session file
-3. Session goals from `.clio/memory/` are loaded and injected as active todos
+3. Session goals from `~/.clio/projects/<uuid>/memory/` are loaded and injected as active todos
 
 ### During Work
 
@@ -583,7 +583,7 @@ The memory system isn't just infrastructure - it's actively used by agents throu
 1. **Proactive trim** fires when approaching 75% of the model's context window
 2. Oldest messages are compressed via YaRN into a summary
 3. The summary is injected as a system message so the AI knows what was dropped
-4. A progress checkpoint is written to `.clio/memory/session_progress.md`
+4. A progress checkpoint is written to `~/.clio/projects/<uuid>/memory/session_progress.md`
 
 ### After Context Recovery
 
@@ -598,7 +598,7 @@ The recovery injection tells the agent:
 
 1. LTM persists with all accumulated knowledge
 2. Session files contain the complete conversation archive
-3. Session-level memories in `.clio/memory/` remain available
+3. Session-level memories in `~/.clio/projects/<uuid>/memory/` remain available
 4. Next session: LTM relevance scoring runs on the first query and
     injects matching entries into the dynamic userContext
 

@@ -473,7 +473,7 @@ CLIO_LOG_LEVEL        # Debug level (automatically set by --debug flag)
 ai_provider: github_copilot
 model: <model-name>
 session:
-  directory: ~/.clio/sessions
+  directory: ~/.clio/projects/<uuid>/sessions
 logging:
   level: info
 ```
