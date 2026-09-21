@@ -317,7 +317,15 @@ sub _handle_edit {
     # Save terminal state and run editor
     system($editor, $path);
 
-    $self->display_success_message("Profile saved. Changes take effect on next session.");
+    # Invalidate the cached system prompt so profile changes take
+    # effect on the next request, not just on next session restart.
+    my $orch = $self->{chat}->{ai_agent}->{orchestrator};
+    if ($orch && $orch->can('invalidate_tool_cache')) {
+        $orch->invalidate_tool_cache();
+        $self->display_success_message("Profile saved. Changes applied immediately.");
+    } else {
+        $self->display_success_message("Profile saved. Changes take effect on next session restart.");
+    }
 }
 
 sub _handle_clear {
@@ -330,7 +338,13 @@ sub _handle_clear {
         return;
     }
 
-    if ($mgr->clear_profile()) {
+    my $result = $mgr->clear_profile();
+    if ($result) {
+        # Invalidate cache so the removed profile stops appearing
+        my $orch = $self->{chat}->{ai_agent}->{orchestrator};
+        if ($orch && $orch->can('invalidate_tool_cache')) {
+            $orch->invalidate_tool_cache();
+        }
         $self->display_success_message("Profile removed. CLIO will use default interaction style.");
     } else {
         $self->display_error_message("Failed to remove profile.");

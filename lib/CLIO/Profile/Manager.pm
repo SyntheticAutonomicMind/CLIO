@@ -196,9 +196,9 @@ sub generate_prompt_section {
     my $content = $self->load_profile();
     return '' unless $content;
 
+    # The profile file itself starts with '# User Profile', so we only
+    # add the framing text here - no duplicate heading.
     my $section = <<'SECTION_HEADER';
-# User Profile
-
 The following profile describes the human you are working with.
 Adapt your communication style, decision-making, and workflow to match their preferences.
 

@@ -61,6 +61,7 @@ sub new {
         _skills_section_cache => undef,
         _user_context_cache => undef,
         _user_context_cache_time => 0,
+        _cached_profile_mtime => 0,
         _system_prompt_cache => undef,
     }, $class;
 }
@@ -98,7 +99,27 @@ sub build_system_prompt {
     # topology scan, and auto-skill heredoc regeneration.
     # The cache is invalidated by clear_prompt_cache() (called from
     # invalidate_tool_cache when MCP/plugins change, and from profile
-    # update code paths).
+    # update code paths) and by a stat() mtime check on ~/.clio/profile.md
+    # (covers direct file edits outside the /profile edit command).
+    if (defined $self->{_system_prompt_cache}) {
+        # Check if profile file has been modified since cache was built.
+        # This handles the case where a user edits ~/.clio/profile.md
+        # directly (outside /profile edit) and the process is still running.
+        my $cached_mtime = $self->{_cached_profile_mtime};
+        if (defined $cached_mtime) {
+            require CLIO::Profile::Manager;
+            my $profile_mgr = CLIO::Profile::Manager->new(debug => $self->{debug});
+            my $profile_path = $profile_mgr->profile_path();
+            if (-f $profile_path) {
+                my @stat = stat($profile_path);
+                if (@stat && $stat[9] > $cached_mtime) {
+                    log_debug('PromptBuilder', "Profile file mtime changed ($stat[9] > $cached_mtime), clearing system prompt cache");
+                    delete $self->{_system_prompt_cache};
+                    delete $self->{_cached_profile_mtime};
+                }
+            }
+        }
+    }
     if (defined $self->{_system_prompt_cache}) {
         return $self->{_system_prompt_cache};
     }
@@ -148,6 +169,17 @@ sub build_system_prompt {
         $profile_section = $self->generate_profile_section();
     }
 
+    # Insert user profile Section right after the base prompt — BEFORE
+    # tools, skills, and auto-skill guidance.  Positioning the profile
+    # early keeps user preferences (em-dashes, ownership model, etc.)
+    # in the first ~30% of the system prompt instead of buried at ~89%.
+    # Without this, the profile was the *last* section (~11% of a ~50K
+    # token prompt) and models routinely overlooked it.
+    if ($profile_section) {
+        $base_prompt .= "\n\n$profile_section";
+        log_debug('PromptBuilder', "Added user profile section to system prompt (positioned after base prompt)");
+    }
+
     # Insert tools section after "## Core Instructions" or append if not found
     if ($base_prompt =~ /## Core Instructions/) {
         $base_prompt =~ s/(## Core Instructions.*?\n)/$1\n$tools_section\n/s;
@@ -171,12 +203,6 @@ sub build_system_prompt {
         log_debug('PromptBuilder', "Added auto-skill creation guidance to prompt");
     }
 
-    # Insert user profile section after tools section
-    if ($profile_section) {
-        $base_prompt .= "\n\n$profile_section";
-        log_debug('PromptBuilder', "Added user profile section to prompt");
-    }
-
     # Optional reasoning-steering paragraph. Only injected for models whose
     # adaptive summarizer actually needs steering: Anthropic adaptive-mode
     # models collapse trivial reasoning to empty strings unless told to be
@@ -198,6 +224,15 @@ sub build_system_prompt {
         $base_prompt .= "\n\n" . generate_thinking_steering_section();
     }
 
+    # Record profile file mtime for cache invalidation on file change
+    require CLIO::Profile::Manager;
+    my $profile_mgr = CLIO::Profile::Manager->new(debug => $self->{debug});
+    my $profile_path = $profile_mgr->profile_path();
+    if (-f $profile_path) {
+        my @stat = stat($profile_path);
+        $self->{_cached_profile_mtime} = $stat[9] if @stat;
+    }
+
     log_debug('PromptBuilder', "Added dynamic tools section to prompt");
 
     $self->{_system_prompt_cache} = $base_prompt;
@@ -216,6 +251,7 @@ serves stale content.
 sub clear_prompt_cache {
     my ($self) = @_;
     delete $self->{_system_prompt_cache};
+    delete $self->{_cached_profile_mtime};
     delete $self->{_tools_section_cache};
     delete $self->{_skills_section_cache};
     log_debug('PromptBuilder', "System prompt cache invalidated");
