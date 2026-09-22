@@ -195,6 +195,31 @@ ok(defined &CLIO::UI::SessionReplay::render_history,
     is($result, 2, "render_history respects max_messages cap");
 }
 
+# Test 8b: render_history renders the LAST N messages, not the first N
+{
+    my $chat = MockChat->new();
+    $chat->{non_interactive} = 0;
+    $chat->{enable_markdown} = 0;
+    $chat->{output} = [];
+
+    my $replay = CLIO::UI::SessionReplay->new(chat => $chat, max_messages => 2);
+    my @history = (
+        { role => 'user', content => 'FIRST: old message 1' },
+        { role => 'user', content => 'FIRST: old message 2' },
+        { role => 'user', content => 'FIRST: old message 3' },
+        { role => 'user', content => 'SHOULD BE REPLAYED: recent message 1' },
+        { role => 'user', content => 'SHOULD BE REPLAYED: recent message 2' },
+    );
+
+    my $result = $replay->render_history(\@history, max_messages => 2);
+    is($result, 2, "render_history renders exactly 2 messages with max=2");
+
+    # Check that the rendered content contains the LAST messages, not the first
+    my $captured = join("\n", @{$chat->{output}});
+    ok($captured =~ /SHOULD BE REPLAYED/, "renders last messages, not first");
+    ok($captured !~ /FIRST/, "does not render messages that were truncated");
+}
+
 # Test 9: _should_suppress uses stored metadata
 {
     my $chat = MockChat->new();

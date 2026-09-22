@@ -118,10 +118,18 @@ sub render_history {
     # invoked; we reset it so writeline doesn't pause mid-replay.
     $self->{chat}->{_tools_invoked_this_request} = 1;
 
+    # Render the LAST max_messages from history, not the first.
+    # "Replaying last 100 of 280" must show messages 180-279, not 0-99.
+    my $render_history = $history;
+    if (defined $max && scalar(@$history) > $max) {
+        my $start = scalar(@$history) - $max;
+        $render_history = [ @{$history}[$start .. $#{$history}] ];
+    }
+
     my $msg_idx = 0;
     my $rendered_so_far = 0;
 
-    MSG: for my $msg (@$history) {
+    MSG: for my $msg (@$render_history) {
         last if defined $max && $rendered_so_far >= $max;
 
         my $role = $msg->{role} || '';
