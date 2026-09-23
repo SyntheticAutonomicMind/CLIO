@@ -269,7 +269,7 @@ sub handle_read {
     my $store = CLIO::Session::TodoStore->new(
         session_id => $session_id,
         debug => $self->{debug},
-        sessions_dir => do { require CLIO::Util::PathResolver; eval { CLIO::Util::PathResolver::get_sessions_dir() } || '.clio/sessions'; },
+        sessions_dir => do { require CLIO::Util::PathResolver; CLIO::Util::PathResolver::get_sessions_dir(); },
     );
     
     my $todos = $store->read();
@@ -448,7 +448,7 @@ sub handle_write {
     my $store = CLIO::Session::TodoStore->new(
         session_id => $session_id,
         debug => $self->{debug},
-        sessions_dir => do { require CLIO::Util::PathResolver; eval { CLIO::Util::PathResolver::get_sessions_dir() } || '.clio/sessions'; },
+        sessions_dir => do { require CLIO::Util::PathResolver; CLIO::Util::PathResolver::get_sessions_dir(); },
     );
     
     # Get existing stats for comparison
@@ -519,7 +519,7 @@ sub handle_update {
     my $store = CLIO::Session::TodoStore->new(
         session_id => $session_id,
         debug => $self->{debug},
-        sessions_dir => do { require CLIO::Util::PathResolver; eval { CLIO::Util::PathResolver::get_sessions_dir() } || '.clio/sessions'; },
+        sessions_dir => do { require CLIO::Util::PathResolver; CLIO::Util::PathResolver::get_sessions_dir(); },
     );
     
     my ($success, $result) = $store->update($updates);
@@ -640,7 +640,7 @@ sub handle_add {
     my $store = CLIO::Session::TodoStore->new(
         session_id => $session_id,
         debug => $self->{debug},
-        sessions_dir => do { require CLIO::Util::PathResolver; eval { CLIO::Util::PathResolver::get_sessions_dir() } || '.clio/sessions'; },
+        sessions_dir => do { require CLIO::Util::PathResolver; CLIO::Util::PathResolver::get_sessions_dir(); },
     );
     
     my ($success, $error) = $store->add($new_todos);

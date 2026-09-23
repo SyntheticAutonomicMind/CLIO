@@ -497,8 +497,8 @@ sub recall_sessions {
     
  return $self->error_result("Missing required parameter: query") unless $query;
     
-    my $sessions_dir = do { require CLIO::Util::PathResolver; eval { CLIO::Util::PathResolver::get_sessions_dir() } || '.clio/sessions'; };
-    return $self->error_result("Sessions directory not found") unless -d $sessions_dir;
+    my $sessions_dir = do { require CLIO::Util::PathResolver; eval { CLIO::Util::PathResolver::get_sessions_dir() }; };
+    return $self->error_result("Sessions directory not found") unless defined $sessions_dir && -d $sessions_dir;
 
     my $result;
     eval {
