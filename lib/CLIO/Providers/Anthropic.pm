@@ -772,28 +772,6 @@ sub convert_tool_result {
 # Private helper methods
 #
 
-sub _separate_system_prompt {
-    my ($self, $messages) = @_;
-    
-    my $system_prompt;
-    my @conversation;
-    
-    for my $msg (@$messages) {
-        if ($msg->{role} eq 'system') {
-            # Concatenate multiple system messages
-            if ($system_prompt) {
-                $system_prompt .= "\n\n" . $msg->{content};
-            } else {
-                $system_prompt = $msg->{content};
-            }
-        } else {
-            push @conversation, $msg;
-        }
-    }
-    
-    return ($system_prompt, \@conversation);
-}
-
 sub _convert_user_message {
     my ($self, $msg) = @_;
     

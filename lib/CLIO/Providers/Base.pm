@@ -184,6 +184,41 @@ sub build_assistant_response {
     return $response;
 }
 
+=head2 _separate_system_prompt($messages)
+
+Split a flat message list into the system prompt and the remaining
+conversation. Multiple system messages are concatenated with a blank
+line between them. Providers that pass the system prompt out-of-band
+(Anthropic, Google) call this before building their request body.
+
+Arguments: $messages (arrayref of message hashrefs)
+Returns: ($system_prompt, \@conversation) - $system_prompt is undef when
+         no system message is present.
+
+=cut
+
+sub _separate_system_prompt {
+    my ($self, $messages) = @_;
+
+    my $system_prompt;
+    my @conversation;
+
+    for my $msg (@$messages) {
+        if ($msg->{role} eq 'system') {
+            # Concatenate multiple system messages
+            if ($system_prompt) {
+                $system_prompt .= "\n\n" . $msg->{content};
+            } else {
+                $system_prompt = $msg->{content};
+            }
+        } else {
+            push @conversation, $msg;
+        }
+    }
+
+    return ($system_prompt, \@conversation);
+}
+
 =head2 get_headers()
 
 Get default headers for API requests.

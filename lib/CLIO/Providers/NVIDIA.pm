@@ -319,35 +319,6 @@ sub convert_tool_result {
     };
 }
 
-=head2 build_assistant_response($accumulated)
-
-Build the final assistant response from accumulated stream data.
-
-=cut
-
-sub build_assistant_response {
-    my ($self, $accumulated) = @_;
-    
-    # Default implementation - most providers can use this
-    my $response = {
-        role => 'assistant',
-    };
-    
-    if ($accumulated->{text}) {
-        $response->{content} = $accumulated->{text};
-    }
-    
-    if ($accumulated->{tool_calls} && @{$accumulated->{tool_calls}}) {
-        $response->{tool_calls} = $accumulated->{tool_calls};
-    }
-    
-    if ($accumulated->{usage}) {
-        $response->{usage} = $accumulated->{usage};
-    }
-    
-    return $response;
-}
-
 =head2 supports_streaming()
 
 Check if this provider supports streaming responses.
