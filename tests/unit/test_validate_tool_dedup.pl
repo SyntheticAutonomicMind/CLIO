@@ -34,9 +34,10 @@ subtest 'Duplicate within one assistant' => sub {
               { id => 'tc_dup', function => { name => 'read_file', arguments => '{}' } },
               { id => 'tc_dup', function => { name => 'read_file', arguments => '{}' } },
           ] },
+        { role => 'tool', tool_call_id => 'tc_dup', content => 'r' },
     ];
     my $out = validate_tool_message_pairs($messages);
-    is(scalar(@$out), 2, 'Returns 2 messages');
+    is(scalar(@$out), 3, 'Returns 3 messages (assistant + its tool result)');
     is(scalar(@{$out->[1]{tool_calls}}), 1, 'Assistant has 1 tool_call after dedup');
     is($out->[1]{tool_calls}[0]{id}, 'tc_dup', 'First occurrence kept');
 };
@@ -88,6 +89,7 @@ subtest 'Multiple dups collapse to one' => sub {
               { id => 'tc_repeat', function => { name => 'b', arguments => '{}' } },
               { id => 'tc_repeat', function => { name => 'c', arguments => '{}' } },
           ] },
+        { role => 'tool', tool_call_id => 'tc_repeat', content => 'r' },
     ];
     my $out = validate_tool_message_pairs($messages);
     is(scalar(@{$out->[1]{tool_calls}}), 1, '3 dups reduced to 1 kept');
@@ -118,6 +120,55 @@ subtest 'Orphan tool_result still removed' => sub {
     my $out = validate_tool_message_pairs($messages);
     is(scalar(@$out), 2, 'Orphan tool_result removed');
     is($out->[1]{role}, 'assistant', 'assistant follows user');
+};
+
+# Invariant helper: no assistant tool_call in the output may lack a
+# matching tool result. Providers reject an unmatched tool_call, so the
+# validator must never emit one.
+sub assert_no_orphaned_tool_calls {
+    my ($out, $label) = @_;
+    my %result_ids = map { $_->{tool_call_id} => 1 }
+        grep { $_->{role} && $_->{role} eq 'tool' && $_->{tool_call_id} } @$out;
+    my @orphans;
+    for my $m (@$out) {
+        next unless $m->{role} && $m->{role} eq 'assistant'
+            && $m->{tool_calls} && ref($m->{tool_calls}) eq 'ARRAY';
+        for my $tc (@{$m->{tool_calls}}) {
+            push @orphans, $tc->{id} if defined $tc->{id} && !$result_ids{$tc->{id}};
+        }
+    }
+    is_deeply(\@orphans, [], "$label: no orphaned tool_calls emitted");
+}
+
+subtest 'Duplicate id with lost result emits no orphan' => sub {
+    # The bug: a tool_call id appears more than once AND its result was
+    # lost (e.g. trimmed from a rebuilt history). The old dedup kept the
+    # first occurrence "regardless of orphan status", emitting an
+    # assistant tool_call with no matching result -> provider rejection.
+    my $messages = [
+        { role => 'user', content => 'hi' },
+        { role => 'assistant', content => 'calling',
+          tool_calls => [{ id => 'tc_lost', function => { name => 'a', arguments => '{}' } }] },
+        { role => 'assistant', content => 'calling again',
+          tool_calls => [{ id => 'tc_lost', function => { name => 'b', arguments => '{}' } }] },
+    ];
+    my $out = validate_tool_message_pairs($messages);
+    assert_no_orphaned_tool_calls($out, 'dup+lost-result');
+    ok(!(grep { $_->{tool_calls} && @{$_->{tool_calls}} } @$out),
+        'No assistant retains the orphaned tc_lost tool_call');
+};
+
+subtest 'All-orphan single assistant collapses to plain text' => sub {
+    my $messages = [
+        { role => 'user', content => 'hi' },
+        { role => 'assistant', content => 'I tried but',
+          tool_calls => [{ id => 'tc_none', function => { name => 'a', arguments => '{}' } }] },
+    ];
+    my $out = validate_tool_message_pairs($messages);
+    assert_no_orphaned_tool_calls($out, 'all-orphan');
+    is($out->[1]{role}, 'assistant', 'assistant retained as plain text');
+    is($out->[1]{content}, 'I tried but', 'assistant content preserved');
+    ok(!$out->[1]{tool_calls}, 'orphaned tool_call stripped');
 };
 
 done_testing();

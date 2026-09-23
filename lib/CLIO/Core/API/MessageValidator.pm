@@ -709,35 +709,24 @@ sub validate_tool_message_pairs {
             for my $tc (@{$msg->{tool_calls}}) {
                 my $id = $tc->{id};
                 my $already_kept = defined $id && exists $kept_ids{$id};
-                my $is_dup = $already_kept
-                    || (defined $id && $duplicate_tc_ids{$id});
                 my $is_orphan = defined $id && $orphaned_tc_ids{$id};
                 # A tool_call is dropped if:
-                # 1. It's a cross-message duplicate (id already in
-                #    %kept_ids) - second/third/... occurrences.
-                # 2. It's a duplicate AND an orphan - in this case
-                #    prefer to drop the duplicate occurrence rather
-                #    than the orphan, so the first occurrence survives
-                #    even if its result was lost. This handles the
-                #    common case where the same tool_call_id appears
-                #    in a rebuilt history that lost a tool_result.
-                # 3. It's an orphan with no prior duplicate - the
-                #    result was lost and we have no way to recover.
-                if ($is_dup && !$already_kept) {
-                    # This is a known-duplicate id but we haven't seen
-                    # it before in the output. The first occurrence
-                    # is the canonical one - we keep this regardless
-                    # of orphan status. (Don't drop the first on
-                    # orphan grounds; if the first id is orphaned,
-                    # the duplicate handler will keep this and the
-                    # orphan check can do nothing for it.)
-                    push @kept_calls, $tc;
-                    $kept_ids{$id} = 1 if defined $id;
-                } elsif ($already_kept) {
-                    # Second/third occurrence of an id we've already
-                    # kept. Always drop.
+                # 1. It is orphaned - no matching tool_result exists
+                #    anywhere in the stream. Providers reject an
+                #    assistant tool_call that has no result, so every
+                #    occurrence is dropped, including the first. (The
+                #    "keep first" dedup rule below only applies when a
+                #    result actually exists.) This also covers a
+                #    duplicated id whose result was lost during a
+                #    history rebuild: with no result to pair against,
+                #    keeping any occurrence would emit an orphan.
+                # 2. It is a cross-message duplicate of an id we have
+                #    already kept (a result exists for it). The
+                #    second/third/... occurrences are redundant and
+                #    providers reject duplicate tool_call ids.
+                if ($is_orphan) {
                     push @dropped_calls, $id;
-                } elsif ($is_orphan) {
+                } elsif ($already_kept) {
                     push @dropped_calls, $id;
                 } else {
                     push @kept_calls, $tc;
