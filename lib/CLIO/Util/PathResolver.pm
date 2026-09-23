@@ -46,6 +46,12 @@ our $CONFIG_DIR;
 # Cached project data directory (resolved once via UUID from .clio/project_uuid)
 our $PROJECT_DATA_DIR;
 our $PROJECT_UUID;
+# The project root + working directory the cache above was resolved for.
+# When the working directory moves into a different project (in-process
+# project switches: sub-agents, parallel execution, tests), the cache is
+# invalidated and re-resolved so each project keeps its own data dir.
+our $PROJECT_RESOLVED_ROOT;
+our $PROJECT_RESOLVED_CWD;
 
 =head2 init
 
@@ -173,11 +179,34 @@ Returns: Absolute path to project data directory (e.g. ~/.clio/projects/<uuid>/)
 =cut
 
 sub get_project_data_dir {
-    return $PROJECT_DATA_DIR if defined $PROJECT_DATA_DIR;
+    my $cwd = Cwd::getcwd();
+
+    # Fast path: working directory unchanged since the last resolution.
+    if (defined $PROJECT_DATA_DIR && defined $PROJECT_RESOLVED_CWD
+        && defined $cwd && $cwd eq $PROJECT_RESOLVED_CWD) {
+        return $PROJECT_DATA_DIR;
+    }
+
+    my $project_root = find_clio_dir();
+
+    # Working directory moved but the project root is the same (e.g. cd
+    # into a subdirectory of the same project): keep the cached UUID.
+    if (defined $PROJECT_DATA_DIR && defined $PROJECT_RESOLVED_ROOT
+        && defined $project_root && $PROJECT_RESOLVED_ROOT eq $project_root) {
+        $PROJECT_RESOLVED_CWD = $cwd;
+        return $PROJECT_DATA_DIR;
+    }
+
+    # First resolution, or the project root changed (in-process project
+    # switch). Drop the stale cache and re-resolve for this project so
+    # each project keeps its own UUID-keyed data directory.
+    $PROJECT_DATA_DIR = undef;
+    $PROJECT_UUID = undef;
+    $PROJECT_RESOLVED_ROOT = $project_root;
+    $PROJECT_RESOLVED_CWD = $cwd;
 
     init() unless defined $CONFIG_DIR;
 
-    my $project_root = find_clio_dir();
     my $clio_dir = File::Spec->catdir($project_root, '.clio');
 
     # Ensure .clio/ exists at the project root (create on first launch)
