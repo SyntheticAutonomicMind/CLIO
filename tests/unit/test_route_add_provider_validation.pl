@@ -141,7 +141,7 @@ subtest 'Config model_routes round-trip' => sub {
     is($route->[2], 'vercel/poolside/laguna-s-2.1', 'third model preserved verbatim');
 
     # Case-insensitive lookup
-    my $upper = $config->get_model_route('LAGUNA-FREE');
+    my $upper = $config->get_model_route('LAGUNA');
     is_deeply($upper, $route, 'route lookup is case-insensitive');
 
     # list_model_routes returns hash
