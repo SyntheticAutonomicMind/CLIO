@@ -386,21 +386,29 @@ sub _ensure_cache_loaded {
     my $cache;
     eval {
         # Read as raw bytes: decode_json expects UTF-8 bytes, not
-        # Perl's internal character strings.
-        open my $fh, '<:raw', $self->{cache_file};
-        if ($fh) {
-            my $data = do { local $/; <$fh> };
+        # Perl's internal character strings. Use a lexical scope
+        # for $fh so it goes out of scope (and closes) before we
+        # reference it again. Check the open() return explicitly.
+        my $data;
+        if (open my $fh, '<:raw', $self->{cache_file}) {
+            $data = do { local $/; <$fh> };
             close $fh;
-            if ($data) {
-                my $decoded = decode_json($data);
-                # Validate cache version — stale entries from a
-                # previous schema are discarded so bad data
-                # (e.g. supports_tools=0 from a bug) doesn't persist.
-                if ($decoded->{_cache_version} && $decoded->{_cache_version} eq $self->{cache_version}) {
-                    $self->{cache} = $decoded;
-                } else {
-                    log_debug('ModelCapabilitiesManager', "Cache version mismatch (stored: " . ($decoded->{_cache_version} // 'none') . ", expected: $self->{cache_version}), discarding cache");
-                }
+        } else {
+            # File doesn't exist yet (first run) or is unreadable.
+            # Log at debug level and return empty cache — this is
+            # not an error condition, just an empty cache.
+            log_debug('ModelCapabilitiesManager',
+                "Cache file not found or unreadable: $self->{cache_file}");
+        }
+        if ($data) {
+            my $decoded = decode_json($data);
+            # Validate cache version — stale entries from a
+            # previous schema are discarded so bad data
+            # (e.g. supports_tools=0 from a bug) doesn't persist.
+            if ($decoded->{_cache_version} && $decoded->{_cache_version} eq $self->{cache_version}) {
+                $self->{cache} = $decoded;
+            } else {
+                log_debug('ModelCapabilitiesManager', "Cache version mismatch (stored: " . ($decoded->{_cache_version} // 'none') . ", expected: $self->{cache_version}), discarding cache");
             }
         }
         if ($@) {
