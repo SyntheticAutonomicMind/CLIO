@@ -1,7 +1,7 @@
 #!/usr/bin/env perl
 # Regression tests for YaRN save/load and cross-cycle section carryover.
-# Adapted for the slimmed YaRN format (only original task + recent user
-# requests — no commits, files, decisions, or tool counts).
+# Tests the enriched format that includes decisions, files, and commits
+# from dropped turns (not just original task + recent user requests).
 
 use strict;
 use warnings;
@@ -61,6 +61,27 @@ EOF
         'no statistical noise sections in slim output');
     unlike($r->{content}, qr/abc1234|def5678|file_operations: \d+ calls/,
         'no commit hashes or tool counts in slim output');
+};
+
+# Test 2b: Extracted intelligence (commits, files, decisions) is
+# included when present in the dropped messages. This was the
+# context-loss bug: the old code extracted these buckets but then
+# discarded them, leaving the model with only user-request text.
+subtest 'extracted intelligence surfaced in summary' => sub {
+    my $yarn = CLIO::Memory::YaRN->new();
+
+    my @msgs = (
+        { role => 'user', content => 'Let us continue the performance work on the fork' },
+        { role => 'tool', content => 'abc1234 perf(roc): add fused HIP kernels for RMSNorm+residual' },
+    );
+
+    my $r = $yarn->compress_for_context_recovery(\@msgs,
+        original_task => 'fork performance work',
+    );
+
+    ok(defined $r, 'compression succeeded');
+    like($r->{content}, qr/abc1234/, 'commit hash preserved in summary');
+    like($r->{content}, qr/perf\(roc\): add fused HIP/, 'commit subject in summary');
 };
 
 # Test 3: [original] marker is scoped to its bullet line

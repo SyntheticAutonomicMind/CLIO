@@ -123,10 +123,12 @@ sub messages_to_prose_dynamic {
     # for environment info, keeping it out of the noise-stripped
     # compressed tail.
 
-    # Active task is not rendered here. It is prepended to the user
-    # input by WorkflowOrchestrator via PromptBuilder::get_user_context().
-    # Re-rendering it in the UC would cause the model to refocus on
-    # the original request every turn (context bug #1).
+    # Active task is not explicitly rendered here. The compressed_tail
+    # (YaRN summary of dropped turns) may contain a "Current task:" line,
+    # but with the stale-session-goal fix in _active_task_text, that
+    # line now reflects the live conversation (user_input or YaARN-
+    # recovered task) rather than a frozen first session goal. This
+    # prevents the model from refocusing on outdated work after a trim.
 
     # Active todos: checklist with status.
     if (my $todos = $projection->{active_todos}) {

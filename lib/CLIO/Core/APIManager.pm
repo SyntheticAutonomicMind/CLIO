@@ -2082,6 +2082,7 @@ sub validate_and_truncate_messages {
         api_base           => $self->{api_base},
         debug              => $self->{debug},
         model              => $model,
+        active_task        => $self->{_active_task_for_trim} // '',
     );
 }
 

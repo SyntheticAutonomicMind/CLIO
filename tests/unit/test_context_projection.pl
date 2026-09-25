@@ -232,6 +232,59 @@ sub make_history {
 }
 
 # ---------------------------------------------------------------------------
+# Test 8b: incomplete current turn is excluded from recent turns
+# ---------------------------------------------------------------------------
+
+{
+    # When the user input is saved to history before the projection is
+    # built, the last turn contains ONLY the user message (no assistant
+    # or tool responses yet). This turn must be excluded from the recent
+    # window because the user input is delivered separately as the final
+    # user message (with dynamic UC). Including it would duplicate the
+    # user input in the @messages array.
+    my @messages = (
+        { role => 'user', content => 'Original task' },
+        { role => 'assistant', content => 'reply 1' },
+        { role => 'tool', content => 'tool result 1', tool_call_id => 'call_1' },
+        { role => 'user', content => 'second message' },
+        { role => 'assistant', content => 'reply 2' },
+        # Current turn: only a user message, no assistant/tool yet
+        { role => 'user', content => 'current user input' },
+    );
+    my $proj = build_projection(
+        history    => \@messages,
+        user_input => 'current user input',
+    );
+
+    # The "current user input" must NOT appear in the recent turns
+    # (it's delivered separately as the last user message).
+    my $found_duplicate = 0;
+    for my $turn (@{$proj->{turns}}) {
+        for my $msg (@$turn) {
+            if (($msg->{content} // '') eq 'current user input') {
+                $found_duplicate = 1;
+                last;
+            }
+        }
+        last if $found_duplicate;
+    }
+    ok(!$found_duplicate, "Incomplete current turn excluded from recent turns (no duplication)");
+
+    # The previous complete turn's user message should still be in recent
+    my $found_prev = 0;
+    for my $turn (@{$proj->{turns}}) {
+        for my $msg (@$turn) {
+            if (($msg->{content} // '') eq 'second message') {
+                $found_prev = 1;
+                last;
+            }
+        }
+        last if $found_prev;
+    }
+    ok($found_prev, "Previous complete turn still in recent turns (context preserved)");
+}
+
+# ---------------------------------------------------------------------------
 # Test 9: determinism
 # ---------------------------------------------------------------------------
 

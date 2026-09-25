@@ -62,6 +62,9 @@ Arguments (hash):
     config             => Config object (optional, for provider fallbacks)
     api_base           => API base URL (optional, for local model detection)
     debug              => Debug flag (optional)
+    active_task        => Scalar active task text (optional; used to seed
+                           a thread_summary for proactively-dropped messages
+                           so they are not permanently lost)
 
 Returns: ArrayRef of validated/truncated messages
 
@@ -150,6 +153,8 @@ sub validate_and_truncate {
     my $effective_limit = $prompt_budget - $tool_tokens;
     $effective_limit = 1000 if $effective_limit < 1000;
 
+    my $active_task = $args{active_task} // '';
+
     log_debug('MessageValidator', "Token budget: max=$max_prompt, tools=$tool_tokens, budget=$prompt_budget, effective=$effective_limit");
     
     # Estimate token usage
@@ -164,7 +169,7 @@ sub validate_and_truncate {
     # while preserving the first user message (the original task
     # anchor) and keeping tool_call/tool_result pairs together so
     # we never strand an orphan.
-    return _role_based_tail_walk($messages, $effective_limit, $debug);
+    return _role_based_tail_walk($messages, $effective_limit, $debug, $active_task);
 }
 
 =head2 _role_based_tail_walk
@@ -174,26 +179,27 @@ Preserves the first user message (original task anchor) and keeps
 tool_call/tool_result pairs together (never leaves a tool_result
 without its call, or vice versa).
 
-This is the proactive trim path. When messages are dropped to fit the
-budget, they are NOT re-compressed here — the projection's compressed_tail
-(in the dynamic UC prepended to the user message) already covers dropped
-messages. The thread_summary system message injection that previously
-happened here was removed: it changed every turn (new tool/file/commit
-counts), busting provider KV cache of the stable prefix. Dropped messages
-remain in the session history (storage-level trimming was removed)
-so the next turn's projection includes them in a fresh compressed_tail.
+When messages are dropped, a YaRN-compressed thread_summary system
+message is injected so the model retains a factual record of what
+was trimmed. The projection's compressed_tail only covers turns
+dropped by the projection (before the recent window); the proactive
+trim can additionally drop messages from within the recent window
+(e.g. after a large tool result pushes the total over budget).
+Without this re-compression, those messages are permanently lost —
+the model forgets what it just did and resets to earlier tasks.
 
 Arguments:
 - $messages:  ArrayRef of message hashes
 - $effective_limit: Token budget for the resulting array
 - $debug: 1 to emit debug logs
+- $active_task: Scalar task text to seed the thread_summary (optional)
 
-Returns: Trimmed ArrayRef
+Returns: Trimmed ArrayRef (possibly with a thread_summary appended)
 
 =cut
 
 sub _role_based_tail_walk {
-    my ($messages, $effective_limit, $debug) = @_;
+    my ($messages, $effective_limit, $debug, $active_task) = @_;
 
     return $messages unless $messages && @$messages;
 
@@ -437,9 +443,7 @@ sub _role_based_tail_walk {
     # the provider's KV cache stays warm for unchanged messages.
     my @trimmed = @{$messages}[@kept_indices];
 
-    # Count dropped messages for debug logging. The projection's
-    # compressed_tail (ContextBuilder::_build_compressed_tail) handles
-    # compression of dropped messages — not this method.
+    # Collect dropped messages for re-compression.
     my %kept_idx_set = map { $_ => 1 } @kept_indices;
     my @dropped;
     for my $i (0 .. $#$messages) {
@@ -449,7 +453,54 @@ sub _role_based_tail_walk {
     if (@dropped && $debug) {
         log_debug('MessageValidator',
             "role-based tail walk: dropped " . scalar(@dropped) .
-            " messages (compressed_tail in dynamic UC covers them)");
+            " messages");
+    }
+
+    # Re-compress dropped messages into a thread_summary system message.
+    # The projection's compressed_tail only covers turns dropped by the
+    # projection (before the recent window). The proactive trim can also
+    # drop messages from within the recent window — e.g. after a large
+    # tool result pushes the total over budget. Without this
+    # re-compression, those messages are permanently lost, causing the
+    # model to forget recent work and reset to earlier tasks.
+    #
+    # We inject a <thread_summary> system message (which is pinned by
+    # _role_based_tail_walk on subsequent turns) so the summary survives
+    # future trims. The summary is only injected when the proactive trim
+    # actually drops messages AND an active_task is available — otherwise
+    # the projection's existing compressed_tail (in the dynamic UC) is
+    # sufficient.
+    if (@dropped && length($active_task // '')) {
+        my $summary = eval {
+            require CLIO::Memory::YaRN;
+            my $yarn = CLIO::Memory::YaRN->new();
+            $yarn->compress_for_context_recovery(\@dropped,
+                original_task => $active_task,
+            );
+        };
+        if ($summary && ref($summary) eq 'HASH'
+            && defined $summary->{content}
+            && length($summary->{content})
+            && ($summary->{content} =~ /<thread_summary>/)) {
+            # Inject as a system message before the last user message
+            # (the current user input is pinned by the walk). If there
+            # is no user message in the trimmed set, append at end.
+            my $inject_idx = scalar(@trimmed);
+            for my $i (reverse 0 .. $#trimmed) {
+                if (ref($trimmed[$i]) eq 'HASH'
+                    && ($trimmed[$i]{role} // '') eq 'user') {
+                    $inject_idx = $i;
+                    last;
+                }
+            }
+            splice(@trimmed, $inject_idx, 0, {
+                role    => 'system',
+                content => $summary->{content},
+            });
+            log_debug('MessageValidator',
+                "Injected thread_summary for " . scalar(@dropped) .
+                " proactively-dropped messages (before idx $inject_idx)");
+        }
     }
 
     # Filter continuation-only user prompts that survived trim.

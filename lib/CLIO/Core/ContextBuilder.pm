@@ -704,6 +704,32 @@ sub _select_turns {
     $recent_count = $min_recent if $recent_count < $min_recent;
     $recent_count = $total_turns if $recent_count > $total_turns;
 
+    # Exclude the current (incomplete) turn — the last turn that contains
+    # only the user message with no assistant/tool responses. That user
+    # message is delivered separately as the final user message (with
+    # dynamic UC prepended) in _build_turn_context. Including it here
+    # would duplicate the user input in the @messages array, and after
+    # enforce_message_alternation merges them, the compressed_tail ends
+    # up sandwiched between two copies of the same user input — which
+    # dilutes focus and wastes tokens.
+    my $last_turn = $turns->[-1];
+    if (ref($last_turn) eq 'ARRAY') {
+        my $has_assistant_or_tool = 0;
+        for my $msg (@$last_turn) {
+            if (ref($msg) eq 'HASH'
+                && ($msg->{role} // '') =~ /^(assistant|tool)$/) {
+                $has_assistant_or_tool = 1;
+                last;
+            }
+        }
+        if (!$has_assistant_or_tool) {
+            # Last turn is just the current user input - remove it
+            # so the rest of _select_turns operates on completed turns only.
+            pop @$turns;
+            $total_turns--;
+        }
+    }
+
     # Tool-turn preservation: if the most recent turn (or the 2nd-most
     # recent) contains assistant messages with tool_calls, always
     # include that turn in the recent window even if it would otherwise

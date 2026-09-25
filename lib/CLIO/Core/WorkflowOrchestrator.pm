@@ -583,6 +583,7 @@ sub process_input {
                 api_base           => $self->{api_manager}{api_base},
                 debug              => $self->{debug},
                 model              => $model,
+                active_task        => $self->{_active_task_for_trim} // '',
             );
             if ($trimmed && scalar(@$trimmed) < $pre_count) {
                 # DIAGNOSTIC: Dump state before and after proactive trim (CLIO_TRIM_DIAG=1 to enable)
@@ -1274,6 +1275,7 @@ sub _build_turn_context {
         # The interrupt handler uses the stashed active_task to
         # build a cancel/continue message.
         $self->{_current_projection} = $projection;
+        $self->{_active_task_for_trim} = $self->_active_task_text($session, $user_input);
         log_debug('WorkflowOrchestrator',
             "Added role-based history (" . scalar(@{$projection->{turns} || []}) . " recent turn(s))");
         log_debug('WorkflowOrchestrator', "Stashed projection for interrupt handling only");
@@ -3256,45 +3258,20 @@ sub _active_task_text {
     my ($self, $session, $user_input) = @_;
     return '' unless $session;
 
-    my $goals = '';
-    if ($session->can('state')) {
-        my $state = $session->state();
-        if (ref($state) && $state->can('session_goals')) {
-            my $list = eval { $state->session_goals() };
-            if (ref($list) eq 'ARRAY') {
-                # Iterate REVERSED so the most recent active goal wins.
-                # Session goals are appended in order; the newest
-                # task transition is the last entry. Scanning
-                # newest-first matches the YaRN fallback below and
-                # gives the model a live "current focus" signal
-                # rather than a frozen "first task" anchor.
-                for my $g (reverse @$list) {
-                    if (ref($g) eq 'HASH' && ($g->{status} // '') eq 'active') {
-                        $goals = $g->{title} || '';
-                        if (length $goals) {
-                            $goals .= ': ' . ($g->{description} || '') if length($g->{description} // '');
-                            last;
-                        }
-                    }
-                }
-            }
-        }
-    }
-    return $goals if length $goals;
+    # Session goals are no longer used as the primary active_task source.
+    # They can become stale when the user pivots mid-session (e.g.
+    # approving a different approach), and a stale active_task leaks
+    # into the compressed_tail as "Current task:" — causing the model
+    # to reset to outdated work. Instead, derive the task from the
+    # live conversation.
 
-    # Fallback 1: use the current user input as the task (if substantive,
-    # i.e. >= 50 chars). This is critical for the first turn of a
-    # session, where the session's conversation history is empty because
-    # the user input has not been saved yet (State::add_message runs
-    # after _build_turn_context). Without this fallback the
-    # projection's active_task is empty and the dynamic userContext
-    # system message contains only environment info (Working directory,
-    # Language, Date). If a trim then condenses the full conversation
-    # into a short thread_summary, the model receives the
-    # [No response - user cancelled interrupt] message with a 93-char
-    # userContext and no task reminder, causing it to fall back to the
-    # Session Start Protocol from the system prompt (complete context loss).
-    if (defined $user_input && length($user_input // '') >= 50) {
+    # Primary: current user input (non-empty). This is critical for the
+    # first turn of a session, where the conversation history is empty
+    # because the user input has not been saved yet (State::add_message
+    # runs after _build_turn_context). Without this the projection's
+    # active_task is empty and the dynamic userContext contains only
+    # environment info, causing the model to lose context after a trim.
+    if (defined $user_input && length($user_input // '') > 0) {
         return $user_input;
     }
 

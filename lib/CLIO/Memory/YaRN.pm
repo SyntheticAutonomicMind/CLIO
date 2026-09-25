@@ -208,6 +208,16 @@ sub load {
     return $class->new(threads => $threads, %args);
 }
 
+# Truncate text to $max bytes, ending at a word boundary, appending '...'.
+sub _truncate {
+    my ($text, $max) = @_;
+    return '' unless defined $text && length($text);
+    return $text unless length($text) > $max;
+    my $truncated = substr($text, 0, $max);
+    $truncated =~ s/\s+\S*$//;
+    return $truncated . '...';
+}
+
 =head2 compress_messages
 
 Compress a sequence of messages into a summary message.
@@ -403,18 +413,35 @@ sub compress_messages {
     # (which is often the most recent user message, not the real task).
     my @all_requests = @user_requests;
     unshift @all_requests, $first_user_request if $first_user_request;
-    my $effective_task = find_substantive_task(
-        $opts{_carried_task} || $original_task,
-        \@all_requests
-    );
 
-    # Build summary — minimal, byte-stable, and useful.
-    # Only the original task and recent user requests are preserved.
-    # NO commits, files, decisions, or collaboration exchanges: these
-    # are statistical noise that changes every turn and busts KV cache
-    # of the stable message prefix. The compressed_tail lives in the
-    # dynamic UC system message (which is non-stable by design), so
-    # any per-turn content is acceptable there — but we keep it lean.
+    # If previous summary had a carried task, use it directly — it
+    # represents the accumulated task across trim cycles. Only fall
+    # through to scanning the dropped turns' user_requests when no
+    # carried task exists.
+    my $effective_task;
+    if ($opts{_carried_task} && length($opts{_carried_task})) {
+        $effective_task = $opts{_carried_task};
+    } else {
+        # Scan user_requests newest-first so the "Current task" reflects
+        # the actual recent conversation, not a stale active_task from
+        # session goals that may not have been updated when the user
+        # pivoted mid-session. find_substantive_task scans messages
+        # first and only uses $original_task as a fallback.
+        $effective_task = find_substantive_task(
+            $original_task,
+            \@all_requests
+        );
+    }
+
+    # Build summary. The compressed_tail lives in the dynamic UC
+    # system message (prepended to the user message), which is per-turn
+    # and NOT part of the cache-stable prefix — so per-turn content
+    # changes here do NOT bust provider KV-cache of the system prompt
+    # or role-based history. We include extracted intelligence (key
+    # decisions, file paths, commits) so the model retains a factual
+    # record of what happened in dropped turns, preventing the
+    # context-loss/reset bug where the model re-discovers work it
+    # already completed.
     my @parts;
     push @parts, "<thread_summary>";
     push @parts, "";
@@ -434,9 +461,44 @@ sub compress_messages {
         push @parts, "";
     }
 
+    # Key decisions from collaboration exchanges. These capture the
+    # "what did we decide?" moments that the terse user-request list
+    # omits — critical for preventing context-loss resets.
+    if (@decisions) {
+        push @parts, "Key decisions:";
+        for my $d (@decisions) {
+            push @parts, "- " . substr($d, 0, 200);
+        }
+        push @parts, "";
+    }
+
+    # Files the model worked on (extracted from tool call args).
+    # Path-only entries, not content — keeps the summary compact.
+    if (@files_touched) {
+        push @parts, "Files worked on:";
+        my $file_list = join(", ", @files_touched);
+        push @parts, substr($file_list, 0, 500);
+        push @parts, "";
+    }
+
+    # Commits made during the dropped turns.
+    if (@commits) {
+        push @parts, "Commits:";
+        push @parts, "- $_" for @commits;
+        push @parts, "";
+    }
+
     push @parts, "</thread_summary>";
 
     my $summary_content = join("\n", @parts);
+
+    # Cap the summary so the dynamic UC doesn't balloon on very long
+    # sessions with many dropped turns.
+    my $UC_CAP = 4000;
+    if (length($summary_content) > $UC_CAP) {
+        $summary_content = _truncate($summary_content, $UC_CAP);
+        $summary_content .= '...';
+    }
 
     # Estimate token counts
     my $original_tokens = 0;
@@ -479,25 +541,28 @@ The messages parameter accepts either:
 
 sub find_substantive_task {
     my ($candidate, $messages) = @_;
-    my $min_len = 50;
 
-    return $candidate if $candidate && length($candidate) >= $min_len;
-
-    # Scan messages newest-first for a substantive user message
+    # Scan messages newest-first for the most recent user message with
+    # actual content. This ensures the "Current task" in the compressed
+    # tail reflects the actual recent conversation, not a stale
+    # active_task from session goals that may not have been updated
+    # when the user pivoted mid-session.
     if ($messages && ref($messages) eq 'ARRAY') {
         for my $item (reverse @$messages) {
             if (ref($item) eq 'HASH') {
                 next unless ($item->{role} || '') eq 'user';
                 my $content = $item->{content} || '';
-                return $content if length($content) >= $min_len;
+                return $content if length($content) > 0;
             } else {
                 # Plain string (e.g. from @user_requests)
-                return $item if defined $item && length($item) >= $min_len;
+                return $item if defined $item && length($item) > 0;
             }
         }
     }
 
-    # No substantive message found - return whatever we have
+    # No user message found in messages - fall back to candidate
+    # (which may be the active_task from session goals or the
+    # current user input)
     return $candidate || '';
 }
 
