@@ -25,6 +25,10 @@ CPAN modules. Provides:
 - Command history
 - Line editing (backspace, delete, arrow keys)
 - Portable terminal control using stty
+- Standard readline/emac-mode key bindings: Ctrl-A/E (beginning/end of
+  line), Ctrl-B/F (backward/forward char), Ctrl-K (kill to end),
+  Ctrl-U (kill to beginning), Ctrl-W (kill word), Ctrl-T (transpose),
+  Ctrl-L (clear screen), Ctrl-Y (yank from kill ring), Alt+Y (yank-pop)
 
 =head2 DESIGN: Compute-from-state cursor tracking
 
@@ -184,6 +188,20 @@ sub new {
         # (0 = first row). Used by redraw_line to compute rows_to_top
         # without assuming the cursor is at the bottom of the input.
         last_cursor_input_row => 0,
+        # Kill ring for line-editing commands (Ctrl-K, Ctrl-U, Ctrl-W, etc.)
+        # Mirrors GNU readline: text killed by these commands is saved so
+        # the user can yank it back with Ctrl-Y. Consecutive kills (without
+        # any other command in between) accumulate into a single entry.
+        kill_ring => [],
+        kill_ring_active => 0,
+        # Internal: was the immediately preceding command a kill?
+        # Stored at the top of each input loop iteration so kill_ring_save
+        # can decide append-vs-new before the flag is reset.
+        _prev_was_kill => 0,
+        # Kill-ring yank state for Alt-Y cycling.
+        yank_start_pos => undef,
+        yank_text => undef,
+        yank_index => 0,
         # Performance caches (invalidated per-readline call)
         _prompt_disp_cache => undef,   # cached prompt display width
         _term_width_cache => undef,    # cached terminal width
@@ -499,6 +517,103 @@ sub _emit_ctrl_c {
     $self->_emit_newline();  # The trailing \n
 }
 
+=head2 kill_ring_save
+
+Save $text to the kill ring, mirroring GNU readline semantics. If the
+immediately preceding command was also a kill (tracked via
+C<_prev_was_kill>), the text is appended to the most recent entry;
+otherwise a new entry is pushed. This makes consecutive Ctrl-K / Ctrl-U
+/ Ctrl-W calls accumulate into a single yank, matching bash.
+
+Arguments:
+- $text: The killed text to store.
+
+=cut
+
+sub kill_ring_save {
+    my ($self, $text) = @_;
+    return unless defined $text && length $text;
+    if ($self->{_prev_was_kill} && scalar(@{$self->{kill_ring}})) {
+        $self->{kill_ring}->[-1] .= $text;
+    } else {
+        push @{$self->{kill_ring}}, $text;
+    }
+    $self->{kill_ring_active} = 1;
+    log_debug('ReadLine', "kill_ring_save: saved '" . length($text) . " chars, ring size=" . scalar(@{$self->{kill_ring}}));
+}
+
+=head2 yank
+
+Insert the most recent kill-ring entry at the cursor position, mirroring
+Ctrl-Y in GNU readline. Records yank state so that repeated Alt-Y can
+cycle through older entries.
+
+Arguments:
+- $input_ref:      Reference to the input string.
+- $cursor_pos_ref: Reference to the cursor position (codepoint offset).
+- $prompt:         Prompt string.
+
+=cut
+
+sub yank {
+    my ($self, $input_ref, $cursor_pos_ref, $prompt) = @_;
+
+    return unless scalar(@{$self->{kill_ring}});
+
+    my $yanked = $self->{kill_ring}->[-1];
+    return unless length $yanked;
+
+    substr($$input_ref, $$cursor_pos_ref, 0, $yanked);
+    $$cursor_pos_ref = $$cursor_pos_ref + length($yanked);
+
+    # Record yank state for Alt-Y cycling.
+    $self->{yank_start_pos} = $$cursor_pos_ref - length($yanked);
+    $self->{yank_text} = $yanked;
+    $self->{yank_index} = $#{$self->{kill_ring}};  # index into kill_ring
+
+    $self->redraw_line($input_ref, $cursor_pos_ref, $prompt);
+}
+
+=head2 yank_pop
+
+Cycle the currently-yanked text to the next (older) kill-ring entry.
+Replaces the previously yanked text with the next older entry. Only
+meaningful immediately after a yank.
+
+Arguments:
+- $input_ref:      Reference to the input string.
+- $cursor_pos_ref: Reference to the cursor position (codepoint offset).
+- $prompt:         Prompt string.
+
+=cut
+
+sub yank_pop {
+    my ($self, $input_ref, $cursor_pos_ref, $prompt) = @_;
+
+    return unless defined $self->{yank_start_pos};
+    return unless defined $self->{yank_text};
+    return unless scalar(@{$self->{kill_ring}});
+
+    # Remove the previously yanked text.
+    my $yank_len = length($self->{yank_text});
+    my $start = $self->{yank_start_pos};
+    substr($$input_ref, $start, $yank_len, '');
+
+    # Cycle to the next older entry (decrement, wrap to newest).
+    my $ring = $self->{kill_ring};
+    $self->{yank_index} = ($self->{yank_index} > 0) ? $self->{yank_index} - 1 : $#{$ring};
+    my $yanked = $ring->[$self->{yank_index}];
+
+    # Insert at the yank start position.
+    substr($$input_ref, $start, 0, $yanked);
+    $$cursor_pos_ref = $start + length($yanked);
+
+    $self->{yank_text} = $yanked;
+    log_debug('ReadLine', "yank_pop: cycled to entry $self->{yank_index}, len=" . length($yanked));
+
+    $self->redraw_line($input_ref, $cursor_pos_ref, $prompt);
+}
+
 =head2 redraw_line
 
 Redraw the input line with cursor at correct position.
@@ -767,6 +882,13 @@ sub readline {
     $self->{scroll_offset} = 0;
     $self->{last_cursor_input_row} = 0;
 
+    # Reset kill-ring accumulation state. The kill_ring itself persists
+    # across readline calls (so Ctrl-Y can yank text killed on a previous
+    # line), but the "last command was a kill" flag must reset so kills
+    # on this line don't accumulate with kills from the previous line.
+    $self->{kill_ring_active} = 0;
+    $self->{_prev_was_kill} = 0;
+
     # Reset performance caches for this readline session
     $self->{_prompt_disp_cache} = undef;
     $self->{_term_width_cache} = undef;
@@ -851,6 +973,12 @@ sub readline {
         my $ord = ord($char);
 
         log_debug('ReadLine', "char='$char' ord=$ord pos=$cursor_pos input='$input'");
+
+        # Track whether the preceding command was a kill, for kill-ring
+        # accumulation: consecutive kills (Ctrl-K, Ctrl-U, Ctrl-W, etc.)
+        # append to the same ring entry, matching bash/readline.
+        $self->{_prev_was_kill} = $self->{kill_ring_active};
+        $self->{kill_ring_active} = 0;
 
         # Tab key (completion)
         if ($ord == 9) {
@@ -994,24 +1122,95 @@ sub readline {
             next;
         }
 
-        # Ctrl-K (kill to end of line)
+        # Ctrl-K (kill to end of line) — saves to kill ring for Ctrl-Y
         if ($ord == 11) {
+            my $killed = substr($input, $cursor_pos);
             substr($input, $cursor_pos) = '';
+            $self->kill_ring_save($killed);
             $self->redraw_line(\$input, \$cursor_pos, $prompt);
             next;
         }
 
-        # Ctrl-U (kill to beginning of line)
+        # Ctrl-U (kill to beginning of line) — saves to kill ring for Ctrl-Y
+        # When cursor is at end, this clears the whole line. Standard
+        # readline behavior: kills from cursor to beginning.
         if ($ord == 21) {
+            my $killed = substr($input, 0, $cursor_pos);
             substr($input, 0, $cursor_pos) = '';
             $cursor_pos = 0;
+            $self->kill_ring_save($killed);
             $self->redraw_line(\$input, \$cursor_pos, $prompt);
             next;
         }
 
-        # Ctrl-W (kill word backward)
+        # Ctrl-W (kill word backward) — saves to kill ring for Ctrl-Y
         if ($ord == 23) {
             $self->_kill_word_backward(\$input, \$cursor_pos, $prompt);
+            next;
+        }
+
+        # Ctrl-L (clear screen and redraw) — standard readline.
+        # Clears the terminal and redraws the prompt + input at the top.
+        if ($ord == 12) {
+            print "\e[2J\e[H";
+            # After clearing, the cursor is at (0,0) and the screen is blank.
+            # Reset scroll and display tracking so redraw_line starts fresh.
+            $self->{scroll_offset} = 0;
+            $self->{last_cursor_row} = 0;
+            $self->{last_cursor_col} = 1;
+            $self->{display_lines} = 1;
+            $self->{last_cursor_input_row} = 0;
+            $self->redraw_line(\$input, \$cursor_pos, $prompt);
+            next;
+        }
+
+        # Ctrl-B (move backward one character) — standard readline,
+        # equivalent to Left arrow.
+        if ($ord == 2) {
+            if ($cursor_pos > 0) {
+                my $old_pos = $cursor_pos;
+                $cursor_pos--;
+                $self->reposition_cursor(\$old_pos, \$cursor_pos, \$input, $prompt);
+            }
+            next;
+        }
+
+        # Ctrl-F (move forward one character) — standard readline,
+        # equivalent to Right arrow.
+        if ($ord == 6) {
+            if ($cursor_pos < length($input)) {
+                my $old_pos = $cursor_pos;
+                $cursor_pos++;
+                $self->reposition_cursor(\$old_pos, \$cursor_pos, \$input, $prompt);
+            }
+            next;
+        }
+
+        # Ctrl-T (transpose characters) — standard readline.
+        # Swaps the character before and after the cursor. When the
+        # cursor is at the end of the line, swaps the last two characters.
+        if ($ord == 20) {
+            my $len = length($input);
+            if ($cursor_pos >= $len && $len >= 2) {
+                # At end: swap last two characters.
+                my $ch1 = substr($input, $len - 2, 1);
+                my $ch2 = substr($input, $len - 1, 1);
+                substr($input, $len - 2, 2, $ch2 . $ch1);
+            } elsif ($cursor_pos > 0 && $cursor_pos < $len) {
+                # Swap char before and after cursor, advance cursor.
+                my $ch1 = substr($input, $cursor_pos - 1, 1);
+                my $ch2 = substr($input, $cursor_pos, 1);
+                substr($input, $cursor_pos - 1, 2, $ch2 . $ch1);
+                $cursor_pos++;
+            }
+            $self->redraw_line(\$input, \$cursor_pos, $prompt);
+            next;
+        }
+
+        # Ctrl-Y (yank from kill ring) — standard readline.
+        # Inserts the most recently killed text at the cursor.
+        if ($ord == 25) {
+            $self->yank(\$input, \$cursor_pos, $prompt);
             next;
         }
 
@@ -1035,11 +1234,23 @@ sub readline {
             if ($inserting_at_end) {
                 $self->_emit_text($char);
 
-                # Update display lines and cursor input row.
-                my $term_width = $self->_get_term_width();
-                if ($self->{last_cursor_row} >= $self->{display_lines} - 1) {
-                    $self->{display_lines} = $self->{last_cursor_row} + 1;
-                }
+                # Compute display_lines from actual content width, NOT from
+                # last_cursor_row (a screen row). When the terminal scrolls
+                # because the input overflowed the bottom of the screen,
+                # _emit_text clamps last_cursor_row to max_row, so deriving
+                # display_lines from it produces term_height instead of the
+                # real content height. A later redraw_line would then move up
+                # by (term_height - 1) rows, overshooting past the input into
+                # content already on screen and wiping it with \e[J.
+                #
+                # The backspace fast-path already uses _compute_display_lines;
+                # the insert path must too. This is O(1) for ASCII (the common
+                # case) since _display_width falls back to length().
+                my $prompt_disp = $self->_get_prompt_disp($prompt);
+                my $input_disp = _display_width($input);
+                my $total_disp = $prompt_disp + $input_disp;
+                $self->{display_lines} = $self->_compute_display_lines($total_disp);
+                # Cursor is at the end of the input, so it's on the last row.
                 $self->{last_cursor_input_row} = $self->{display_lines} - 1;
             } else {
                 # Mid-input insert: full redraw. redraw_line recomputes
@@ -1129,6 +1340,7 @@ Supported sequences:
 - ESC b/f - Option+Left/Right (macOS, word movement)
 - ESC d - Alt+D (kill word forward)
 - ESC DEL - Alt+Backspace (kill word backward)
+- ESC y - Alt+Y (yank-pop: cycle through kill ring)
 - ESC [ H / ESC [ 1~ / ESC O H - Home key (beginning of line)
 - ESC [ F / ESC [ 4~ / ESC O F - End key (end of line)
 - ESC [ 3~ - Delete key (forward delete)
@@ -1272,6 +1484,13 @@ sub handle_escape_sequence {
     # Alt+Backspace / ESC + DEL (0x7F) - kill word backward
     if ($seq eq "\e\x7f") {
         $self->_kill_word_backward($input_ref, $cursor_pos_ref, $prompt);
+        return;
+    }
+
+    # Alt+Y - yank-pop: cycle through kill ring entries (replaces
+    # current yank with next older entry). Only meaningful after Ctrl-Y.
+    if ($seq eq "\ey") {
+        $self->yank_pop($input_ref, $cursor_pos_ref, $prompt);
         return;
     }
 }
@@ -1446,7 +1665,9 @@ sub _kill_word_forward {
     while ($pos < $len && substr($$input_ref, $pos, 1) !~ /\s/) {
         $pos++;
     }
+    my $killed = substr($$input_ref, $$cursor_pos_ref, $pos - $$cursor_pos_ref);
     substr($$input_ref, $$cursor_pos_ref, $pos - $$cursor_pos_ref, '');
+    $self->kill_ring_save($killed);
     $self->redraw_line($input_ref, $cursor_pos_ref, $prompt);
 }
 
@@ -1483,8 +1704,10 @@ sub _kill_word_backward {
         $pos--;
     }
 
+    my $killed = substr($$input_ref, $pos, $old_pos - $pos);
     substr($$input_ref, $pos, $old_pos - $pos, '');
     $$cursor_pos_ref = $pos;
+    $self->kill_ring_save($killed);
     $self->redraw_line($input_ref, $cursor_pos_ref, $prompt);
 }
 

@@ -273,21 +273,33 @@ These kinds of prompts help you see how CLIO investigates before it changes anyt
 | Key | Action |
 |-----|--------|
 | `Left` / `Right` (Arrows) | Move cursor one character |
+| `Ctrl+B` / `Ctrl+F` | Move cursor backward/forward one character (emacs) |
 | `Shift+Left` / `Shift+Right` | Jump by word |
 | `Ctrl+Left` / `Ctrl+Right` | Jump by word (emacs/Mac Terminal) |
 | `Option+Left` / `Option+Right` | Jump by word (macOS Terminal, requires Meta on) |
 | `Home` / `End` | Move to start/end of line |
 | `Ctrl+A` / `Ctrl+E` | Start/end of line (emacs) |
-| `Ctrl+W` | Delete word before cursor |
+| `Backspace` / `Delete` | Delete character before/after cursor |
+| `Ctrl+W` | Delete word before cursor (saved to kill ring) |
+| `Ctrl+K` | Delete from cursor to end of line (saved to kill ring) |
+| `Ctrl+U` | Delete from cursor to start of line (saved to kill ring) |
+| `Alt+D` | Delete word after cursor (saved to kill ring) |
+| `Ctrl+Delete` | Delete word after cursor (saved to kill ring) |
+| `Option+D` | Delete word after cursor (macOS Terminal, requires Meta on) |
 | `Shift+Delete` | Delete word before cursor |
 | `Option+Backspace` | Delete word before cursor (macOS Terminal, requires Meta on) |
-| `Alt+D` | Delete word after cursor |
-| `Ctrl+Delete` | Delete word after cursor |
-| `Option+D` | Delete word after cursor (macOS Terminal, requires Meta on) |
-| `Ctrl+K` | Delete from cursor to end of line |
-| `Ctrl+U` | Delete from cursor to start of line |
+| `Ctrl+Y` | Yank (paste) most recently killed text |
+| `Alt+Y` | Yank-pop: cycle through kill ring entries (after Ctrl+Y) |
+| `Ctrl+T` | Transpose characters around cursor |
+| `Ctrl+L` | Clear screen and redraw prompt |
 | `Tab` | Auto-complete commands/paths |
 | `ESC` | Cancel multi-line input |
+
+> **Kill Ring:** Text deleted with `Ctrl+K`, `Ctrl+U`, `Ctrl+W`, `Alt+D`,
+> and `Ctrl+Delete` is saved to a kill ring. Consecutive kills accumulate
+> into a single entry (bash behavior). Use `Ctrl+Y` to yank the most
+> recent kill, and `Alt+Y` to cycle through older entries. Typing any
+> non-kill command (including regular characters) breaks the accumulation.
 
 ### Input Modes
 
