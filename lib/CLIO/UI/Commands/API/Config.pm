@@ -145,11 +145,22 @@ sub handle_set {
         if ($session_only) {
             $self->_write_session_override('thinking_effort', $level);
         } else {
+            my $current_model = $self->{config}->get('model') || '';
             $self->{config}->set('thinking_effort', $level);
             # thinking_effort is model-scoped; clear stale per-model
             # entries so a switch back to a model that previously had
             # a different effort does not resurrect the old setting.
-            $self->{config}->clear_model_scoped('thinking_effort');
+            # Skip the current model - set() just wrote its entry, and
+            # we re-pin it below with the explicit flag.
+            $self->{config}->clear_model_scoped('thinking_effort', $current_model);
+            if ($current_model && $current_model =~ m{/}) {
+                $self->{config}->{model_configs} ||= {};
+                $self->{config}->{model_configs}{$current_model} ||= {};
+                $self->{config}->{model_configs}{$current_model}{'thinking_effort'} = $level;
+                $self->{config}->{model_configs_explicit} ||= {};
+                $self->{config}->{model_configs_explicit}{$current_model} ||= {};
+                $self->{config}->{model_configs_explicit}{$current_model}{'thinking_effort'} = 1;
+            }
             $self->{config}->save();
         }
         $self->display_system_message("Thinking effort set to '$level'" . $self->_scope_tag($session_only));
@@ -190,11 +201,22 @@ sub handle_set {
         if ($session_only) {
             $self->_write_session_override('thinking_mode', $mode);
         } else {
+            my $current_model = $self->{config}->get('model') || '';
             $self->{config}->set('thinking_mode', $mode);
             # thinking_mode is model-scoped; clear stale per-model
             # entries so a switch back to a model that previously had
             # a different mode does not resurrect the old setting.
-            $self->{config}->clear_model_scoped('thinking_mode');
+            # Skip the current model - set() just wrote its entry, and
+            # we re-pin it below with the explicit flag.
+            $self->{config}->clear_model_scoped('thinking_mode', $current_model);
+            if ($current_model && $current_model =~ m{/}) {
+                $self->{config}->{model_configs} ||= {};
+                $self->{config}->{model_configs}{$current_model} ||= {};
+                $self->{config}->{model_configs}{$current_model}{'thinking_mode'} = $mode;
+                $self->{config}->{model_configs_explicit} ||= {};
+                $self->{config}->{model_configs_explicit}{$current_model} ||= {};
+                $self->{config}->{model_configs_explicit}{$current_model}{'thinking_mode'} = 1;
+            }
             $self->{config}->save();
         }
         $self->display_system_message("Thinking mode set to '$mode'" . $self->_scope_tag($session_only));

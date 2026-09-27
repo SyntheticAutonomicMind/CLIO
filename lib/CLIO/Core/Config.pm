@@ -822,8 +822,17 @@ sub _restore_model_config {
     # A switch is cross-provider only when set() hands us the outgoing
     # model. On load() (initial restore) there is no switch - we just
     # restore the saved entry (or keep globals) as before.
+    #
+    # NOTE: the original expression `defined $old_model && _same_provider(...) ? 0 : 1`
+    # was parsed as `(defined $old_model && _same_provider(...)) ? 0 : 1`, which
+    # made $cross_provider=1 when $old_model was undef (initial load from
+    # load()). That caused thinking keys missing from model_configs to be
+    # silently reset to DEFAULT_CONFIG values instead of keeping the user's
+    # saved global values. Initial load is NOT a provider switch, so
+    # $cross_provider must be 0 when there is no outgoing model.
     my $cross_provider = defined $old_model
-                       && _same_provider($old_model, $model_id) ? 0 : 1;
+        ? (_same_provider($old_model, $model_id) ? 0 : 1)
+        : 0;
 
     # If no entry exists, the behavior depends on whether this is a
     # cross-provider switch. Within a provider we KEEP current globals

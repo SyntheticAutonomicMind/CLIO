@@ -326,10 +326,16 @@ subtest 'end-to-end: stale value cannot resurrect after reset through reload' =>
 };
 
 # ============================================================================
-# 7. Same shape of bug for show_thinking / thinking_effort / thinking_mode.
-# These are also in MODEL_SCOPED_KEYS. The /api handlers call
-# clear_model_scoped after set() so a switch back to a model that had
-# the opposite value does not resurrect the old setting.
+# 7. Thinking handlers (show_thinking, thinking_effort, thinking_mode) call
+#    set() then clear_model_scoped($key, $current_model) then re-pin the
+#    current model's entry. This clears stale entries from OTHER models
+#    while preserving the current model's explicit override.
+#
+#    Previously, thinking_effort and thinking_mode called clear_model_scoped()
+#    WITHOUT $skip_model, wiping the current model's entry that set() had
+#    just written. Combined with a second bug in _restore_model_config (which
+#    treated initial load as a cross-provider switch), this caused the values
+#    to silently revert to defaults on every restart.
 # ============================================================================
 
 for my $key (qw(show_thinking thinking_effort thinking_mode)) {
@@ -356,7 +362,8 @@ for my $key (qw(show_thinking thinking_effort thinking_mode)) {
         });
 
         # Simulate the API handler: user on minimax toggles thinking OFF.
-        # The handler calls set() then clear_model_scoped().
+        # The handler calls set() then clear_model_scoped(current_model)
+        # then re-pins the current model's entry with the explicit flag.
         my $reset_value = {
             show_thinking   => 0,
             thinking_effort => 'medium',
@@ -364,25 +371,142 @@ for my $key (qw(show_thinking thinking_effort thinking_mode)) {
         };
 
         my $config = CLIO::Core::Config->new(config_dir => $tmpdir);
+        my $current_model = $config->get('model') || '';
         $config->set($key, $reset_value->{$key}, 1);
-        $config->clear_model_scoped($key);
+        $config->clear_model_scoped($key, $current_model);
+        # Re-pin current model's entry (mirrors the fixed handler)
+        if ($current_model && $current_model =~ m{/}) {
+            $config->{config}->{model_configs}{$current_model}{$key} = $reset_value->{$key};
+            $config->{config}->{model_configs_explicit}{$current_model}{$key} = 1;
+        }
         $config->save();
 
-        # Both models' entries for $key should be gone.
-        ok(!exists $config->{config}{model_configs}{'minimax/MiniMax-M3'}{$key},
-            "$key: minimax entry cleared");
+        # Current model's entry should be PRESERVED (with the new value).
+        is($config->{config}{model_configs}{'minimax/MiniMax-M3'}{$key}, $reset_value->{$key},
+            "$key: minimax entry preserved with reset value");
+        # Other model's stale entry should be cleared.
         ok(!exists $config->{config}{model_configs}{'anthropic/claude-4-sonnet'}{$key},
-            "$key: anthropic entry cleared");
+            "$key: anthropic stale entry cleared");
 
         # Global value should be the new value.
         is($config->{config}{$key}, $reset_value->{$key},
             "$key: global value updated to reset value");
 
-        # Restart and switch to anthropic: stale value must not resurrect.
+        # Restart and verify: global value persists, stale entry doesn't resurrect.
         my $config2 = CLIO::Core::Config->new(config_dir => $tmpdir);
         is($config2->{config}{$key}, $reset_value->{$key},
             "$key: global value persists across reload");
     };
 }
+
+# ============================================================================
+# 8. Regression: thinking_effort / thinking_mode survive a full save/restart
+#    cycle. This reproduces the exact bug reported by the user:
+#      /api set thinking_effort high  ->  saved, but reverted to 'medium' on restart
+#      /api set thinking_mode enabled ->  saved, but reverted to 'auto'   on restart
+#    Root cause was two bugs:
+#      (a) handle_set called clear_model_scoped without $skip_model,
+#          wiping the current model's model_configs entry before save.
+#      (b) _restore_model_config set $cross_provider=1 on initial load
+#          (no $old_model), causing missing thinking keys to be reset
+#          to DEFAULT_CONFIG instead of keeping user-set globals.
+# ============================================================================
+
+subtest 'thinking_effort and thinking_mode survive save/restart cycle' => sub {
+    my $tmpdir = tempdir(CLEANUP => 1);
+
+    # Seed a config with a provider and model already configured.
+    write_disk($tmpdir, {
+        api_base => 'https://integrate.api.nvidia.com/v1',
+        api_key  => 'nvapi-test',
+        model    => 'nvidia/nemotron-3-ultra-550b-a55b',
+        provider => 'nvidia',
+        show_thinking => 1,
+    });
+
+    # Session 1: simulate the full handler flow for /api set thinking_effort high
+    # and /api set thinking_mode enabled.
+    my $config = CLIO::Core::Config->new(config_dir => $tmpdir);
+    my $current_model = $config->get('model') || '';
+    ok($current_model eq 'nvidia/nemotron-3-ultra-550b-a55b',
+        'precondition: model is set');
+
+    # /api set thinking_effort high
+    $config->set('thinking_effort', 'high', 1);
+    $config->clear_model_scoped('thinking_effort', $current_model);
+    if ($current_model && $current_model =~ m{/}) {
+        $config->{config}->{model_configs}{$current_model}{'thinking_effort'} = 'high';
+        $config->{config}->{model_configs_explicit}{$current_model}{'thinking_effort'} = 1;
+    }
+    $config->save();
+
+    # /api set thinking_mode enabled
+    $config->set('thinking_mode', 'enabled', 1);
+    $config->clear_model_scoped('thinking_mode', $current_model);
+    if ($current_model && $current_model =~ m{/}) {
+        $config->{config}->{model_configs}{$current_model}{'thinking_mode'} = 'enabled';
+        $config->{config}->{model_configs_explicit}{$current_model}{'thinking_mode'} = 1;
+    }
+    $config->save();
+
+    # Verify in-memory state
+    is($config->{config}{thinking_effort}, 'high',
+        'in-memory: thinking_effort is high');
+    is($config->{config}{thinking_mode}, 'enabled',
+        'in-memory: thinking_mode is enabled');
+
+    # Session 2: fresh restart - the exact bug scenario
+    my $config2 = CLIO::Core::Config->new(config_dir => $tmpdir);
+
+    is($config2->{config}{thinking_effort}, 'high',
+        'restart: thinking_effort preserved as high (was reverting to medium)');
+    is($config2->{config}{thinking_mode}, 'enabled',
+        'restart: thinking_mode preserved as enabled (was reverting to auto)');
+    is($config2->{config}{show_thinking}, 1,
+        'restart: show_thinking still preserved');
+};
+
+# ============================================================================
+# 9. Regression: thinking values set WITHOUT model_configs entry (e.g. the
+#    value was set before model_configs existed) still survive on initial
+#    load. This tests the _restore_model_config $cross_provider=0 fix directly:
+#    when $old_model is undef (initial load), missing thinking keys must KEEP
+#    the user-set global value, not reset to DEFAULT_CONFIG.
+# ============================================================================
+
+subtest 'thinking values persist on load when missing from model_configs' => sub {
+    my $tmpdir = tempdir(CLEANUP => 1);
+
+    # Disk has thinking_effort='high' and thinking_mode='enabled' as
+    # top-level user_set values, but the model_configs entry does NOT
+    # contain those keys (simulating the state after the old clear_model_scoped
+    # bug wiped them, or a partially-migrated config from an older version).
+    write_disk($tmpdir, {
+        api_base => 'https://integrate.api.nvidia.com/v1',
+        api_key  => 'nvapi-test',
+        model    => 'nvidia/nemotron-3-ultra-550b-a55b',
+        provider => 'nvidia',
+        show_thinking => 1,
+        thinking_effort => 'high',
+        thinking_mode   => 'enabled',
+        model_configs => {
+            'nvidia/nemotron-3-ultra-550b-a55b' => {
+                show_thinking => 1,
+                # NOTE: thinking_effort and thinking_mode are MISSING
+                # from this entry - exactly the state that triggered
+                # Bug 2 (reset to default on initial load).
+            },
+        },
+    });
+
+    my $config = CLIO::Core::Config->new(config_dir => $tmpdir);
+
+    is($config->{config}{thinking_effort}, 'high',
+        'load: thinking_effort keeps user-set global (not reset to medium)');
+    is($config->{config}{thinking_mode}, 'enabled',
+        'load: thinking_mode keeps user-set global (not reset to auto)');
+    is($config->{config}{show_thinking}, 1,
+        'load: show_thinking still correct');
+};
 
 done_testing();
