@@ -299,8 +299,10 @@ sub flush {
         $printed = 1;
     }
 
-    $self->{markdown_buffer} = '';
-    $self->{line_buffer}     = '';
+    $self->{markdown_buffer}  = '';
+    $self->{line_buffer}      = '';
+    $self->{md_line_count}    = 0;
+    $self->{last_flush_time}  = time();
 
     return $printed;
 }
@@ -349,6 +351,11 @@ sub flush_for_tools {
         $self->{line_buffer} = '';
         $printed = 1;
     }
+
+    $self->{markdown_buffer}  = '';
+    $self->{line_buffer}      = '';
+    $self->{md_line_count}    = 0;
+    $self->{last_flush_time}  = time();
 
     STDOUT->flush() if STDOUT->can('flush');
     $| = 1;

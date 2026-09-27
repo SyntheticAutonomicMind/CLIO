@@ -171,4 +171,30 @@ sub strip_ansi { my $t = $_[0]; $t =~ s/\e\[[0-9;?]*[A-Za-z]//g; return $t }
     unlike($out, qr/\e\[s/, 'code-block path: no cursor dance');
 }
 
+# ---- Test 4: flush() resets md_line_count and last_flush_time ----
+# The public flush() must reset the same buffer-tracking state as the
+# internal _flush_markdown_buffer(), otherwise callers that invoke flush()
+# (e.g. the thinking callback's $flush_thinking) leave a stale md_line_count
+# that can trigger a spurious extra flush on the next chunk.
+{
+    my $sc = fresh_sc();
+    my $cb = $sc->make_on_chunk_callback(spinner => $spinner, host_proto => $host);
+
+    # Push a partial line (no newline) so it lands in the line_buffer
+    # and does NOT trigger the per-line flush path (which only fires
+    # on complete lines). Then flush() must drain and reset state.
+    $cb->("A line without a newline");
+
+    # Manually set md_line_count to simulate a pending buffered state
+    # that flush() should clean up (the per-line path already resets it
+    # for complete lines, but flush() handles the residual tail).
+    $sc->{md_line_count} = 3;
+    ok($sc->{md_line_count} > 0, 'set md_line_count to a stale non-zero value');
+
+    $sc->flush();
+
+    is($sc->{md_line_count}, 0, 'flush() resets md_line_count to 0');
+    ok(defined $sc->{last_flush_time}, 'flush() sets last_flush_time');
+}
+
 done_testing();
