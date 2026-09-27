@@ -195,15 +195,38 @@ sub make_on_chunk_callback {
             $self->{markdown_buffer} .= $line . "\n";
             $self->{md_line_count}++;
 
-            # Flush decision
+            # Flush decision.
+            #
+            # We post-process (markdown render + indent/wrap) BEFORE ever
+            # sending anything to the terminal: each complete line is
+            # rendered and printed as soon as it is available, so the user
+            # sees output progressively instead of waiting for the model
+            # to finish.  There is NO "print raw text immediately and
+            # replace it later" step -- that approach (ANSI cursor
+            # save/restore + row-count clearing) is what produced the
+            # duplicated/garbled output, because the visible row count of
+            # the raw text never matches the wrapped formatted text.
+            #
+            # size_limit = 1  -> flush on every *complete* line (when not
+            #                    inside a code block or table), giving
+            #                    character-level-ish feedback at line
+            #                    granularity with zero post-processing
+            #                    latency.
+            # in_special guard -> code blocks and tables are held until the
+            #                    closing fence / last row so they render as
+            #                    a coherent unit, never a fragment.
+            # time_limit      -> safety net so a partially-buffered block
+            #                    (rare) still drains within 0.5s.
+            # max_limit       -> hard cap so a runaway code block / table
+            #                    cannot pin the buffer forever.
             my $now        = time();
-            my $size_limit = 10;
+            my $size_limit = 1;
             my $time_limit = 0.5;
             my $max_limit  = 50;
             my $in_special = $self->{in_code_block} || $self->{in_table};
             my $should_flush = (
                 ($self->{md_line_count} >= $size_limit && !$in_special) ||
-                ($now - $self->{last_flush_time} >= $time_limit && !$in_special) ||
+                ($self->{md_line_count} > 0 && ($now - $self->{last_flush_time} >= $time_limit) && !$in_special) ||
                 ($self->{md_line_count} >= $max_limit)
             );
 

@@ -27,6 +27,7 @@ my $mock_pager = bless {
     *MockPager::reset_page = sub { $_[0]->{line_count} = 0; $_[0]->{current_page} = [] };
     *MockPager::track_line = sub { push @{$_[0]->{current_page}}, $_[1]; $_[0]->{line_count}++ };
     *MockPager::increment_lines = sub { $_[0]->{line_count} += ($_[1] // 1) };
+    *MockPager::should_trigger = sub { 0 };  # pagination never triggers in unit tests
     *MockPager::line_count = sub { $_[0]->{line_count} = $_[1] if defined $_[1]; $_[0]->{line_count} };
     *MockPager::enabled = sub { $_[0]->{pagination_enabled} };
 }
@@ -241,6 +242,17 @@ sub render_markdown { return $_[1] }
 sub colorize { return $_[1] }  # just return text
 sub agent_name { return 'CLIO' }
 sub pause { }
+
+# Faithful mock of CLIO::UI::Chat::_count_visual_lines, used by
+# StreamingController::_flush_markdown_buffer for pager tracking.
+# Needed now that the controller flushes on every complete line.
+sub _count_visual_lines {
+    my ($self, $text) = @_;
+    return 0 unless defined $text && length($text) > 0;
+    my @lines = split /\n/, $text, -1;
+    pop @lines if @lines && $lines[-1] eq '';
+    return scalar(@lines);
+}
 
 1;
 
