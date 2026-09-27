@@ -635,6 +635,21 @@ sub _make_thinking_callback {
         # StreamingController::flush never modifies it; the 'end'
         # handler resets it to 0 so the next answer chunk re-emits the
         # "CLIO: " prefix.
+        #
+        # CRITICAL: we copy ONLY markdown_buffer, NOT line_buffer.
+        # The thinking callback's while loop extracts complete lines
+        # into markdown_buffer one at a time, leaving remaining
+        # unprocessed content (with embedded \n) in line_buffer. If we
+        # copy line_buffer into the main controller, flush() renders
+        # that remaining content via its line_buffer path — which (a)
+        # calls print $output,"\n" adding an extra blank line, (b)
+        # bypasses the per-line Markdown context tracking the while
+        # loop does, and (c) clears line_buffer, destroying content the
+        # while loop still needs. This is the per-line streaming
+        # regression: models that emit small thinking chunks (NVIDIA
+        # Nemotron) accumulate partial-line fragments that get
+        # prematurely flushed as "incomplete final lines", splitting
+        # words and list numbers across output lines.
         my $saved_md  = $self->{streaming}{markdown_buffer};
         my $saved_ln  = $self->{streaming}{line_buffer};
         my $saved_flp = $self->{streaming}{first_line_printed};
@@ -643,7 +658,7 @@ sub _make_thinking_callback {
         my $saved_cnt = $self->{streaming}{md_line_count};
 
         $self->{streaming}{markdown_buffer}     = $think_stream->{markdown_buffer};
-        $self->{streaming}{line_buffer}         = $think_stream->{line_buffer};
+        $self->{streaming}{line_buffer}         = '';  # Do NOT flush thinking's line_buffer
         $self->{streaming}{first_line_printed}  = 1;
         $self->{streaming}{in_table}            = $think_stream->{in_table};
         $self->{streaming}{in_code_block}       = $think_stream->{in_code_block};
@@ -653,22 +668,26 @@ sub _make_thinking_callback {
         # the structured form (the simple form is already handled by
         # the per-line strip inside StreamingController).
         $self->{streaming}{markdown_buffer} = $strip_session_markers->($self->{streaming}{markdown_buffer});
-        $self->{streaming}{line_buffer}     = $strip_session_markers->($self->{streaming}{line_buffer});
 
         # Flush through the live StreamingController so the thinking
         # text is rendered with the same line-batching, Markdown, and
-        # word-wrap as ordinary assistant output.
+        # word-wrap as ordinary assistant output. Only markdown_buffer
+        # is processed (line_buffer is empty); the while loop retains
+        # remaining content for continued per-line extraction.
         $self->{streaming}->flush();
 
-        # Capture post-flush state back into the thinking controller
-        # so subsequent thinking chunks see an empty buffer.
+        # Capture post-flush state back into the thinking controller.
+        # markdown_buffer is empty after flush(); copy it back so the
+        # thinking callback sees a clean buffer. Do NOT copy line_buffer
+        # back — the thinking callback's while loop manages line_buffer
+        # and must retain unprocessed content across flushes.
         $think_stream->{markdown_buffer} = $self->{streaming}{markdown_buffer};
-        $think_stream->{line_buffer}     = $self->{streaming}{line_buffer};
         $think_stream->{md_line_count}   = $self->{streaming}{md_line_count};
         $think_stream->{in_table}        = $self->{streaming}{in_table};
         $think_stream->{in_code_block}   = $self->{streaming}{in_code_block};
 
-        # Restore the main streaming controller's pre-call state.
+        # Restore the main streaming controller's pre-call state
+        # (including its own line_buffer, which we never touched).
         $self->{streaming}{markdown_buffer}     = $saved_md;
         $self->{streaming}{line_buffer}         = $saved_ln;
         $self->{streaming}{first_line_printed}  = $saved_flp;
@@ -739,6 +758,18 @@ sub _make_thinking_callback {
             }
             elsif ($signal eq 'end') {
                 if ($header_printed) {
+                    # At end-of-stream, any partial line remaining in
+                    # line_buffer must be moved to markdown_buffer so it
+                    # gets flushed through the markdown render path
+                    # (flush() no longer processes line_buffer during
+                    # per-line thinking flushes - that was the bug).
+                    if (defined $think_stream->{line_buffer}
+                        && $think_stream->{line_buffer} =~ /\S/) {
+                        $think_stream->{line_buffer} = $strip_session_markers->($think_stream->{line_buffer});
+                        $think_stream->{markdown_buffer} .= $think_stream->{line_buffer} . "\n";
+                        $think_stream->{md_line_count}++;
+                        $think_stream->{line_buffer} = '';
+                    }
                     $flush_thinking->();
                     print "\n";
                     $print_thinking_hrule->();

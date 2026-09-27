@@ -534,4 +534,113 @@ subtest 'thinking content is flushed per-line (not buffered until end)' => sub {
     $cap_sub->(sub { $cb->('', 'end'); });
 };
 
+# --- Test 15: per-line flush does not prematurely flush line_buffer ---
+#
+# Regression test for the line_buffer double-flush bug introduced with
+# per-line thinking streaming (commit 13eace6d).
+#
+# Root cause: $flush_thinking called StreamingController::flush(), which
+# processes BOTH markdown_buffer (complete lines) AND line_buffer (incomplete
+# partial line). During per-line flushing, the thinking callback's while loop
+# extracts ONE complete line from line_buffer, but line_buffer still holds
+# remaining unprocessed content (with embedded \n). flush() then renders that
+# remaining content via its line_buffer path, which:
+#   (a) prints it immediately (without per-line Markdown context tracking),
+#   (b) adds an extra blank line (flush()-> line_buffer path prints "\n"
+#       after the output), and
+#   (c) clears line_buffer, destroying content the while loop still needs.
+#
+# This was invisible when the callback was only invoked with the full
+# content (the old buffer-until-end approach), but per-line streaming
+# exposes it: models that emit small thinking chunks (e.g. NVIDIA
+# Nemotron) accumulate many word fragments in line_buffer before the first
+# \n arrives. When that \n triggers the first per-line flush, all the
+# accumulated remaining content gets flushed at once — splitting words,
+# list numbers, and Markdown bold markers across output lines.
+#
+# The fix: $flush_thinking copies ONLY markdown_buffer to the main
+# controller, sets line_buffer to '' so flush() does not process it,
+# and does NOT copy line_buffer back to thinking - letting the while
+# loop retain unprocessed content across flushes. At 'end', any
+# remaining line_buffer content is moved to markdown_buffer first.
+#
+subtest 'per-line flush does not prematurely flush thinking line_buffer' => sub {
+    my $config  = MockConfig->new(show_thinking => 1);
+    my $chat    = MockChat->new(config => $config);
+    my $spinner = MockSpinner->new;
+    my $cb      = $chat->_make_thinking_callback($spinner);
+
+    # Simulate NVIDIA-style small chunks: words accumulate without \n,
+    # then a chunk arrives with \n that triggers the first per-line flush.
+    # The bug would cause flush()->line_buffer to render SAM. Likely
+    # these are internal etc. as separate "incomplete final line"
+    # prints, splitting "CLIO" into "CL" + "IO" or similar.
+    my $out = _capture_stdout(sub {
+        $cb->('', 'start');
+        $cb->("We need to answer about CL", undef);
+        $cb->("IO and SAM. Likely", undef);
+        $cb->(" these are internal", undef);
+        $cb->(" frameworks or components.", undef);
+        $cb->("\n\n", undef);
+        $cb->("We must assume", undef);
+        $cb->(" knowledge of CL", undef);
+        $cb->("IO frameworks.", undef);
+        $cb->("\n", undef);
+        $cb->('', 'end');
+    });
+
+    # Strip ANSI for inspection
+    $out =~ s/\e\[[0-9;]*[A-Za-z]//g;
+
+    # Every word fragment must be joined correctly by the while loop
+    like($out, qr/CLIO/,            'CLIO not split across lines');
+    like($out, qr/SAM\. Likely/,    'SAM. Likely not orphaned');
+
+    # The full sentence is present (may be word-wrapped at 80 cols,
+    # that is expected and correct - the bug was about mid-word splits
+    # not about normal word-wrap).
+    like($out, qr/internal frameworks/,
+         'sentence fragment "internal frameworks" intact');
+    like($out, qr/or components\./,
+         'sentence fragment "or components." intact');
+    like($out, qr/knowledge of CLIO frameworks/,
+         'second CLIO mention also intact');
+
+    # No orphaned fragments that the bug would produce
+    unlike($out, qr/^    CL\s*$/m,
+         'no orphaned "CL" fragment on its own line');
+    unlike($out, qr/^    IO and SAM\. Likely\s*$/m,
+         'no orphaned mid-word fragment on its own line');
+
+    # Count occurrences of key phrases - should be exactly 1 each
+    my $clio_count = () = ($out =~ /CLIO/g);
+    cmp_ok($clio_count, '==', 2, 'CLIO appears exactly twice (not split/fragmented)');
+};
+
+# --- Test 16: end-of-stream partial line is still flushed ---
+#
+# After the fix, $flush_thinking no longer processes line_buffer.
+# The 'end' handler must move any remaining partial line into
+# markdown_buffer so it gets rendered.
+subtest 'end-of-stream partial line is flushed after fix' => sub {
+    my $config  = MockConfig->new(show_thinking => 1);
+    my $chat    = MockChat->new(config => $config);
+    my $spinner = MockSpinner->new;
+    my $cb      = $chat->_make_thinking_callback($spinner);
+
+    my $out = _capture_stdout(sub {
+        $cb->('', 'start');
+        $cb->("Some thinking", undef);  # No trailing newline -> stays in line_buffer
+        $cb->('', 'end');
+    });
+
+    like($out, qr/Some thinking/,
+         'partial line in line_buffer is flushed at end signal');
+
+    $out =~ s/\e\[[0-9;]*[A-Za-z]//g;
+    # The output should contain actual thinking content, not just
+    # the header/hrules with everything lost.
+    like($out, qr/Some thinking/, 'partial line content rendered');
+};
+
 done_testing();
