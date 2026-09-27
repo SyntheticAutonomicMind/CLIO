@@ -489,4 +489,49 @@ subtest 'chunks with leading whitespace preserved verbatim' => sub {
     like($out, qr/word next/, 'single space preserved when previous chunk ends with whitespace');
 };
 
+# --- Test 14: thinking content is flushed per-line, not buffered until 'end' ---
+#
+# Regression test: the thinking callback previously accumulated all content
+# into $think_stream buffers and only flushed on the 'end' signal, so the
+# user saw nothing until the model finished. The fix routes each complete
+# line through $flush_thinking immediately (mirroring on_chunk's per-line
+# flush), so thinking output appears progressively.
+subtest 'thinking content is flushed per-line (not buffered until end)' => sub {
+    my $config  = MockConfig->new(show_thinking => 1);
+    my $chat    = MockChat->new(config => $config);
+    my $spinner = MockSpinner->new;
+    my $cb      = $chat->_make_thinking_callback($spinner);
+
+    # Simulate a provider streaming multi-line thinking content in
+    # several chunks, each containing complete lines, WITHOUT calling
+    # 'end' between them. If per-line flushing works, each line's
+    # output should be visible immediately after its chunk is processed.
+    my @captured;
+    my $cap_sub = sub {
+        my $cb = shift;
+        my $captured = '';
+        open my $fh, '>:encoding(UTF-8)', \$captured or die;
+        my $old = select $fh;
+        local $| = 1;
+        $cb->();
+        select $old;
+        close $fh;
+        push @captured, $captured;
+    };
+
+    $cap_sub->(sub { $cb->('', 'start'); });
+
+    # Chunk 1: contains two complete lines
+    $cap_sub->(sub { $cb->("First line of thinking\nSecond line of thinking\n", undef); });
+    like($captured[-1], qr/First line of thinking/, 'chunk 1: first line visible immediately');
+    like($captured[-1], qr/Second line of thinking/, 'chunk 1: second line visible immediately');
+
+    # Chunk 2: another complete line
+    $cap_sub->(sub { $cb->("Third line of thinking\n", undef); });
+    like($captured[-1], qr/Third line of thinking/, 'chunk 2: third line visible immediately');
+
+    # Final end
+    $cap_sub->(sub { $cb->('', 'end'); });
+};
+
 done_testing();

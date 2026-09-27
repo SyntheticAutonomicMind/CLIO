@@ -811,6 +811,27 @@ sub _make_thinking_callback {
 
             $think_stream->{markdown_buffer} .= $line . "\n";
             $think_stream->{md_line_count}++;
+
+            # Flush decision: mirror on_chunk's per-line flush so thinking
+            # content appears progressively instead of buffering until 'end'.
+            # size_limit = 1 -> flush on every complete line (when not inside
+            # a code block or table), giving line-level feedback with zero
+            # post-processing latency. The time/max guards are safety nets.
+            my $now        = time();
+            my $size_limit = 1;
+            my $time_limit = 0.5;
+            my $max_limit  = 50;
+            my $in_special = $think_stream->{in_code_block} || $think_stream->{in_table};
+            my $should_flush = (
+                ($think_stream->{md_line_count} >= $size_limit && !$in_special) ||
+                ($think_stream->{md_line_count} > 0 && ($now - $think_stream->{last_flush_time} >= $time_limit) && !$in_special) ||
+                ($think_stream->{md_line_count} >= $max_limit)
+            );
+
+            if ($should_flush) {
+                $flush_thinking->();
+                $think_stream->{last_flush_time} = time();
+            }
         }
         STDOUT->flush() if STDOUT->can('flush');
     };
