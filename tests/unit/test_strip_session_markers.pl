@@ -97,6 +97,32 @@ subtest 'rejects non-conforming names' => sub {
     }
 };
 
+# --- Newline preservation around session markers ---
+# Regression: strip_session_markers used \s* around markers, which matches
+# \n and collapses paragraph breaks in thinking output.  The fix uses
+# [ \t]* so only spaces/tabs are consumed, preserving newlines.
+subtest 'strip_session_markers preserves newlines around markers' => sub {
+    # Marker on its own line between paragraphs
+    my $r = strip_session_markers("First para\n<!--session:foo-->\nSecond para\n");
+    like($r, qr/^First para\n\nSecond para\n$/,
+        'paragraph breaks preserved when marker is on own line');
+
+    # Structured marker on its own line
+    my $r2 = strip_session_markers("Para one\n<!--session:{\"title\":\"x\"}-->\nPara two\n");
+    like($r2, qr/^Para one\n\nPara two\n$/,
+        'structured marker on own line preserves paragraph breaks');
+
+    # Marker at end of line with content before it
+    my $r3 = strip_session_markers("Some text <!--session:foo-->\nMore text\n");
+    like($r3, qr/^Some text\nMore text\n$/,
+        'marker at end of line preserves the following newline');
+
+    # Multiple markers, each on own line
+    my $r4 = strip_session_markers("A\n<!--session:foo-->\nB\n<!--session:bar-->\nC\n");
+    like($r4, qr/^A\n\nB\n\nC\n$/,
+        'multiple markers on own lines preserve all paragraph breaks');
+};
+
 # --- Chat wrapper still works (three call shapes) ---
 subtest 'Chat::_strip_session_markers class method' => sub {
     my $r = CLIO::UI::Chat->_strip_session_markers('hello <!--session:foo--> world');

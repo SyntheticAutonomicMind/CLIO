@@ -3186,7 +3186,7 @@ sub _extract_session_marker {
     my ($self, $content, $session) = @_;
     
     # Try structured format first: <!--session:{"title":"name here"}-->
-    if ($content =~ s/\s*<!--session:\{[^}]*"title"\s*:\s*"([^"]{3,80})"[^}]*\}-->\s*//s) {
+    if ($content =~ s/[ \t]*<!--session:\{[^}]*"title"[ \t]*:[ \t]*"([^"]{3,80})"[^}]*\}-->[ \t]*//s) {
         my $title = $1;
         $title =~ s/^\s+|\s+$//g;
         if (length($title) >= 3) {
@@ -3200,7 +3200,7 @@ sub _extract_session_marker {
     # Character class allows '.' for date-version tags (e.g.
     # "doc-sync-20260904.1"); see CLIO::Util::TextSanitizer for the
     # matching strip regex used elsewhere.
-    if ($content =~ s/\s*<!--session:([a-z][a-z0-9._-]{2,50})-->\s*//si) {
+    if ($content =~ s/[ \t]*<!--session:([a-z][a-z0-9._-]{2,50})-->[ \t]*//si) {
         my $title = $1;
         $title =~ s/^\s+|\s+$//g;
         if (length($title) >= 3) {

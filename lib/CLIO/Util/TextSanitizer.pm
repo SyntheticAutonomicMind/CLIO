@@ -256,8 +256,8 @@ Returns: String with markers removed, or undef if input was undef.
 sub strip_session_markers {
     my ($text) = @_;
     return undef unless defined $text;
-    $text =~ s/\s*<!--session:\{[^}]*\}-->\s*//sg;
-    $text =~ s/\s*<!--session:[a-z][a-z0-9._-]{2,50}-->\s*//sgi;
+    $text =~ s/[ \t]*<!--session:\{[^}]*\}-->[ \t]*//sg;
+    $text =~ s/[ \t]*<!--session:[a-z][a-z0-9._-]{2,50}-->[ \t]*//sgi;
     return $text;
 }
 
