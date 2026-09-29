@@ -244,6 +244,7 @@ Returns: User-friendly message string
 sub _get_quota_exceeded_user_message {
     my ($info, $copilot_plan) = @_;
 
+    $copilot_plan //= '';
     my $code = $info && $info->{code} ? $info->{code} : '';
 
     # Free tier quota exceeded

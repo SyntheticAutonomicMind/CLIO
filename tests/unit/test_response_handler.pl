@@ -825,4 +825,128 @@ subtest 'handle_error_response - NVIDIA DEGRADED still classified correctly (reg
     is($result->{error_type}, 'provider_unavailable', 'DEGRADED function still classified as provider_unavailable');
     is($result->{retryable}, 0, 'DEGRADED function still NOT retryable');
 };
+
+# =============================================================================
+# Quota exceeded tests (Copilot billing codes: quota_exceeded, free_quota_exceeded, etc.)
+# =============================================================================
+# These are detected via semantic error codes in the response body, not HTTP
+# status. The _get_quota_exceeded_user_message helper branches on $copilot_plan
+# which can be undef when there is no session - this previously caused
+# "Use of uninitialized value $copilot_plan in string eq" warnings.
+
+subtest 'handle_error_response - quota_exceeded with no session (undef copilot_plan)' => sub {
+    # Regression test: $copilot_plan is undef when $self->{session} is falsy.
+    # Previously this caused "Use of uninitialized value $copilot_plan in string eq"
+    # warnings at ResponseHandler.pm lines 256 and 259.
+    my $handler = CLIO::Core::API::ResponseHandler->new();
+    my $resp = MockResponse->new(
+        code => 400,
+        status_line => '400 Bad Request',
+        content => '{"error":{"message":"Quota exceeded","code":"quota_exceeded"}}',
+    );
+
+    my $result = $handler->handle_error_response($resp, '{}', 0);
+    is($result->{retryable}, 0, 'quota_exceeded is NOT retryable');
+    is($result->{error_type}, 'quota_exceeded', 'Error type is quota_exceeded');
+    # Falls through to the default message (no matching plan branch)
+    like($result->{error}, qr/AI Credits/i, 'Returns generic quota message when plan is unknown');
+};
+
+subtest 'handle_error_response - free_quota_exceeded with no session' => sub {
+    my $handler = CLIO::Core::API::ResponseHandler->new();
+    my $resp = MockResponse->new(
+        code => 400,
+        status_line => '400 Bad Request',
+        content => '{"error":{"message":"Free tier quota exhausted","code":"free_quota_exceeded"}}',
+    );
+
+    my $result = $handler->handle_error_response($resp, '{}', 0);
+    is($result->{retryable}, 0, 'free_quota_exceeded is NOT retryable');
+    is($result->{error_type}, 'quota_exceeded', 'Error type is quota_exceeded');
+    like($result->{error}, qr/monthly chat messages quota/i, 'Returns free-tier upgrade message');
+};
+
+subtest 'handle_error_response - quota_exceeded with session copilot_plan=free' => sub {
+    my $handler = CLIO::Core::API::ResponseHandler->new();
+    $handler->set_session({ copilot_plan => 'free' });
+    my $resp = MockResponse->new(
+        code => 400,
+        status_line => '400 Bad Request',
+        content => '{"error":{"message":"Quota exceeded","code":"quota_exceeded"}}',
+    );
+
+    my $result = $handler->handle_error_response($resp, '{}', 0);
+    is($result->{retryable}, 0, 'quota_exceeded is NOT retryable');
+    like($result->{error}, qr/Upgrade to Copilot Pro/i, 'Returns free-tier upgrade message for plan=free');
+};
+
+subtest 'handle_error_response - quota_exceeded with session copilot_plan=individual' => sub {
+    my $handler = CLIO::Core::API::ResponseHandler->new();
+    $handler->set_session({ copilot_plan => 'individual' });
+    my $resp = MockResponse->new(
+        code => 400,
+        status_line => '400 Bad Request',
+        content => '{"error":{"message":"Quota exceeded","code":"quota_exceeded"}}',
+    );
+
+    my $result = $handler->handle_error_response($resp, '{}', 0);
+    like($result->{error}, qr/exhausted your AI Credits/i, 'Returns credits message for plan=individual');
+};
+
+subtest 'handle_error_response - quota_exceeded with session copilot_plan=individual_pro' => sub {
+    my $handler = CLIO::Core::API::ResponseHandler->new();
+    $handler->set_session({ copilot_plan => 'individual_pro' });
+    my $resp = MockResponse->new(
+        code => 400,
+        status_line => '400 Bad Request',
+        content => '{"error":{"message":"Quota exceeded","code":"quota_exceeded"}}',
+    );
+
+    my $result = $handler->handle_error_response($resp, '{}', 0);
+    like($result->{error}, qr/enable additional paid usage/i, 'Returns paid usage message for plan=individual_pro');
+};
+
+subtest 'handle_error_response - quota_exceeded with session but no copilot_plan key' => sub {
+    # Session exists but copilot_plan key is missing/undef
+    my $handler = CLIO::Core::API::ResponseHandler->new();
+    $handler->set_session({ id => 'test-session' });
+    my $resp = MockResponse->new(
+        code => 400,
+        status_line => '400 Bad Request',
+        content => '{"error":{"message":"Quota exceeded","code":"quota_exceeded"}}',
+    );
+
+    my $result = $handler->handle_error_response($resp, '{}', 0);
+    is($result->{retryable}, 0, 'quota_exceeded is NOT retryable');
+    is($result->{error_type}, 'quota_exceeded', 'Error type is quota_exceeded');
+    like($result->{error}, qr/AI Credits/i, 'Falls through to default message when copilot_plan key missing');
+};
+
+subtest 'handle_error_response - overage_limit_reached with no session' => sub {
+    my $handler = CLIO::Core::API::ResponseHandler->new();
+    my $resp = MockResponse->new(
+        code => 400,
+        status_line => '400 Bad Request',
+        content => '{"error":{"message":"Overage limit reached","code":"overage_limit_reached"}}',
+    );
+
+    my $result = $handler->handle_error_response($resp, '{}', 0);
+    is($result->{retryable}, 0, 'overage_limit_reached is NOT retryable');
+    is($result->{error_type}, 'quota_exceeded', 'Error type is quota_exceeded');
+    like($result->{error}, qr/accrue additional AI Credits/i, 'Returns overage message');
+};
+
+subtest 'handle_error_response - Z.AI insufficient balance (code 1113) with no session' => sub {
+    my $handler = CLIO::Core::API::ResponseHandler->new();
+    my $resp = MockResponse->new(
+        code => 400,
+        status_line => '400 Bad Request',
+        content => '{"error":{"message":"Insufficient balance","code":"1113"}}',
+    );
+
+    my $result = $handler->handle_error_response($resp, '{}', 0);
+    is($result->{retryable}, 0, 'Z.AI 1113 is NOT retryable');
+    is($result->{error_type}, 'quota_exceeded', 'Error type is quota_exceeded');
+    like($result->{error}, qr/Z.AI account has insufficient balance/i, 'Returns Z.AI balance message');
+};
 done_testing();
