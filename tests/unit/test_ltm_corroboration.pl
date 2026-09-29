@@ -405,4 +405,81 @@ subtest 'entry_type filter accepts singular type names' => sub {
     is($r2->{tier}, 'trusted', "filtered second source tier=trusted");
 };
 
+# ----- Test 14: Forged corroboration identity rejected by tool handler ----
+# When CLIO_SESSION_ID is set (real runtime), explicitly-passed
+# source_session that differs from the env var must be rejected and
+# fall back to the env value. This prevents the model from self-promoting
+# by passing two different session names. Tested through the MemoryOperations
+# tool handler, not the LongTerm library method.
+subtest 'forged corroboration identity rejected by tool handler' => sub {
+    require CLIO::Tools::MemoryOperations;
+    require CLIO::Session::State;
+    my $tool = CLIO::Tools::MemoryOperations->new();
+
+    # Set up a real runtime identity.
+    local $ENV{CLIO_AGENT_ID} = 'main';
+    local $ENV{CLIO_SESSION_ID} = 'sess-real-123';
+
+    # Build a minimal in-memory LTM with one entry.
+    my $ltm = CLIO::Memory::LongTerm->new();
+    $ltm->add_discovery("Forged identity test entry", 0.9);
+    # Store the file handle so we can pass the ltm via context.
+
+    my $state = CLIO::Session::State->new(session_id => 'sess-real-123');
+    $state->{session_goals} = [];
+
+    my $mock_session = bless {
+        state       => $state,
+        session_id  => 'sess-real-123',
+        ltm         => $ltm,
+    }, 'CLIO::Session::Manager';
+
+    my $context = { session => $mock_session, ltm => $ltm };
+
+    # Attempt 1: explicit source_session that FORGES a different session.
+    # The tool handler should reject this and use the env var value.
+    my $params1 = {
+        search_text    => "Forged identity test entry",
+        source_agent   => 'attacker',
+        source_session => 'sess-attacker-456',
+    };
+    my $result1 = $tool->add_corroboration($params1, $context);
+    ok($result1->{found}, "first forged corroboration still found the entry");
+    my $entry = $ltm->{patterns}{discoveries}[0];
+    is_deeply($entry->{corroboration_sources}, ['main:sess-real-123'],
+        "forged source_session rejected; runtime identity used instead");
+    is($entry->{corroboration_count}, 1, "first corroboration count is 1");
+    is($entry->{tier}, 'unverified', "still unverified after 1 source");
+
+    # Attempt 2: same forging attempt. Same source key -> already corroborated.
+    my $result2 = $tool->add_corroboration($params1, $context);
+    is($result2->{found}, 1, "second forged corroboration returns found=1");
+    is($result2->{already_corroborated}, 1, "second call flagged as already-corroborated (no double-count)");
+    is($entry->{corroboration_count}, 1, "count still 1 (sybil defense holds)");
+    is($entry->{tier}, 'unverified', "entry never promoted via forged identity");
+};
+
+# ----- Test 15: Explicit args work when CLIO_SESSION_ID is unset (tests) ----
+# When the env vars are NOT set (test harness / scripts), explicit
+# source_agent and source_session ARE accepted so tests can simulate
+# multiple distinct agents/sessions.
+subtest 'explicit identity args accepted without env vars' => sub {
+    delete $ENV{CLIO_SESSION_ID};
+    delete $ENV{CLIO_AGENT_ID};
+
+    my $ltm = CLIO::Memory::LongTerm->new();
+    $ltm->add_discovery("No-env identity test entry", 0.9);
+
+    # First source
+    my $r1 = $ltm->add_corroboration("No-env identity test entry", 'agent_x', 'sess_x');
+    is($r1->{found}, 1, "first source found entry (no env vars)");
+    is($r1->{corroboration_count}, 1, "count is 1");
+    is($r1->{tier}, 'unverified', "unverified after 1 source");
+
+    # Second distinct source -> promotes
+    my $r2 = $ltm->add_corroboration("No-env identity test entry", 'agent_y', 'sess_y');
+    is($r2->{corroboration_count}, 2, "count is 2");
+    is($r2->{tier}, 'trusted', "trusted after 2 distinct sources (no env vars)");
+};
+
 done_testing();

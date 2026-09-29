@@ -11,6 +11,7 @@ binmode(STDERR, ':encoding(UTF-8)');
 use Cwd;
 use Carp qw(croak confess);
 use parent 'CLIO::Tools::Tool';
+use CLIO::Core::Logger qw(log_debug);
 use CLIO::Util::ConfigPath qw(get_config_dir);
 use CLIO::Util::JSON qw(encode_json decode_json safe_decode_json);
 use CLIO::Util::PathResolver qw(strip_path_quotes);
@@ -1209,6 +1210,24 @@ sub add_corroboration {
         $source_agent = $ENV{CLIO_AGENT_ID} || 'main';
     }
 
+    # Sybil-resistance guard: when running under a real `clio` runtime
+    # ($ENV{CLIO_SESSION_ID} is set), reject explicitly-passed
+    # source_session values that differ from the runtime identity. This
+    # prevents the model from self-promoting by passing two different
+    # session names in two calls. The corroboration identity is derived
+    # from the runtime environment, not from model-supplied arguments.
+    # In test harnesses or scripts where CLIO_SESSION_ID is unset,
+    # explicit args are still accepted (they are how tests simulate
+    # multiple distinct agents/sessions).
+    if ($ENV{CLIO_SESSION_ID} && $source_session && $source_session ne $ENV{CLIO_SESSION_ID}) {
+        log_debug('LTM', "Rejected forged corroboration session identity: '$source_session' != CLIO_SESSION_ID '$ENV{CLIO_SESSION_ID}'");
+        $source_session = $ENV{CLIO_SESSION_ID};
+    }
+    if ($ENV{CLIO_AGENT_ID} && $source_agent && $source_agent ne $ENV{CLIO_AGENT_ID}) {
+        log_debug('LTM', "Rejected forged corroboration agent identity: '$source_agent' != CLIO_AGENT_ID '$ENV{CLIO_AGENT_ID}'");
+        $source_agent = $ENV{CLIO_AGENT_ID};
+    }
+
     my $ltm = ref($context) eq 'HASH' ? ($context->{ltm} || $context->{session}->{ltm}) : undef;
     return $self->error_result("LTM not available in context") unless $ltm;
 
@@ -1237,6 +1256,7 @@ sub add_corroboration {
                 promoted => $corroboration_result->{promoted},
                 tier => $corroboration_result->{tier},
                 corroboration_count => $corroboration_result->{corroboration_count},
+                already_corroborated => $corroboration_result->{already_corroborated} // 0,
                 category => $corroboration_result->{category},
             );
         } else {

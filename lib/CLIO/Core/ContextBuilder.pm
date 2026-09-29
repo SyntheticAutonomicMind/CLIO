@@ -403,16 +403,27 @@ sub score_ltm {
         # words like "context" or "framework" that appear in any text.
         $score += 2 if $input_is_meta && _meta_category_count($content) >= 2;
 
+        # Tier weight: unverified entries get a 0.3x scoring penalty so
+        # they rank below trusted entries at injection time, matching
+        # docs/MEMORY.md's described three-channel enforcement
+        # (scoring penalty + prompt badge + differential decay).
+        # The bug flagged in the agent-memory-atlas report was that this
+        # penalty lived only in score_entry (used by consolidate's cap
+        # eviction) and was never applied in score_ltm's injection path.
+        my $tier = $entry->{entry}{tier} // 'unverified';
+        my $tier_weight = ($tier eq 'trusted') ? 1.0 : 0.3;
+        $score = $score * $tier_weight;
+
         push @scored, {
-            content    => $content,
-            confidence => $confidence,
-            type       => $entry->{type},
-            score      => $score,
-            _is_meta   => ($input_is_meta && _meta_category_count($content) >= 2) ? 1 : 0,
-            tier       => $entry->{entry}{tier} // 'unverified',
-            corroboration_count => $entry->{entry}{corroboration_count} // 0,
-        };
-    }
+           content    => $content,
+           confidence => $confidence,
+           type       => $entry->{type},
+           score      => $score,
+           _is_meta   => ($input_is_meta && _meta_category_count($content) >= 2) ? 1 : 0,
+           tier       => $tier,
+           corroboration_count => $entry->{entry}{corroboration_count} // 0,
+       };
+   }
 
     # Highest score first. Two threshold tiers:
     # - Regular memories: score >= RELEVANCE_THRESHOLD (5)

@@ -230,8 +230,8 @@ LTM entries have a trust tier system to defend against memory poisoning attacks.
 
 | Tier | Badge | Description |
 |------|-------|-------------|
-| **Unverified** | `[UNVERIFIED]` | Single-source entry, not yet corroborated. Heavy score penalty (0.3x), fast decay (30-day age-out), low confidence floor (0.7). |
-| **Trusted** | `[TRUSTED]` | Corroborated by ≥2 independent sources (distinct agent:session pairs) OR manually promoted after verified outcome. Full score weight, normal decay (90-day age-out), standard confidence floor (0.5). |
+| **Unverified** | `[UNVERIFIED]` | Single-source entry, not yet corroborated. Heavy score penalty (0.3x at injection), fast decay (30-day age-out), low confidence floor (0.7). |
+| **Trusted** | `[TRUSTED]` | Corroborated by ≥2 independent sources (distinct agent:session pairs) OR manually promoted after verified outcome. Full score weight at injection, normal decay (90-day age-out), standard confidence floor (0.5). |
 
 **Identity and source tracking.**
 
@@ -248,14 +248,16 @@ Every corroboration is stamped with a `source_agent` and `source_session` joined
 ```text
 # Agent independently verifies an existing memory.
 # Identity is auto-resolved from env vars / session context.
-# Override only when simulating a different agent (eg, tests):
-memory_operations(operation: "add_corroboration",
-    search_text: "Config uses YAML not JSON",
-    source_agent: "agent-123",
-    source_session: "session-456")
+# Explicit source_agent/source_session are accepted ONLY when they
+# match the runtime identity (CLIO_AGENT_ID/CLIO_SESSION_ID) —
+# forged identities are rejected to prevent the model self-promoting
+# by passing two different names:
 
-# After 2+ independent corroborations, entry auto-promotes to TRUSTED.
-# Same source re-corroborating returns already_corroborated=1 (no double-count).
+memory_operations(operation: "add_corroboration",
+    search_text: "Config uses YAML not JSON")
+# The agent:session key is derived from CLIO_AGENT_ID/CLIO_SESSION_ID
+# at the live entry point (clio or SubAgent), never from model-supplied
+# arguments.
 ```
 
 **When promotion happens automatically:**
@@ -271,6 +273,8 @@ memory_operations(operation: "add_corroboration",
 
 **Trust but verify:** `[UNVERIFIED]` entries (especially procedural patterns like "always do X") should be validated before acting on them. Use `add_corroboration` when you independently confirm a memory, or `/memory promote <search_text>` after a verified successful outcome. The `/memory tier <search_text>` command shows the current tier, the corroboration count, and the recorded sources so you can audit why an entry is or isn't promoted.
 
+**Content edits reset trust.** When `update_ltm` rewrites an entry's text, the tier is reset to `[UNVERIFIED]`, `corroboration_sources` is cleared, and `corroboration_count` is zeroed. A rewritten claim has not been independently verified — its new content should earn trust on its own merits, not inherit a badge from the old text.
+
 ### Pruning
 
 Old or low-confidence entries are cleaned up to keep LTM focused:
@@ -279,6 +283,8 @@ Old or low-confidence entries are cleaned up to keep LTM focused:
 memory_operations(operation: "prune_ltm", max_age_days: 90, min_confidence: 0.3)
 memory_operations(operation: "ltm_stats")  # Check current LTM size
 ```
+
+The `/memory prune` command and the `prune_ltm` tool operation both call `LongTerm::prune`, which applies the same tier-differentiated age-out as `consolidate`: unverified entries age out at 30 days with a 0.7 confidence floor, while trusted entries survive to 90 days with a 0.5 floor. This ensures the user-facing cleanup command agrees with the automated consolidation pass.
 
 ### Atomic Persistence
 

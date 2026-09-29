@@ -147,13 +147,15 @@ sub make_history {
     is(scalar @$scored, 0, "Zero memories meet threshold with no keyword overlap");
 
     # Now build memories that match the current input - they should win.
+    # These entries use the real projection format (with 'entry' sub-hash)
+    # so that score_ltm can read tier/corroboration_count correctly.
     push @ltm,
-        { confidence => 0.9, content => 'cache-collapse regex needs whitespace class not just >', type => 'pattern' },
-        { confidence => 0.85, content => 'apply YaRN compression only when >200 chars dropped', type => 'pattern' },
-        { confidence => 0.78, content => 'use rindex not regex for embedded tag safety', type => 'pattern' },
-        { confidence => 0.6, content => 'ModelBudget enforcement is wired but disabled', type => 'discovery' },
-        { confidence => 0.55, content => 'AGENTS.md gaps for memory budgeting', type => 'discovery' },
-        { confidence => 0.55, content => 'AGENTS.md gaps for cache health', type => 'discovery' };
+        { confidence => 0.9, content => 'cache-collapse regex needs whitespace class not just >', type => 'pattern', entry => { tier => 'trusted' } },
+        { confidence => 0.85, content => 'apply YaRN compression only when >200 chars dropped', type => 'pattern', entry => { tier => 'trusted' } },
+        { confidence => 0.78, content => 'use rindex not regex for embedded tag safety', type => 'pattern', entry => { tier => 'trusted' } },
+        { confidence => 0.6, content => 'ModelBudget enforcement is wired but disabled', type => 'discovery', entry => { tier => 'trusted' } },
+        { confidence => 0.55, content => 'AGENTS.md gaps for memory budgeting', type => 'discovery', entry => { tier => 'trusted' } },
+        { confidence => 0.55, content => 'AGENTS.md gaps for cache health', type => 'discovery', entry => { tier => 'trusted' } };
 
     my $scored2 = score_ltm(\@ltm, 'fix the cache-collapse regex bug', 'qa-messageHistory-fix', []);
     ok(scalar(@$scored2) <= 5, "At most 5 memories pass cap (was " . scalar(@$scored2) . ")");

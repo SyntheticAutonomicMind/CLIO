@@ -323,6 +323,28 @@ ok_test(defined $update_ltm->{patterns}{discoveries}[0]{updated}, "update_entry:
 ok_test(($update_ltm->{patterns}{discoveries}[0]{search_count} || 0) >= 1, "update_entry: search_count incremented");
 
 # ============================================================
+# 10. update_entry resets trust state on content change
+# ============================================================
+
+my $trust_ltm = CLIO::Memory::LongTerm->new();
+$trust_ltm->add_discovery('We deploy to zaphod for testing', 0.9);
+# Manually promote to trusted
+$trust_ltm->promote_entry('We deploy to zaphod for testing');
+ok_test($trust_ltm->{patterns}{discoveries}[0]{tier} eq 'trusted', "update_entry: entry is trusted before update");
+
+# Update the text of a trusted entry
+my $u_trust = $trust_ltm->update_entry(
+    search => 'We deploy to zaphod',
+    replacement => 'We deploy to betelgeuse for production testing'
+);
+ok_test($u_trust->{found} == 1, "update_entry: found entry for trust-reset test");
+ok_test($trust_ltm->{patterns}{discoveries}[0]{tier} eq 'unverified', "update_entry: tier reset to unverified after content change");
+ok_test(($trust_ltm->{patterns}{discoveries}[0]{corroboration_count} || 0) == 0, "update_entry: corroboration_count zeroed after content change");
+ok_test(scalar(@{$trust_ltm->{patterns}{discoveries}[0]{corroboration_sources}}) == 0,
+    "update_entry: corroboration_sources cleared after content change");
+ok_test(!exists $trust_ltm->{patterns}{discoveries}[0]{promoted_by}, "update_entry: promoted_by removed after content change");
+
+# ============================================================
 # Summary
 # ============================================================
 

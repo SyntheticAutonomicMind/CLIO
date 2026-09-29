@@ -323,9 +323,18 @@ sub update_entry {
                 $d->{fact} = $replacement;
                 $d->{updated} = $now;
                 $d->{search_count} = ($d->{search_count} || 0) + 1;
+                # Content changed — reset trust state. A text rewrite
+                # invalidates prior corroboration: the new claim has not
+                # been independently verified. See agent-memory-atlas
+                # report section 9 / 3 "A rewrite keeps the standing".
+                $d->{tier} = 'unverified';
+                $d->{corroboration_count} = 0;
+                $d->{corroboration_sources} = [];
+                delete $d->{promoted_by};
+                delete $d->{promoted_at};
                 $self->{_dirty} = 1;
                 $self->{metadata}{last_updated} = $now;
-                log_debug('LTM', "Updated discovery: '$old' -> '$replacement'");
+                log_debug('LTM', "Updated discovery: '$old' -> '$replacement' (trust reset)");
                 return { found => 1, type => 'discovery', old_text => $old, new_text => $replacement };
             }
         }
@@ -352,9 +361,15 @@ sub update_entry {
                 }
                 $s->{updated} = $now;
                 $s->{search_count} = ($s->{search_count} || 0) + 1;
+                # Content changed — reset trust state (see discovery branch).
+                $s->{tier} = 'unverified';
+                $s->{corroboration_count} = 0;
+                $s->{corroboration_sources} = [];
+                delete $s->{promoted_by};
+                delete $s->{promoted_at};
                 $self->{_dirty} = 1;
                 $self->{metadata}{last_updated} = $now;
-                log_debug('LTM', "Updated solution: error '$old_error' -> '$s->{error}'");
+                log_debug('LTM', "Updated solution: error '$old_error' -> '$s->{error}' (trust reset)");
                 return {
                     found => 1, type => 'solution',
                     old_text => "$old_error -> $old_solution",
@@ -372,10 +387,98 @@ sub update_entry {
                 $p->{pattern} = $replacement;
                 $p->{updated} = $now;
                 $p->{search_count} = ($p->{search_count} || 0) + 1;
+                # Content changed — reset trust state (see discovery branch).
+                $p->{tier} = 'unverified';
+                $p->{corroboration_count} = 0;
+                $p->{corroboration_sources} = [];
+                delete $p->{promoted_by};
+                delete $p->{promoted_at};
                 $self->{_dirty} = 1;
                 $self->{metadata}{last_updated} = $now;
-                log_debug('LTM', "Updated pattern: '$old' -> '$replacement'");
+                log_debug('LTM', "Updated pattern: '$old' -> '$replacement' (trust reset)");
                 return { found => 1, type => 'pattern', old_text => $old, new_text => $replacement };
+            }
+        }
+    }
+    
+    # Search workflows
+    if (!$type_filter || $type_filter eq 'workflow') {
+        for my $w (@{$self->{patterns}{workflows} || []}) {
+            my $seq_text = ref($w->{sequence}) eq 'ARRAY' ? join('->', @{$w->{sequence}}) : '';
+            if (index(lc($seq_text), $search_lc) >= 0 || index(lc($w->{description} || ''), $search_lc) >= 0) {
+                # Replace the sequence with the new text as a single-step
+                # workflow, or replace description if present.
+                if ($w->{description} && index(lc($w->{description}), $search_lc) >= 0) {
+                    $w->{description} = $replacement;
+                } else {
+                    $w->{sequence} = [$replacement];
+                }
+                $w->{updated} = $now;
+                $w->{search_count} = ($w->{search_count} || 0) + 1;
+                $w->{tier} = 'unverified';
+                $w->{corroboration_count} = 0;
+                $w->{corroboration_sources} = [];
+                delete $w->{promoted_by};
+                delete $w->{promoted_at};
+                $self->{_dirty} = 1;
+                $self->{metadata}{last_updated} = $now;
+                log_debug('LTM', "Updated workflow (trust reset)");
+                return { found => 1, type => 'workflow', old_text => $seq_text, new_text => $replacement };
+            }
+        }
+    }
+    
+    # Search failures
+    if (!$type_filter || $type_filter eq 'failure') {
+        for my $f (@{$self->{patterns}{failures} || []}) {
+            my $combined = lc(join(' ', grep { defined } ($f->{what}, $f->{impact}, $f->{prevention})));
+            if (index($combined, $search_lc) >= 0) {
+                # Determine which field matched and replace only that one
+                if (index(lc($f->{what} || ''), $search_lc) >= 0) {
+                    my $old = $f->{what};
+                    $f->{what} = $replacement;
+                    $f->{updated} = $now;
+                    $f->{search_count} = ($f->{search_count} || 0) + 1;
+                    $f->{tier} = 'unverified';
+                    $f->{corroboration_count} = 0;
+                    $f->{corroboration_sources} = [];
+                    delete $f->{promoted_by};
+                    delete $f->{promoted_at};
+                    $self->{_dirty} = 1;
+                    $self->{metadata}{last_updated} = $now;
+                    log_debug('LTM', "Updated failure what (trust reset)");
+                    return { found => 1, type => 'failure', old_text => $old // '', new_text => $replacement };
+                }
+                if (index(lc($f->{impact} || ''), $search_lc) >= 0) {
+                    my $old = $f->{impact};
+                    $f->{impact} = $replacement;
+                    $f->{updated} = $now;
+                    $f->{search_count} = ($f->{search_count} || 0) + 1;
+                    $f->{tier} = 'unverified';
+                    $f->{corroboration_count} = 0;
+                    $f->{corroboration_sources} = [];
+                    delete $f->{promoted_by};
+                    delete $f->{promoted_at};
+                    $self->{_dirty} = 1;
+                    $self->{metadata}{last_updated} = $now;
+                    log_debug('LTM', "Updated failure impact (trust reset)");
+                    return { found => 1, type => 'failure', old_text => $old // '', new_text => $replacement };
+                }
+                if (index(lc($f->{prevention} || ''), $search_lc) >= 0) {
+                    my $old = $f->{prevention};
+                    $f->{prevention} = $replacement;
+                    $f->{updated} = $now;
+                    $f->{search_count} = ($f->{search_count} || 0) + 1;
+                    $f->{tier} = 'unverified';
+                    $f->{corroboration_count} = 0;
+                    $f->{corroboration_sources} = [];
+                    delete $f->{promoted_by};
+                    delete $f->{promoted_at};
+                    $self->{_dirty} = 1;
+                    $self->{metadata}{last_updated} = $now;
+                    log_debug('LTM', "Updated failure prevention (trust reset)");
+                    return { found => 1, type => 'failure', old_text => $old // '', new_text => $replacement };
+                }
             }
         }
     }
@@ -1726,6 +1829,14 @@ sub prune {
     my $max_age_days = $args{max_age_days} // 90;
     
     my $cutoff_time = time() - ($max_age_days * 86400);
+    # Unverified entries age out faster (30 days) and require a higher
+    # confidence floor (0.7) than trusted entries (90 days, 0.5 floor).
+    # This mirrors consolidate's tier-differentiated age-out so that the
+    # user-facing /memory prune command agrees with the automated
+    # consolidation pass. See agent-memory-atlas report section 9
+    # "The two cleanup paths disagree".
+    my $unverified_age_cutoff = time() - (30 * 86400);
+    my $unverified_min_confidence = 0.7;
     my %removed = (
         discoveries => 0,
         solutions => 0,
@@ -1734,7 +1845,11 @@ sub prune {
         failures => 0,
     );
     
-    # Helper to filter array by age and confidence
+    # Helper to filter array by age and confidence, tier-aware.
+    # $has_confidence indicates whether this entry type stores a confidence
+    # field. Entries without confidence (solutions, workflows) pass the
+    # confidence check trivially but still get age-out treatment based
+    # on their tier.
     my $filter_and_limit = sub {
         my ($array, $limit, $has_confidence) = @_;
         my @original = @$array;
@@ -1743,10 +1858,22 @@ sub prune {
         for my $item (@original) {
             my $timestamp = $item->{timestamp} || $item->{updated} || 0;
             my $confidence = $item->{confidence} // 1.0;
+            my $tier = $item->{tier} // 'unverified';
             
-            # Keep if: recent enough AND (no confidence field OR confidence above threshold)
-            if ($timestamp >= $cutoff_time) {
-                if (!$has_confidence || $confidence >= $min_confidence) {
+            my $age_cutoff;
+            my $conf_floor;
+            if ($tier eq 'trusted') {
+                $age_cutoff = $cutoff_time;
+                $conf_floor = $min_confidence;
+            } else {
+                # Unverified: stricter thresholds
+                $age_cutoff = $unverified_age_cutoff;
+                $conf_floor = $unverified_min_confidence;
+            }
+            
+            # Keep if: recent enough AND (no confidence field OR confidence above tier floor)
+            if ($timestamp >= $age_cutoff) {
+                if (!$has_confidence || $confidence >= $conf_floor) {
                     push @filtered, $item;
                 }
             }

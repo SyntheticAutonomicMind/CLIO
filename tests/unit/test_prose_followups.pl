@@ -95,8 +95,8 @@ subtest 'LTM sanitizer: score_ltm applies sanitizer on read' => sub {
         # because the model needs the tool names to recall "use
         # this specific tool". See test_ltm_sanitizer_code_patterns.pl
         # for that behavior.
-        { confidence => 0.9, type => 'discovery', content => 'memory_operations prompt caching pattern' },
-        { confidence => 0.8, type => 'discovery', content => 'plain text about cache misses' },
+        { confidence => 0.9, type => 'discovery', entry => { tier => 'trusted' }, content => 'memory_operations prompt caching pattern' },
+        { confidence => 0.8, type => 'discovery', entry => { tier => 'trusted' }, content => 'plain text about cache misses' },
     );
     my $scored = CLIO::Core::ContextBuilder::score_ltm(
         \@dirty_ltm,
@@ -471,6 +471,7 @@ subtest 'category boost: meta-relevant memory surfaces during framework work' =>
         # type=pattern would skip the tool replacement (see
         # test_ltm_sanitizer_code_patterns.pl for that behavior).
         { confidence => 0.92, type => 'discovery',
+          entry => { tier => 'trusted' },
           content => 'Model-facing prompt paths must NOT tell the model about framework internals (memory_operations, prompt caching, validate_and_truncate, framework narration). The thread_summary content is a work product that speaks for itself.' },
     );
     my $scored = CLIO::Core::ContextBuilder::score_ltm(
@@ -488,6 +489,7 @@ subtest 'category boost: meta-relevant memory surfaces during framework work' =>
 subtest 'category boost: meta memory does NOT surface during non-framework work' => sub {
     my @ltm = (
         { confidence => 0.92, type => 'discovery',
+          entry => { tier => 'trusted' },
           content => 'Model-facing prompt paths must NOT tell the model about framework internals (memory_operations, prompt caching, framework narration).' },
     );
     my $scored = CLIO::Core::ContextBuilder::score_ltm(
@@ -502,6 +504,7 @@ subtest 'category boost: meta memory does NOT surface during non-framework work'
 subtest 'category boost: domain memory surfaces with normal scoring' => sub {
     my @ltm = (
         { confidence => 0.9, type => 'pattern',
+          entry => { tier => 'trusted' },
           content => 'ContextBuilder.pm already exists with build_projection, score_ltm, and collapse_repeated_tool_calls. The projection logic is in lib/CLIO/Core/ContextBuilder.pm.' },
     );
     my $scored = CLIO::Core::ContextBuilder::score_ltm(

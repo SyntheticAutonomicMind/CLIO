@@ -9,7 +9,6 @@ use lib "$RealBin/../../lib";
 use lib "$RealBin/../lib";
 
 use CLIO::Memory::LongTerm;
-use CLIO::Util::PathResolver;
 use CLIO::Core::ContextBuilder;
 use CLIO::Core::MessageHistory;
 use CLIO::Util::JSON qw(encode_json decode_json);
@@ -61,26 +60,28 @@ ok_test(grep(/discovery/, @types), "discovery entries included");
 ok_test(grep(/solution/, @types), "solution entries included");
 ok_test(grep(/pattern/, @types), "pattern entries included");
 
-# 3. Test score_ltm returns relevant entries
-print "[3] Testing score_ltm relevance scoring...\n";
+# 3. Test score_ltm applies tier penalty (0.3x for unverified)
+print "[3] Testing score_ltm relevance scoring with tier penalty...\n";
 my $input = 'CLIO uses Perl';
 my $task = '';
 my $unresolved = [];
+
+# Score with the entry still unverified. The 0.3x tier penalty should
+# keep it below the 5.0 relevance threshold even though it has strong
+# keyword overlap — that is the intended behavior: unverified entries
+# rank below trusted ones at injection time.
 my $scored = CLIO::Core::ContextBuilder::score_ltm($entries, $input, $task, $unresolved);
 
-ok_test(scalar(@$scored) >= 1, "score_ltm returned at least 1 relevant entry");
-my $found_disc = 0;
+my $unverified_in_results = 0;
 for my $s (@$scored) {
     if ($s->{content} =~ /CLIO uses Perl/) {
-        $found_disc = 1;
-        ok_test($s->{tier} eq 'unverified', "entry has tier=unverified (no corroboration)");
-        ok_test(defined $s->{score}, "entry has a score");
-        ok_test($s->{score} >= 5, "entry score >= relevance threshold 5");
+        $unverified_in_results = 1;
+        ok_test($s->{tier} eq 'unverified', "entry has tier=unverified before corroboration");
     }
 }
-ok_test($found_disc, "discovery entry matched and scored");
+ok_test(!$unverified_in_results, "unverified entry filtered out by 0.3x tier penalty (below threshold)");
 
-# 4. Test tier field is carried through score_ltm
+# 4. Corroborate -> promote to trusted, then re-score
 print "\n[4] Testing tier propagation through score_ltm...\n";
 $ltm->add_corroboration('CLIO uses Perl', 'agent_a', 'session_a');
 $ltm->add_corroboration('CLIO uses Perl', 'agent_b', 'session_b');
@@ -89,14 +90,21 @@ my $entries2 = $ltm->get_entries_for_projection();
 my $scored2 = CLIO::Core::ContextBuilder::score_ltm($entries2, 'CLIO uses Perl', '', []);
 
 my $found_trusted = 0;
+my $trusted_score = undef;
 for my $s (@$scored2) {
     if ($s->{content} =~ /CLIO uses Perl/) {
         $found_trusted = 1;
+        $trusted_score = $s->{score};
         ok_test($s->{tier} eq 'trusted', "entry promoted to trusted after 2 corroborations");
         ok_test($s->{corroboration_count} == 2, "entry has corroboration_count=2");
+        ok_test(defined $trusted_score, "trusted entry has a score");
     }
 }
 ok_test($found_trusted, "trusted entry found in scored results");
+
+# The trusted (corroborated) entry should pass the threshold where the
+# unverified entry did not — demonstrating the tier penalty at injection.
+ok_test($trusted_score >= 5, "trusted entry passes relevance threshold (>=5)");
 
 # 5. Test messages_to_prose_dynamic renders relevant_memory with badges
 print "\n[5] Testing messages_to_prose_dynamic rendering...\n";
@@ -137,8 +145,12 @@ ok_test($rendered2 !~ /memory_operations/, "tool name sanitized out of rendered 
 ok_test($rendered2 =~ /long-term memory/, "tool name replaced with neutral term");
 
 # Cleanup
-ok_test(1, "cleanup marker");
-unlink CLIO::Util::PathResolver::get_project_ltm_file() if -e CLIO::Util::PathResolver::get_project_ltm_file();
+# The LTM is constructed in-memory (LongTerm->new with project_root),
+# never saved to disk, so there is nothing to unlink. The previous
+# implementation called PathResolver::get_project_ltm_file() which
+# resolves from the process CWD and deleted the developer's real
+# project ltm.json. See agent-memory-atlas report section 9 "Data-loss
+# risk is the deletion model" and the test cleanup bug flagged there.
 
 print "\n" . "=" x 60 . "\n";
 print "Results: $PASS/$PASS+$FAIL passed";
