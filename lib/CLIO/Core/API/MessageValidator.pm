@@ -107,6 +107,12 @@ sub validate_and_truncate {
     } else {
         $token_ratio = 2.5;
     }
+
+    # Propagate the clamped ratio to _estimate_tokens so the parameter
+    # is actually consumed (previously it was accepted, clamped, then
+    # discarded — the global TokenEstimator ratio was used instead).
+    # The ratio may differ from the global if a test injects a custom
+    # value, and threading it ensures consistent token budget decisions.
     
     # Determine max prompt tokens
     require CLIO::Providers;
@@ -157,8 +163,8 @@ sub validate_and_truncate {
 
     log_debug('MessageValidator', "Token budget: max=$max_prompt, tools=$tool_tokens, budget=$prompt_budget, effective=$effective_limit");
     
-    # Estimate token usage
-    my $estimated_tokens = _estimate_tokens($messages);
+    # Estimate token usage (use the clamped token_ratio if provided)
+    my $estimated_tokens = _estimate_tokens($messages, $token_ratio);
 
     if ($estimated_tokens <= $effective_limit) {
         log_debug('MessageValidator', "Token validation: $estimated_tokens / $effective_limit tokens (OK)");
@@ -907,7 +913,7 @@ sub _calculate_tool_tokens {
 }
 
 sub _estimate_tokens {
-    my ($messages) = @_;
+    my ($messages, $ratio) = @_;
 
     my $total = 0;
     for my $msg (@$messages) {
@@ -917,15 +923,40 @@ sub _estimate_tokens {
         $total += 4;                                                      # base overhead
         $total += 8 if $msg->{role} && $msg->{role} eq 'tool';           # tool-specific fields
 
-        $total += estimate_tokens($msg->{content} || '');
+        # When an explicit ratio is passed (from validate_and_truncate's
+        # clamped token_ratio parameter), use it instead of the global
+        # TokenEstimator ratio. This makes the parameter non-dead and
+        # ensures consistent token estimates throughout the validation.
+        if (defined $ratio) {
+            $total += _estimate_tokens_with_ratio($msg->{content} || '', $ratio);
+        } else {
+            $total += estimate_tokens($msg->{content} || '');
+        }
         if ($msg->{tool_calls} && ref($msg->{tool_calls}) eq 'ARRAY') {
             for my $tc (@{$msg->{tool_calls}}) {
                 my $json = safe_encode_json($tc);
-                $total += estimate_tokens($json || '');
+                if (defined $ratio) {
+                    $total += _estimate_tokens_with_ratio($json || '', $ratio);
+                } else {
+                    $total += estimate_tokens($json || '');
+                }
             }
         }
     }
     return $total;
+}
+
+# Estimate tokens using an explicit chars-per-token ratio rather than the
+# global TokenEstimator ratio. Used when validate_and_truncate passes a
+# clamped token_ratio parameter so that callers can override the global
+# ratio for testing or per-model calibration.
+sub _estimate_tokens_with_ratio {
+    my ($text, $ratio) = @_;
+    return 0 unless defined $text;
+    $ratio = 4.0 unless defined $ratio && $ratio > 0;
+    return 0 unless length($text) > 0;
+    require POSIX;
+    return POSIX::ceil(length($text) / $ratio);
 }
 
 

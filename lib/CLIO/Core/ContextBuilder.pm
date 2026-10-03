@@ -123,7 +123,6 @@ our $RECENT_SCALING_BANDS = [
     [1e9,  10],  # very long: hard cap at 10
 ];
 
-our $DEFAULT_HISTORY_BUDGET_TOKENS = 8000;
 
 # ============================================================================
 # Public API
@@ -141,11 +140,9 @@ Arguments:
 - active_todos: Arrayref of todo hashes {id, status, content} (optional).
 - ltm: Arrayref of LTM entries as {confidence, content, type} (optional).
 - unresolved: Arrayref of strings describing unresolved state (optional).
-- budget_tokens: Token budget for the projection's history portion (optional,
-  defaults to C<$DEFAULT_HISTORY_BUDGET_TOKENS>).
 - session: Session object (optional; used for anchor fallback via YaRN).
 - context_window: Model context window in tokens (optional; used to
-  scale the compressed tail budget). Defaults to 128K.
+ scale the compressed tail budget). Defaults to 128K.
 
 Returns a hashref:
    {
@@ -169,7 +166,6 @@ sub build_projection {
     my $active_todos  = $args{active_todos}  || [];
     my $ltm           = $args{ltm}           || [];
     my $unresolved    = $args{unresolved}    || [];
-    my $budget_tokens = $args{budget_tokens} // $DEFAULT_HISTORY_BUDGET_TOKENS;
     my $session       = $args{session};
     my $context_window = $args{context_window};
 
@@ -229,6 +225,11 @@ sub build_projection {
         # user_input is preserved on the projection for reference.
         user_input          => $user_input,
         token_estimate      => $token_estimate,
+        # Note: budget_tokens is no longer accepted — the proactive
+        # trim (MessageValidator::_role_based_tail_walk) is the
+        # authoritative token-budget enforcer via compute_prompt_budget().
+        # The projection's compressed_tail handles lossy summarization of
+        # dropped turns; it does not need an independent token budget.
     };
 }
 
@@ -909,9 +910,14 @@ sub _compressed_tail_sig {
 
 # Compute the character cap for the compressed tail (the per-turn
 # dynamic UC section). This is smaller than YaRN's thread_summary cap
-# because the compressed tail is per-turn (changes every turn) and
-# lives in the dynamic userContext. Scales with the model's context
-# window but is bounded.
+# (2.5% of context) because the compressed tail lives in the dynamic
+# userContext, which is a per-turn message that churns every turn and
+# therefore does not benefit from provider KV-caching. Reserving
+# 0.5% (instead of 2.5%) keeps the per-turn dynamic UC small while
+# still providing a meaningful "earlier work" summary. The thread_summary
+# cap (2.5%) is used for the cross-cycle injected system messages that
+# persist across turns and DO benefit from caching.
+# Scales with the model's context window but is bounded.
 sub _compute_compressed_tail_cap {
     my ($context_window) = @_;
     require CLIO::Core::Defaults;
