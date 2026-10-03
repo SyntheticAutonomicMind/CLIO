@@ -183,6 +183,20 @@ sub _routing_should_skip {
     return 1 if $error_type eq 'region_unavailable';
     return 1 if $error_type eq 'user_interrupt';
 
+    # Context-window overflow is a local-to-this-request size problem, not a
+    # model/provider health problem. Cycling through the other route models
+    # does not help when they share comparable context windows -- every model
+    # returns the same token-limit error, burning the entire routing budget
+    # before any recovery happens. Skip routing so the error falls through to
+    # the reactive trim path (trim_for_token_limit), which actually shrinks the
+    # conversation (budget-based trim -> 25% tail -> minimal) and retries on the
+    # current model. The trim preserves the active task and injects a YaRN
+    # compression summary, so context is recovered rather than dropped.
+    # If trimming cannot help (conversation fits in no model's window), the trim
+    # bails with a clear "try a larger model" message instead of a silent
+    # 30-attempt exhaustion loop.
+    return 1 if $error_type eq 'token_limit_exceeded';
+
     # Weekly/monthly usage caps - per-account, not per-model, and
     # the wait would be hours/days, not seconds.
     return 1 if $rl_code =~ /user_weekly_rate_limited|user_monthly_rate_limited/i;
@@ -1033,6 +1047,19 @@ sub trim_for_token_limit {
     my $retry_count     = $args{retry_count};
     my $session         = $args{session};
     my $tool_calls_made = $args{tool_calls_made};
+
+    # retry_count is passed by caller as a scalar reference
+    # (retry_count => \$retry_count) so handle_api_error can increment the
+    # caller's counter. Dereference it here; fall back to the raw value
+    # for callers/tests that pass a plain integer. Without this, the ref
+    # numifies to its address (a large integer) on every numeric comparison,
+    # so the $retry_count == 1 / == 2 tier checks below were always false and
+    # the $retry_count > 2 bail was always true -- the 3-tier trim strategy
+    # never ran and the reactive trim bailed immediately on the first retry.
+    if (ref($retry_count) eq 'SCALAR') {
+        $retry_count = $$retry_count;
+    }
+    $retry_count //= 0;
     my $iteration       = $args{iteration};
     my $max_retries     = $args{max_retries};
     my $max_server_retries = $args{max_server_retries};

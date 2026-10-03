@@ -315,6 +315,15 @@ sub _infer_operation_from_params {
     unless ($self->{_supported_ops_hash}) {
         my @all = (@{$self->{supported_operations} || []},
                    @{$self->{operation_aliases} || []});
+        # Mirror validate_operation: also accept aliases that are declared
+        # only in the dispatch_table. Without this, an alias reachable via
+        # dispatch_table (but not in supported_operations/operation_aliases)
+        # could not be silently inferred from a parameter key, even though
+        # validate_operation would accept it as a valid operation.
+        my $table = $self->dispatch_table();
+        if ($table && ref($table) eq 'HASH') {
+            push @all, keys %$table;
+        }
         $self->{_supported_ops_hash} = { map { $_ => 1 } @all };
     }
 

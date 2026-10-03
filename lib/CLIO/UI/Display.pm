@@ -9,6 +9,7 @@ use utf8;
 
 use Carp qw(croak confess);
 use CLIO::Util::TextSanitizer qw(sanitize_text);
+use CLIO::Core::Logger qw(log_debug);
 use CLIO::UI::Terminal qw(box_char ui_char);
 
 =head1 NAME

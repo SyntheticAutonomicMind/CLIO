@@ -161,6 +161,27 @@ sub make_history {
     ok(scalar(@$scored2) <= 5, "At most 5 memories pass cap (was " . scalar(@$scored2) . ")");
     ok(scalar(@$scored2) > 0, "Some memories pass threshold when relevant");
 
+    # Regression: an unverified-but-relevant memory must still be injected.
+    # add_discovery/add_problem_solution create 'unverified' entries by
+    # default (tier='unverified', promoted only after 2 corroborations).
+    # score_ltm previously multiplied the score by 0.3 for unverified
+    # entries BEFORE the keep/drop threshold, which crushed every
+    # unverified memory below RELEVANCE_THRESHOLD (5) and made LTM
+    # projection dead for freshly observed memories. The tier weight is
+    # now a ranking-only penalty (trusted sorts above unverified at equal
+    # lexical relevance); the gate uses the raw score.
+    my @unverified = (
+        { confidence => 0.9, content => 'cache-collapse regex needs whitespace class', type => 'pattern', entry => { tier => 'unverified' } },
+        { confidence => 0.9, content => 'cache-collapse regex needs whitespace class', type => 'pattern', entry => { tier => 'trusted'  } },
+    );
+    my $unv = score_ltm(\@unverified, 'fix the cache-collapse regex bug', 'qa-messageHistory-fix', []);
+    my @tiers = sort map { $_->{tier} } @$unv;
+    is("@{tiers}", 'trusted unverified',
+       'unverified-but-relevant entry is injected (not vetoed by tier penalty)');
+    # Trusted must rank above unverified at equal lexical relevance.
+    is($unv->[0]{tier}, 'trusted',
+       'trusted entry ranks above unverified at equal relevance');
+
     # Verify tier labels are absent from the compressed_tail
     my $proj = build_projection(
         history    => make_history(turns => 2),

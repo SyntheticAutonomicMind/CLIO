@@ -416,27 +416,43 @@ sub score_ltm {
         # eviction) and was never applied in score_ltm's injection path.
         my $tier = $entry->{entry}{tier} // 'unverified';
         my $tier_weight = ($tier eq 'trusted') ? 1.0 : 0.3;
-        $score = $score * $tier_weight;
+
+        # Tier weight is a RANKING penalty only: trusted entries sort above
+        # unverified entries with equal lexical relevance, but the keep/drop
+        # gate is evaluated against the raw (pre-penalty) score. Applying the
+        # 0.3x multiplier at the gate eliminated every unverified entry -- and
+        # add_discovery/add_problem_solution/etc. all create 'unverified'
+        # entries by default (promoted to 'trusted' only after two
+        # corroborations). That made LTM projection dead for all freshly
+        # observed memories, since a strong lexical match (raw score up to ~6)
+        # was crushed to ~1.8 and fell below RELEVANCE_THRESHOLD (5). This
+        # matches docs/MEMORY.md's three-channel enforcement: scoring penalty
+        # (ranking), prompt badge ([UNVERIFIED]), differential decay -- the
+        # penalty lowers ordering, it does not veto injection.
+        my $raw_score  = $score;
+        $score         = $score * $tier_weight;
 
         push @scored, {
            content    => $content,
            confidence => $confidence,
            type       => $entry->{type},
            score      => $score,
+           raw_score  => $raw_score,
            _is_meta   => ($input_is_meta && _meta_category_count($content) >= 2) ? 1 : 0,
            tier       => $tier,
            corroboration_count => $entry->{entry}{corroboration_count} // 0,
        };
    }
 
-    # Highest score first. Two threshold tiers:
-    # - Regular memories: score >= RELEVANCE_THRESHOLD (5)
+    # Highest score first (penalized score ranks trusted above unverified).
+    # Two threshold tiers:
+    # - Regular memories: raw_score >= RELEVANCE_THRESHOLD (5)
     # - Category-matched memories (input is framework work AND
-    #   memory is about framework work): score >= 3, because the
+    #   memory is about framework work): raw_score >= 3, because the
     #   meta-relevance is signal enough on its own.
     @scored = sort { $b->{score} <=> $a->{score} } @scored;
     my @kept = grep {
-        my $s = $_->{score};
+        my $s = $_->{raw_score};       # gate on relevance, not trust tier
         my $is_meta = $_->{_is_meta};  # set in the loop above
         $s >= $RELEVANCE_THRESHOLD || ($is_meta && $s >= 3);
     } @scored;
