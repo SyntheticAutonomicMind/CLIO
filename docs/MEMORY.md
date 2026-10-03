@@ -241,7 +241,7 @@ LTM entries have a trust tier system to defend against memory poisoning attacks.
 
 | Tier | Badge | Description |
 |------|-------|-------------|
-| **Unverified** | `[UNVERIFIED]` | Single-source entry, not yet corroborated. Heavy score penalty (0.3x at injection), fast decay (30-day age-out), low confidence floor (0.7). |
+| **Unverified** | `[UNVERIFIED]` | Single-source entry, not yet corroborated. Ranking penalty (0.3x score multiplier so trusted entries sort above at equal lexical relevance), fast decay (30-day age-out), low confidence floor (0.7). |
 | **Trusted** | `[TRUSTED]` | Corroborated by ≥2 independent sources (distinct agent:session pairs) OR manually promoted after verified outcome. Full score weight at injection, normal decay (90-day age-out), standard confidence floor (0.5). |
 
 **Identity and source tracking.**

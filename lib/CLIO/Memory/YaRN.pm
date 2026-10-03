@@ -218,6 +218,25 @@ sub _truncate {
     return $truncated . '...';
 }
 
+# Extract plain text from message content, handling both scalar strings
+# and arrayref (multimodal) content. For arrayref content (e.g. image
+# uploads), concatenates the text parts and skips non-text parts (image_url,
+# image, etc.). Returns '' for empty/undefined content.
+sub _extract_content_text {
+    my ($content) = @_;
+    return '' unless defined $content;
+    return $content unless ref($content) eq 'ARRAY';
+
+    my $text = '';
+    for my $part (@$content) {
+        next unless ref($part) eq 'HASH';
+        if (($part->{type} // '') eq 'text' && defined $part->{text}) {
+            $text .= $part->{text};
+        }
+    }
+    return $text;
+}
+
 # ---------------------------------------------------------------------------
 # Context-aware compression parameters
 # ---------------------------------------------------------------------------
@@ -460,7 +479,7 @@ sub compress_messages {
 
     for my $msg (@$messages) {
         my $role    = $msg->{role}    || '';
-        my $content = $msg->{content} || '';
+        my $content = _extract_content_text($msg->{content});
 
         if ($role eq 'user') {
             my $summary = substr($content, 0, $max_ur_len);
@@ -748,7 +767,7 @@ sub find_substantive_task {
         for my $item (reverse @$messages) {
             if (ref($item) eq 'HASH') {
                 next unless ($item->{role} // '') eq 'user';
-                my $content = $item->{content} || '';
+                my $content = _extract_content_text($item->{content});
                 return $content if length($content) >= 50;
             } else {
                 # Plain string (e.g. from @user_requests)
@@ -764,7 +783,7 @@ sub find_substantive_task {
         for my $item (reverse @$messages) {
             if (ref($item) eq 'HASH') {
                 next unless ($item->{role} // '') eq 'user';
-                my $content = $item->{content} || '';
+                my $content = _extract_content_text($item->{content});
                 return $content if length($content) > 0;
             } else {
                 return $item if defined $item && length($item) > 0;
@@ -829,7 +848,7 @@ sub recover_substantive_task {
     for my $item (@$thread) {
         next unless ref($item) eq 'HASH';
         next unless ($item->{role} // '') eq 'user';
-        my $content = $item->{content} // '';
+        my $content = _extract_content_text($item->{content});
         return $content if length($content) >= $min_len;
     }
 
@@ -837,7 +856,7 @@ sub recover_substantive_task {
     for my $item (@$thread) {
         next unless ref($item) eq 'HASH';
         next unless ($item->{role} // '') eq 'user';
-        my $content = $item->{content} // '';
+        my $content = _extract_content_text($item->{content});
         return $content if length $content;
     }
 
@@ -1064,7 +1083,7 @@ sub _extract_thread_summary_from_messages {
     for my $msg (reverse @$messages) {
         next unless ref($msg) eq 'HASH';
         next unless ($msg->{role} // '') eq 'system';
-        my $content = $msg->{content} || '';
+        my $content = _extract_content_text($msg->{content});
         if ($content =~ /<thread_summary>.*?<\/thread_summary>/s) {
             return $content;
         }

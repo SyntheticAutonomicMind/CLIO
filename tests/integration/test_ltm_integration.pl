@@ -60,26 +60,34 @@ ok_test(grep(/discovery/, @types), "discovery entries included");
 ok_test(grep(/solution/, @types), "solution entries included");
 ok_test(grep(/pattern/, @types), "pattern entries included");
 
-# 3. Test score_ltm applies tier penalty (0.3x for unverified)
+# 3. Test score_ltm tier penalty is ranking-only (not gate-level)
 print "[3] Testing score_ltm relevance scoring with tier penalty...\n";
 my $input = 'CLIO uses Perl';
 my $task = '';
 my $unresolved = [];
 
-# Score with the entry still unverified. The 0.3x tier penalty should
-# keep it below the 5.0 relevance threshold even though it has strong
-# keyword overlap — that is the intended behavior: unverified entries
-# rank below trusted ones at injection time.
+# Score with the entry still unverified. The 0.3x tier penalty is a
+# RANKING penalty only: an unverified entry with a strong lexical match
+# (raw_score >= 5) is still injected, but ranks below trusted entries
+# at equal lexical relevance. Previously the penalty was applied at the
+# keep/drop gate, which killed ALL fresh memories (add_discovery creates
+# 'unverified' by default) — LTM was dead until corroboration.
 my $scored = CLIO::Core::ContextBuilder::score_ltm($entries, $input, $task, $unresolved);
 
+my $unverified_score;
 my $unverified_in_results = 0;
 for my $s (@$scored) {
     if ($s->{content} =~ /CLIO uses Perl/) {
         $unverified_in_results = 1;
+        $unverified_score = $s->{score};
         ok_test($s->{tier} eq 'unverified', "entry has tier=unverified before corroboration");
+        ok_test(defined $s->{raw_score}, "unverified entry has raw_score field");
+        # The penalized score (0.3x) should be lower than the raw score.
+        ok_test($s->{score} < $s->{raw_score}, "unverified entry's penalized score < raw_score (ranking penalty applied)");
     }
 }
-ok_test(!$unverified_in_results, "unverified entry filtered out by 0.3x tier penalty (below threshold)");
+ok_test($unverified_in_results, "unverified-but-relevant entry IS injected (ranking-only, not gate-level)");
+ok_test($unverified_score >= 0, "injected unverified entry has a non-negative score");
 
 # 4. Corroborate -> promote to trusted, then re-score
 print "\n[4] Testing tier propagation through score_ltm...\n";
@@ -102,9 +110,12 @@ for my $s (@$scored2) {
 }
 ok_test($found_trusted, "trusted entry found in scored results");
 
-# The trusted (corroborated) entry should pass the threshold where the
-# unverified entry did not — demonstrating the tier penalty at injection.
-ok_test($trusted_score >= 5, "trusted entry passes relevance threshold (>=5)");
+# The trusted entry should rank HIGHER than the unverified entry —
+# demonstrating the ranking penalty (trusted sorts above unverified
+# at equal lexical relevance). Both pass the threshold (raw_score gate),
+# but the trusted entry's score (no penalty) exceeds the unverified's
+# penalized score (0.3x).
+ok_test($trusted_score > $unverified_score, "trusted entry ranks above unverified entry (ranking penalty)");
 
 # 5. Test messages_to_prose_dynamic renders relevant_memory with badges
 print "\n[5] Testing messages_to_prose_dynamic rendering...\n";

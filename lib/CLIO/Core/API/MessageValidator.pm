@@ -950,10 +950,34 @@ sub _estimate_tokens {
 # global TokenEstimator ratio. Used when validate_and_truncate passes a
 # clamped token_ratio parameter so that callers can override the global
 # ratio for testing or per-model calibration.
+#
+# Unlike estimate_tokens(), this takes a caller-specified ratio instead
+# of the global learned ratio. For arrayref (multimodal) content, text
+# parts are summed using the ratio and image_url parts add a fixed
+# 85-token estimate (matching TokenEstimator's image handling).
 sub _estimate_tokens_with_ratio {
     my ($text, $ratio) = @_;
     return 0 unless defined $text;
     $ratio = 4.0 unless defined $ratio && $ratio > 0;
+
+    # Handle arrayref content (multimodal messages with text + image parts)
+    if (ref($text) eq 'ARRAY') {
+        my $chars = 0;
+        my $image_tokens = 0;
+        for my $part (@$text) {
+            next unless ref($part) eq 'HASH';
+            if (($part->{type} // '') eq 'text' && defined $part->{text}) {
+                $chars += length($part->{text});
+            } elsif ($part->{type} && $part->{type} =~ /^image/) {
+                # 85 tokens per image (low-res estimate, matching TokenEstimator)
+                $image_tokens += 85;
+            }
+        }
+        require POSIX;
+        my $text_tokens = $chars > 0 ? POSIX::ceil($chars / $ratio) : 0;
+        return $text_tokens + $image_tokens;
+    }
+
     return 0 unless length($text) > 0;
     require POSIX;
     return POSIX::ceil(length($text) / $ratio);
