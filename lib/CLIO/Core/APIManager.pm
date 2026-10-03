@@ -3594,9 +3594,12 @@ sub send_request {
 
     my $ctx = $self->_prepare_api_request($input, %opts, is_streaming => 0);
     
-    # Check rate limiter before making request (provider_label may be undefined for early returns)
+    # Check rate limiter before making request (provider_label may be undefined for early returns).
+    # Pass model so model-specific concurrency limits (e.g. DeepSeek's 500
+    # concurrent for v4-pro) are enforced proactively, not just reactively
+    # in acquire().
     my $provider = lc($ctx->{provider_label} // 'unknown');
-    my $wait = $self->{rate_limiter}->check_and_wait($provider);
+    my $wait = $self->{rate_limiter}->check_and_wait($provider, $ctx->{model});
     if ($wait > 0) {
         log_debug('APIManager', "Rate limited by $provider, waiting ${wait}s...");
         # Interruptible sleep so ESC works during rate-limit waits.
@@ -3813,9 +3816,12 @@ sub send_request_streaming {
         _on_thinking  => $on_thinking,
     );
     
-    # Check rate limiter before making request (provider_label may be undefined for early returns)
+    # Check rate limiter before making request (provider_label may be undefined for early returns).
+    # Pass model so model-specific concurrency limits (e.g. DeepSeek's 500
+    # concurrent for v4-pro) are enforced proactively, not just reactively
+    # in acquire().
     my $provider = lc($ctx->{provider_label} // 'unknown');
-    my $wait = $self->{rate_limiter}->check_and_wait($provider);
+    my $wait = $self->{rate_limiter}->check_and_wait($provider, $ctx->{model});
     if ($wait > 0) {
         log_debug('APIManager', "Rate limited by $provider, waiting ${wait}s...");
         # Interruptible sleep so ESC works during rate-limit waits.

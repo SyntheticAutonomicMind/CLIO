@@ -385,13 +385,17 @@ or concurrency limits.
 
 Arguments:
 - $provider: Provider name
+- $model: Optional model name for model-specific concurrency limits
+  (e.g. DeepSeek's 500 concurrent for v4-pro vs 2500 for v4-flash).
+  Without this, the provider-level default is used, which caps DeepSeek
+  at DEFAULT_MAX_CONCURRENT (2) even though the model allows 500/2500.
 
 Returns: Seconds to wait (0 = proceed immediately, >0 = sleep and retry)
 
 =cut
 
 sub check_and_wait {
-    my ($self, $provider) = @_;
+    my ($self, $provider, $model) = @_;
     $provider = lc($provider);
     my $wait = 0;
     
@@ -405,9 +409,9 @@ sub check_and_wait {
         }
     }
     
-    # Check concurrency limit
+    # Check concurrency limit (model-specific limits take precedence)
     my $active = $self->{active_requests}{$provider} // 0;
-    my $max = $self->get_max_concurrent($provider);
+    my $max = $self->get_max_concurrent($provider, $model);
     if ($active >= $max) {
         # Estimate wait based on typical request duration
         $wait = 0.5;  # Start with small wait

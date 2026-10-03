@@ -91,6 +91,52 @@ $rl->release("deepseek");
 is($rl->get_active_count("deepseek"), 0, "Active count is 0 after release");
 
 # ============================================================
+# Section 1b: check_and_wait uses model-specific concurrency
+# (Regression: previously check_and_wait ignored the model parameter
+#  and fell back to DEFAULT_MAX_CONCURRENT=2, artificially capping
+#  DeepSeek v4-pro at 2 concurrent instead of 500.)
+# ============================================================
+{
+    # Reset state for a clean concurrency test
+    CLIO::Core::RateLimiter->reset_instance();
+    my $rl2 = CLIO::Core::RateLimiter->get_instance();
+    CLIO::Providers::configure_rate_limiter($rl2);
+
+    # DeepSeek v4-pro allows 500 concurrent. Acquire 3 slots — well under
+    # the limit. check_and_wait should return 0 (proceed immediately)
+    # even though 3 > DEFAULT_MAX_CONCURRENT (2).
+    for (1..3) {
+        ok($rl2->acquire("deepseek", "deepseek-v4-pro"), "Acquire slot $_ for v4-pro");
+    }
+    is($rl2->check_and_wait("deepseek", "deepseek-v4-pro"), 0,
+        "check_and_wait returns 0 (proceed) when 3 slots held < 500 limit");
+
+    # Verify the old behavior (no model param) would have returned >0:
+    # without the model, default concurrency is 2, and 3 > 2 should
+    # trigger a wait. This confirms the model param actually changes
+    # behavior.
+    my $no_model_wait = $rl2->check_and_wait("deepseek");
+    ok($no_model_wait > 0, "check_and_wait without model falls back to default (2), waits at 3 slots")
+        or diag("Expected >0s wait without model param, got: $no_model_wait");
+
+    # v4-flash allows 2500 — even more headroom
+    is($rl2->check_and_wait("deepseek", "deepseek-v4-flash"), 0, "v4-flash: 3 slots << 2500 limit, no wait");
+
+    # Release all for clean state
+    for (1..3) { $rl2->release("deepseek"); }
+    is($rl2->get_active_count("deepseek"), 0, "All slots released");
+
+    # Hit the actual limit for v4-pro (500): this is impractical to test
+    # directly (would need 500 acquires), so we test the acquire/return
+    # boundary logic on a mock with a small limit instead.
+    my $rl3 = CLIO::Core::RateLimiter->new();
+    $rl3->set_max_concurrent("test_provider", 3);
+    for (1..3) { $rl3->acquire("test_provider"); }
+    ok($rl3->check_and_wait("test_provider") > 0,
+        "check_and_wait returns >0 when at provider concurrency limit");
+}
+
+# ============================================================
 # Section 2: NVIDIA NIM SSE error chunk pattern matching
 # ============================================================
 require CLIO::Core::API::ResponseHandler;
