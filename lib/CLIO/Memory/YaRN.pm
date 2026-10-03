@@ -334,8 +334,7 @@ sub _compute_limits {
         $limits{commits}        = 5  if $limits{commits}        < 5;
     }
     elsif ($context_window >= 262144) {
-        my $scale = 1.0;
-        $scale = 1.5 if $context_window >= 262144;
+        my $scale = 1.5;  # 256K and above: start at 1.5x
         $scale = 2.0 if $context_window >= 524288;
         $scale = 4.0 if $context_window >= 1048576;
         for my $k (qw(user_requests decisions collaboration files commits
@@ -400,6 +399,7 @@ sub compress_messages {
     my $max_tool_types     = $limits->{tool_types};
     my $max_ur_display     = $limits->{user_requests};
     my $max_collab_len     = $limits->{collaboration_len};
+    my $max_decision_len   = $limits->{decision_len};
 
     # Extraction buckets
     my @user_requests;
@@ -431,18 +431,18 @@ sub compress_messages {
     # Carry forward the original task marker. Anchored to the bullet
     # line so body text mentioning "[original]" elsewhere isn't adopted.
     # Also support the legacy "Original task:" header (pre-current format).
-    if ($previous_summary =~ /^- \[original\] ([^\n]{1,300})$/m) {
+    if ($previous_summary =~ /^- \[original\] ([^\n]{1,$max_ur_len})$/m) {
         $opts{_carried_original} = $1;
-    } elsif ($previous_summary =~ /- \[original\] ([^\n]{1,300})/s) {
+    } elsif ($previous_summary =~ /- \[original\] ([^\n]{1,$max_ur_len})/s) {
         $opts{_carried_original} = $1;
     }
     if (!$opts{_carried_original}
-        && $previous_summary =~ /^Original task: (.{1,400})$/m) {
+        && $previous_summary =~ /^Original task: (.{1,$max_ur_len})$/m) {
         $opts{_carried_original} = $1;
     }
     # Carry forward the Current task line (used when caller's
     # original_task is too short to be substantive).
-    if ($previous_summary =~ /^Current task: (.{1,300})$/m) {
+    if ($previous_summary =~ /^Current task: (.{1,$max_ur_len})$/m) {
         my $prev_task = $1;
         $prev_task =~ s/\s+$//;
         if (!$original_task || length($original_task) < 50) {
@@ -450,7 +450,7 @@ sub compress_messages {
         }
     }
     if (!$opts{_carried_task}
-        && $previous_summary =~ /^Original task: (.{1,400})$/m) {
+        && $previous_summary =~ /^Original task: (.{1,$max_ur_len})$/m) {
         my $prev_task = $1;
         $prev_task =~ s/\s+$//;
         if (!$original_task || length($original_task) < 50) {
@@ -474,11 +474,12 @@ sub compress_messages {
             if ($collab_type) {
                 my $dec = $content;
                 $dec =~ s/\s+/ /g;
-                push @decisions, substr($dec, 0, $max_ur_len);
-            } elsif ($content =~ /\[COLLABORATION\](.{1,300})/s) {
+                push @decisions, substr($dec, 0, $max_decision_len);
+            } elsif ($content =~ /\[COLLABORATION\](.+)/s) {
+                # Legacy: [COLLABORATION] text prefix (backward compat)
                 my $dec = $1;
                 $dec =~ s/\s+/ /g;
-                push @decisions, substr($dec, 0, $max_ur_len);
+                push @decisions, substr($dec, 0, $max_decision_len);
             }
 
             # Tool calls - extract paths, count operations, pair interact calls
@@ -553,6 +554,12 @@ sub compress_messages {
         my @ordered;
         for my $c (reverse @commits) {
             my ($hash) = $c =~ /^([a-f0-9]{7,12})/;
+            # Guard against commit strings that don't start with a hex
+            # hash (e.g. legacy prose or malformed entries) — without this,
+            # $hash is undef, $by_hash{undef}++ triggers an
+            # uninitialized-value warning under strict, and the entry gets
+            # silently dropped from dedup (kept only by chance of ordering).
+            next unless defined $hash;
             next if $by_hash{$hash}++;
             unshift @ordered, $c;
         }
@@ -613,7 +620,7 @@ sub compress_messages {
     push @parts, "";
 
     if ($effective_task) {
-        push @parts, "Current task: " . substr($effective_task, 0, 300);
+        push @parts, "Current task: " . substr($effective_task, 0, $max_ur_len);
         push @parts, "";
     }
 
@@ -630,7 +637,7 @@ sub compress_messages {
     if (@decisions) {
         push @parts, "Key decisions:";
         for my $d (@decisions) {
-            push @parts, "- " . substr($d, 0, 500);
+            push @parts, "- " . substr($d, 0, $max_decision_len);
         }
         push @parts, "";
     }
@@ -669,9 +676,9 @@ sub compress_messages {
     if (@collaboration_exchanges) {
         push @parts, "Discussion:";
         for my $ex (@collaboration_exchanges) {
-            my $q = substr($ex->{question}, 0, 300);
+            my $q = substr($ex->{question}, 0, $max_collab_len);
             $q =~ s/\s+/ /g;
-            my $a = substr($ex->{response}, 0, 300);
+            my $a = substr($ex->{response}, 0, $max_collab_len);
             $a =~ s/\s+/ /g;
             push @parts, "- Q: " . $q;
             push @parts, "  A: " . $a;
@@ -948,11 +955,19 @@ sub _parse_previous_summary {
         my @lines = split /\n/, $block;
         my $i = 0;
         while ($i < @lines) {
-            if ($lines[$i] =~ /^\s*- Q:\s*(.+)$/ && $i + 1 < @lines
-                && $lines[$i + 1] =~ /^\s*A:\s*(.+)$/) {
+            # Use separate match statements so each captures its own $1.
+            # A single "regex1 && regex2" test would leave $1 bound to the
+            # second (A:) regex's capture, making question => $1 return the
+            # answer text. And storing $lines[$i+1] directly would include
+            # the "  A: " prefix, doubling it on re-emission.
+            my ($q_text) = $lines[$i] =~ /^\s*- Q:\s*(.+)$/;
+            my ($a_text) = ($i + 1 < @lines)
+                ? ($lines[$i + 1] =~ /^\s*A:\s*(.+)$/ ? $1 : undef)
+                : undef;
+            if (defined $q_text && defined $a_text) {
                 push @$collaboration_exchanges, {
-                    question => $1,
-                    response => $lines[$i + 1],
+                    question => $q_text,
+                    response => $a_text,
                 };
                 $i += 2;
             } else {

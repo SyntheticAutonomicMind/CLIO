@@ -1108,7 +1108,13 @@ sub trim_for_token_limit {
         # The model's actual output cap is used, not a fixed percentage.
         require CLIO::Memory::TokenEstimator;
         my $keep_budget = CLIO::Memory::TokenEstimator::compute_prompt_budget($_retry_caps);
-        $keep_budget = 40000 if $keep_budget < 40000;
+        # Floor the retry budget at 1000 tokens (the same floor as
+        # compute_prompt_budget and validate_and_truncate) so tiny
+        # context models still keep a usable window. The old hardcoded
+        # 40000 floor ignored the model's context window entirely — on
+        # a 32K model it kept 40K tokens, exceeding the window and
+        # guaranteeing a second token-limit error.
+        $keep_budget = 1000 if $keep_budget < 1000;
 
         my $kept_tokens = 0;
         my $start_idx   = $original_count;

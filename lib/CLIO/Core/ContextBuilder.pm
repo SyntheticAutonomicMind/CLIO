@@ -826,11 +826,11 @@ sub _build_compressed_tail {
 
     # Context-aware cap for the compressed tail (goes into the dynamic
     # UC, which is per-turn). Scales with the model's context window:
-    #   32K ctx  -> ~1,200 chars
-    #   64K ctx  -> ~2,600 chars
-    #   128K ctx -> ~5,100 chars
-    #   256K ctx -> ~10,200 chars
-    #   1M ctx   -> ~20,000 chars (capped)
+    #   32K ctx  -> ~1,200 chars (floor: 300 tokens * ratio)
+    #   64K ctx  -> ~1,308 chars
+    #   128K ctx -> ~2,620 chars
+    #   256K ctx -> ~5,240 chars
+    #   1M ctx   -> ~20,000 chars (ceiling: 8000 tokens * ratio)
     # The old hardcoded OVERALL_CAP=900 was too conservative for
     # modern 128K+ context windows.
     my $OVERALL_CAP = _compute_compressed_tail_cap($context_window);
@@ -921,6 +921,11 @@ sub _compute_compressed_tail_cap {
     my $ratio = CLIO::Memory::TokenEstimator::get_effective_ratio();
 
     # ~0.5% of context window in tokens for the per-turn compressed tail.
+    #   32K ctx  -> 163 tokens -> 652 chars (floored to 300 tokens -> 1200 chars)
+    #   64K ctx  -> 327 tokens -> 1308 chars
+    #   128K ctx -> 655 tokens -> 2620 chars
+    #   256K ctx -> 1310 tokens -> 5240 chars
+    #   1M ctx   -> 5000 tokens -> 20000 chars (floored to 8000 tokens -> 32000, capped)
     my $cap_tokens = int($context_window * 0.005);
     $cap_tokens = 300  if $cap_tokens < 300;
     $cap_tokens = 8000 if $cap_tokens > 8000;

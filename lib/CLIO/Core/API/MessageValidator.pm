@@ -478,8 +478,16 @@ sub _role_based_tail_walk {
         my $summary = eval {
             require CLIO::Memory::YaRN;
             my $yarn = CLIO::Memory::YaRN->new();
+            # Extract previous thread_summary from the FULL message array
+            # (not just @dropped). Pinned thread_summaries from prior trims
+            # within this turn are still in $messages but are NOT in @dropped
+            # (they're pinned/kept). Scanning only @dropped would miss them
+            # and silently reset the cross-cycle carryover on every proactive
+            # trim — the same class of bug as the collaboration/decision fixes.
+            my $prev_summary = $yarn->_extract_thread_summary_from_messages($messages);
             $yarn->compress_for_context_recovery(\@dropped,
                 original_task    => $active_task,
+                previous_summary => $prev_summary,
                 context_window   => $context_window || 0,
             );
         };
