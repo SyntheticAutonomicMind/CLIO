@@ -1433,23 +1433,24 @@ Returns: String with variables substituted
 
 sub _substitute_variables {
     my ($self, $template, $context) = @_;
-    
-    my $result = $template;
+
+    my $result = $template // '';
     $context ||= {};
-    
-    # Simple variable substitution: ${var}
-    while ($result =~ /\$\{([a-zA-Z0-9_:]+)\}/) {
+
+    # Single-pass substitution. The original loop (`while` + `s///g`)
+    # re-scanned the string after each replacement, so a value that
+    # contained another `${var}` reference (e.g. outer=>'${inner}')
+    # was recursively expanded -- silently turning data into injected
+    # variables and losing the literal value the caller supplied.
+    # A single s///ge walk over the original template substitutes each
+    # placeholder exactly once, using the original context values and
+    # never re-scanning substituted text.
+    $result =~ s{\$\{([a-zA-Z0-9_:]+)\}}{
         my $var = $1;
-        my $value = $context->{$var};
-        
-        # Handle undefined variables
-        $value = '' unless defined $value;
-        
-        # Escape special regex characters in value
-        my $escaped_var = quotemeta($var);
-        $result =~ s/\$\{$escaped_var\}/$value/g;
-    }
-    
+        my $value = exists $context->{$var} ? $context->{$var} : '';
+        defined $value ? $value : '';
+    }ge;
+
     return $result;
 }
 

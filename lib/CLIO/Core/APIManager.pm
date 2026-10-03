@@ -3692,6 +3692,13 @@ sub _process_non_streaming_response {
     my $data = safe_decode_json($resp->decoded_content);
     if ($@) {
         log_debug('APIManager', "[$provider_label] Invalid response: $@");
+        # Release the broker slot for this request before returning the
+        # error. A malformed response still consumed a granted slot
+        # (release_broker_slot was only called on the success / HTTP-error
+        # paths above); omitting it here leaks the slot -- under load the
+        # broker's in_flight cap is never recovered and subsequent agents
+        # stall waiting for a slot that will never be released.
+        $self->{response_handler}->release_broker_slot($resp, 599);
         return $self->_error("Invalid response format: $@");
     }
 
