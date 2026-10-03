@@ -3234,25 +3234,24 @@ sub _read_ltm_entries_for_projection {
 
 =head2 _active_task_text
 
-Return the active task text for the projection. Reads the most recent
-active session goal, falling back to the most recent substantive user
-message from $history if no goals are set. Returns '' when neither is
-available.
+Return the active task text for the projection. Derives the task from the
+live conversation rather than session goals: session goals can become stale
+when the user pivots mid-session, and a stale active_task leaks into the
+compressed_tail as "Current task:" -- causing the model to reset to outdated
+work (the bug fixed in d3ef9ee4).
 
-The "most recent active goal" rule is what makes this function correct
-in long sessions where the user has moved on to a new task. The earlier
-"first active goal" implementation pinned the active task label to the
-user's first request, which caused the model to treat all subsequent
-work as scope creep and revert it (observed in CLIO session
-e45204bf-94ea-45da-99a8-c7d512e54cfb, 2026-09-05). The fix iterates
-the goals array in reverse so the most recent active goal wins.
-
-Why the model can rely on this: the agent records a new active goal
-via todo_operations(session_goals) when it recognises a substantive
-new user request (>=200 chars, not a short acknowledgement like
-"proceed" or "ship it"). The length guard lives upstream in the
-goal-recording path, not here - this function trusts that what is in
-session_goals is the current focus.
+Resolution order:
+1. The current user_input, but only when it is substantive (>= 50 chars,
+   matching YaRN::find_substantive_task). A short acknowledgement is NOT a
+   task and must not overwrite the real one. This covers the first turn of
+   a session, where history is empty (user input is saved after
+   _build_turn_context).
+2. The most recent substantive (>= 50 char) user message from the session's
+   full conversation history (YaRN::find_substantive_task, newest-first).
+3. The durable YaRN thread (recover_substantive_task), which is never
+   trimmed -- so the original task is recoverable even after aggressive
+   context trimming removed it from the in-memory history.
+4. '' when nothing substantive is available.
 
 =cut
 
@@ -3267,13 +3266,17 @@ sub _active_task_text {
     # to reset to outdated work. Instead, derive the task from the
     # live conversation.
 
-    # Primary: current user input (non-empty). This is critical for the
-    # first turn of a session, where the conversation history is empty
-    # because the user input has not been saved yet (State::add_message
-    # runs after _build_turn_context). Without this the projection's
-    # active_task is empty and the dynamic userContext contains only
-    # environment info, causing the model to lose context after a trim.
-    if (defined $user_input && length($user_input // '') > 0) {
+    # Primary: current user input, but only when it is substantive. Short
+    # acknowledgements ("yes", "proceed", "ship it") are not tasks and must
+    # not overwrite the substantive task recovered from history below --
+    # otherwise the compressed summary's "Current task:" line collapses to a
+    # one-word ack, losing the real task context. The 50-char floor matches
+    # YaRN::find_substantive_task's substantiveness threshold so the two
+    # sources agree on what counts as a task. This is still critical for the
+    # first turn of a session, where history is empty (the user input has not
+    # been saved yet -- State::add_message runs after _build_turn_context):
+    # a real first-turn request is usually well over 50 chars.
+    if (defined $user_input && length($user_input // '') >= 50) {
         return $user_input;
     }
 
@@ -3294,6 +3297,18 @@ sub _active_task_text {
     # original task even after aggressive context trimming.
     if (!length($task) && $session->can('id')) {
         $task = CLIO::Memory::YaRN::recover_substantive_task($session);
+    }
+
+    # Enforce the substantive floor: active_task is either a substantive
+    # (>= 50 char) task or ''. find_substantive_task's candidate fallback
+    # (and, rarely, the ack itself when no substantive history exists) can
+    # return a short acknowledgement like "yes" or "proceed"; seeding the
+    # compressed summary's "Current task:" line with that collapses the task
+    # context. A short string is not a task, so drop it. (The user's live
+    # message is still present in the conversation; this only affects the
+    # task label the projection seeds.)
+    if (length($task) < 50) {
+        $task = '';
     }
 
     return $task;

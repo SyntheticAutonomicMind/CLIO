@@ -2,17 +2,21 @@
 # SPDX-License-Identifier: GPL-3.0-only
 # SPDX-FileCopyrightText: Copyright (c) 2026 Andrew Wyatt (Fewtarius)
 #
-# Regression test for the task-transition bug. _active_task_text()
-# must return the most recent active goal, not the first. The dynamic
-# userContext pins the session to whatever the function returns, so
-# returning the wrong goal freezes the model on the previous task.
+# Tests for _active_task_text() (CLIO::Core::WorkflowOrchestrator).
 #
-# Pins three properties:
-# 1. _active_task_text() returns the most recent active goal.
-# 2. _active_task_text() still returns the original task when only
-#    one active goal is set.
-# 3. Short acknowledgements ("proceed", "yes", "ship it", "looks good")
-#    do not trigger a new active task.
+# active_task resolution (see the POD on _active_task_text):
+# 1. The current user_input, when substantive (>= 50 chars). Short
+#    acknowledgements ("yes", "proceed", "ship it") are NOT tasks.
+# 2. The most recent substantive (>= 50 char) user message in history
+#    (YaRN::find_substantive_task, newest-first).
+# 3. The durable YaRN thread (recover_substantive_task), never trimmed.
+# 4. '' when nothing substantive is available.
+#
+# Session goals are intentionally NOT consulted: they go stale when the
+# user pivots mid-session, leaking an outdated "Current task:" into the
+# compressed summary and making the model reset to old work (the bug
+# d3ef9ee4 fixed by switching to the live conversation). This test pins
+# that behaviour so it does not silently regress.
 
 use strict;
 use warnings;
@@ -25,25 +29,31 @@ use CLIO::Session::State;
 require CLIO::Core::WorkflowOrchestrator;
 
 # Access the private method through the package symbol table. This is the
-# only way to test it without standing up a full WorkflowOrchestrator (which
-# would require APIManager, session state, tool registry, etc.).
+# only way to test it without standing up a full WorkflowOrchestrator
+# (which would require APIManager, tool registry, etc.).
 *_active_task_text = \&CLIO::Core::WorkflowOrchestrator::_active_task_text;
 
 # ---------------------------------------------------------------------------
-# Mock session: minimal object that satisfies _active_task_text's interface
-# (state() -> ref with session_goals() method, get_conversation_history()).
-# Only the methods listed here exist. Capability probes must see that: a
-# blanket can() override makes every can() probe succeed and then dies when
-# the caller dispatches the method it just "confirmed" (e.g. YaRN's
-# can('yarn') guard followed by ->yarn).
+# Mock session: satisfies _active_task_text's interface
+# (state(), get_conversation_history()). Deliberately does NOT provide id(),
+# so the recover_substantive_task (durable thread) fallback is never
+# reached -- keeps the assertions hermetic. History items are hashrefs of
+# {role, content} matching CLIO::Session::State's real message shape.
 # ---------------------------------------------------------------------------
 
 package MockSession {
     sub new {
         my ($class, %args) = @_;
-        bless {
-            state => $args{state},
-            history => $args{history} || [],
+        my $state = CLIO::Session::State->new(
+            session_id => $args{session_id} // ('test-' . $$. '-' . int(rand(100000))),
+            state_dir  => $args{state_dir} // "/tmp/clio-task-transition-test-$$",
+        );
+        if (my $goals = $args{goals}) {
+            $state->set_session_goals($goals);
+        }
+        return bless {
+            state   => $state,
+            history => $args{history} // [],
         }, $class;
     }
     sub state { return $_[0]->{state}; }
@@ -52,176 +62,104 @@ package MockSession {
 
 package main;
 
-sub make_session_with_goals {
-    my (@goals) = @_;
-    my $state = CLIO::Session::State->new(
-        session_id => 'test-' . int(rand(100000)),
-        state_dir  => "/tmp/clio-task-transition-test-$$",
-    );
-    $state->set_session_goals(\@goals);
-    return MockSession->new(state => $state);
-}
+# Build a proper arrayref-of-hashref history from a flat list of messages.
+sub hist { [ @_ ] }
+
+# A stale session goal -- must never become the active task.
+my $stale_goal = {
+    id          => 1,
+    title       => 'Init templates',
+    description => 'Set up /init templating with generic templates',
+    status      => 'active',
+    created_at  => '2026-09-01T00:00:00Z',
+};
+
+my $substantive = "Fix the routing bug properly so recovery trims conversation " .
+                  "history before retrying the request with a larger model.";
 
 # ---------------------------------------------------------------------------
-# Test 1 (regression guard): single active goal returns its title.
-# ---------------------------------------------------------------------------
-
-{
-    my $session = make_session_with_goals(
-        {
-            id          => 1,
-            title       => 'Init templates',
-            description => 'Set up /init templating with generic templates',
-            status      => 'active',
-            created_at  => '2026-09-01T00:00:00Z',
-        },
-    );
-    my $task = _active_task_text(undef, $session);
-    like($task, qr/Init templates/, 'Single active goal: title returned');
-    like($task, qr/Set up \/init templating/, 'Single active goal: description appended');
-}
-
-# ---------------------------------------------------------------------------
-# Test 2 (bug reproduction): two active goals - was returning FIRST, must
-# return MOST RECENT. This is the exact scenario from the bad session.
+# Test 1: a substantive user_input (>= 50 chars) is returned verbatim and
+# dominates over stale session goals. This is the primary path and the one
+# actually hit in production (user_input is always the live request).
 # ---------------------------------------------------------------------------
 
 {
-    my $session = make_session_with_goals(
-        {
-            id          => 1,
-            title       => 'Init templates',
-            description => 'Set up /init templating with generic templates',
-            status      => 'active',
-            created_at  => '2026-09-01T00:00:00Z',
-        },
-        {
-            id          => 2,
-            title       => 'Auto-skill creation',
-            description => 'Add a feature to auto-create skills at session end',
-            status      => 'active',
-            created_at  => '2026-09-05T00:00:00Z',
-        },
-    );
-    my $task = _active_task_text(undef, $session);
-    like($task, qr/Auto-skill creation/, 'Two active goals: MOST RECENT title returned (not the first)');
-    unlike($task, qr/Init templates/, 'Two active goals: first goal is NOT the active task');
-    like($task, qr/Add a feature to auto-create skills/, 'Two active goals: most recent description appended');
+    my $session = MockSession->new(goals => [$stale_goal]);
+    my $task = _active_task_text(undef, $session, $substantive);
+    is($task, $substantive,
+       'substantive user_input is the active task');
+    unlike($task, qr/Init templates/,
+           'stale session goal is NOT used as active task');
 }
 
 # ---------------------------------------------------------------------------
-# Test 3 (regression guard): completed goals are not eligible.
-# Most recent ACTIVE goal is returned, not most recent of any status.
-# ---------------------------------------------------------------------------
-
-{
-    my $session = make_session_with_goals(
-        {
-            id          => 1,
-            title       => 'Init templates',
-            description => 'Set up /init templating',
-            status      => 'completed',
-            created_at  => '2026-09-01T00:00:00Z',
-        },
-        {
-            id          => 2,
-            title       => 'Auto-skill creation',
-            description => 'Add a feature to auto-create skills at session end',
-            status      => 'active',
-            created_at  => '2026-09-05T00:00:00Z',
-        },
-        {
-            id          => 3,
-            title       => 'Refactor caching',
-            description => 'Refactor the request cache',
-            status      => 'pending',
-            created_at  => '2026-09-06T00:00:00Z',
-        },
-    );
-    my $task = _active_task_text(undef, $session);
-    like($task, qr/Auto-skill creation/, 'Mixed statuses: most recent ACTIVE goal returned');
-    unlike($task, qr/Init templates/, 'Mixed statuses: completed goal is NOT returned');
-    unlike($task, qr/Refactor caching/, 'Mixed statuses: pending goal is NOT returned');
-}
-
-# ---------------------------------------------------------------------------
-# Test 4 (length guard verification): short acknowledgements do not create
-# new active goals. The fix relies on the agent/system to record a new
-# active goal when the user starts a new task. The length guard lives in
-# the system that records goals (todo_operations or session_goals update),
-# not in _active_task_text. We verify the assumption here by checking
-# that _active_task_text does NOT misfire on history alone - if all the
-# recent user messages are short acknowledgements, the function should
-# still return the active goal title, not a short message.
-# ---------------------------------------------------------------------------
-
-{
-    my $state = CLIO::Session::State->new(
-        session_id => 'test-ack-' . int(rand(100000)),
-        state_dir  => "/tmp/clio-task-transition-test-ack-$$",
-    );
-    $state->set_session_goals([
-        {
-            id          => 1,
-            title       => 'Original task',
-            description => 'The user is working on this.',
-            status      => 'active',
-            created_at  => '2026-09-01T00:00:00Z',
-        },
-    ]);
-    my $history = [
-        { role => 'user',      content => 'Original substantive task description that the user asked about.' },
-        { role => 'assistant', content => 'Working on it.' },
-        { role => 'user',      content => 'proceed' },
-        { role => 'assistant', content => 'Done.' },
-        { role => 'user',      content => 'yes' },
-        { role => 'assistant', content => 'Continuing.' },
-        { role => 'user',      content => 'ship it' },
-    ];
-    my $session = MockSession->new(state => $state, history => $history);
-    my $task = _active_task_text(undef, $session);
-    like($task, qr/Original task/, 'Short acknowledgements: active goal title still returned');
-    unlike($task, qr/^proceed$/, 'Short acknowledgements: "proceed" not promoted to active task');
-    unlike($task, qr/^yes$/, 'Short acknowledgements: "yes" not promoted to active task');
-    unlike($task, qr/^ship it$/, 'Short acknowledgements: "ship it" not promoted to active task');
-}
-
-# ---------------------------------------------------------------------------
-# Test 5: empty session returns empty string.
+# Test 2: a short acknowledgement ("proceed") is NOT the active task;
+# the most recent substantive user message from history is used instead.
+# This is the regression guard for the task-transition bug: before the
+# substantive floor, an ack could overwrite the real task in the
+# compressed summary's "Current task:" line.
 # ---------------------------------------------------------------------------
 
 {
     my $session = MockSession->new(
-        state   => undef,
-        history => [],
+        goals   => [$stale_goal],
+        history => hist({ role => 'user', content => $substantive }),
     );
-    my $task = _active_task_text(undef, $session);
-    is($task, '', 'Empty session: returns empty string');
+    my $task = _active_task_text(undef, $session, 'proceed');
+    is($task, $substantive,
+       'short ack defers to the most recent substantive history');
+    unlike($task, qr/^proceed$/,
+           'the ack itself is not the active task');
+    unlike($task, qr/Init templates/,
+           'stale goal is not used as the fallback');
 }
 
 # ---------------------------------------------------------------------------
-# Test 6 (regression guard): no active goals falls back to YaRN's
-# newest-first scan. The first user message is the original substantive
-# task. If the most recent user message is also substantive, YaRN
-# returns that (it scans newest-first).
+# Test 3: when there is no live user_input, the most recent substantive
+# user message in history is returned. This covers turns where the input
+# has already been saved to history before the projection runs.
 # ---------------------------------------------------------------------------
 
 {
-    my $state = CLIO::Session::State->new(
-        session_id => 'test-fallback-' . int(rand(100000)),
-        state_dir  => "/tmp/clio-task-transition-test-fb-$$",
+    my $session = MockSession->new(
+        history => hist({ role => 'user', content => $substantive }),
     );
-    $state->set_session_goals([]);
-    my $history = [
-        { role => 'user', content => 'Original task: implement the /init templating feature.' },
-        { role => 'assistant', content => 'Working on it.' },
-        { role => 'user', content => 'Now I want to think through designing an auto skill feature that works like our LTM feature.' },
-        { role => 'assistant', content => 'Designing it now.' },
-    ];
-    my $session = MockSession->new(state => $state, history => $history);
-    my $task = _active_task_text(undef, $session);
-    like($task, qr/auto skill feature/, 'No goals: YaRN fallback returns most recent substantive message');
-    unlike($task, qr/Original task: implement the \/init/, 'No goals: original message NOT returned when more recent exists');
+    my $task = _active_task_text(undef, $session, undef);
+    is($task, $substantive,
+       'empty user_input falls back to most recent substantive history');
+}
+
+# ---------------------------------------------------------------------------
+# Test 4: nothing available -> ''. Short acks with empty history must not
+# leak into the summary as a fake task. (In production this only happens
+# for pathological sessions that never contain a substantive request;
+# recover_substantive_task handles the durable-thread case for real
+# sessions.)
+# ---------------------------------------------------------------------------
+
+{
+    my $session = MockSession->new(history => []);
+    my $task = _active_task_text(undef, $session, 'yes');
+    is($task, '',
+       'short ack with empty history returns empty, not the ack');
+}
+
+# ---------------------------------------------------------------------------
+# Test 5: find_substantive_task scans newest-first and only returns
+# >= 50 char USER messages; assistant messages and short (< 50) user
+# messages are skipped, even when more recent.
+# ---------------------------------------------------------------------------
+
+{
+    my $session = MockSession->new(history => hist(
+        { role => 'user',      content => $substantive },   # oldest, substantive
+        { role => 'user',      content => 'a' x 49 },        # recent, but < 50
+        { role => 'assistant', content => 'a' x 200 },      # recent, wrong role
+        { role => 'user',      content => 'proceed' },       # most recent ack
+    ));
+    my $task = _active_task_text(undef, $session, undef);
+    is($task, $substantive,
+       'most recent SUBSTANTIVE user message wins; acks and <50 msgs skipped');
 }
 
 done_testing();
