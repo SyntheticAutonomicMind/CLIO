@@ -1216,6 +1216,7 @@ sub _build_turn_context {
         unresolved          => $self->_collect_unresolved_state($history, $session),
         context_files_block => $self->_render_context_files_for_user_context($session),
         session             => $session,
+        context_window      => $ctx_window,
     );
 
     # Push the projection's selected history (anchor + recent turns)
@@ -2822,7 +2823,7 @@ Returns: Message hashref with role 'system' containing the thread_summary,
 =cut
 
 sub _compress_dropped_for_recovery {
-    my ($dropped_messages, $last_user_msg, $session, $all_messages, $prompt_builder) = @_;
+    my ($dropped_messages, $last_user_msg, $session, $all_messages, $prompt_builder, $context_window) = @_;
 
     return undef unless $dropped_messages && @$dropped_messages;
 
@@ -2886,6 +2887,7 @@ sub _compress_dropped_for_recovery {
         $compressed = $yarn_cache->compress_for_context_recovery($dropped_messages,
             original_task    => $original_task,
             previous_summary => $prev,
+            context_window   => $context_window,
         );
     };
     if ($@) {

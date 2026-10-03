@@ -4,7 +4,7 @@
 #
 # Test: _build_compressed_tail uses YaRN compression, surfacing file
 # paths, tool counts, and decisions from dropped turns. The dropped-
-# tail section must stay under the 900-char cap on long inputs.
+# tail section must stay under the context-aware cap.
 
 use strict;
 use warnings;
@@ -13,16 +13,16 @@ use lib './lib';
 
 use Test::More;
 use CLIO::Core::ContextBuilder;
+use CLIO::Memory::YaRN ();
+
+# Use a 128K context window so the cap is predictable.
+my $CTX = 128000;
+my $expected_cap = CLIO::Core::ContextBuilder::_compute_compressed_tail_cap($CTX);
 
 # Build a dropped-turns list simulating a session where the model
-# actually did work: read files, ran git commands, made commits.
+# did real work: read files, ran git commands, made commits.
 # Each tool_call has realistic arguments so YaRN can extract
 # file paths; each tool result is a realistic body.
-#
-# Keep the count low (4 substantive turns) so the YaRN output
-# stays under the 900-char cap without being truncated. The cap
-# IS firing - we just want enough headroom in the test fixture
-# to see the file-path and tool-count sections in the assertion.
 my @dropped;
 for my $i (1..4) {
     push @dropped, [
@@ -48,33 +48,33 @@ for my $i (1..4) {
     ];
 }
 
-my $tail = CLIO::Core::ContextBuilder::_build_compressed_tail(\@dropped, 'Audit role-based refactor');
+my $tail = CLIO::Core::ContextBuilder::_build_compressed_tail(\@dropped, 'Audit role-based refactor', $CTX);
 
-# 1. Section is non-empty and under the 900-char cap.
+# 1. Section is non-empty and under the context-aware cap.
 ok(length($tail) > 0, 'compressed tail is non-empty for substantive dropped turns');
-ok(length($tail) < 900, 'compressed tail is under 900-char cap')
-    or diag("Got " . length($tail) . " chars:\n$tail");
+ok(length($tail) <= $expected_cap, 'compressed tail is under context-aware cap')
+    or diag("Got " . length($tail) . " chars, cap was $expected_cap:\n$tail");
 
 # 2. YaRN output is identifiable by its structured section markers.
-#    (The old "YaRN-compressed" narration was removed in the context
-#    pipeline redesign — compress_for_context_recovery returns clean
-#    thread_summary content without framework framing.)
 like($tail, qr/Current task:|Recent user requests:/, 'YaRN compression output is present (structured sections found)');
 
-# 3. The "Current task" section is surfaced (YaRN picks the most
-# substantive user message from the dropped turns; the active_task
-# argument is used as a fallback when the messages are too short
-# to be substantive).
+# 3. The "Current task" section surfaces a substantive user request.
 like($tail, qr/Current task:.*Investigate the role-based history/s,
     'Current task: surfaces a substantive user request from dropped turns')
     or diag("tail:\n$tail");
 
-# No statistical noise (commits, files, decisions) in the slimmed YaRN
-# output — these change every turn and bust provider KV cache.
-unlike($tail, qr/files_touched|Files:|Commits:|Decisions:|Tool calls:/,
-    'no statistical noise (files/commits/decisions) in compressed output');
+# 4. Files were extracted from tool calls and included in the summary.
+like($tail, qr/lib\/CLIO\/Core\/ContextBuilder\.pm/, 'file path extracted from tool calls');
 
-# 6. Continuation filtering still applies (mixed input).
+# 5. Tool operations are counted and included.
+like($tail, qr/Tool operations:/, 'Tool operations section present');
+like($tail, qr/file_operations: \d+/, 'tool operation count present');
+
+# 6. No framework narration or raw variable names in output.
+unlike($tail, qr/files_touched|Tool calls:|_metadata|compressed_count/,
+    'no raw framework narration in compressed output');
+
+# 7. Continuation filtering still applies (mixed input).
 my @mixed = (
     [
         { role => 'user', content => 'continue' },
@@ -82,16 +82,16 @@ my @mixed = (
     ],
     @dropped,
 );
-my $mixed_tail = CLIO::Core::ContextBuilder::_build_compressed_tail(\@mixed, '');
-unlike($mixed_tail, qr/User: continue/,
+my $mixed_tail = CLIO::Core::ContextBuilder::_build_compressed_tail(\@mixed, '', $CTX);
+unlike($mixed_tail, qr/Current task:.*continue$/,
     'pure-continuation user messages still filtered from the YaRN input')
     or diag("tail:\n$mixed_tail");
 
-# 7. Empty dropped_turns still returns empty string.
-is(CLIO::Core::ContextBuilder::_build_compressed_tail([], ''), '',
+# 8. Empty dropped_turns still returns empty string.
+is(CLIO::Core::ContextBuilder::_build_compressed_tail([], '', $CTX), '',
     'empty dropped_turns returns empty string');
 
-# 8. All-continuation dropped_turns returns empty string (YaRN sees
+# 9. All-continuation dropped_turns returns empty string (YaRN sees
 # only continuations, summary is empty after the filter, fallback
 # path also returns empty).
 my @cont = (
@@ -100,7 +100,19 @@ my @cont = (
     { role => 'user',    content => 'y' },
     { role => 'assistant', content => 'proceed' },
 );
-my $cont_tail = CLIO::Core::ContextBuilder::_build_compressed_tail([\@cont], '');
+my $cont_tail = CLIO::Core::ContextBuilder::_build_compressed_tail([\@cont], '', $CTX);
 is($cont_tail, '', 'all-continuation dropped turns return empty tail');
+
+# 10. Context scaling: 32K context produces a smaller cap than 1M.
+my $cap_32k  = CLIO::Core::ContextBuilder::_compute_compressed_tail_cap(32768);
+my $cap_1m   = CLIO::Core::ContextBuilder::_compute_compressed_tail_cap(1000000);
+ok($cap_32k < $cap_1m, '32K context gets smaller cap than 1M context (scaling works)');
+ok($cap_32k > 0,   '32K cap is positive');
+ok($cap_1m  > $cap_32k * 3, '1M cap is substantially larger than 32K cap');
+
+# 11. YaRN summary cap also scales with context.
+my $yarn_cap_32k = CLIO::Memory::YaRN::_compute_summary_cap(32768);
+my $yarn_cap_1m  = CLIO::Memory::YaRN::_compute_summary_cap(1000000);
+ok($yarn_cap_32k < $yarn_cap_1m, 'YaRN summary cap scales: 32K < 1M');
 
 done_testing();

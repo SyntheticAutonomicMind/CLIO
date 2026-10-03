@@ -1076,6 +1076,15 @@ sub trim_for_token_limit {
 
     my $original_count = scalar(@non_system);
 
+    # Extract context window for YaRN compression (used across all
+    # retry tiers to scale the summary budget).
+    my $_retry_caps = $wo->{api_manager}
+        ? ($wo->{api_manager}->get_model_capabilities() || {}) : {};
+    my $_ctx_window = $_retry_caps->{max_context_window_tokens}
+                   || $_retry_caps->{context_window}
+                   || $_retry_caps->{max_prompt_tokens}
+                   || 0;
+
     # Build tool_call_id -> message index maps
     my %tool_call_indices   = ();
     my %tool_result_indices = ();
@@ -1097,8 +1106,6 @@ sub trim_for_token_limit {
         # First retry: keep recent messages that fit in the model's
         # prompt budget (context - output - estimation buffer).
         # The model's actual output cap is used, not a fixed percentage.
-        my $_retry_caps = $wo->{api_manager}
-            ? ($wo->{api_manager}->get_model_capabilities() || {}) : {};
         require CLIO::Memory::TokenEstimator;
         my $keep_budget = CLIO::Memory::TokenEstimator::compute_prompt_budget($_retry_caps);
         $keep_budget = 40000 if $keep_budget < 40000;
@@ -1152,7 +1159,7 @@ sub trim_for_token_limit {
 
         if (@dropped_messages) {
             my $compressed = CLIO::Core::WorkflowOrchestrator::_compress_dropped_for_recovery(
-                \@dropped_messages, $last_user_msg, $session, $messages, $wo->{prompt_builder}
+                \@dropped_messages, $last_user_msg, $session, $messages, $wo->{prompt_builder}, $_ctx_window
             );
             if ($compressed) {
                 push @non_system, $compressed;
@@ -1179,7 +1186,7 @@ sub trim_for_token_limit {
 
         if (@dropped_messages) {
             my $compressed = CLIO::Core::WorkflowOrchestrator::_compress_dropped_for_recovery(
-                \@dropped_messages, $last_user_msg, $session, $messages, $wo->{prompt_builder}
+                \@dropped_messages, $last_user_msg, $session, $messages, $wo->{prompt_builder}, $_ctx_window
             );
             if ($compressed) {
                 push @non_system, $compressed;
@@ -1203,7 +1210,7 @@ sub trim_for_token_limit {
 
         if (@dropped_messages > 2) {
             my $compressed = CLIO::Core::WorkflowOrchestrator::_compress_dropped_for_recovery(
-                \@dropped_messages, $last_user_msg, $session, $messages, $wo->{prompt_builder}
+                \@dropped_messages, $last_user_msg, $session, $messages, $wo->{prompt_builder}, $_ctx_window
             );
             if ($compressed) {
                 push @non_system, $compressed;

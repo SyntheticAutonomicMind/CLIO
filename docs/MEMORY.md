@@ -72,16 +72,25 @@ When context trimming drops messages from the active window (because the AI's co
 
 When the context window needs trimming, `compress_messages()` takes the messages about to be dropped and extracts:
 
-| Category | What's Extracted |
-|----------|-----------------|
-| **User requests** | The last N user messages (truncated to ~300 chars each) |
-| **Current task** | Most recent user message - the active work being done |
-| **Git commits** | Commit hashes and messages from tool output |
-| **Files touched** | File paths from tool call arguments (path, new_path, old_path) |
-| **Key decisions** | Collaboration exchanges (question + user response) |
-| **Tool usage** | Counts of each tool type used |
+| Category | What's Extracted | 128K default | Scales with context |
+|----------|-----------------|-------------|---------------------|
+| **User requests** | The last N user messages (truncated to ~600 chars each) | 16 | Yes (down to 5 at 32K, up to 64 at 1M) |
+| **Current task** | Most recent substantive user message (>= 50 chars) | — | Short acks (yes, go ahead) are filtered |
+| **Git commits** | Commit hashes and messages from tool output | 30 | Yes (down to 5 at 32K, up to 120 at 1M) |
+| **Files touched** | File paths from tool call arguments (path, new_path, old_path), deduplicated | 50 | Yes (down to 10 at 32K, up to 200 at 1M) |
+| **Key decisions** | Collaboration exchanges with metadata or [COLLABORATION] prefix | 8 | Yes (down to 2 at 32K, up to 32 at 1M) |
+| **Tool operations** | Cumulative counts per tool type (accumulates across trim cycles) | top 8 | Yes |
+| **Discussion** | Collaboration Q/A pairs from interact tool calls | 10 | Yes |
 
-The result is a single system message wrapped in `<thread_summary>` tags that gets injected into the trimmed context. Critically, the `<thread_summary>` is **preserved across multiple trim cycles** - each new compression merges with the previous summary, building an accumulating record of the entire session.
+**Context-aware budgeting:** The summary cap scales with the model's context window at ~2.5% of the context window in tokens (converted to characters via the TokenEstimator ratio). For 128K contexts this produces ~12,800 chars (up from the previous hardcoded 4,000). For 256K it is ~25,600 chars; for 1M it is capped at 60,000 chars. The per-turn compressed tail (in the dynamic userContext) uses ~0.5% of the context window, scaling from ~1,200 chars at 32K to ~20,000 chars at 1M.
+
+**Token estimation** uses `CLIO::Memory::TokenEstimator` (learned ratio from API feedback, default 4.0 chars/token) rather than a hardcoded 2.5 ratio.
+
+The result is a single system message wrapped in `<thread_summary>` tags that gets injected into the trimmed context. Critically, the `<thread_summary>` is **preserved across multiple trim cycles** - each new compression merges with the previous summary, building an accumulating record of the entire session. Cross-cycle carryover preserves ALL sections (user requests, decisions, files, commits, tool operations, discussion), not just user requests.
+
+### Lossless Durable History
+
+YaRN's thread store is the **lossless source of truth**. `State::add_message` stores every message in both `$self->{history}` (the active window, which is trimmed by the projection) and `$self->{yarn}` (the durable thread, which is never trimmed). The `<thread_summary>` is a **lossy projection** — a disposable view over the durable truth — and is never written back to the thread. When the active history has been trimmed past the original user task, `recover_substantive_task` walks the durable YaRN thread to find and restore it.
 
 ### Seamless Recovery
 
@@ -99,6 +108,8 @@ The recovery injection includes neutral language ("Older conversation history ha
 The `# Active task` line in the dynamic userContext is the model's current-focus signal. CLIO derives it from the most recent active session goal (reversed iteration of `session_goals`), with a YaRN fallback to the most recent substantive user message from history when no goals are set. Short acknowledgements like "proceed" or "yes" do not promote into a new goal - the length guard lives upstream in the goal-recording path, so `_active_task_text` can trust that what is in `session_goals` is the current focus.
 
 This is deliberately the **opposite** rule from the trim-preservation anchor (which freezes the first substantive user message to keep long-task history visible). The active task label is meant to track *what the user is working on right now* so the model does not treat a brand-new request as scope creep against the first thing the user asked for.
+
+The YaRN fallback uses `find_substantive_task`, which prefers user messages of at least 50 characters (so short acknowledgements like "yes", "proceed", or "do it" do not overwrite a meaningful active task). When no substantive user message is found in the dropped messages, a carried task from the previous `<thread_summary>` (set via cross-cycle carryover) takes precedence over the caller's `original_task`, since the carried task represents the accumulated direction across trim cycles.
 
 ### Session Recovery
 

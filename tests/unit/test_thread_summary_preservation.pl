@@ -58,17 +58,18 @@ END
     
     my $content = $result->{content} || '';
     
-    # Minimal-summary design (see YaRN::compress_messages): only the current
-    # task and recent user requests survive across trim cycles. Per-turn noise
-    # (commits, files, tool calls, counts, decisions) is intentionally NOT
-    # carried over so the stable prefix stays byte-stable for KV caching.
+    # Cross-cycle carryover: ALL sections from the previous summary
+    # are preserved, not just user requests. This fixes the context-loss
+    # bug where commits, files, and decisions were silently dropped
+    # between trim cycles.
     like($content, qr/<thread_summary>/, "Summary wrapped in thread_summary tags");
     like($content, qr/Build a widget system/, "Original task preserved as current task");
     like($content, qr/Now add tests for the widget system/, "Recent user request preserved");
-    # And the dropped content must stay dropped (negative guards).
-    unlike($content, qr/abc1234/, "Commits not carried over across trim cycles");
-    unlike($content, qr/Widget\.pm/, "File paths not carried over");
-    unlike($content, qr/file_operations:\s*2[56]/, "Tool counts not carried over");
+    like($content, qr/abc1234/, "Commits carried over across trim cycles");
+    like($content, qr/def5678/, "Multiple commit entries carried over");
+    like($content, qr/lib\/Widget\.pm/, "File paths carried over across trim cycles");
+    like($content, qr/Use composition over inheritance/, "Key decisions carried over");
+    like($content, qr/file_operations: \d+/, "Tool operation counts carried over (accumulated)");
 }
 
 # Test 2: YaRN without previous_summary still works

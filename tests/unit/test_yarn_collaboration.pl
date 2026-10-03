@@ -1,4 +1,10 @@
 #!/usr/bin/env perl
+# SPDX-License-Identifier: GPL-3.0-only
+#
+# Test: Collaboration Q/A extraction and Discussion section.
+# Updated for the new YaRN format ("Discussion:" header, 10-exchange
+# default at 128K context, "Tool operations:" section).
+
 use strict;
 use warnings;
 use utf8;
@@ -39,16 +45,15 @@ sub ok {
     my $result = $yarn->compress_messages(\@messages, original_task => 'Design board game');
     ok($result, 'compress_messages returns result');
     ok($result->{content}, 'Result has content');
-    
-    # Check that collaboration exchanges are captured
+
     my $content = $result->{content};
-    ok($content =~ /Active discussion/i, 'Contains active discussion section');
+    ok($content =~ /Discussion:/, 'Contains Discussion section');
     ok($content =~ /abbreviate/i, 'Contains user response about abbreviation');
     ok($content =~ /24 ch/i || $content =~ /24 col/i, 'Contains details about 24 chars/columns');
     ok($content =~ /separator/i, 'Contains user response about separator');
 }
 
-# Test 2: Non-collaboration messages don't create fake exchanges
+# Test 2: Non-collaboration messages don't create fake Discussion
 {
     my @messages = (
         { role => 'user', content => 'Read the file config.json' },
@@ -61,11 +66,15 @@ sub ok {
     my $result = $yarn->compress_messages(\@messages, original_task => 'Read config');
     ok($result, 'Non-collab compress returns result');
     my $content = $result->{content};
-    ok($content !~ /Active discussion/i, 'No active discussion for non-collaboration messages');
-    ok($content =~ /file_operations/i, 'Tool usage tracked');
+    ok($content !~ /Discussion:/, 'No Discussion section for non-collaboration messages');
+    ok($content =~ /Tool operations:/, 'Tool operations section present');
+    ok($content =~ /file_operations: \d+/, 'Tool operation counted');
 }
 
-# Test 3: Multiple exchanges - only last 5 kept
+# Test 3: Multiple exchanges - only last N kept.
+# Use context_window=65536 to get a collaboration limit of 5 (matching
+# the old test's expectation). At 128K the limit is 10, so all 8 would
+# be kept — we test the scaling by using a smaller window.
 {
     my @messages;
     for my $i (1..8) {
@@ -75,16 +84,18 @@ sub ok {
         push @messages, { role => 'tool', tool_call_id => "tc_multi_$i", content => "Response $i from user" };
     }
 
-    my $result = $yarn->compress_messages(\@messages, original_task => 'Design session');
+    my $result = $yarn->compress_messages(\@messages,
+        original_task  => 'Design session',
+        context_window => 65536,  # collaboration limit = 5
+    );
     my $content = $result->{content};
-    # Should have exchanges but limited to 5
-    ok($content =~ /Active discussion/i, 'Multi-exchange has active discussion');
+    ok($content =~ /Discussion:/, 'Multi-exchange has Discussion section');
     # First 3 should be dropped (8-5=3)
     ok($content !~ /Question 1 about/, 'Oldest exchanges trimmed');
     ok($content !~ /Question 2 about/, 'Second oldest trimmed');
     ok($content !~ /Question 3 about/, 'Third oldest trimmed');
-    ok($content =~ /Question 4 about/ || $content =~ /Response 4/, 'Fourth exchange kept');
-    ok($content =~ /Question 8 about/ || $content =~ /Response 8/, 'Latest exchange kept');
+    ok($content =~ /Question 4 about/, 'Fourth exchange kept');
+    ok($content =~ /Question 8 about/, 'Latest exchange kept');
 }
 
 print "\n$pass passed, $fail failed\n";

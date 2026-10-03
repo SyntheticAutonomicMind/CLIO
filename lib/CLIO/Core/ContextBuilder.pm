@@ -144,6 +144,8 @@ Arguments:
 - budget_tokens: Token budget for the projection's history portion (optional,
   defaults to C<$DEFAULT_HISTORY_BUDGET_TOKENS>).
 - session: Session object (optional; used for anchor fallback via YaRN).
+- context_window: Model context window in tokens (optional; used to
+  scale the compressed tail budget). Defaults to 128K.
 
 Returns a hashref:
    {
@@ -169,6 +171,7 @@ sub build_projection {
     my $unresolved    = $args{unresolved}    || [];
     my $budget_tokens = $args{budget_tokens} // $DEFAULT_HISTORY_BUDGET_TOKENS;
     my $session       = $args{session};
+    my $context_window = $args{context_window};
 
     # context_files: callers pass either an arrayref of file paths
     # (which we render here, see _render_user_context) or a
@@ -185,7 +188,7 @@ sub build_projection {
         _select_turns($turns, $session, $history, $active_task);
 
     # Build the compressed tail if any turns were dropped
-    my $compressed_tail = _build_compressed_tail($dropped_turns, $active_task);
+    my $compressed_tail = _build_compressed_tail($dropped_turns, $active_task, $context_window);
 
     my @deduped_recent = @$recent_turns;
 
@@ -817,9 +820,20 @@ Returns '' when there are no dropped turns.
 =cut
 
 sub _build_compressed_tail {
-    my ($dropped_turns, $active_task) = @_;
+    my ($dropped_turns, $active_task, $context_window) = @_;
 
     return '' unless $dropped_turns && @$dropped_turns;
+
+    # Context-aware cap for the compressed tail (goes into the dynamic
+    # UC, which is per-turn). Scales with the model's context window:
+    #   32K ctx  -> ~1,200 chars
+    #   64K ctx  -> ~2,600 chars
+    #   128K ctx -> ~5,100 chars
+    #   256K ctx -> ~10,200 chars
+    #   1M ctx   -> ~20,000 chars (capped)
+    # The old hardcoded OVERALL_CAP=900 was too conservative for
+    # modern 128K+ context windows.
+    my $OVERALL_CAP = _compute_compressed_tail_cap($context_window);
 
     # Lazy regeneration: cache the compressed tail keyed on a signature
     # of the dropped turns + active_task. If the inputs are unchanged,
@@ -846,11 +860,7 @@ sub _build_compressed_tail {
     }
 
     # Try YaRN compression first.
-    my $yarn_out = _yarn_compress_dropped(\@flat_msgs, $active_task);
-
-    # Cap parameters so the compressed tail cannot balloon the dynamic
-    # userContext budget on a session with hundreds of dropped turns.
-    my $OVERALL_CAP = 900;
+    my $yarn_out = _yarn_compress_dropped(\@flat_msgs, $active_task, $context_window, $OVERALL_CAP);
 
     my $tail;
     if (defined $yarn_out && length $yarn_out) {
@@ -897,6 +907,26 @@ sub _compressed_tail_sig {
     return $sig;
 }
 
+# Compute the character cap for the compressed tail (the per-turn
+# dynamic UC section). This is smaller than YaRN's thread_summary cap
+# because the compressed tail is per-turn (changes every turn) and
+# lives in the dynamic userContext. Scales with the model's context
+# window but is bounded.
+sub _compute_compressed_tail_cap {
+    my ($context_window) = @_;
+    require CLIO::Core::Defaults;
+    $context_window //= CLIO::Core::Defaults::DEFAULT_CONTEXT_WINDOW();
+
+    require CLIO::Memory::TokenEstimator;
+    my $ratio = CLIO::Memory::TokenEstimator::get_effective_ratio();
+
+    # ~0.5% of context window in tokens for the per-turn compressed tail.
+    my $cap_tokens = int($context_window * 0.005);
+    $cap_tokens = 300  if $cap_tokens < 300;
+    $cap_tokens = 8000 if $cap_tokens > 8000;
+    return int($cap_tokens * $ratio);
+}
+
 # YaRN-backed compression. Takes a flat message array (the same
 # shape YaRN::compress_messages expects) and an optional task hint,
 # calls compress_for_context_recovery (which extracts previous_summary
@@ -905,7 +935,7 @@ sub _compressed_tail_sig {
 # and NO framework narration. Returns undef if the result is empty /
 # YaRN is unavailable.
 sub _yarn_compress_dropped {
-    my ($flat_msgs, $active_task) = @_;
+    my ($flat_msgs, $active_task, $context_window, $max_chars) = @_;
 
     return undef unless $flat_msgs && @$flat_msgs;
 
@@ -915,7 +945,9 @@ sub _yarn_compress_dropped {
 
     my $compressed = eval {
         $yarn->compress_for_context_recovery($flat_msgs,
-            original_task => ($active_task // ''),
+            original_task  => ($active_task // ''),
+            context_window => $context_window,
+            max_chars      => $max_chars,
         );
     };
     return undef if $@ || !$compressed || !ref($compressed);

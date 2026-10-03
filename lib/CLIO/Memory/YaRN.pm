@@ -218,20 +218,153 @@ sub _truncate {
     return $truncated . '...';
 }
 
+# ---------------------------------------------------------------------------
+# Context-aware compression parameters
+# ---------------------------------------------------------------------------
+
+# Default limits (designed for 128K-context models). _compute_limits()
+# scales these down for smaller contexts and up for larger ones.
+our $DEFAULT_MAX_USER_REQUESTS     = 16;
+our $DEFAULT_MAX_DECISIONS         = 8;
+our $DEFAULT_MAX_COLLABORATION     = 10;
+our $DEFAULT_MAX_FILES             = 50;
+our $DEFAULT_MAX_COMMITS           = 30;
+our $DEFAULT_MAX_TOOL_TYPES        = 8;
+our $DEFAULT_USER_REQUEST_LEN      = 600;
+our $DEFAULT_DECISION_LEN          = 500;
+our $DEFAULT_COLLABORATION_LEN     = 1500;
+
+# Summary cap bounds (characters). The actual cap is derived from the
+# model's context window via _compute_summary_cap(); these prevent
+# pathological values.
+our $MIN_SUMMARY_CAP = 4000;    # ~1K-2K tokens — usable for 32K local models
+our $MAX_SUMMARY_CAP = 60000;   # ~15-20K tokens — enough for extreme contexts
+
+=head2 _default_context_window
+
+Return the default context window in tokens (from CLIO::Core::Defaults).
+
+=cut
+
+sub _default_context_window {
+    require CLIO::Core::Defaults;
+    return CLIO::Core::Defaults::DEFAULT_CONTEXT_WINDOW();
+}
+
+=head2 _get_chars_per_token
+
+Return the current characters-per-token ratio from TokenEstimator
+(learned ratio if available, else the default of 4.0).
+
+=cut
+
+sub _get_chars_per_token {
+    require CLIO::Memory::TokenEstimator;
+    return CLIO::Memory::TokenEstimator::get_effective_ratio();
+}
+
+=head2 _compute_summary_cap
+
+Compute the maximum character count for a thread_summary based on the
+model's context window. Reserves ~2.5% of the context window in tokens,
+converted to characters:
+
+    32K ctx  -> ~800 tokens  -> ~2,400 chars
+    64K ctx  -> ~1,600 tokens -> ~6,400 chars
+    128K ctx -> ~3,200 tokens -> ~12,800 chars
+    256K ctx -> ~6,400 tokens -> ~25,600 chars
+    1M ctx   -> ~15,000 tokens (capped) -> ~60,000 chars (capped)
+
+Bounded by $MIN_SUMMARY_CAP / $MAX_SUMMARY_CAP so the summary never
+consumes so much context that it harms the current task.
+
+=cut
+
+sub _compute_summary_cap {
+    my ($context_window) = @_;
+    $context_window //= _default_context_window();
+    $context_window = _default_context_window() unless $context_window && $context_window > 0;
+
+    my $ratio = _get_chars_per_token();
+
+    my $cap_tokens = int($context_window * 0.025);
+    $cap_tokens = 1000  if $cap_tokens < 1000;
+    $cap_tokens = 15000 if $cap_tokens > 15000;
+
+    my $cap_chars = int($cap_tokens * $ratio);
+    $cap_chars = $MIN_SUMMARY_CAP if $cap_chars < $MIN_SUMMARY_CAP;
+    $cap_chars = $MAX_SUMMARY_CAP if $cap_chars > $MAX_SUMMARY_CAP;
+    return $cap_chars;
+}
+
+=head2 _compute_limits
+
+Compute context-aware compression limits (counts and text lengths).
+128K is the baseline. Scales DOWN for smaller contexts (< 128K,
+local models) and UP for larger contexts (>= 256K). See DESIGN NOTES.
+
+=cut
+
+sub _compute_limits {
+    my ($context_window) = @_;
+    $context_window //= _default_context_window();
+    $context_window = _default_context_window() unless $context_window && $context_window > 0;
+
+    my %limits = (
+        user_requests      => $DEFAULT_MAX_USER_REQUESTS,
+        decisions          => $DEFAULT_MAX_DECISIONS,
+        collaboration      => $DEFAULT_MAX_COLLABORATION,
+        files              => $DEFAULT_MAX_FILES,
+        commits            => $DEFAULT_MAX_COMMITS,
+        tool_types         => $DEFAULT_MAX_TOOL_TYPES,
+        user_request_len   => $DEFAULT_USER_REQUEST_LEN,
+        decision_len       => $DEFAULT_DECISION_LEN,
+        collaboration_len  => $DEFAULT_COLLABORATION_LEN,
+    );
+
+    if ($context_window < 131072) {
+        my $scale = $context_window / 131072;
+        for my $k (qw(user_requests decisions collaboration files commits)) {
+            $limits{$k} = int($limits{$k} * $scale);
+        }
+        $limits{user_requests}  = 5  if $limits{user_requests}  < 5;
+        $limits{decisions}      = 2  if $limits{decisions}      < 2;
+        $limits{collaboration}  = 2  if $limits{collaboration}  < 2;
+        $limits{files}          = 10 if $limits{files}          < 10;
+        $limits{commits}        = 5  if $limits{commits}        < 5;
+    }
+    elsif ($context_window >= 262144) {
+        my $scale = 1.0;
+        $scale = 1.5 if $context_window >= 262144;
+        $scale = 2.0 if $context_window >= 524288;
+        $scale = 4.0 if $context_window >= 1048576;
+        for my $k (qw(user_requests decisions collaboration files commits
+                      user_request_len decision_len collaboration_len)) {
+            $limits{$k} = int($limits{$k} * $scale);
+        }
+    }
+
+    return \%limits;
+}
+
 =head2 compress_messages
 
 Compress a sequence of messages into a summary message.
 
 Strategy:
-- Extracts key information: user requests, agent actions, tool operations, decisions
+- Extracts key information: user requests, decisions, files touched,
+  commits, collaboration Q/A pairs, and tool operation counts
 - Preserves semantic meaning while reducing token count
-- Returns a summary message suitable for injection into conversation
+- Uses context-aware limits (scales with model context window)
+- Uses CLIO::Memory::TokenEstimator for token estimation
 
 Arguments:
 - $messages: Array reference of message hashes to compress
 - %opts: Optional parameters
-  * original_task: Most recent user message (for current task context)
-  * compression_ratio_target: Desired compression (default 0.2 = 80% reduction)
+  * original_task:  Most recent user message (for current task context)
+  * previous_summary: Prior thread_summary text (for cross-cycle carryover)
+  * context_window:  Model context window in tokens (for scaling)
+  * max_chars:       Explicit character cap (overrides context_window-derived cap)
 
 Returns: Hashref with compressed summary message
 {
@@ -247,11 +380,26 @@ sub compress_messages {
 
     return undef unless $messages && ref($messages) eq 'ARRAY' && @$messages;
 
-    my $original_task = $opts{original_task} || '';
+    my $original_task    = $opts{original_task}    || '';
     my $previous_summary = $opts{previous_summary} || '';
-    my $message_count = scalar(@$messages);
+    my $context_window   = $opts{context_window}   || _default_context_window();
+    my $message_count    = scalar(@$messages);
 
-    log_debug('YaRN', "Compressing $message_count messages");
+    log_debug('YaRN', "Compressing $message_count messages (ctx=$context_window)");
+
+    # Compute context-aware limits and summary cap.
+    my $limits = _compute_limits($context_window);
+    my $max_chars = _compute_summary_cap($context_window);
+    $max_chars = $opts{max_chars} if exists $opts{max_chars} && defined $opts{max_chars} && $opts{max_chars} > 0;
+
+    my $max_ur_len         = $limits->{user_request_len};
+    my $max_decisions      = $limits->{decisions};
+    my $max_collaboration  = $limits->{collaboration};
+    my $max_files          = $limits->{files};
+    my $max_commits        = $limits->{commits};
+    my $max_tool_types     = $limits->{tool_types};
+    my $max_ur_display     = $limits->{user_requests};
+    my $max_collab_len     = $limits->{collaboration_len};
 
     # Extraction buckets
     my @user_requests;
@@ -259,11 +407,16 @@ sub compress_messages {
     my @files_touched;
     my @decisions;
     my @collaboration_exchanges;  # Agent question + user response pairs
+    my %tool_counts;              # tool_name => total call count (cumulative)
 
     # Track collaboration tool_call IDs so we can pair them with responses
     my %collab_tool_calls;  # tool_call_id => agent's question text
 
-    # Seed buckets from previous summary so accumulated history isn't lost across trim cycles
+    # Seed buckets from previous summary so accumulated history isn't lost
+    # across trim cycles. _parse_previous_summary parses ALL sections
+    # (commits, files, decisions, collaboration, tool counts) — not just
+    # user requests — so no historical information is silently dropped
+    # between compression cycles.
     if ($previous_summary) {
         _parse_previous_summary($previous_summary, {
             commits                 => \@commits,
@@ -271,28 +424,33 @@ sub compress_messages {
             decisions               => \@decisions,
             user_requests           => \@user_requests,
             collaboration_exchanges => \@collaboration_exchanges,
+            tool_counts             => \%tool_counts,
         });
     }
 
-    # If previous summary had a preserved original request, carry it forward.
-    # The carryover is intentionally bounded and anchored to the literal
-    # "- [original] " marker so a body line that happens to mention
-    # "[original]" elsewhere in the conversation does not get adopted as
-    # the original task. The capture stops at the next newline to avoid
-    # swallowing subsequent bullets/sections across section boundaries.
+    # Carry forward the original task marker. Anchored to the bullet
+    # line so body text mentioning "[original]" elsewhere isn't adopted.
+    # Also support the legacy "Original task:" header (pre-current format).
     if ($previous_summary =~ /^- \[original\] ([^\n]{1,300})$/m) {
         $opts{_carried_original} = $1;
-    } elsif ($previous_summary =~ /^- \[original\] ([^\n]{1,300})/) {
-        # Fall back to first-line match if the marker is not at column 0
-        # (legacy summaries may have leading whitespace).
+    } elsif ($previous_summary =~ /- \[original\] ([^\n]{1,300})/s) {
         $opts{_carried_original} = $1;
     }
-    # If previous summary had a Current task, carry it forward. Anchored
-    # to the line so a stray "Current task:" string elsewhere (e.g. in a
-    # file path or commit message body) does not get adopted. Newlines
-    # are not matched (. in default mode), so the capture is bounded to
-    # a single line.
+    if (!$opts{_carried_original}
+        && $previous_summary =~ /^Original task: (.{1,400})$/m) {
+        $opts{_carried_original} = $1;
+    }
+    # Carry forward the Current task line (used when caller's
+    # original_task is too short to be substantive).
     if ($previous_summary =~ /^Current task: (.{1,300})$/m) {
+        my $prev_task = $1;
+        $prev_task =~ s/\s+$//;
+        if (!$original_task || length($original_task) < 50) {
+            $opts{_carried_task} = $prev_task;
+        }
+    }
+    if (!$opts{_carried_task}
+        && $previous_summary =~ /^Original task: (.{1,400})$/m) {
         my $prev_task = $1;
         $prev_task =~ s/\s+$//;
         if (!$original_task || length($original_task) < 50) {
@@ -305,30 +463,32 @@ sub compress_messages {
         my $content = $msg->{content} || '';
 
         if ($role eq 'user') {
-            my $summary = substr($content, 0, 300);
-            $summary .= '...' if length($content) > 300;
+            my $summary = substr($content, 0, $max_ur_len);
+            $summary .= '...' if length($content) > $max_ur_len;
             push @user_requests, $summary;
         }
         elsif ($role eq 'assistant') {
-            # Collaboration/decision messages (identified by metadata or legacy text prefix)
+            # Collaboration/decision messages (identified by metadata or
+            # legacy text prefix)
             my $collab_type = $msg->{metadata} && $msg->{metadata}{collaboration};
             if ($collab_type) {
-                # Modern: collaboration metadata on message
-                my $dec = substr($content, 0, 300);
+                my $dec = $content;
                 $dec =~ s/\s+/ /g;
-                push @decisions, substr($dec, 0, 250);
+                push @decisions, substr($dec, 0, $max_ur_len);
             } elsif ($content =~ /\[COLLABORATION\](.{1,300})/s) {
-                # Legacy: [COLLABORATION] text prefix (backward compat)
                 my $dec = $1;
                 $dec =~ s/\s+/ /g;
-                push @decisions, substr($dec, 0, 250);
+                push @decisions, substr($dec, 0, $max_ur_len);
             }
 
-            # Tool calls - extract meaningful path/operation details
+            # Tool calls - extract paths, count operations, pair interact calls
             if ($msg->{tool_calls} && ref($msg->{tool_calls}) eq 'ARRAY') {
                 for my $tc (@{$msg->{tool_calls}}) {
                     my $name     = $tc->{function}{name}      || 'unknown';
                     my $args_str = $tc->{function}{arguments} || '{}';
+
+                    # Count tool operations (cumulative across carryover)
+                    $tool_counts{$name}++;
 
                     # Track interact calls to pair with responses
                     if ($name eq 'interact' && $tc->{id}) {
@@ -356,9 +516,10 @@ sub compress_messages {
             if ($msg->{tool_call_id} && exists $collab_tool_calls{$msg->{tool_call_id}}) {
                 my $question = $collab_tool_calls{$msg->{tool_call_id}};
                 my $response = $content;
-                # Keep more content for collaboration exchanges (1000 chars each)
-                $question = substr($question, 0, 1000) . '...' if length($question) > 1000;
-                $response = substr($response, 0, 1000) . '...' if length($response) > 1000;
+                $question = substr($question, 0, $max_collab_len) . '...'
+                    if length($question) > $max_collab_len;
+                $response = substr($response, 0, $max_collab_len) . '...'
+                    if length($response) > $max_collab_len;
                 push @collaboration_exchanges, {
                     question => $question,
                     response => $response,
@@ -378,70 +539,75 @@ sub compress_messages {
         }
     }
 
-    # Deduplicate and limit. Files are deduped as encountered and capped at
-    # 30. Commits are deduped keeping the most recent occurrence (the body
-    # order is preserved so reverse() ensures last-wins, then we cap at 15).
+    # Deduplicate and limit each bucket.
+    # Files: dedup, cap at max_files.
     my %seen;
     @files_touched = grep { !$seen{$_}++ } @files_touched;
-    @files_touched = @files_touched[0..29] if @files_touched > 30;
-    @commits       = do { my %s; grep { !$s{$_}++ } reverse @commits };
-    @commits       = @commits[0..14] if @commits > 15;
-    @decisions     = @decisions[-3..-1]     if @decisions > 3;
-    @collaboration_exchanges = @collaboration_exchanges[-5..-1]
-        if @collaboration_exchanges > 5;
+    splice(@files_touched, $max_files) if @files_touched > $max_files;
 
-    # Always preserve the FIRST user request (the original session task).
-    # When trimming to last N, we risk losing the original task context
-    # that started the session. Keep it separately if we have many requests.
+    # Commits: dedup BY HASH (keeping most recent subject for each hash),
+    # then cap at max_commits. Dedup by full string would miss same-hash
+    # different-subject entries (e.g. truncated subjects that vary).
+    @commits = do {
+        my %by_hash;
+        my @ordered;
+        for my $c (reverse @commits) {
+            my ($hash) = $c =~ /^([a-f0-9]{7,12})/;
+            next if $by_hash{$hash}++;
+            unshift @ordered, $c;
+        }
+        @ordered;
+    };
+    splice(@commits, $max_commits) if @commits > $max_commits;
+
+    # Decisions: keep most recent N (reverse, dedup, reverse back).
+    @decisions = reverse(@decisions);
+    @decisions = do { my %s; grep { !$s{$_}++ } @decisions };
+    @decisions = reverse(@decisions);
+    splice(@decisions, $max_decisions) if @decisions > $max_decisions;
+
+    # Collaboration exchanges: keep last N (most recent).
+    splice(@collaboration_exchanges, 0,
+        @collaboration_exchanges > $max_collaboration
+            ? @collaboration_exchanges - $max_collaboration : 0);
+
+    # Always preserve the FIRST user request (the original session task)
+    # when we have more than the display limit. Use carried original
+    # from previous summary if available (survives cycles).
     my $first_user_request;
-    if (@user_requests > 8) {
+    if (@user_requests > $max_ur_display) {
         $first_user_request = $user_requests[0];
-        @user_requests = @user_requests[-7..-1];
+        splice(@user_requests, 0, 1);
+        my $keep = $max_ur_display - 1;
+        splice(@user_requests, 0, @user_requests - $keep) if @user_requests > $keep;
     }
-    # Use carried original from previous summary if available (survives cycles)
     if ($opts{_carried_original}) {
         my $carried = $opts{_carried_original};
         unless (grep { $_ eq $carried } @user_requests) {
             $first_user_request = $carried unless $first_user_request;
         }
     }
-    # Cap at 8 total (up from 5)
 
-    # Find a substantive task description. Short confirmations like "yes" or
-    # "go ahead" are useless as task context - scan user_requests for better.
-    # Prefer a carried task from previous summary over the caller's original_task
-    # (which is often the most recent user message, not the real task).
+    # Find effective task: prefer carried task, then most recent
+    # substantive user request, falling back to the caller's
+    # original_task. Short acknowledgements ("yes", "go ahead")
+    # do not replace a meaningful current task.
     my @all_requests = @user_requests;
     unshift @all_requests, $first_user_request if $first_user_request;
 
-    # If previous summary had a carried task, use it directly — it
-    # represents the accumulated task across trim cycles. Only fall
-    # through to scanning the dropped turns' user_requests when no
-    # carried task exists.
     my $effective_task;
     if ($opts{_carried_task} && length($opts{_carried_task})) {
         $effective_task = $opts{_carried_task};
     } else {
-        # Scan user_requests newest-first so the "Current task" reflects
-        # the actual recent conversation, not a stale active_task from
-        # session goals that may not have been updated when the user
-        # pivoted mid-session. find_substantive_task scans messages
-        # first and only uses $original_task as a fallback.
         $effective_task = find_substantive_task(
             $original_task,
             \@all_requests
         );
     }
 
-    # Build summary. The compressed_tail lives in the dynamic UC
-    # system message (prepended to the user message), which is per-turn
-    # and NOT part of the cache-stable prefix — so per-turn content
-    # changes here do NOT bust provider KV-cache of the system prompt
-    # or role-based history. We include extracted intelligence (key
-    # decisions, file paths, commits) so the model retains a factual
-    # record of what happened in dropped turns, preventing the
-    # context-loss/reset bug where the model re-discovers work it
-    # already completed.
+    # Build summary. Includes tool operations with cumulative counts
+    # and collaboration exchanges, in a self-consistent format that
+    # _parse_previous_summary can round-trip.
     my @parts;
     push @parts, "<thread_summary>";
     push @parts, "";
@@ -453,7 +619,6 @@ sub compress_messages {
 
     if (@user_requests || $first_user_request) {
         push @parts, "Recent user requests:";
-        # Include original request first if it was preserved separately
         if ($first_user_request && !grep { $_ eq $first_user_request } @user_requests) {
             push @parts, "- [original] $first_user_request";
         }
@@ -461,30 +626,56 @@ sub compress_messages {
         push @parts, "";
     }
 
-    # Key decisions from collaboration exchanges. These capture the
-    # "what did we decide?" moments that the terse user-request list
-    # omits — critical for preventing context-loss resets.
+    # Key decisions (collaboration metadata + [COLLABORATION] prefix)
     if (@decisions) {
         push @parts, "Key decisions:";
         for my $d (@decisions) {
-            push @parts, "- " . substr($d, 0, 200);
+            push @parts, "- " . substr($d, 0, 500);
         }
         push @parts, "";
     }
 
-    # Files the model worked on (extracted from tool call args).
-    # Path-only entries, not content — keeps the summary compact.
+    # Files the model worked on (deduped, path-only).
     if (@files_touched) {
         push @parts, "Files worked on:";
-        my $file_list = join(", ", @files_touched);
-        push @parts, substr($file_list, 0, 500);
+        for my $f (@files_touched) {
+            push @parts, "- " . substr($f, 0, 200);
+        }
         push @parts, "";
     }
 
-    # Commits made during the dropped turns.
+    # Tool operations: cumulative counts per tool type (deduplicated).
+    if (%tool_counts) {
+        push @parts, "Tool operations:";
+        my @sorted = sort { $tool_counts{$b} <=> $tool_counts{$a}
+                             || $a cmp $b } keys %tool_counts;
+        my $shown = 0;
+        for my $name (@sorted) {
+            last if $shown >= $max_tool_types;
+            push @parts, "- $name: $tool_counts{$name}";
+            $shown++;
+        }
+        push @parts, "";
+    }
+
+    # Commits made during the dropped turns (deduped, most recent kept).
     if (@commits) {
         push @parts, "Commits:";
         push @parts, "- $_" for @commits;
+        push @parts, "";
+    }
+
+    # Collaboration Q/A exchanges (from interact tool calls).
+    if (@collaboration_exchanges) {
+        push @parts, "Discussion:";
+        for my $ex (@collaboration_exchanges) {
+            my $q = substr($ex->{question}, 0, 300);
+            $q =~ s/\s+/ /g;
+            my $a = substr($ex->{response}, 0, 300);
+            $a =~ s/\s+/ /g;
+            push @parts, "- Q: " . $q;
+            push @parts, "  A: " . $a;
+        }
         push @parts, "";
     }
 
@@ -492,24 +683,23 @@ sub compress_messages {
 
     my $summary_content = join("\n", @parts);
 
-    # Cap the summary so the dynamic UC doesn't balloon on very long
-    # sessions with many dropped turns.
-    my $UC_CAP = 4000;
-    if (length($summary_content) > $UC_CAP) {
-        $summary_content = _truncate($summary_content, $UC_CAP);
+    # Cap at the context-aware limit (max_chars or _compute_summary_cap).
+    if (length($summary_content) > $max_chars) {
+        $summary_content = _truncate($summary_content, $max_chars);
         $summary_content .= '...';
     }
 
-    # Estimate token counts
+    # Estimate token counts using TokenEstimator (learned ratio).
+    require CLIO::Memory::TokenEstimator;
     my $original_tokens = 0;
     for my $msg (@$messages) {
-        $original_tokens += int(length($msg->{content} || '') / 2.5);
+        $original_tokens += CLIO::Memory::TokenEstimator::estimate_tokens($msg->{content} || '');
     }
-    my $compressed_tokens = int(length($summary_content) / 2.5);
+    my $compressed_tokens = CLIO::Memory::TokenEstimator::estimate_tokens($summary_content);
 
     if ($original_tokens > 0) {
         log_debug('YaRN', "Compression: $original_tokens -> $compressed_tokens tokens (" .
-            sprintf("%.1f", 100 * ($original_tokens - $compressed_tokens) / $original_tokens) . "% reduction)");
+            sprintf("%.1f", 100 * ($original_tokens - $compressed_tokens) / $original_tokens) . "% reduction");
     }
 
     return {
@@ -542,25 +732,40 @@ The messages parameter accepts either:
 sub find_substantive_task {
     my ($candidate, $messages) = @_;
 
-    # Scan messages newest-first for the most recent user message with
-    # actual content. This ensures the "Current task" in the compressed
-    # tail reflects the actual recent conversation, not a stale
-    # active_task from session goals that may not have been updated
-    # when the user pivoted mid-session.
+    # Scan messages newest-first for the most recent SUBSTANTIVE user
+    # message (>= 50 chars). Short acknowledgements like "yes", "go ahead",
+    # "do it" are skipped — they do not represent a meaningful current
+    # task and would cause the compressed summary to lose the real task
+    # context. This matches the documented contract (">= 50 chars").
     if ($messages && ref($messages) eq 'ARRAY') {
         for my $item (reverse @$messages) {
             if (ref($item) eq 'HASH') {
-                next unless ($item->{role} || '') eq 'user';
+                next unless ($item->{role} // '') eq 'user';
+                my $content = $item->{content} || '';
+                return $content if length($content) >= 50;
+            } else {
+                # Plain string (e.g. from @user_requests)
+                return $item if defined $item && length($item) >= 50;
+            }
+        }
+    }
+
+    # No substantive user message (>= 50 chars) found. Fall back to
+    # any non-empty user message, so we still surface *something*
+    # rather than silently losing all task context.
+    if ($messages && ref($messages) eq 'ARRAY') {
+        for my $item (reverse @$messages) {
+            if (ref($item) eq 'HASH') {
+                next unless ($item->{role} // '') eq 'user';
                 my $content = $item->{content} || '';
                 return $content if length($content) > 0;
             } else {
-                # Plain string (e.g. from @user_requests)
                 return $item if defined $item && length($item) > 0;
             }
         }
     }
 
-    # No user message found in messages - fall back to candidate
+    # No user message found at all - fall back to candidate
     # (which may be the active_task from session goals or the
     # current user input)
     return $candidate || '';
@@ -632,24 +837,131 @@ sub recover_substantive_task {
     return '';
 }
 
-# Parse structured sections from a previous thread_summary to seed extraction buckets.
-# This preserves accumulated history across multiple trim cycles.
+# Parse ALL structured sections from a previous thread_summary to seed
+# extraction buckets. This is the cross-cycle carryover mechanism: without
+# parsing commits, files, decisions, tool counts, and collaboration
+# exchanges, those sections would be silently lost between trim cycles (only
+# user_requests were parsed previously, causing progressive information loss).
+#
+# Supports both the current format (produced by this function's output) and
+# legacy formats ("Original task:", "Files created/modified:",
+# "Tool usage:", "Tools:") for backward compatibility with existing
+# serialized YaRN state.
 sub _parse_previous_summary {
     my ($summary_text, $buckets) = @_;
-    
+
     return unless $summary_text && $buckets;
-    
+
     # Strip thread_summary tags
     $summary_text =~ s/<\/?thread_summary>//g;
-    
-    my $user_requests = $buckets->{user_requests} || [];
-    
-    if ($summary_text =~ /(?:^|\n)Recent user requests:\n((?:- [^\n]+\n)+)/) {
+
+    my $user_requests          = $buckets->{user_requests}          || [];
+    my $decisions              = $buckets->{decisions}              || [];
+    my $files_touched          = $buckets->{files_touched}          || [];
+    my $commits                = $buckets->{commits}                || [];
+    my $collaboration_exchanges = $buckets->{collaboration_exchanges} || [];
+    my $tool_counts            = $buckets->{tool_counts}            || {};
+
+    # Parse a bulleted section: captures lines starting with "- " after
+    # the header line, stopping at the next header (Capitalized words +
+    # colon) or end of text.
+    my $parse_bullets = sub {
+        my ($text, $header_re) = @_;
+        return unless $text =~ /(?:^|\n)$header_re:\s*\n(.*?)(?=\n(?:[A-Z][\w ]+:|\z))/s;
         my $block = $1;
-        while ($block =~ /^- (?:\[original\] )?([^\n]+)$/mg) {
-            push @$user_requests, $1;
+        my @items;
+        for my $line (split /\n/, $block) {
+            if ($line =~ /^\s*- (.+)$/) {
+                push @items, $1;
+            }
+        }
+        return @items;
+    };
+
+    # Parse a comma-separated file list (legacy format: "path1, path2")
+    my $parse_file_list = sub {
+        my ($text, $header_re) = @_;
+        return unless $text =~ /(?:^|\n)$header_re:\s*\n([^\n]+)/s;
+        my $line = $1;
+        return unless $line =~ /,/;
+        my @items;
+        for my $f (split /,\s*/, $line) {
+            push @items, $f if length $f;
+        }
+        return @items;
+    };
+
+    # --- Recent user requests (current + legacy headers) ---
+    my @items = $parse_bullets->($summary_text, qr/Recent user requests/i);
+    for my $item (@items) {
+        # Strip [original] prefix for user_requests carryover
+        $item =~ s/^\[original\]\s*//;
+        push @$user_requests, $item;
+    }
+
+    # --- Key decisions ---
+    @items = $parse_bullets->($summary_text, qr/Key decisions/i);
+    push @$decisions, @items if @items;
+
+    # --- Files touched (current one-per-line + legacy comma-separated) ---
+    # Try one-per-line format first, then comma-separated
+    @items = $parse_bullets->($summary_text, qr/Files worked on/i);
+    push @$files_touched, @items if @items;
+    if (!@items) {
+        # Legacy: "Files created/modified:" with one-per-line bullets
+        @items = $parse_bullets->($summary_text, qr/Files created\/modified/i);
+        push @$files_touched, @items if @items;
+    }
+    if (!@items) {
+        # Legacy: "Files:" with comma-separated list
+        @items = $parse_file_list->($summary_text, qr/^Files:/m);
+        push @$files_touched, @items if @items;
+    }
+
+    # --- Tool operations (current "Tool operations:" + legacy "Tool usage:" / "Tools:") ---
+    for my $hdr (qr/Tool operations/i, qr/Tool usage/i, qr/^Tools:/m) {
+        @items = $parse_bullets->($summary_text, $hdr);
+        if (@items) {
+            for my $item (@items) {
+                if ($item =~ /^(\w[\w_]*)\s*:\s*(\d+)/) {
+                    my ($name, $count) = ($1, $2);
+                    # Accumulate counts across carryover cycles
+                    $tool_counts->{$name} += $count;
+                }
+            }
+            last;
         }
     }
+
+    # --- Commits (current "Commits:" + legacy "Git commits made during compressed period:") ---
+    for my $hdr (qr/Commits/i, qr/Git commits made during compressed period/i) {
+        @items = $parse_bullets->($summary_text, $hdr);
+        if (@items) {
+            push @$commits, @items;
+            last;
+        }
+    }
+
+    # --- Discussion / collaboration Q&A ---
+    if ($summary_text =~ /(?:^|\n)Discussion:\s*\n(.*?)(?=\n(?:[A-Z][\w ]+:|\z))/s) {
+        my $block = $1;
+        my @lines = split /\n/, $block;
+        my $i = 0;
+        while ($i < @lines) {
+            if ($lines[$i] =~ /^\s*- Q:\s*(.+)$/ && $i + 1 < @lines
+                && $lines[$i + 1] =~ /^\s*A:\s*(.+)$/) {
+                push @$collaboration_exchanges, {
+                    question => $1,
+                    response => $lines[$i + 1],
+                };
+                $i += 2;
+            } else {
+                $i++;
+            }
+        }
+    }
+
+    return 1;
 }
 
 =head2 compress_for_context_recovery
@@ -672,10 +984,15 @@ Arguments:
   * C<previous_summary>: Pre-extracted summary text. When provided,
     overrides the internal scan. Callers use this when the summary
     lives in the *kept* (non-dropped) set.
+  * C<context_window>  : Model context window in tokens (for context-aware
+    scaling of limits and summary cap). Defaults to DEFAULT_CONTEXT_WINDOW.
+  * C<max_chars>       : Explicit character cap for the summary. When
+    provided, overrides the context-window-derived cap.
 
 Returns: Hashref as from L</compress_messages>
 
-    my $result = $yarn->compress_for_context_recovery(\@dropped, original_task => $task);
+    my $result = $yarn->compress_for_context_recovery(\@dropped,
+        original_task => $task, context_window => 128000);
 
 =cut
 
@@ -706,6 +1023,8 @@ sub compress_for_context_recovery {
     return $self->compress_messages(\@compress_msgs,
         previous_summary => $previous_summary,
         original_task    => $opts{original_task} || '',
+        context_window   => $opts{context_window},
+        max_chars        => $opts{max_chars},
     );
 }
 
@@ -757,22 +1076,85 @@ compression paths:
 3. B<WorkflowOrchestrator> (reactive): C<_compress_dropped_for_recovery>
    compresses dropped messages after a token-limit error from the provider.
 
-All paths produce a single C<< <thread_summary> >> system message (the
+All paths produce a single C<< <thread_summary> >> message (the
 compression format marker) that preserves:
-- User requests (summarized; the first/original request kept as
-  C<<- [original] >>)
-- Tool operations (deduplicated with counts)
-- Commits (deduped, most recent kept, capped at 15)
-- Files touched (deduped, capped at 30)
-- Key decisions (last 3)
-- Active discussion turns (last 5 Q/A pairs, if any)
+- User requests (truncated to ~600 chars each; the first/original
+  request kept as C<<- [original] >>)
+- Key decisions (collaboration exchanges; capped at 8 for 128K+)
+- Files worked on (path-only, deduplicated; capped at 50 for 128K+)
+- Tool operations (cumulative counts per tool type; top 8 shown)
+- Commits (deduped, most recent kept; capped at 30 for 128K+)
+- Discussion (collaboration Q/A pairs from interact calls; capped at 10 for 128K+)
 
-Cross-cycle carryover: C<compress_for_context_recovery> extracts the most
-recent C<< <thread_summary> >> block from the message array (via
-C<_extract_thread_summary_from_messages>) and feeds it as C<previous_summary>
-to C<compress_messages>, so accumulated summaries survive successive trim
-cycles instead of being reset each time. Old summary blocks are filtered
-out of the compressed set and replaced by the single new one.
+The current task line ("Current task:") reflects the most recent
+substantive direction. Short acknowledgements ("yes", "go ahead")
+do not replace a meaningful current task — they are filtered or
+outvoted by longer substantive requests.
+
+=head2 Context-Aware Budgeting
+
+The summary size and extraction limits scale with the model's context
+window (passed as C<context_window> tokens). This replaces the previous
+hardcoded cap (C<UC_CAP = 4000>) and fixed limits.
+
+Summary cap (C<_compute_summary_cap>): ~2.5% of the context window in
+tokens, converted to characters via the TokenEstimator ratio. Bounded
+by C<$MIN_SUMMARY_CAP> (4,000) and C<$MAX_SUMMARY_CAP> (60,000).
+
+    32K ctx  -> ~2,400 chars
+    64K ctx  -> ~6,400 chars
+    128K ctx -> ~12,800 chars
+    256K ctx -> ~25,600 chars
+    1M ctx   -> ~60,000 chars (capped)
+
+Extraction limits (C<_compute_limits>): 128K is the baseline
+(16 user requests, 8 decisions, 10 discussion pairs, 50 files,
+30 commits, 8 tool types). Scales DOWN for contexts below 128K
+(local models, 64K and smaller) and UP for 256K+ contexts.
+
+Callers that know the model's context window should pass it:
+C<ContextBuilder> (via C<build_projection>), C<MessageValidator>
+(via C<$caps>), and C<WorkflowOrchestrator> (via C<api_manager>).
+When C<context_window> is not provided, the default is
+C<DEFAULT_CONTEXT_WINDOW> (128K). An explicit C<max_chars> option
+overrides the computed cap.
+
+=head2 Large-Context Scaling
+
+The design target is 128K contexts with a summary budget of ~12K-16K
+chars. For 256K+ contexts, limits scale proportionally so the
+historical projection grows richer without requiring code changes.
+For 1M-context models (MiniMax-M3, Z.A.I. GLM-5), the summary cap
+reaches its 60K ceiling while extraction limits scale 4x.
+
+For contexts below 128K (local inference at 64K/32K), limits scale
+down proportionally with floors that ensure usable recall even on
+small windows.
+
+=head2 Cross-Cycle Carryover and Lossless Durable History
+
+C<compress_for_context_recovery()> extracts the most recent
+C<< <thread_summary> >> block from the message array (via
+C<_extract_thread_summary_from_messages>) and feeds it as
+C<previous_summary> to C<compress_messages>, so accumulated summaries
+survive successive trim cycles instead of being reset each time.
+C<_parse_previous_summary> parses ALL sections (user requests,
+decisions, files, commits, tool operations, discussion) — not just
+user requests — so no historical information is silently dropped
+between cycles.
+
+C<compress_messages> accepts C<%tool_counts> (accumulated counts) in
+the buckets hash; these are added to rather than replaced, producing
+cumulative tool-operation totals across the entire session.
+
+C<YaRN> is the durable, lossless record. C<State::add_message> stores
+every message in both C<$self->{history}> (active window) and
+C<$self->{yarn}> (durable thread). C<get_thread> returns the full
+history; C<add_to_thread> appends without ever removing. The
+C<< <thread_summary> >> is a lossy projection — a disposable view
+over the durable truth — and is never written back to the thread.
+C<recover_substantive_task> walks the durable thread to find the
+original task when active history has been trimmed past it.
 
 =head1 AUTHOR
 

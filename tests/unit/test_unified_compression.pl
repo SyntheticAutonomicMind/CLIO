@@ -23,8 +23,10 @@ use CLIO::Memory::YaRN;
 my $yarn = CLIO::Memory::YaRN->new();
 
 # ---------------------------------------------------------------------------
-# previous_summary is extracted from messages and only user_requests carried
-# forward (no commits/files/decisions — slimmed format)
+# previous_summary is extracted from messages and carried forward.
+# The slimmed format preserves user requests, decisions, files, commits,
+# and tool operations from the previous summary — all sections, not just
+# user requests. Framework narration and raw variable names are absent.
 # ---------------------------------------------------------------------------
 my @messages = (
     {
@@ -56,9 +58,9 @@ like($result->{content}, qr/<thread_summary>/, 'Result is wrapped in <thread_sum
 # Previous user request carried forward
 like($result->{content}, qr/Build a widget system/, 'Previous original request carried forward');
 
-# No statistical noise in the slimmed output
-unlike($result->{content}, qr/abc1234|Commits:|Files:|Decisions:|Tool calls:/,
-    'No commit/file/decision/tool noise in slimmed output');
+# No raw framework narration or old-format headers in output
+unlike($result->{content}, qr/abc1234|file_operations:\s*\d+\s*calls|tools_worked/,
+    'No raw framework narration in output');
 
 # Current task is surfaced
 like($result->{content}, qr/Current task:/, 'Current task section present');

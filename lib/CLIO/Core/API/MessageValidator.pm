@@ -169,7 +169,11 @@ sub validate_and_truncate {
     # while preserving the first user message (the original task
     # anchor) and keeping tool_call/tool_result pairs together so
     # we never strand an orphan.
-    return _role_based_tail_walk($messages, $effective_limit, $debug, $active_task);
+    my $ctx_window = $caps->{max_context_window_tokens}
+                  || $caps->{context_window}
+                  || $caps->{max_prompt_tokens}
+                  || 0;
+    return _role_based_tail_walk($messages, $effective_limit, $debug, $active_task, $ctx_window);
 }
 
 =head2 _role_based_tail_walk
@@ -199,7 +203,7 @@ Returns: Trimmed ArrayRef (possibly with a thread_summary appended)
 =cut
 
 sub _role_based_tail_walk {
-    my ($messages, $effective_limit, $debug, $active_task) = @_;
+    my ($messages, $effective_limit, $debug, $active_task, $context_window) = @_;
 
     return $messages unless $messages && @$messages;
 
@@ -475,7 +479,8 @@ sub _role_based_tail_walk {
             require CLIO::Memory::YaRN;
             my $yarn = CLIO::Memory::YaRN->new();
             $yarn->compress_for_context_recovery(\@dropped,
-                original_task => $active_task,
+                original_task    => $active_task,
+                context_window   => $context_window || 0,
             );
         };
         if ($summary && ref($summary) eq 'HASH'
