@@ -97,8 +97,8 @@ subtest 'trim_for_token_limit dereferences retry_count ref' => sub {
         my $res = CLIO::Core::API::ErrorHandler::trim_for_token_limit($wo, %$ctx);
 
         if ($attempt <= 2) {
-            ok(exists $res->{system_msg},
-               "retry_count=$attempt (ref): trim proceeds with system_msg (did NOT bail)");
+            ok($res->{retried},
+               "retry_count=$attempt (ref): trim proceeds (did NOT bail)");
             ok(scalar(@msgs) < 37,
                "retry_count=$attempt (ref): messages were actually trimmed ("
                  . scalar(@msgs) . " remain of 37)");
@@ -117,7 +117,7 @@ subtest 'trim_for_token_limit dereferences retry_count ref' => sub {
         max_server_retries => 0, error => 'token limit',
     };
     my $res = CLIO::Core::API::ErrorHandler::trim_for_token_limit($wo, %$ctx);
-    ok(exists $res->{system_msg}, 'retry_count=1 (plain int): trim proceeds (did NOT bail)');
+    ok($res->{retried}, 'retry_count=1 (plain int): trim proceeds (did NOT bail)');
 };
 
 # =============================================================================
@@ -171,9 +171,10 @@ subtest 'token_limit_exceeded during routing trims instead of exhausting' => sub
     is($session->{routing_attempts}, 0,
        'routing_attempts not incremented (no model cycling for token_limit)');
 
-    # A trim-driven system message must have been emitted to the UI.
+    # Trim-driven system message must NOT be emitted to the UI — reactive
+    # trimming is silent (debug-logged only).
     my $trim_msg = grep { /Token limit exceeded\. Trimmed/ || /trimming/i } @sys_msgs;
-    ok($trim_msg, 'emitted a trim-driven system message to the UI');
+    ok(!$trim_msg, 'did NOT emit a trim-driven system message to the UI');
 };
 
 done_testing();

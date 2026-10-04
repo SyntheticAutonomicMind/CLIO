@@ -696,7 +696,7 @@ sub handle_api_error {
             return $trim_result->{response} if $trim_result->{bail};
 
             $error_type = "token limit exceeded";
-            $system_msg = $trim_result->{system_msg};
+            $system_msg = undef;
         }
         elsif ($api_response->{error_type} && ($api_response->{error_type} eq 'server_error' || $api_response->{error_type} eq 'connection_error')) {
             my $backoff_multiplier = 2 ** ($$retry_count_ref - 1);
@@ -1044,7 +1044,7 @@ Parameters:
     %args - Same context as handle_api_error
 
 Returns:
-    { system_msg => '...' } on success
+    { retried => 1 } on success (no system message — trimming is silent)
     { bail => 1, response => {...} } when further retries are pointless
 
 =cut
@@ -1373,10 +1373,6 @@ sub trim_for_token_limit {
         },
     ) if $ENV{CLIO_TRIM_DIAG};
 
-    my $preserved_info = $last_user_msg ? " (most recent user message preserved)" : "";
-    my $recovery_info  = ($trimmed_count > 0) ? " Context summary injected." : "";
-    my $system_msg = "Token limit exceeded. Trimmed $trimmed_count messages from conversation history and retrying$preserved_info...$recovery_info (attempt $retry_count/$max_retries)";
-
     log_debug('ErrorHandler', "Trimmed $trimmed_count messages due to token limit (kept " . scalar(@non_system) . " messages, last_user=" . ($last_user_msg ? 'YES' : 'NO') . ")");
 
     # Nothing trimmed means context isn't the problem
@@ -1425,7 +1421,7 @@ sub trim_for_token_limit {
         };
     }
 
-    return { system_msg => $system_msg };
+    return { retried => 1 };
 }
 
 # Build a concise per-provider cooldown summary for system messages.

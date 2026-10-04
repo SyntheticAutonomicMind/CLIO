@@ -129,7 +129,7 @@ subtest 'retry_count==1: reactive trim preserves current user as last message' =
 
     my $result = CLIO::Core::API::ErrorHandler::trim_for_token_limit($wo, %$ctx);
 
-    ok(exists $result->{system_msg}, 'did not bail (retry_count=1)');
+    ok($result->{retried}, 'did not bail (retry_count=1)');
 
     # CRITICAL: last message must be USER (current user message)
     is(_last_role(\@messages), 'user',
