@@ -40,19 +40,21 @@ cursor movement, redraw, and reposition uses this pure function.
 
 Incremental state retained for fast-path operations and viewport math
 (see C<new()> for the full list):
-- C<last_cursor_row>: redraw_line uses it to know how many rows to
-  move up before clearing. Always set by C<_cursor_at_codepoint> (via
-  C<reposition_cursor>, C<_redraw_from_cursor>, or C<redraw_line>).
-- C<last_cursor_col>: starting column for the next C<_emit_text> call.
-  Read by emit helpers as the base for per-char advancement; written
-  back by every cursor-moving operation. Not consulted by the compute
-  functions - those always derive position from input state.
-- C<last_cursor_disp>: cached (row * term_width + col - 1) for the
-  fast-path backspace, which uses it as the new position after a
-  same-row single-column deletion.
-- C<scroll_offset>: how many input rows have scrolled off the top of
-  the screen when input overflows the viewport. Used by
-  C<_input_row_to_screen_row> to convert input rows to screen rows.
+- C<last_cursor_row>: cursor screen row after the last C<_emit_text>
+  call (clamped to max_row). Read by C<_emit_text> as the starting row
+  for the next emit. Written by C<_emit_text>, C<_emit_newline>,
+  C<reposition_cursor>, C<redraw_line>, C<_redraw_line_external>.
+- C<last_cursor_col>: cursor screen column after the last C<_emit_text>
+  call. Read by C<_emit_text> as the starting column for the next emit.
+  Written back by every cursor-moving operation.
+- C<scroll_offset>: DERIVED state — C<max(0, display_lines - term_height)>.
+  Recomputed by C<_refresh_geometry> whenever content or geometry changes.
+  Used by C<_input_row_to_screen_row> to convert input rows to screen rows.
+- C<last_cursor_input_row>: the cursor's row within the input buffer
+  (0-indexed, NOT a screen row). Written by C<redraw_line>,
+  C<reposition_cursor>, C<_redraw_line_external>, and the fast-path
+  insert/backspace. Read by C<redraw_line> and C<_redraw_line_external>
+  to compute C<rows_to_top> (how many rows to move up before clearing).
 
 =cut
 
@@ -61,11 +63,14 @@ Incremental state retained for fast-path operations and viewport math
 Compute the number of terminal columns a string occupies.
 
 ASCII characters are 1 column wide. CJK (Chinese/Japanese/Korean) and other
-fullwidth Unicode characters are 2 columns wide. This is needed for correct
-cursor positioning when wide characters are present in the input.
+fullwidth Unicode characters are 2 columns wide. Combining marks, ZWJ,
+ZWNJ, variation selectors, and other zero-width characters contribute
+0 columns. Tab characters are normalized to a single space by the
+editor (see readline() insert path) before they reach width computation.
 
 Uses Unicode::GCString if available (most accurate), otherwise falls back
-to a regex-based range check covering the common East Asian wide blocks.
+to Perl Unicode properties (C<\p{Wide}>, C<\p{Mn}>, C<\p{Me}>) and an
+explicit zero-width codepoint table.
 
 =cut
 
@@ -74,6 +79,47 @@ to a regex-based range check covering the common East Asian wide blocks.
 my $HAS_UNICODE_GCSTRING = eval { require Unicode::GCString; 1 } ? 1 : 0;
 
 sub _check_gcstring { $HAS_UNICODE_GCSTRING }
+
+# Codepoints that are zero-width in terminal rendering: combining marks,
+# ZWJ, ZWNJ, variation selectors, zero-width spaces, and tags.
+sub _is_zero_width {
+    my ($cp) = @_;
+    # \p{Mn} = nonspacing marks (combining diacritics)
+    # \p{Me} = enclosing marks
+    return 1 if chr($cp) =~ /\p{Mn}/;
+    return 1 if chr($cp) =~ /\p{Me}/;
+    # Explicit zero-width format characters
+    return 1 if $cp == 0x200B;  # Zero Width Space
+    return 1 if $cp == 0x200C;  # Zero Width Non-Joiner
+    return 1 if $cp == 0x200D;  # Zero Width Joiner
+    return 1 if $cp == 0x2060;  # Word Joiner
+    return 1 if $cp == 0xFEFF;  # Zero Width No-Break Space / BOM
+    # Variation Selectors (VS1-VS16)
+    return 1 if $cp >= 0xFE00 && $cp <= 0xFE0F;
+    # Tags (language tags, U+E0001..U+E007F)
+    return 1 if $cp >= 0xE0001 && $cp <= 0xE007F;
+    return 0;
+}
+
+# Regional Indicator symbols (A-Z, U+1F1E6..U+1F1FF) used in flag emoji.
+sub _is_regional_indicator {
+    my ($cp) = @_;
+    return $cp >= 0x1F1E6 && $cp <= 0x1F1FF;
+}
+
+# Check if a codepoint should be rendered as 2 columns wide.
+sub _is_wide_cp {
+    my ($cp) = @_;
+    my $ch = chr($cp);
+    # East Asian Wide and Fullwidth characters (CJK, Hiragana, Katakana,
+    # Hangul, fullwidth forms, most emoji in the SMP)
+    return 1 if $ch =~ /\p{EA=Wide}/;
+    return 1 if $ch =~ /\p{EA=Fullwidth}/;
+    # Regional indicators (flags) — EA=Neutral per Unicode, but terminals
+    # render them as 2-column wide.
+    return 1 if $cp >= 0x1F1E6 && $cp <= 0x1F1FF;
+    return 0;
+}
 
 sub _display_width {
     my ($str) = @_;
@@ -84,68 +130,119 @@ sub _display_width {
         return Unicode::GCString->new($str)->columns();
     }
 
-    # Fallback: count codepoints, adding 1 extra column for each wide character.
-    # Wide characters are those in the East Asian Wide (W) and Fullwidth (F) categories.
-    # This covers CJK Unified Ideographs, Hiragana, Katakana, Hangul, and common
-    # fullwidth forms used in Chinese/Japanese/Korean text.
+    # Fallback: process grapheme clusters via \X. The width of each
+    # cluster is the width of its first non-zero-width character
+    # (the "base"). This correctly handles:
+    #   - Combining marks (e + U+0301): width = 1 (from the base 'e')
+    #   - ZWJ sequences (man + ZWJ + woman): width = 2 (from the first emoji)
+    #   - Regional indicator pairs (flag): width = 2 (from the first RI)
+    #   - Zero-width chars (ZWJ, VS, ZWSP): contribute 0 to their cluster
     my $width = 0;
-    for my $ch (split //, $str) {
-        my $cp = ord($ch);
-        if (
-            # CJK Unified Ideographs and extensions
-            ($cp >= 0x4E00  && $cp <= 0x9FFF)   ||
-            ($cp >= 0x3400  && $cp <= 0x4DBF)   ||
-            ($cp >= 0x20000 && $cp <= 0x2A6DF)  ||
-            ($cp >= 0x2A700 && $cp <= 0x2CEAF)  ||
-            ($cp >= 0xF900  && $cp <= 0xFAFF)   ||
-            ($cp >= 0x2F800 && $cp <= 0x2FA1F)  ||
-            # CJK Compatibility and Radicals
-            ($cp >= 0x2E80  && $cp <= 0x2EFF)   ||
-            ($cp >= 0x2F00  && $cp <= 0x2FDF)   ||
-            ($cp >= 0x31C0  && $cp <= 0x31EF)   ||
-            # Hiragana, Katakana, Bopomofo
-            ($cp >= 0x3040  && $cp <= 0x30FF)   ||
-            ($cp >= 0x3100  && $cp <= 0x312F)   ||
-            ($cp >= 0x31A0  && $cp <= 0x31BF)   ||
-            # Enclosed CJK, CJK Compatibility
-            ($cp >= 0x3200  && $cp <= 0x32FF)   ||
-            ($cp >= 0x3300  && $cp <= 0x33FF)   ||
-            # Hangul Syllables
-            ($cp >= 0xAC00  && $cp <= 0xD7AF)   ||
-            # Halfwidth and Fullwidth Forms
-            ($cp >= 0xFF01  && $cp <= 0xFF60)   ||
-            ($cp >= 0xFFE0  && $cp <= 0xFFE6)   ||
-            # Wide miscellaneous symbols
-            ($cp >= 0x1F300 && $cp <= 0x1F9FF)
-        ) {
-            $width += 2;
-        } else {
-            $width += 1;
+    while ($str =~ /(\X)/g) {
+        my $cluster = $1;
+        # Find the first non-zero-width character in the cluster.
+        for my $i (0 .. length($cluster) - 1) {
+            my $ch = substr($cluster, $i, 1);
+            my $cp = ord($ch);
+            if (_is_zero_width($cp)) {
+                next;
+            }
+            if (_is_wide_cp($cp)) {
+                $width += 2;
+            } else {
+                $width += 1;
+            }
+            last;  # Only count the first non-zero-width char of the cluster
         }
     }
     return $width;
 }
 
+# Find the codepoint offset of the start of the grapheme cluster that
+# ends at or before position $cp (i.e., the previous grapheme boundary
+# before $cp). Returns 0 if $cp <= 0.
+#
+# Walks backwards past zero-width characters (combining marks, ZWJ, VS,
+# etc.) that extend the preceding base character. Also handles flag emoji
+# (two consecutive regional indicators as a single cluster).
+sub _grapheme_boundary_before {
+    my ($input, $cp) = @_;
+    return 0 if $cp <= 0;
+    # Start at the character just before $cp — this is the base
+    # character of the grapheme we want to back up to.
+    my $pos = $cp - 1;
+    # Walk backwards past zero-width characters that extend the
+    # character at $pos (e.g., base + combining mark).
+    while ($pos > 0) {
+        my $ch = substr($input, $pos, 1);
+        last unless _is_zero_width(ord($ch));
+        $pos--;
+    }
+    # Handle flag emoji: if the char at $pos is a regional indicator
+    # and the char before it is also a regional indicator, they form
+    # a single grapheme. Move back to the start of the pair.
+    if ($pos > 0) {
+        my $this_cp = ord(substr($input, $pos, 1));
+        my $prev_cp = ord(substr($input, $pos - 1, 1));
+        if (_is_regional_indicator($this_cp) && _is_regional_indicator($prev_cp)) {
+            $pos--;
+        }
+    }
+    return $pos;
+}
+
+# Find the codepoint offset of the end of the grapheme cluster that
+# starts at or after position $cp. Returns length($input) if $cp >=
+# length($input).
+sub _grapheme_boundary_after {
+    my ($input, $cp) = @_;
+    my $len = length($input);
+    return $len if $cp >= $len;
+    # Start just after the base character at $cp.
+    my $pos = $cp + 1;
+    # Walk forward past zero-width characters (combining marks, ZWJ, VS).
+    while ($pos < $len) {
+        my $ch = substr($input, $pos, 1);
+        last unless _is_zero_width(ord($ch));
+        $pos++;
+    }
+    # Handle flag emoji: if the base char is a regional indicator and
+    # the next char is also a regional indicator, consume both.
+    if ($pos < $len && $pos == $cp + 1) {
+        my $base_cp = ord(substr($input, $cp, 1));
+        my $next_cp = ord(substr($input, $pos, 1));
+        if (_is_regional_indicator($base_cp) && _is_regional_indicator($next_cp)) {
+            $pos++;
+            # Also consume any trailing zero-width chars after the second RI
+            while ($pos < $len) {
+                my $ch = substr($input, $pos, 1);
+                last unless _is_zero_width(ord($ch));
+                $pos++;
+            }
+        }
+    }
+    return $pos;
+}
+
 =head2 _strip_ansi
 
-Strip ANSI CSI sequences from $text and return the visible substring.
+Strip terminal control sequences from $text and return the visible substring.
 The result contains no control bytes - only printable characters and
 whitespace. Used by cursor-tracking code (C<_get_prompt_disp>,
 C<_emit_text>) to compute display width without inflating the count
-with SGR bytes.
+with invisible escape bytes.
 
-The regex matches every CSI sequence: ESC [ followed by any number of
-parameter bytes (digits, semicolons, ?), then a final byte from
-[A-Za-z]. This covers SGR (m), cursor moves (A/B/C/D/E/F/G/H/J/K/S/T),
-erase/scroll (J/K), mode set/reset (h/l), device attrs (c), and the
-private-mode set/reset (?h/?l) used by some terminals.
+Handles:
+- OSC sequences: ESC ] ... BEL / ESC ] ... ST
+- DCS sequences:  ESC P ... ST
+- CSI sequences:  ESC [ params final
+- Other 2-byte/3-byte ESC sequences (ESC + non-[ non-])
 
 Arguments:
-- $text: String that may contain ANSI escape sequences.
+- $text: String that may contain terminal control sequences.
 
 Returns:
-- String with all CSI sequences removed. Whitespace and printable
-  characters preserved.
+- String with all control sequences removed.
 
 =cut
 
@@ -153,7 +250,14 @@ sub _strip_ansi {
     my ($text) = @_;
     return '' unless defined $text && length $text;
     my $copy = $text;
+    # OSC: ESC ] ... terminated by BEL (0x07) or ST (ESC \)
+    $copy =~ s/\e\].*?(\x07|\e\\)//g;
+    # DCS: ESC P ... ST (ESC \)
+    $copy =~ s/\eP.*?(\e\\)//g;
+    # CSI: ESC [ params final-byte
     $copy =~ s/\e\[[0-9;?]*[A-Za-z]//g;
+    # Other 2-byte ESC sequences: ESC + (anything except [ or ]) + char
+    $copy =~ s/\e[^][A-Za-z0-9]*[A-Za-z0-9]//g;
     return $copy;
 }
 
@@ -168,25 +272,22 @@ sub new {
         debug => $args{debug} || 0,
         max_history => $args{max_history} || 1000,
         # How many terminal lines the current input occupies.
-        # Computed from input state; used by redraw_line for vertical
-        # movement.
+        # Computed from input state via _compute_display_lines; used by
+        # redraw_line for vertical movement.
         display_lines => 1,
-        # Cursor position tracking. Updated by _cursor_at_codepoint-based
-        # operations. Used by redraw_line to know how many rows to move up
-        # before clearing. Always set to the value computed by
-        # _cursor_at_codepoint — never by ad-hoc arithmetic.
+        # Cursor position tracking. Updated by _emit_text (clamped to
+        # max_row), reposition_cursor, redraw_line. Read only by _emit_text
+        # as the starting point for the next emit.
         last_cursor_row => 0,
         last_cursor_col => 1,
-        last_cursor_disp => 0,
         # How many input rows are scrolled off the top of the screen.
-        # When the input is taller than the screen, the visible portion
-        # is the last term_height rows of the input; scroll_offset
-        # tracks how many input rows are above the visible window.
-        # Used by redraw_line to convert input rows to screen rows.
+        # DERIVED state (max(0, display_lines - term_height)), recomputed
+        # by _refresh_geometry whenever content or geometry changes.
+        # Used by _input_row_to_screen_row to convert input rows to screen rows.
         scroll_offset => 0,
         # How many rows the cursor is from the top of the input area
-        # (0 = first row). Used by redraw_line to compute rows_to_top
-        # without assuming the cursor is at the bottom of the input.
+        # (0 = first row). Written by redraw_line, reposition_cursor,
+        # _redraw_line_external, and the fast-path insert/backspace.
         last_cursor_input_row => 0,
         # Kill ring for line-editing commands (Ctrl-K, Ctrl-U, Ctrl-W, etc.)
         # Mirrors GNU readline: text killed by these commands is saved so
@@ -198,16 +299,21 @@ sub new {
         # Stored at the top of each input loop iteration so kill_ring_save
         # can decide append-vs-new before the flag is reset.
         _prev_was_kill => 0,
-        # Kill-ring yank state for Alt-Y cycling.
+        # Kill-ring yank state for Alt-Y cycling. These are INVALIDATED
+        # by any command other than yank/yank-pop, and reset at the start
+        # of each readline() call. Alt-Y is only meaningful immediately
+        # after Ctrl-Y (GNU readline semantics).
         yank_start_pos => undef,
         yank_text => undef,
         yank_index => 0,
+        # Was the immediately preceding command a yank or yank-pop?
+        # Set by yank()/yank_pop() so the input loop knows not to
+        # invalidate yank state at the start of the next iteration.
+        _yank_op => 0,
         # Performance caches (invalidated per-readline call)
         _prompt_disp_cache => undef,   # cached prompt display width
-        _term_width_cache => undef,    # cached terminal width
-        _term_width_time => 0,         # when we last checked terminal width
-        _term_height_cache => undef,   # cached terminal height
-        _term_height_time => 0,        # when we last checked terminal height
+        _term_size_cache => undef,     # cached (cols, rows) from GetTerminalSize
+        _term_size_time => 0,          # when we last checked terminal size
     };
 
     return bless $self, $class;
@@ -230,40 +336,112 @@ Signal Handling:
 
 =cut
 
+=head2 _refresh_term_size
+
+Refresh the cached terminal dimensions atomically. Both width and height
+are fetched from a single GetTerminalSize() call so they are never
+inconsistent. Cached for at most 1 second to avoid ioctl overhead.
+
+=cut
+
+sub _refresh_term_size {
+    my ($self) = @_;
+    my $now = time();
+    if (!$self->{_term_size_cache} || $now > $self->{_term_size_time}) {
+        my ($w, $h) = GetTerminalSize();
+        $self->{_term_size_cache} = [
+            ($w && $w >= 10) ? $w : 80,
+            ($h && $h >= 5)  ? $h : 24,
+        ];
+        $self->{_term_size_time} = $now;
+    }
+    return @{$self->{_term_size_cache}};
+}
+
+=head2 _invalidate_term_size
+
+Force a terminal size refresh on the next _refresh_term_size call.
+Called by the SIGWINCH handler and at readline() start.
+
+=cut
+
+sub _invalidate_term_size {
+    my ($self) = @_;
+    $self->{_term_size_cache} = undef;
+    $self->{_term_size_time} = 0;
+}
+
 =head2 _get_term_width
 
-Return cached terminal width. Refreshes from the terminal at most once
-per second to avoid expensive ioctl calls on every keystroke.
+Return cached terminal width (via _refresh_term_size).
 
 =cut
 
 sub _get_term_width {
     my ($self) = @_;
-    my $now = time();
-    if (!$self->{_term_width_cache} || $now > $self->{_term_width_time}) {
-        my ($w, $h) = GetTerminalSize();
-        $self->{_term_width_cache} = ($w && $w >= 10) ? $w : 80;
-        $self->{_term_width_time} = $now;
-    }
-    return $self->{_term_width_cache};
+    my ($w, $h) = $self->_refresh_term_size();
+    return $w;
 }
 
 =head2 _get_term_height
 
-Return cached terminal height. Refreshes from the terminal at most once
-per second (same call as _get_term_width). Defaults to 24.
+Return cached terminal height (via _refresh_term_size).
+Defaults to 24.
 
 =cut
 
 sub _get_term_height {
     my ($self) = @_;
-    my $now = time();
-    if (!$self->{_term_height_cache} || $now > $self->{_term_height_time}) {
-        my ($w, $h) = GetTerminalSize();
-        $self->{_term_height_cache} = ($h && $h >= 5) ? $h : 24;
-        $self->{_term_height_time} = $now;
-    }
-    return $self->{_term_height_cache};
+    my ($w, $h) = $self->_refresh_term_size();
+    return $h;
+}
+
+=head2 _invalidate_yank
+
+Invalidate yank state (yank_start_pos/yank_text/yank_index). Called by
+readline() at start and after any command that is not yank or yank-pop.
+
+GNU readline rule: yank-pop (Alt-Y) is only meaningful immediately after
+yank (Ctrl-Y), before any other editing command. This method enforces
+that rule by clearing the yank anchor.
+
+=cut
+
+sub _invalidate_yank {
+    my ($self) = @_;
+    $self->{yank_start_pos} = undef;
+    $self->{yank_text} = undef;
+    $self->{yank_index} = 0;
+}
+
+=head2 _refresh_geometry
+
+Recompute all derived geometry state from the current input and prompt:
+display_lines, scroll_offset, last_cursor_input_row. This is the
+single place where derived geometry is updated, ensuring consistency.
+
+scroll_offset = max(0, display_lines - term_height)
+The cursor's input row is derived from the cursor position via
+_cursor_at_codepoint (called by the caller as needed).
+
+=cut
+
+sub _refresh_geometry {
+    my ($self, $input, $cursor_pos, $prompt) = @_;
+    my $prompt_disp = $self->_get_prompt_disp($prompt);
+    my $total_disp = $prompt_disp + _display_width($input);
+    my $term_height = $self->_get_term_height();
+    my $display_lines = $self->_compute_display_lines($total_disp);
+    $self->{display_lines} = $display_lines;
+    $self->{scroll_offset} = _max(0, $display_lines - $term_height);
+    my ($cursor_input_row, $cursor_col) = $self->_cursor_at_codepoint($input, $cursor_pos, $prompt);
+    $self->{last_cursor_input_row} = $cursor_input_row;
+    return;
+}
+
+sub _max {
+    my ($a, $b) = @_;
+    return $a > $b ? $a : $b;
 }
 
 =head2 _get_prompt_disp
@@ -292,10 +470,14 @@ at the last column (col=term_width) occupies that column, and the cursor
 advances to (row+1, col=1). The cursor is never reported at col > term_width.
 
 This is the single source of truth for cursor position. Every cursor
-movement, redraw, and reposition is computed from this function — never
-from incrementally-tracked shadow state that can desync.
+movement, redraw, and reposition computes from this pure function.
 
-Returns: ($row, $col) where $row is 0-indexed and $col is 1-indexed.
+B<Note:> This function is pure — it does NOT modify any object state.
+Callers pass its return values through C<_input_row_to_screen_row>
+(which reads the derived C<scroll_offset>) to get screen coordinates.
+
+Returns: ($row, $col) where $row is 0-indexed (input row, NOT screen row)
+and $col is 1-indexed.
 
 =cut
 
@@ -348,8 +530,8 @@ screen row, accounting for terminal scrolling.
 
 When the input is taller than the terminal, the terminal scrolls the
 content up. The visible portion is the last term_height rows of the
-input. scroll_offset tracks how many input rows are above the visible
-window.
+input. scroll_offset (derived by _refresh_geometry) tracks how many
+input rows are above the visible window.
 
 Returns: screen row (0-indexed, clamped to 0..max_row).
 
@@ -446,22 +628,20 @@ sub _emit_text {
         }
     }
 
-    # If the row went past the bottom of the screen, the
-    # terminal scrolled up by 1 row per overflowing row. Track how
-    # many rows have scrolled off so cursor positioning can convert
-    # input rows to screen rows.
+    # If the row went past the bottom of the screen, the terminal
+    # scrolled. Clamp last_cursor_row to the visible area so the next
+    # _emit_text call continues from the correct screen position.
+    # scroll_offset is NOT accumulated here — it is derived by
+    # _refresh_geometry from the total content height.
     my $term_height = $self->_get_term_height();
     my $max_row = $term_height - 1;
-    my $scroll_offset = $self->{scroll_offset} || 0;
     if ($row > $max_row) {
-        $scroll_offset += ($row - $max_row);
         $row = $max_row;
+        $col = 1;
     }
 
     $self->{last_cursor_row} = $row;
     $self->{last_cursor_col} = $col;
-    $self->{last_cursor_disp} = $row * $term_width + ($col - 1);
-    $self->{scroll_offset} = $scroll_offset;
 }
 
 =head2 _emit_newline
@@ -474,21 +654,14 @@ sub _emit_newline {
     my ($self) = @_;
     print "\r\n";
     # Newline: move to (row+1, col 1).
-    my $row = $self->{last_cursor_row} + 1;
-
-    # Clamp to screen and track scroll_offset for input row accounting.
     my $term_height = $self->_get_term_height();
     my $max_row = $term_height - 1;
-    my $scroll_offset = $self->{scroll_offset} || 0;
+    my $row = $self->{last_cursor_row} + 1;
     if ($row > $max_row) {
-        $scroll_offset += ($row - $max_row);
         $row = $max_row;
     }
-
     $self->{last_cursor_row} = $row;
     $self->{last_cursor_col} = 1;
-    $self->{last_cursor_disp} = $row * $self->_get_term_width();
-    $self->{scroll_offset} = $scroll_offset;
 }
 
 =head2 _emit_ctrl_c
@@ -513,7 +686,6 @@ sub _emit_ctrl_c {
     }
     $self->{last_cursor_row} = $row;
     $self->{last_cursor_col} = $col;
-    $self->{last_cursor_disp} = $row * $term_width + ($col - 1);
     $self->_emit_newline();  # The trailing \n
 }
 
@@ -571,6 +743,11 @@ sub yank {
     $self->{yank_text} = $yanked;
     $self->{yank_index} = $#{$self->{kill_ring}};  # index into kill_ring
 
+    # Mark this as a yank operation so the input loop does not
+    # invalidate yank state before the next iteration (allowing
+    # repeated Alt-Y to cycle).
+    $self->{_yank_op} = 1;
+
     $self->redraw_line($input_ref, $cursor_pos_ref, $prompt);
 }
 
@@ -610,6 +787,9 @@ sub yank_pop {
 
     $self->{yank_text} = $yanked;
     log_debug('ReadLine', "yank_pop: cycled to entry $self->{yank_index}, len=" . length($yanked));
+
+    # Mark this as a yank operation (same as yank()).
+    $self->{_yank_op} = 1;
 
     $self->redraw_line($input_ref, $cursor_pos_ref, $prompt);
 }
@@ -654,13 +834,19 @@ sub redraw_line {
     # How many terminal lines the new content occupies
     my $new_lines_needed = $self->_compute_display_lines($total_disp);
 
+    # Save old cursor_input_row before _refresh_geometry overwrites it.
+    # redraw_line needs to know where the cursor WAS (to move up the
+    # right number of rows), not where it is now.
+    my $old_cursor_input_row = $self->{last_cursor_input_row} || 0;
     my $old_display_lines = $self->{display_lines} || 1;
-    my $max_lines = $old_display_lines > $new_lines_needed ? $old_display_lines : $new_lines_needed;
+
+    # Derive scroll_offset and last_cursor_input_row from total content.
+    $self->_refresh_geometry($$input_ref, $$cursor_pos_ref, $prompt);
 
     if (should_log('DEBUG')) {
         log_debug('ReadLine', "redraw_line: input_len=$input_len, prompt_disp=$prompt_disp, input_disp=$input_disp, total_disp=$total_disp");
         log_debug('ReadLine', "redraw_line: term_width=$term_width, new_lines_needed=$new_lines_needed");
-        log_debug('ReadLine', "redraw_line: old_display_lines=$old_display_lines, max_lines=$max_lines");
+        log_debug('ReadLine', "redraw_line: old_display_lines=$old_display_lines, old_cursor_input_row=$old_cursor_input_row");
         log_debug('ReadLine', "redraw_line: last cursor was at row=$self->{last_cursor_row}, col=$self->{last_cursor_col}");
     }
 
@@ -674,7 +860,7 @@ sub redraw_line {
     # row per keystroke.
     print "\r";
     $self->{last_cursor_col} = 1;
-    my $rows_to_top = $self->{last_cursor_input_row} || 0;
+    my $rows_to_top = $old_cursor_input_row;
     # Clamp to old_display_lines - 1 as a safety net for stale state.
     if ($rows_to_top > $old_display_lines - 1) {
         $rows_to_top = $old_display_lines - 1;
@@ -689,9 +875,6 @@ sub redraw_line {
     print "\e[J";
     $self->_emit_text($prompt);
     $self->_emit_text($$input_ref);
-
-    # Update display_lines for next redraw.
-    $self->{display_lines} = $new_lines_needed;
 
     # After printing, the terminal cursor is at the end of the output.
     # Compute the desired cursor position from input state (NOT from
@@ -727,66 +910,7 @@ sub redraw_line {
     # Update tracking to reflect the final cursor position.
     $self->{last_cursor_row} = $desired_row;
     $self->{last_cursor_col} = $desired_col;
-    $self->{last_cursor_disp} = $prompt_disp + _display_width(substr($$input_ref, 0, $$cursor_pos_ref));
     $self->{last_cursor_input_row} = $desired_input_row;
-}
-
-=head2 _redraw_from_cursor
-
-Partial redraw: reprint from cursor position to end of input, then
-clear any leftover characters and reposition the cursor.
-
-All positions are computed from input state via _cursor_at_codepoint.
-
-=cut
-
-sub _redraw_from_cursor {
-    my ($self, $input_ref, $cursor_pos_ref, $prompt) = @_;
-
-    my $term_width = $self->_get_term_width();
-    my $prompt_disp = $self->_get_prompt_disp($prompt);
-
-    # Print everything after cursor, then clear leftover chars.
-    my $tail = substr($$input_ref, $$cursor_pos_ref);
-    $self->_emit_text($tail);
-    print "\e[J";
-
-    # Compute end-of-input position from input state.
-    my ($end_input_row, $end_col) = $self->_cursor_at_codepoint($$input_ref, length($$input_ref), $prompt);
-
-    # Compute target cursor position from input state.
-    my ($target_input_row, $target_col) = $self->_cursor_at_codepoint($$input_ref, $$cursor_pos_ref, $prompt);
-
-    # Convert input rows to screen rows (account for terminal scrolling).
-    my $end_row   = $self->_input_row_to_screen_row($end_input_row);
-    my $target_row = $self->_input_row_to_screen_row($target_input_row);
-
-    if (should_log('DEBUG')) {
-        log_debug('ReadLine', "_redraw_from_cursor: end=($end_row,$end_col), target=($target_row,$target_col)");
-    }
-
-    # Move from end to target. Use CR + vertical + horizontal for safety
-    # (avoid pending-wrap ambiguity with relative horizontal movement).
-    if ($target_row != $end_row || $target_col != $end_col) {
-        print "\r";
-        if ($target_row < $end_row) {
-            print "\e[" . ($end_row - $target_row) . "A";
-        } elsif ($target_row > $end_row) {
-            print "\e[" . ($target_row - $end_row) . "B";
-        }
-        print "\e[" . ($target_col - 1) . "C" if $target_col > 1;
-    }
-
-    # Update tracking.
-    $self->{last_cursor_row} = $target_row;
-    $self->{last_cursor_col} = $target_col;
-    my $cursor_disp = $prompt_disp + _display_width(substr($$input_ref, 0, $$cursor_pos_ref));
-    $self->{last_cursor_disp} = $cursor_disp;
-
-    # Update display_lines.
-    my $total_disp = $prompt_disp + _display_width($$input_ref);
-    $self->{display_lines} = $self->_compute_display_lines($total_disp);
-    $self->{last_cursor_input_row} = $target_input_row;
 }
 
 =head2 _redraw_line_external
@@ -812,12 +936,15 @@ sub _redraw_line_external {
         $$cursor_pos_ref = $input_len;
     }
 
+    # Save old cursor_input_row before _refresh_geometry overwrites it.
+    my $old_cursor_input_row = $self->{last_cursor_input_row} || 0;
+
     # Move to column 0 of current row, clear to end of screen,
     # then redraw prompt + input.
     print "\r";
     # Move up to the top of the input area (same logic as redraw_line).
     my $old_display_lines = $self->{display_lines} || 1;
-    my $rows_to_top = $self->{last_cursor_input_row} || 0;
+    my $rows_to_top = $old_cursor_input_row;
     if ($rows_to_top > $old_display_lines - 1) {
         $rows_to_top = $old_display_lines - 1;
     }
@@ -829,6 +956,9 @@ sub _redraw_line_external {
     print "\e[J";
     $self->_emit_text($prompt);
     $self->_emit_text($$input_ref);
+
+    # Derive scroll_offset from total content.
+    $self->_refresh_geometry($$input_ref, $$cursor_pos_ref, $prompt);
 
     # Compute cursor position from input state.
     my ($cursor_input_row, $cursor_col) = $self->_cursor_at_codepoint($$input_ref, $$cursor_pos_ref, $prompt);
@@ -851,17 +981,8 @@ sub _redraw_line_external {
         print "\e[" . ($cursor_col - 1) . "C" if $cursor_col > 1;
     }
 
-    # Update tracking.
-    my $term_width = $self->_get_term_width();
-    my $prompt_disp = $self->_get_prompt_disp($prompt);
-    my $total_disp = $prompt_disp + _display_width($$input_ref);
-    my $new_display_lines = $self->_compute_display_lines($total_disp);
-    my $cursor_disp = $prompt_disp + _display_width(substr($$input_ref, 0, $$cursor_pos_ref));
-
-    $self->{display_lines} = $new_display_lines;
     $self->{last_cursor_row} = $cursor_row;
     $self->{last_cursor_col} = $cursor_col;
-    $self->{last_cursor_disp} = $cursor_disp;
     $self->{last_cursor_input_row} = $cursor_input_row;
 }
 
@@ -878,7 +999,6 @@ sub readline {
     $self->{display_lines} = 1;
     $self->{last_cursor_row} = 0;
     $self->{last_cursor_col} = 1;
-    $self->{last_cursor_disp} = 0;
     $self->{scroll_offset} = 0;
     $self->{last_cursor_input_row} = 0;
 
@@ -889,12 +1009,20 @@ sub readline {
     $self->{kill_ring_active} = 0;
     $self->{_prev_was_kill} = 0;
 
+    # Reset yank state. Alt-Y is only valid immediately after Ctrl-Y;
+    # yank state must not carry across readline boundaries.
+    $self->_invalidate_yank();
+    $self->{_yank_op} = 0;
+
+    # Reset history position so Up/Down starts from the end.
+    $self->{history_pos} = -1;
+    delete $self->{current_input};
+
+    # Force terminal size refresh on this readline call.
+    $self->_invalidate_term_size();
+
     # Reset performance caches for this readline session
     $self->{_prompt_disp_cache} = undef;
-    $self->{_term_width_cache} = undef;
-    $self->{_term_width_time} = 0;
-    $self->{_term_height_cache} = undef;
-    $self->{_term_height_time} = 0;
 
     # Install SIGWINCH handler
     my $resize_flag = 0;
@@ -918,11 +1046,8 @@ sub readline {
     # If pre-filled, display the restored text
     if (length $prefill) {
         $self->_emit_text($prefill);
-        # Update display_lines to reflect how many terminal rows the
-        # prefilled input actually occupies (may be > 1 if it wraps).
-        my $total_disp = $self->_get_prompt_disp($prompt) + _display_width($prefill);
-        $self->{display_lines} = $self->_compute_display_lines($total_disp);
-        $self->{last_cursor_input_row} = $self->{display_lines} - 1;
+        # Derive geometry from the prefilled content.
+        $self->_refresh_geometry($input, $cursor_pos, $prompt);
     }
 
     while (1) {
@@ -931,8 +1056,7 @@ sub readline {
         # Handle SIGWINCH before reading
         if ($resize_flag) {
             $resize_flag = 0;
-            $self->{_term_width_cache} = undef;
-            $self->{_term_width_time} = 0;
+            $self->_invalidate_term_size();
             $self->redraw_line(\$input, \$cursor_pos, $prompt);
         }
 
@@ -980,10 +1104,24 @@ sub readline {
         $self->{_prev_was_kill} = $self->{kill_ring_active};
         $self->{kill_ring_active} = 0;
 
-        # Tab key (completion)
+        # Invalidate yank state: yank-pop is only valid immediately after
+        # a yank or yank-pop (GNU readline semantics). Any other command
+        # makes the recorded yank_start_pos/yank_text stale.
+        unless ($self->{_yank_op}) {
+            $self->_invalidate_yank();
+        }
+        $self->{_yank_op} = 0;
+
+        # Tab key (completion) — or tab character in input.
+        # If there is a completer and it handles the tab (finds candidates,
+        # cycles, etc.), it returns 1 and we skip the rest. If it returns 0
+        # (no completer or no candidates), fall through and treat Tab as
+        # a tab character, which is normalized to a space by the insert path.
         if ($ord == 9) {
-            $self->handle_tab(\$input, \$cursor_pos, $completion_state, $prompt);
-            next;
+            my $handled = $self->handle_tab(\$input, \$cursor_pos, $completion_state, $prompt);
+            next if $handled;
+            $char = ' ';
+            $ord = ord($char);
         }
 
         # Reset completion state on any non-tab key
@@ -1013,7 +1151,10 @@ sub readline {
                 return undef;
             }
             if ($cursor_pos < length($input)) {
-                substr($input, $cursor_pos, 1, '');
+                # Grapheme-aware: delete the entire grapheme at cursor.
+                my $del_end = _grapheme_boundary_after($input, $cursor_pos);
+                substr($input, $cursor_pos, $del_end - $cursor_pos, '');
+                $self->_invalidate_yank();
                 $self->redraw_line(\$input, \$cursor_pos, $prompt);
             }
             next;
@@ -1033,25 +1174,34 @@ sub readline {
                 my $input_len = length($input);
                 my $deleting_at_end = ($cursor_pos == $input_len);
 
-                my $deleted_char = substr($input, $cursor_pos - 1, 1);
-                my $deleted_width = _display_width($deleted_char);
+                # Grapheme-aware: find the start of the grapheme cluster
+                # containing the character before the cursor, so we delete
+                # the entire cluster (e.g., 'e' + combining accent) not
+                # just its last codepoint.
+                my $del_start = _grapheme_boundary_before($input, $cursor_pos);
+                my $deleted = substr($input, $del_start, $cursor_pos - $del_start);
+                my $deleted_width = _display_width($deleted);
 
-                substr($input, $cursor_pos - 1, 1, '');
-                $cursor_pos--;
+                substr($input, $del_start, $cursor_pos - $del_start, '');
+                $cursor_pos = $del_start;
+
+                # Invalidate yank state (input content changed).
+                $self->_invalidate_yank();
 
                 if ($deleting_at_end) {
                     # Optimization: if deleting from end, try the fast-path
-                    # (\b \b). Fall back to full redraw when the deletion
-                    # crosses a row boundary or involves non-ASCII content.
+                    # (move back, overwrite with space, move back). Fall back
+                    # to full redraw when the deletion crosses a row boundary
+                    # or involves non-ASCII content.
 
                     my $term_width = $self->_get_term_width();
                     my $prompt_disp = $self->_get_prompt_disp($prompt);
 
                     # Compute old and new cursor positions from input state.
                     # We reconstruct the old input by re-inserting the deleted
-                    # char at cursor_pos (pre-increment).
-                    my $old_input = substr($input, 0, $cursor_pos) . $deleted_char . substr($input, $cursor_pos);
-                    my $old_cp = $cursor_pos + 1;
+                    # text at the deletion point.
+                    my $old_input = substr($input, 0, $cursor_pos) . $deleted . substr($input, $cursor_pos);
+                    my $old_cp = $cursor_pos + length($deleted);
                     my ($old_row, $old_col) = $self->_cursor_at_codepoint($old_input, $old_cp, $prompt);
                     my ($new_row, $new_col) = $self->_cursor_at_codepoint($input, $cursor_pos, $prompt);
 
@@ -1059,21 +1209,20 @@ sub readline {
 
                     # Fast path is safe when:
                     # - cursor stays on the same row (no wrap boundary crossing)
-                    # - deleted char is exactly 1 column (no wide chars)
-                    # - remaining input has no wide chars (ASCII-only so
-                    #   arithmetic == character-by-character width)
+                    # - deleted cluster is exactly 1 column (no wide chars)
+                    # - remaining input is ASCII-only ($display_width == length)
                     if ($old_row == $new_row && $old_col > 1 && $deleted_width == 1 && $input_disp == length($input)) {
                         # Fast path: single-column ASCII at end of line.
                         print "\b \b";
 
-                        # Update tracking.
+                        # Update tracking. Recompute scroll_offset from
+                        # total content (NOT accumulated from _emit_text).
                         $self->{last_cursor_col} -= 1;
                         $self->{last_cursor_col} = 1 if $self->{last_cursor_col} < 1;
-                        $self->{last_cursor_disp} = $self->{last_cursor_row} * $term_width + ($self->{last_cursor_col} - 1);
 
-                        # Update display_lines.
                         my $total_disp = $prompt_disp + $input_disp;
                         $self->{display_lines} = $self->_compute_display_lines($total_disp);
+                        $self->{scroll_offset} = _max(0, $self->{display_lines} - $self->_get_term_height());
                         $self->{last_cursor_input_row} = $self->{display_lines} - 1;
                     } else {
                         $self->redraw_line(\$input, \$cursor_pos, $prompt);
@@ -1127,6 +1276,7 @@ sub readline {
             my $killed = substr($input, $cursor_pos);
             substr($input, $cursor_pos) = '';
             $self->kill_ring_save($killed);
+            $self->_invalidate_yank();
             $self->redraw_line(\$input, \$cursor_pos, $prompt);
             next;
         }
@@ -1139,6 +1289,7 @@ sub readline {
             substr($input, 0, $cursor_pos) = '';
             $cursor_pos = 0;
             $self->kill_ring_save($killed);
+            $self->_invalidate_yank();
             $self->redraw_line(\$input, \$cursor_pos, $prompt);
             next;
         }
@@ -1146,6 +1297,7 @@ sub readline {
         # Ctrl-W (kill word backward) — saves to kill ring for Ctrl-Y
         if ($ord == 23) {
             $self->_kill_word_backward(\$input, \$cursor_pos, $prompt);
+            $self->_invalidate_yank();
             next;
         }
 
@@ -1160,28 +1312,34 @@ sub readline {
             $self->{last_cursor_col} = 1;
             $self->{display_lines} = 1;
             $self->{last_cursor_input_row} = 0;
+            $self->_invalidate_yank();
             $self->redraw_line(\$input, \$cursor_pos, $prompt);
             next;
         }
 
         # Ctrl-B (move backward one character) — standard readline,
-        # equivalent to Left arrow.
+        # equivalent to Left arrow. Grapheme-aware: skips past
+        # combining marks, ZWJ, etc. that extend the preceding base.
         if ($ord == 2) {
             if ($cursor_pos > 0) {
                 my $old_pos = $cursor_pos;
-                $cursor_pos--;
-                $self->reposition_cursor(\$old_pos, \$cursor_pos, \$input, $prompt);
+                $cursor_pos = _grapheme_boundary_before($input, $cursor_pos);
+                if ($cursor_pos != $old_pos) {
+                    $self->reposition_cursor(\$old_pos, \$cursor_pos, \$input, $prompt);
+                }
             }
             next;
         }
 
         # Ctrl-F (move forward one character) — standard readline,
-        # equivalent to Right arrow.
+        # equivalent to Right arrow. Grapheme-aware.
         if ($ord == 6) {
             if ($cursor_pos < length($input)) {
                 my $old_pos = $cursor_pos;
-                $cursor_pos++;
-                $self->reposition_cursor(\$old_pos, \$cursor_pos, \$input, $prompt);
+                $cursor_pos = _grapheme_boundary_after($input, $cursor_pos);
+                if ($cursor_pos != $old_pos) {
+                    $self->reposition_cursor(\$old_pos, \$cursor_pos, \$input, $prompt);
+                }
             }
             next;
         }
@@ -1189,20 +1347,32 @@ sub readline {
         # Ctrl-T (transpose characters) — standard readline.
         # Swaps the character before and after the cursor. When the
         # cursor is at the end of the line, swaps the last two characters.
+        # Grapheme-aware: transposes grapheme clusters, not individual
+        # codepoints that would split combining marks.
         if ($ord == 20) {
             my $len = length($input);
             if ($cursor_pos >= $len && $len >= 2) {
-                # At end: swap last two characters.
-                my $ch1 = substr($input, $len - 2, 1);
-                my $ch2 = substr($input, $len - 1, 1);
-                substr($input, $len - 2, 2, $ch2 . $ch1);
+                # At end: swap last two grapheme clusters.
+                my $gb2 = length($input);
+                my $gb1 = _grapheme_boundary_before($input, $gb2);
+                my $gb0 = _grapheme_boundary_before($input, $gb1);
+                if ($gb1 > $gb0) {
+                    my $g2 = substr($input, $gb1, $gb2 - $gb1);
+                    my $g1 = substr($input, $gb0, $gb1 - $gb0);
+                    substr($input, $gb0, $gb2 - $gb0, $g2 . $g1);
+                }
             } elsif ($cursor_pos > 0 && $cursor_pos < $len) {
-                # Swap char before and after cursor, advance cursor.
-                my $ch1 = substr($input, $cursor_pos - 1, 1);
-                my $ch2 = substr($input, $cursor_pos, 1);
-                substr($input, $cursor_pos - 1, 2, $ch2 . $ch1);
-                $cursor_pos++;
+                # Swap the grapheme before cursor with the one after.
+                my $gb_after = _grapheme_boundary_after($input, $cursor_pos);
+                my $gb_before = _grapheme_boundary_before($input, $cursor_pos);
+                if ($gb_before < $cursor_pos && $gb_after > $cursor_pos) {
+                    my $g_before = substr($input, $gb_before, $cursor_pos - $gb_before);
+                    my $g_after = substr($input, $cursor_pos, $gb_after - $cursor_pos);
+                    substr($input, $gb_before, $gb_after - $gb_before, $g_after . $g_before);
+                    $cursor_pos = $gb_before + length($g_after);
+                }
             }
+            $self->_invalidate_yank();
             $self->redraw_line(\$input, \$cursor_pos, $prompt);
             next;
         }
@@ -1216,6 +1386,14 @@ sub readline {
 
         # Regular printable character
         if ($ord >= 32 || ($ord >= 128)) {
+            # Normalize tabs to spaces. Terminals use variable-width
+            # tab stops (typically 8 columns), which makes cursor
+            # tracking unreliable. We normalize to a single space so
+            # display width is always 1, consistent with _display_width.
+            if ($char eq "\t") {
+                $char = ' ';
+            }
+
             if (should_log('DEBUG')) {
                 log_debug('ReadLine', "Inserting '$char' at cursor_pos=$cursor_pos, input_len=" . length($input));
                 log_debug('ReadLine', "Input before: '$input'");
@@ -1230,6 +1408,9 @@ sub readline {
             if (should_log('DEBUG')) {
                 log_debug('ReadLine', "Input after: '$input', new cursor_pos=$cursor_pos");
             }
+
+            # Invalidate yank state (input content changed).
+            $self->_invalidate_yank();
 
             if ($inserting_at_end) {
                 $self->_emit_text($char);
@@ -1246,10 +1427,9 @@ sub readline {
                 # The backspace fast-path already uses _compute_display_lines;
                 # the insert path must too. This is O(1) for ASCII (the common
                 # case) since _display_width falls back to length().
-                my $prompt_disp = $self->_get_prompt_disp($prompt);
-                my $input_disp = _display_width($input);
-                my $total_disp = $prompt_disp + $input_disp;
+                my $total_disp = $self->_get_prompt_disp($prompt) + _display_width($input);
                 $self->{display_lines} = $self->_compute_display_lines($total_disp);
+                $self->{scroll_offset} = _max(0, $self->{display_lines} - $self->_get_term_height());
                 # Cursor is at the end of the input, so it's on the last row.
                 $self->{last_cursor_input_row} = $self->{display_lines} - 1;
             } else {
@@ -1274,7 +1454,7 @@ Handle tab completion
 sub handle_tab {
     my ($self, $input_ref, $cursor_pos_ref, $state, $prompt) = @_;
 
-    return unless $self->{completer};
+    return 0 unless $self->{completer};
 
     my $current_input = $$input_ref;
 
@@ -1293,7 +1473,7 @@ sub handle_tab {
 
         log_debug('ReadLine', "Found " . scalar(@candidates) . " candidates: @candidates");
 
-        return unless @candidates;
+        return 0 unless @candidates;
 
         if (@candidates == 1) {
             $$input_ref = $candidates[0];
@@ -1301,13 +1481,14 @@ sub handle_tab {
             $self->redraw_line($input_ref, $cursor_pos_ref, $prompt);
             $state->{active} = 0;
             log_debug('ReadLine', "Single match, completed to: '$$input_ref'");
-            return;
+            return 1;
         }
 
         $$input_ref = $candidates[0];
         $$cursor_pos_ref = length($$input_ref);
         $self->redraw_line($input_ref, $cursor_pos_ref, $prompt);
         log_debug('ReadLine', "Multiple matches, showing first: '$$input_ref'");
+        return 1;
 
     } else {
         $state->{index}++;
@@ -1323,6 +1504,7 @@ sub handle_tab {
 
         $$cursor_pos_ref = length($$input_ref);
         $self->redraw_line($input_ref, $cursor_pos_ref, $prompt);
+        return 1;
     }
 }
 
@@ -1363,14 +1545,18 @@ sub handle_escape_sequence {
         } elsif ($dir eq 'C') {
             if ($$cursor_pos_ref < length($$input_ref)) {
                 my $old_pos = $$cursor_pos_ref;
-                $$cursor_pos_ref++;
-                $self->reposition_cursor(\$old_pos, $cursor_pos_ref, $input_ref, $prompt);
+                $$cursor_pos_ref = _grapheme_boundary_after($$input_ref, $$cursor_pos_ref);
+                if ($$cursor_pos_ref != $old_pos) {
+                    $self->reposition_cursor(\$old_pos, $cursor_pos_ref, $input_ref, $prompt);
+                }
             }
         } elsif ($dir eq 'D') {
             if ($$cursor_pos_ref > 0) {
                 my $old_pos = $$cursor_pos_ref;
-                $$cursor_pos_ref--;
-                $self->reposition_cursor(\$old_pos, $cursor_pos_ref, $input_ref, $prompt);
+                $$cursor_pos_ref = _grapheme_boundary_before($$input_ref, $$cursor_pos_ref);
+                if ($$cursor_pos_ref != $old_pos) {
+                    $self->reposition_cursor(\$old_pos, $cursor_pos_ref, $input_ref, $prompt);
+                }
             }
         }
         return;
@@ -1447,7 +1633,12 @@ sub handle_escape_sequence {
     # Delete key: ESC[3~
     if ($seq =~ /^\e\[3~$/) {
         if ($$cursor_pos_ref < length($$input_ref)) {
-            substr($$input_ref, $$cursor_pos_ref, 1, '');
+            # Grapheme-aware: delete the entire grapheme cluster at the
+            # cursor, not just one codepoint.
+            my $del_start = $$cursor_pos_ref;
+            my $del_end = _grapheme_boundary_after($$input_ref, $$cursor_pos_ref);
+            substr($$input_ref, $del_start, $del_end - $del_start, '');
+            $self->_invalidate_yank();
             $self->redraw_line($input_ref, $cursor_pos_ref, $prompt);
         }
         return;
@@ -1516,6 +1707,11 @@ sub reposition_cursor {
     my ($self, $old_pos_ref, $new_pos_ref, $input_ref, $prompt) = @_;
 
     $prompt //= '';
+
+    # Ensure scroll_offset is derived from current content so
+    # _input_row_to_screen_row gives correct screen rows.
+    $self->_refresh_geometry($$input_ref, $$new_pos_ref, $prompt);
+
     my $term_width = $self->_get_term_width();
 
     # Compute BOTH source and target from input state. _cursor_at_codepoint
@@ -1564,14 +1760,6 @@ sub reposition_cursor {
     # Update tracking.
     $self->{last_cursor_row} = $new_row;
     $self->{last_cursor_col} = $new_col;
-    $self->{last_cursor_disp} = $new_row * $term_width + ($new_col - 1);
-
-    # display_lines and last_cursor_input_row should also be updated
-    # here so redraw_line and _redraw_line_external compute rows_to_top
-    # correctly after cursor movement.
-    my $prompt_disp = $self->_get_prompt_disp($prompt);
-    my $total_disp  = $prompt_disp + _display_width($$input_ref);
-    $self->{display_lines} = $self->_compute_display_lines($total_disp);
     $self->{last_cursor_input_row} = $new_input_row;
 
     if (should_log('DEBUG')) {

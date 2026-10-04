@@ -179,10 +179,8 @@ sub run_scenario {
             alarm 15;
             require CLIO::Core::ReadLine;
             my $rl = CLIO::Core::ReadLine->new(prompt => '> ');
-            $rl->{_term_width_cache} = 20;
-            $rl->{_term_width_time} = time();
-            $rl->{_term_height_cache} = 24;
-            $rl->{_term_height_time} = time();
+            $rl->{_term_size_cache} = [20, 24];
+            $rl->{_term_size_time} = time();
             $rl->readline('> ');
             alarm 0;
         };

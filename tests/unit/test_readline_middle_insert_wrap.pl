@@ -159,8 +159,8 @@ sub run_scenario {
             require CLIO::Core::ReadLine;
             my $rl = CLIO::Core::ReadLine->new(use_vt => 1);
             # Override terminal size
-            $rl->{_term_width_cache} = 20;
-            $rl->{_term_width_time} = time();
+            $rl->{_term_size_cache} = [20, 24];
+            $rl->{_term_size_time} = time();
 
             my $line = $rl->readline('> ');
             print "\nLINE:" . $line . "\n";
