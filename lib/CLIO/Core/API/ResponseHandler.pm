@@ -914,7 +914,8 @@ sub _handle_error_response_impl {
     elsif ($status == 400 && ($error =~ /model_max_prompt_tokens_exceeded|context_length_exceeded|prompt token count.*exceeds/i
                                || $error =~ /maximum.context.length/i
                                || $error =~ /reduce.*(?:prompt|input|context|length)/i
-                               || $error =~ /exceed.*context.size/i
+        || $error =~ /exceed.*(?:context|input)\s*size/i
+                               || $error =~ /exceeds?.*maximum.*(?:input|context|prompt)\s*(?:length|tokens?)/i
                                || (ref($error_obj) eq 'HASH' && ($error_obj->{type} // '') eq 'exceed_context_size_error'))) {
         $is_retryable_error = 1;
         $retryable = 1;

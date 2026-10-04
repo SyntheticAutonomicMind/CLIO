@@ -1116,6 +1116,29 @@ sub trim_for_token_limit {
     my $max_server_retries = $args{max_server_retries};
     my $error           = $args{error};
 
+    # Extract the actual provider-imposed input token limit from the error
+    # message, when available. Some provider gateways (e.g. Vercel routing
+    # to Poolside, or OpenRouter's :free variants) report a larger
+    # context_length in their model listing than the hard input limit
+    # enforced on the actual request. If the model's reported context window
+    # exceeds the actual limit, the proactive/predictive budget is too large
+    # and the reactive trim would keep too many messages, causing the retry
+    # to hit the same 400. By capping the retry budget to the actual limit
+    # (when the error message provides it), we ensure the trimmed context
+    # fits the provider's real constraint.
+    my $provider_max_input;
+    if ($error && $error =~ /exceeds?\s+(?:the\s+)?maximum(?:.*input)?\s*(?:length|limit).*(?:of\s+|is\s+)(\d+)\s*(?:tokens?|input tokens?)/i) {
+        $provider_max_input = int($1);
+    }
+    # Fallback: try "exceeds the context window of N" style messages
+    if (!$provider_max_input && $error && $error =~ /(?:maximum|context).*(?:window|allowed|limit).*[^\d](\d{4,})\s*tokens?/i) {
+        $provider_max_input = int($1);
+    }
+    if ($provider_max_input) {
+        log_debug('ErrorHandler', "Extracted provider max input limit from error: $provider_max_input tokens");
+    }
+
+
     dump_diagnostic(
         trigger     => 'trim',
         phase       => 'reactive_before',
@@ -1193,6 +1216,19 @@ sub trim_for_token_limit {
         # a 32K model it kept 40K tokens, exceeding the window and
         # guaranteeing a second token-limit error.
         $keep_budget = 1000 if $keep_budget < 1000;
+
+        # Cap the keep budget to the provider's actual input limit when
+        # the error message revealed it. Without this cap, the budget is
+        # derived from the model's reported context_window, which may be
+        # larger than the provider's hard input limit (e.g. a gateway may
+        # report 1M context_length for a variant that actually enforces
+        # 262K). The uncapped budget keeps too many messages and the retry
+        # hits the same 400, burning all retry cycles without ever trimming
+        # enough to fit.
+        if ($provider_max_input && $keep_budget > $provider_max_input) {
+            $keep_budget = $provider_max_input;
+            log_debug('ErrorHandler', "Capping keep_budget to provider limit: $provider_max_input tokens");
+        }
 
         my $kept_tokens = 0;
         my $start_idx   = $original_count;

@@ -5,7 +5,7 @@ use strict;
 use warnings;
 use FindBin;
 use lib "$FindBin::Bin/../lib";
-use Test::More tests => 5;
+use Test::More tests => 6;
 use CLIO::Core::APIManager;
 
 # Mock HTTP response for testing
@@ -14,8 +14,8 @@ package MockResponse {
         my ($class, $code, $content) = @_;
         return bless { code => $code, content => $content }, $class;
     }
-    sub code { $_[0]->{code} }
-    sub decoded_content { $_[0]->{content} }
+    sub code { $_[0]{code} }
+    sub decoded_content { $_[0]{content} }
     sub header { undef }
 }
 
@@ -66,4 +66,18 @@ package MockResponse {
     ok($is_token_limit, "OpenRouter 'maximum context length' error is classified as token limit");
 }
 
-print "\n✓ All token limit error handling tests passed!\n";
+# Test 6: Poolside-style "exceeds the maximum allowed input length" error
+# should match our new pattern (from the actual error in /tmp/clio_api_400.log)
+{
+    my $error_msg = 'Input length 263470 exceeds the maximum allowed input length of 262112 tokens.';
+
+    # The new regex catches "exceeds the maximum allowed input length of N tokens"
+    my $is_token_limit = $error_msg =~ /model_max_prompt_tokens_exceeded|context_length_exceeded|prompt token count.*exceeds/i
+                        || $error_msg =~ /maximum.context.length/i
+                        || $error_msg =~ /reduce.*(?:prompt|input|context|length)/i
+                        || $error_msg =~ /exceeds?.*(?:the\s+)?maximum.*(?:input|context|prompt)\s*(?:length|tokens?)/i
+                        || $error_msg =~ /exceed.*(?:context|input)\s*size/i;
+    ok($is_token_limit, "Poolside 'exceeds maximum allowed input length' error is classified as token limit");
+}
+
+print "\n All token limit error handling tests passed!\n";
