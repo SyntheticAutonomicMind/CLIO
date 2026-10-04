@@ -540,4 +540,44 @@ sub tc {
     is($r->{decision}, 'complete', 'Additional: Missing success field treated as success (backward compat)');
 }
 
+# ── Additional: api_truncated continuation message is concise (no token budget mention) ──
+{
+    my $r = $eval->evaluate(
+        content      => "Here is the beginning of",
+        api_response  => { finish_reason => 'length' },
+        tool_calls   => [],
+        user_input   => "explain",
+        retry_count  => 0,
+    );
+    is($r->{decision}, 'continue', 'Additional: finish_reason=length = continue');
+    ok(grep { $_ eq 'api_truncated' } @{$r->{blockers}}, 'Additional: blocks on api_truncated');
+    # The continuation message should be concise and NOT mention token
+    # budgets (antipattern). It should instruct the model to continue
+    # and produce remaining content.
+    unlike($r->{continuation}, qr/token|budget|max_token|output.?token/i,
+        'Additional: api_truncated continuation does NOT mention token budgets');
+    like($r->{continuation}, qr/continu|remaining|finish|short|cut/i,
+        'Additional: api_truncated continuation mentions continuing/remaining content');
+}
+
+# ── Additional: Truncated budget with in-progress todo surfaces both blockers ──
+{
+    my $session = make_session([{
+        id => 1, title => 'Fix bug', status => 'in-progress',
+        description => 'Fix the login bug',
+    }]);
+    my $r = $eval->evaluate(
+        content      => "Here is the beginning of",
+        api_response  => { finish_reason => 'length' },
+        tool_calls   => [],
+        session      => $session,
+        user_input   => "fix the bug",
+        retry_count  => 0,
+    );
+    is($r->{decision}, 'continue', 'Additional: Truncated + in-progress todo = continue');
+    ok(grep { $_ eq 'api_truncated' } @{$r->{blockers}}, 'Additional: blocks on api_truncated');
+    ok(grep { $_ eq 'todo_in_progress' } @{$r->{blockers}}, 'Additional: blocks on todo_in_progress');
+    is(scalar(@{$r->{blockers}}), 2, 'Additional: exactly 2 blockers');
+}
+
 done_testing();

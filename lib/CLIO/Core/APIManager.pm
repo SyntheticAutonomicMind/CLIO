@@ -1304,6 +1304,13 @@ sub _inject_reasoning_params {
     my $schema = $endpoint_config->{reasoning_schema};
     return unless $schema && ref($schema) eq 'HASH';
 
+    # Consume the per-call thinking override (set by the orchestrator on
+    # continuation retries after API truncation). Always delete here so
+    # it never leaks to subsequent API calls — even when thinking is
+    # disabled for this request, the flag is consumed so it doesn't
+    # accidentally affect the next call.
+    my $reduce_thinking = delete $self->{_reduce_thinking_override};
+
     my $mode = $schema->{mode} || 'disabled';
 
     # --- Side-effect adaptations (always applied) ---
@@ -1408,6 +1415,23 @@ sub _inject_reasoning_params {
         unless ($valid{$effort}) {
             $effort = $schema->{invalid_effort_default} || $schema->{default_effort};
         }
+    }
+
+    # On continuation retries after API truncation (finish_reason=length),
+    # reduce thinking effort to the lowest level to free output tokens
+    # for actual response content. The flag was consumed (deleted) at the
+    # top of this method. Only applies when thinking is active ($send)
+    # — if thinking is off, there's nothing to reduce.
+    if ($reduce_thinking && $send) {
+        $effort = 'low';
+        if ($schema->{values} && ref($schema->{values}) eq 'ARRAY') {
+            my %valid = map { $_ => 1 } @{$schema->{values}};
+            $effort = $schema->{invalid_effort_default} || $schema->{default_effort}
+                unless $valid{$effort};
+        }
+        log_debug('APIManager', sprintf(
+            "Truncation retry: reduced reasoning effort to '%s' for %s to conserve output tokens",
+            $effort, $model));
     }
 
     # Dispatch on mode for param injection
@@ -2435,6 +2459,15 @@ sub _build_responses_api_payload {
     my $budget_limit = $self->_compute_budget_aware_max_output_tokens($messages);
     my $max_out = $opts{max_output_tokens} || $budget_limit;
     $max_out = $budget_limit if $max_out > $budget_limit;
+    # Apply per-call override (set by the orchestrator on continuation retries
+    # after API truncation). See _build_payload for the same pattern.
+    if ($self->{_max_output_tokens_override} && $self->{_max_output_tokens_override} < $max_out) {
+        $max_out = $self->{_max_output_tokens_override};
+        log_debug('APIManager', sprintf(
+            "Truncation retry: capping max_output_tokens to %d (override) for %s",
+            $max_out, $model));
+    }
+    delete $self->{_max_output_tokens_override};
 
     my $payload = {
         model => $model,
@@ -2461,6 +2494,13 @@ sub _build_responses_api_payload {
         elsif ($thinking_mode eq 'enabled'
             || ($thinking_mode eq 'auto' && $show_thinking)) {
             my $thinking_effort = $self->{config} ? ($self->{config}->get('thinking_effort') // 'medium') : 'medium';
+            # On truncation-retry continuations, reduce thinking effort to the
+            # lowest level to free output tokens for actual response content.
+            my $reduce = delete $self->{_reduce_thinking_override};
+            if ($reduce) {
+                $thinking_effort = 'low';
+                log_debug('APIManager', "Truncation retry: reduced reasoning effort to 'low' (Responses API)");
+            }
             my $reasoning_config = { effort => $thinking_effort };
             # summary: auto makes the model return reasoning text; only set
             # when the user actually wants to see it. With thinking_mode=auto
@@ -2699,6 +2739,17 @@ sub _build_payload {
     my $budget_limit = $self->_compute_budget_aware_max_output_tokens($messages);
     my $max_tokens = $opts{max_tokens} || $budget_limit;
     $max_tokens = $budget_limit if $max_tokens > $budget_limit;
+    # Apply per-call override (set by the orchestrator on continuation retries
+    # after API truncation). Halves the output budget so the model has room
+    # to produce remaining content without hitting the same token ceiling.
+    if ($self->{_max_output_tokens_override} && $self->{_max_output_tokens_override} < $max_tokens) {
+        $max_tokens = $self->{_max_output_tokens_override};
+        log_debug('APIManager', sprintf(
+            "Truncation retry: capping max_tokens to %d (override) for %s",
+            $max_tokens, $model));
+    }
+    # Clear the override after applying so it doesn't persist across calls
+    delete $self->{_max_output_tokens_override};
     
     # Build base payload
     my $payload = {
@@ -3592,6 +3643,24 @@ sub _log_api_response {
 sub send_request {
     my ($self, $input, %opts) = @_;
 
+    # Extract per-call truncation-recovery overrides (set by the orchestrator
+    # on continuation retries after finish_reason=length). Stored on $self so
+    # the payload-building pipeline (_build_payload / _build_responses_api_payload
+    # / _inject_reasoning_params) can read them without plumbing opts through
+    # every intermediate method. Both are consumed during payload building.
+    delete $self->{_reduce_thinking_override};
+    delete $self->{_max_output_tokens_override};
+    my $reduce_thinking = delete $opts{reduce_thinking};
+    my $max_out_override = delete $opts{max_output_tokens_override};
+    if ($reduce_thinking) {
+        $self->{_reduce_thinking_override} = 1;
+        log_debug('APIManager', "reduce_thinking override activated (truncation-retry path)");
+    }
+    if ($max_out_override && $max_out_override > 0) {
+        $self->{_max_output_tokens_override} = $max_out_override;
+        log_debug('APIManager', "max_output_tokens override activated: $max_out_override (truncation-retry path)");
+    }
+
     my $ctx = $self->_prepare_api_request($input, %opts, is_streaming => 0);
     
     # Check rate limiter before making request (provider_label may be undefined for early returns).
@@ -3827,6 +3896,23 @@ sub send_request_streaming {
     my $on_chunk     = delete $opts{on_chunk};
     my $on_tool_call = delete $opts{on_tool_call};
     my $on_thinking  = delete $opts{on_thinking};
+
+    # Extract per-call truncation-recovery overrides (set by the orchestrator
+    # on continuation retries after finish_reason=length). Stored on $self so
+    # the payload-building pipeline can read them without plumbing opts through
+    # every intermediate method. Both are consumed during payload building.
+    delete $self->{_reduce_thinking_override};
+    delete $self->{_max_output_tokens_override};
+    my $reduce_thinking = delete $opts{reduce_thinking};
+    my $max_out_override = delete $opts{max_output_tokens_override};
+    if ($reduce_thinking) {
+        $self->{_reduce_thinking_override} = 1;
+        log_debug('APIManager', "reduce_thinking override activated (truncation-retry path)");
+    }
+    if ($max_out_override && $max_out_override > 0) {
+        $self->{_max_output_tokens_override} = $max_out_override;
+        log_debug('APIManager', "max_output_tokens override activated: $max_out_override (truncation-retry path)");
+    }
 
     my $ctx = $self->_prepare_api_request($input, %opts,
         is_streaming => 1,

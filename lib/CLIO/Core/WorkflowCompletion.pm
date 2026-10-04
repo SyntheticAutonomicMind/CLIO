@@ -843,10 +843,10 @@ sub _build_continuation {
     my %b = map { $_ => 1 } @$blockers;
 
     if ($b{api_truncated}) {
-        $msg = "The workflow is not complete.\n"
-             . "The response was truncated by the API (finish_reason=length). "
-             . "Produce the remaining content or tool calls needed to finish. "
-             . "Do not repeat what was already written.";
+        $msg = "The workflow is not complete. Your previous response was cut "
+             . "short by the API. Continue from where you left off and "
+             . "produce only the remaining content or tool calls needed to "
+             . "finish. Do not repeat what was already written.";
     }
     elsif ($b{verification_failed}) {
         my $detail = join('; ', grep { /verification command failed/ } @$evidence);

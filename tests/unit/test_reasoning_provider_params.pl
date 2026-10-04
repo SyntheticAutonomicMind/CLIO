@@ -9,7 +9,7 @@ use strict;
 use warnings;
 use FindBin qw($RealBin);
 use lib "$RealBin/../../lib";
-use Test::More tests => 46;
+use Test::More tests => 56;
 
 use CLIO::Core::APIManager;
 use CLIO::Providers qw(build_endpoint_config);
@@ -315,4 +315,42 @@ sub _run_adapt {
     my $payload = { model => 'MiniMax-M3', messages => [] };
     my ($p) = _run_adapt(provider => 'minimax', payload => $payload, thinking_mode => 'auto', effort => 'high', show_thinking => 0);
     is($p->{thinking}{type}, 'disabled', 'MiniMax+auto/off: thinking.type is disabled');
+}
+
+# Case 29: reduce_thinking override forces lowest effort on OpenRouter nested mode
+{
+    my $payload = { model => 'poolside/laguna-s-2.1', messages => [] };
+    $am->{_reduce_thinking_override} = 1;
+    my ($p) = _run_adapt(provider => 'openrouter', payload => $payload, thinking_mode => 'enabled', effort => 'medium');
+    is($p->{reasoning}{effort}, 'low', 'OpenRouter+reduce_thinking: effort forced to low');
+    ok(defined $p->{reasoning}{enabled} && ${$p->{reasoning}{enabled}}, 'OpenRouter+reduce_thinking: enabled remains true');
+    ok(!exists $am->{_reduce_thinking_override}, 'OpenRouter+reduce_thinking: flag consumed (deleted)');
+}
+
+# Case 30: reduce_thinking override forces lowest effort on Z.AI mixed mode
+{
+    my $payload = { model => 'glm-5.2', messages => [] };
+    $am->{_reduce_thinking_override} = 1;
+    my ($p) = _run_adapt(provider => 'zai', payload => $payload, thinking_mode => 'enabled', effort => 'high');
+    is($p->{reasoning_effort}, 'low', 'Z.AI+reduce_thinking: effort forced to low');
+    is($p->{thinking}{type}, 'enabled', 'Z.AI+reduce_thinking: thinking.type remains enabled');
+    ok(!exists $am->{_reduce_thinking_override}, 'Z.AI+reduce_thinking: flag consumed (deleted)');
+}
+
+# Case 31: reduce_thinking override forces lowest effort on OpenAI effort mode
+{
+    my $payload = { model => 'gpt-4.1', messages => [] };
+    $am->{_reduce_thinking_override} = 1;
+    my ($p) = _run_adapt(provider => 'openai', payload => $payload, thinking_mode => 'enabled', effort => 'high');
+    is($p->{reasoning_effort}, 'low', 'OpenAI+reduce_thinking: effort forced to low');
+    ok(!exists $am->{_reduce_thinking_override}, 'OpenAI+reduce_thinking: flag consumed (deleted)');
+}
+
+# Case 32: reduce_thinking without thinking enabled is consumed but has no effect
+{
+    my $payload = { model => 'poolside/laguna-s-2.1', messages => [] };
+    $am->{_reduce_thinking_override} = 1;
+    my ($p) = _run_adapt(provider => 'openrouter', payload => $payload, thinking_mode => 'disabled', effort => 'medium');
+    ok(!exists $p->{reasoning}, 'OpenRouter+disabled+reduce_thinking: no reasoning param (thinking off)');
+    ok(!exists $am->{_reduce_thinking_override}, 'OpenRouter+disabled+reduce_thinking: flag consumed');
 }

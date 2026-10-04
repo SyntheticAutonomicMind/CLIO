@@ -502,6 +502,8 @@ sub process_input {
     my $max_retries = 3;  # Maximum retries for API errors (malformed JSON, etc.)
     my $premature_stop_retries = 0;  # Track retries for premature workflow stops
     my $max_premature_stop_retries = 2;  # Max auto-retries for premature stops
+    my $reduce_thinking = 0;  # Lower thinking effort on truncation-retry continuations
+    my $max_output_tokens_override = 0;  # Capped output budget for truncation-retry continuations
     my $max_server_retries = 0;  # Infinite retries for server/network errors (0 = unlimited)
     my $max_rate_limit_retries = 0;  # Infinite retries for rate limits (0 = unlimited)
     
@@ -696,6 +698,8 @@ sub process_input {
                 on_chunk => $callback,
                 on_tool_call => $tool_callback,
                 on_thinking => $on_thinking,
+                reduce_thinking => $reduce_thinking,
+                max_output_tokens_override => $max_output_tokens_override,
             );
         };
         
@@ -932,6 +936,31 @@ sub process_input {
                 log_debug('WorkflowOrchestrator', "Workflow completion evaluation: decision=$eval->{decision}, blockers=[" . join(',', @{$eval->{blockers}}) . "]");
                 log_debug('WorkflowOrchestrator', "Nudging model to continue (attempt $premature_stop_retries/$max_premature_stop_retries).");
 
+                # On continuation after API truncation (finish_reason=length),
+                # the model's output token budget was exhausted. Reduce both
+                # the output token ceiling and thinking effort on the retry so
+                # the model has room to produce remaining content instead of
+                # hitting the same ceiling again.
+                if (grep { $_ eq 'api_truncated' } @{$eval->{blockers} || []}) {
+                    $reduce_thinking = 1;
+                    # Use the actual completion tokens from the API response
+                    # as a floor — the model already produced this many tokens,
+                    # so the retry needs at least that much headroom. Cap the
+                    # override at half the original budget so thinking (which
+                    # consumed the rest) is squeezed out.
+                    my $orig_max_out = $api_response->{usage}->{completion_tokens} // 0;
+                    if ($orig_max_out > 0) {
+                        $max_output_tokens_override = int($orig_max_out * 2);
+                        log_debug('WorkflowOrchestrator',
+                            "Setting max_output_tokens_override=$max_output_tokens_override (2x completed tokens) for truncation retry");
+                    } else {
+                        # No usage data — fall back to a conservative cap
+                        $max_output_tokens_override = 4096;
+                        log_debug('WorkflowOrchestrator',
+                            "Setting max_output_tokens_override=$max_output_tokens_override (conservative fallback) for truncation retry");
+                    }
+                }
+
                 # Save any partial content as assistant message (ephemeral -
                 # not persisted to session; the next assistant message with
                 # tool_calls will be saved by _execute_tool_round).
@@ -1018,6 +1047,8 @@ sub process_input {
         
         # Workflow is complete — reset the retry counter for the next turn.
         $premature_stop_retries = 0;
+        $reduce_thinking = 0;
+        $max_output_tokens_override = 0;
         
         # AI has final answer
         my $elapsed_time = time() - $start_time;

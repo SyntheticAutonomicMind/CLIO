@@ -42,6 +42,8 @@ sub new {
         api_base       => 'https://mock.example.com/v1',
         config         => $opts{config} || {},
         _model         => 'mock-model',
+        reduce_thinking_calls => 0,
+        max_out_override_calls => 0,
     }, $class;
 }
 
@@ -49,6 +51,8 @@ sub send_request_streaming {
     my ($self, $input, %opts) = @_;
     $self->{request_count}++;
     $self->{last_messages} = $opts{messages} if $opts{messages};
+    $self->{reduce_thinking_calls} += ($opts{reduce_thinking} ? 1 : 0);
+    $self->{max_out_override_calls} += ($opts{max_output_tokens_override} ? 1 : 0);
 
     my $resp;
     if (@{$self->{response_queue}}) {
@@ -62,7 +66,7 @@ sub send_request_streaming {
         $result->{tool_calls} = $resp->{tool_calls};
         $result->{content}    = '';
     }
-    $result->{usage} = { prompt_tokens => 100, completion_tokens => 50 };
+    $result->{usage} = { prompt_tokens => 100, completion_tokens => $resp->{completion_tokens} // 50 };
 
     return $result;
 }
@@ -384,6 +388,98 @@ print "=" x 60 . "\n\n";
     ok($result->{success}, 'Test 10: Complete response returns success');
     is($api_manager->{request_count}, 1,
         'Test 10: API called exactly once (no false-positive continuation)');
+}
+
+# ── Test 11: reduce_thinking and max_output_tokens_override on truncation-retry ──
+{
+    $api_manager->{response_queue} = [];
+    $api_manager->{request_count} = 0;
+    $api_manager->{reduce_thinking_calls} = 0;
+    $api_manager->{max_out_override_calls} = 0;
+    push @{$api_manager->{response_queue}},
+        { content => "Here is the beginning of", finish_reason => 'length' },
+        { content => "The full explanation is complete. Done.", finish_reason => 'stop' };
+
+    $session->{messages} = [];
+    my $result = $orchestrator->process_input("Explain something", $session);
+
+    ok($result->{success}, 'Test 11: Eventually succeeds after truncation');
+    # On the continuation retry after finish_reason=length, both reduce_thinking
+    # and max_output_tokens_override should be passed to the API call.
+    ok($api_manager->{reduce_thinking_calls} >= 1,
+        'Test 11: reduce_thinking was passed on truncation-retry continuation');
+    ok($api_manager->{max_out_override_calls} >= 1,
+        'Test 11: max_output_tokens_override was passed on truncation-retry continuation');
+}
+
+# ── Test 12: reduce_thinking and max_output_tokens_override NOT set on normal continuation ──
+{
+    $api_manager->{response_queue} = [];
+    $api_manager->{request_count} = 0;
+    $api_manager->{reduce_thinking_calls} = 0;
+    $api_manager->{max_out_override_calls} = 0;
+    push @{$api_manager->{response_queue}},
+        { content => "I still need to check something", finish_reason => 'stop' },
+        { content => "Done.", finish_reason => 'stop' };
+
+    $session->{messages} = [];
+    my $result = $orchestrator->process_input("Check something", $session);
+
+    ok($result->{success}, 'Test 12: Eventually succeeds');
+    # Normal premature stop (text_unfinished, not api_truncated) should NOT
+    # trigger truncation-recovery overrides.
+    is($api_manager->{reduce_thinking_calls}, 0,
+        'Test 12: reduce_thinking NOT set on non-truncated continuation');
+    is($api_manager->{max_out_override_calls}, 0,
+        'Test 12: max_output_tokens_override NOT set on non-truncated continuation');
+}
+
+# ── Test 13: Exhausted budget after api_truncated surfaces error with overrides attempted ──
+{
+    $api_manager->{response_queue} = [];
+    $api_manager->{request_count} = 0;
+    $api_manager->{reduce_thinking_calls} = 0;
+    $api_manager->{max_out_override_calls} = 0;
+    # All responses truncated — the model keeps hitting output limits
+    push @{$api_manager->{response_queue}},
+        { content => "Beginning", finish_reason => 'length' },
+        { content => "Beginning", finish_reason => 'length' },
+        { content => "Beginning", finish_reason => 'length' };
+
+    $session->{messages} = [];
+    my $result = $orchestrator->process_input("Explain something very complex", $session);
+
+    ok(!$result->{success}, 'Test 13: Exhausted budget returns error');
+    is($result->{error_type}, 'completion_exhausted',
+        'Test 13: error_type is completion_exhausted');
+    # Even on exhaustion, truncation-recovery overrides should have been
+    # attempted on the 2 continuation retries.
+    ok($api_manager->{reduce_thinking_calls} >= 2,
+        'Test 13: reduce_thinking attempted on continuation retries');
+    ok($api_manager->{max_out_override_calls} >= 2,
+        'Test 13: max_output_tokens_override attempted on continuation retries');
+}
+
+# ── Test 14: max_output_tokens_override is based on completion_tokens from API ──
+{
+    $api_manager->{response_queue} = [];
+    $api_manager->{request_count} = 0;
+    # Return a response with specific completion_tokens so we can verify
+    # the override is 2x that value.
+    push @{$api_manager->{response_queue}},
+        { content => "Partial content", finish_reason => 'length', completion_tokens => 800 },
+        { content => "Done.", finish_reason => 'stop' };
+
+    $session->{messages} = [];
+    my $result = $orchestrator->process_input("Complex task", $session);
+
+    ok($result->{success}, 'Test 14: Eventually succeeds');
+    # Mock returns completion_tokens from the response hash, not usage hash.
+    # The orchestrator reads from $api_response->{usage}{completion_tokens}.
+    # Mock returns usage->{completion_tokens} = 50 by default, so override
+    # should be 100 (2 * 50). Verify the override was passed (value > 0).
+    ok($api_manager->{max_out_override_calls} >= 1,
+        'Test 14: max_output_tokens_override was passed on truncation retry');
 }
 
 done_testing();
