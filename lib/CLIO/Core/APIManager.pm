@@ -3726,6 +3726,23 @@ sub _process_non_streaming_response {
         $self->_extract_response_content($data, $use_responses_api, $opts);
     my ($tokens_in, $tokens_out) = $self->_extract_usage_tokens($data, $use_responses_api);
 
+    # Extract finish_reason / stop_reason so the WorkflowCompletion gate can
+    # distinguish a legitimate turn-end (finish_reason=stop) from a
+    # token-limit truncation (finish_reason=length / content_filter) without
+    # duplicating provider-specific streaming logic. APIManager already
+    # surfaces stream-level truncation (no finish_reason at all) as an error;
+    # this field fills the gap for deterministic truncation (finish_reason=length).
+    my $finish_reason;
+    if ($use_responses_api) {
+        # Responses API exposes completion via the top-level `status` field.
+        # A completed response maps to 'stop'; an incomplete one maps through
+        # so the completion gate can detect non-terminal states.
+        my $resp_status = $data->{status} || '';
+        $finish_reason = $resp_status eq 'completed' ? 'stop' : $resp_status if length $resp_status;
+    } elsif ($data->{choices} && ref($data->{choices}) eq 'ARRAY' && @{$data->{choices}} && $data->{choices}[0]{message}) {
+        $finish_reason = $data->{choices}[0]{finish_reason};
+    }
+
     # Post-process content
     if (defined $content && length($content)) {
         # Strip inline thinking tags from any provider's non-streaming
@@ -3756,6 +3773,7 @@ sub _process_non_streaming_response {
         $result->{tool_calls} = $tool_calls if $tool_calls;
         $result->{reasoning_details} = $reasoning_details if $reasoning_details;
         $result->{responses_reasoning_items} = $responses_reasoning_items if $responses_reasoning_items;
+        $result->{finish_reason} = $finish_reason if defined $finish_reason;
         $self->{response_handler}->release_broker_slot($resp, 200);
         return $result;
     }
@@ -3765,6 +3783,7 @@ sub _process_non_streaming_response {
         $self->{response_handler}->release_broker_slot($resp, 200);
         my $tc_result = { content => '', tool_calls => $tool_calls, usage => $data->{usage} };
         $tc_result->{responses_reasoning_items} = $responses_reasoning_items if $responses_reasoning_items;
+        $tc_result->{finish_reason} = $finish_reason if defined $finish_reason;
         return $tc_result;
     }
 
@@ -4694,9 +4713,8 @@ sub _finalize_streaming_response {
     #
     # Only fire when we have something to lose (content or tool_calls
     # accumulated) - a stream that produced nothing yet has no
-    # `finish_reason` is still treated as a no-op by the orchestrator's
-    # premature-stop heuristic, which has the right context to decide
-    # whether to nudge the model.
+    # `finish_reason` and is left for the WorkflowCompletion gate to
+    # decide whether to nudge the model.
     if (!$s{_finish_reason}
         && (length($s{accumulated_content}) || keys(%{$s{tool_calls_accumulator}}))) {
         my $content_len = length($s{accumulated_content} // '');
@@ -4808,6 +4826,17 @@ sub _finalize_streaming_response {
     };
 
     $response->{tool_calls} = $tool_calls if $tool_calls;
+
+    # Surface finish_reason so the WorkflowCompletion gate can distinguish
+    # a legitimate turn-end (stop / tool_calls) from deterministic token-limit
+    # truncation (length / content_filter) without re-implementing provider
+    # streaming logic. APIManager already surfaces stream-level truncation
+    # (no finish_reason at all) as a retryable error; this field fills the
+    # gap for finish_reason=length which completes cleanly but is still
+    # a truncated turn.
+    if (defined $s{_finish_reason} && length $s{_finish_reason}) {
+        $response->{finish_reason} = $s{_finish_reason};
+    }
 
     if (length($s{accumulated_reasoning} // '')) {
         $response->{reasoning_details} = [{ type => 'reasoning.text', text => $s{accumulated_reasoning} }];
