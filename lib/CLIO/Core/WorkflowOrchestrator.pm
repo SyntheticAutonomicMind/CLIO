@@ -313,18 +313,19 @@ sub _looks_premature_stop {
         return 1;
     }
 
-    # Long responses are treated as genuine final answers even if they
-    # look mid-sentence - a model that wrote 200+ chars was probably
-    # actually finishing its thought, not stopping mid-work.
-    return 0 if $content_length >= 200;
-
-    # Short response: check if it ends mid-sentence.
-    my $trimmed = $content // '';
-    $trimmed =~ s/\s+$//;
-    # Ends with `:` (colon, e.g. "Let me check:") or no terminal
-    # punctuation (`.`, `!`, `?` possibly followed by `)`/`]`) -> mid-work.
-    if ($trimmed =~ /[:]\s*$/ || $trimmed !~ /[.!?][)\]]*\s*$/) {
-        return 1;
+    # Responses that don't end with terminal punctuation are premature
+    # stops — the model was still working. Threshold raised from 200 to
+    # 500 to allow longer analytical responses to be treated as genuine
+    # final answers, while still catching "thinking through loud"
+    # responses that stop mid-sentence after tool calls.
+    if ($content_length < 500) {
+        my $trimmed = $content // '';
+        $trimmed =~ s/\s+$//;
+        # Ends with `:`, backtick, `(`, `[`, `{`, `,`, `;`, `+`, `=`
+        # or has no terminal punctuation (`.`, `!`, `?`) -> mid-work.
+        if ($trimmed =~ /[:`({\[;,+=]\s*$/ || $trimmed !~ /[.!?][)\]`'"']*\s*$/) {
+            return 1;
+        }
     }
 
     return 0;
