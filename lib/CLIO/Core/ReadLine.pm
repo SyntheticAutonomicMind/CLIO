@@ -78,8 +78,6 @@ explicit zero-width codepoint table.
 # on every _display_width call. The result is captured in a closure.
 my $HAS_UNICODE_GCSTRING = eval { require Unicode::GCString; 1 } ? 1 : 0;
 
-sub _check_gcstring { $HAS_UNICODE_GCSTRING }
-
 # Codepoints that are zero-width in terminal rendering: combining marks,
 # ZWJ, ZWNJ, variation selectors, zero-width spaces, and tags.
 sub _is_zero_width {

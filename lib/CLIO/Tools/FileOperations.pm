@@ -1498,7 +1498,6 @@ sub grep_search {
 
                     # Stop if we hit result limit
                     if (scalar(@matches) >= $max_results) {
-                        close $fh;
                         last;
                     }
                 }

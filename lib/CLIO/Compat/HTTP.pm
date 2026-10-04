@@ -835,11 +835,6 @@ sub status_line {
     return $self->{status} . " " . $self->{reason};
 }
 
-sub content_type {
-    my $self = shift;
-    return $self->{headers}{'content-type'};
-}
-
 package CLIO::Compat::HTTP::Request;
 
 use strict;

@@ -73,32 +73,6 @@ use constant {
 
 # No external dependencies, only core Perl
 
-# Generate a UUID v4 for request tracking headers
-sub _generate_uuid {
-    # Self-contained entropy pool using xorshift32 seeded from time/PID/counter.
-    # Avoids Perl's rand() entirely: a stray srand() call elsewhere in the
-    # process (e.g. from a module that seeds for reproducibility) would
-    # otherwise poison UUID randomness without us knowing.
-    our $UUID_COUNTER = 0;
-    $UUID_COUNTER++;
-    my $entropy = (Time::HiRes::time() * 1_000_000) ^ $$ ^ (0 + \$UUID_COUNTER) ^ ($UUID_COUNTER * 0x9E3779B9);
-
-    my @hex = ('0'..'9', 'a'..'f');
-    my $uuid = '';
-    for my $i (1..32) {
-        # xorshift32 step to mix entropy per character
-        $entropy ^= ($entropy << 13) & 0xFFFFFFFF;
-        $entropy ^= ($entropy >> 17) & 0xFFFFFFFF;
-        $entropy ^= ($entropy << 5)  & 0xFFFFFFFF;
-        $uuid .= $hex[$entropy & 0xF];
-        $uuid .= '-' if $i == 8 || $i == 12 || $i == 16 || $i == 20;
-    }
-    # Set version (4) and variant (8, 9, a, or b)
-    substr($uuid, 14, 1) = '4';
-    substr($uuid, 19, 1) = $hex[8 + ($entropy & 0x3)];
-    return $uuid;
-}
-
 # Create an HTTP client with proxy config from CLIO config
 sub _create_http_client {
     my ($self, %opts) = @_;
@@ -3736,6 +3710,7 @@ sub _process_non_streaming_response {
         $self->{performance_monitor}->record_api_call($self->{api_base}, $model,
             { start_time => $perf_start_time, end_time => time(), success => 0, error => "Request failed: $eval_error" });
         $self->{response_handler}->release_broker_slot(undef, 599);
+        $self->{rate_limiter}->release(lc($provider_label // 'unknown'));
         return { success => 0, error => "Request failed: $eval_error", retryable => 1, retry_after => 2, error_type => 'server_error' };
     }
 
@@ -5274,23 +5249,6 @@ sub has_response {
     
     return ($self->{request_state} // 0) == REQUEST_COMPLETE || 
            ($self->{request_state} // 0) == REQUEST_ERROR;
-}
-
-sub _cleanup {
-    my ($self) = @_;
-    
-    if ($self->{message_file} && -f $self->{message_file}) {
-        unlink($self->{message_file});
-    }
-    $self->{message_file} = undef;
-    $self->{pid} = undef;
-    
-    if ($self->{debug}) {
-        log_debug('APIManager', sprintf("Request complete: State=%s%s",
-            $self->{request_state},
-            $self->{error} ? " Error=$self->{error}" : ""
-        ));
-    }
 }
 
 =head2 _extract_stateful_markers($data, $opts)

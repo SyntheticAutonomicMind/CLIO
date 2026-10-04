@@ -477,14 +477,8 @@ sub _check_failed_verification {
         # (fallback when exit_code is not available, e.g. older tool_calls_made)
         my $result = $tc->{result} // '';
         if (length $result && $result =~ /\b(fail|error|FAILED|FAIL)\b/i) {
-            # Be conservative: only count as failure if the result text
-            # clearly indicates a verification failure, not just any
-            # error mention in tool output.
-            my $error = $tc->{error} // '';
-            if ($error =~ /\b(fail|error|FAILED|FAIL)\b/i) {
-                push @$evidence_ref, "verification command likely failed: '$command'";
-                return 1;
-            }
+            push @$evidence_ref, "verification command likely failed: '$command'";
+            return 1;
         }
     }
 
