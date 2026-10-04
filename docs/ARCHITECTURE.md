@@ -110,7 +110,7 @@ Terminal Output
 4. WorkflowOrchestrator appends the user input and any current-turn exchanges.
 5. Before each subsequent API call within the same turn, the proactive trim (MessageValidator::validate_and_truncate) keeps at messages under the model effective budget. It protects the system prompt, dynamic userContext, current user_input, and tool_call/tool_result pairs while dropping oldest tool exchanges first.
 6. ToolExecutor invokes selected tools; results return as native role-based tool messages.
-7. On token_limit_exceeded, the same validate_and_truncate path runs reactively.
+7. On token_limit_exceeded, ErrorHandler::trim_for_token_limit fires a three-tier reactive trim (keep-budget on retry 1, last-25% on retry 2, minimal on retry 3+), each tier compressing dropped messages into a thread_summary system message injected *before* the current user message. This is a separate code path from the proactive validate_and_truncate walk, retained for its progressive-aggressiveness strategy.
 8. On 400 Bad Request: silent retry -> tool_call repair -> context trim -> error surface.
 
 

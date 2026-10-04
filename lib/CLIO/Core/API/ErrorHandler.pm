@@ -749,7 +749,20 @@ sub handle_api_error {
             if ($session && $session->can('get_conversation_history')) {
                 my $fresh_history    = $session->get_conversation_history() || [];
                 my $system_msg_saved = $messages->[0]{role} eq 'system' ? $messages->[0] : undef;
-                my $current_user_msg = $messages->[-1]{role} eq 'user'  ? $messages->[-1] : undef;
+
+                # Scan backwards for the last USER message instead of
+                # assuming messages[-1] is a user message. After a reactive
+                # trim (or any path that can leave a trailing system summary),
+                # messages[-1] may be a system message. Relying on the
+                # assumption loses the current user request.
+                my $current_user_msg = undef;
+                for my $i (reverse 0 .. $#$messages) {
+                    if (ref($messages->[$i]) eq 'HASH'
+                        && ($messages->[$i]{role} // '') eq 'user') {
+                        $current_user_msg = $messages->[$i];
+                        last;
+                    }
+                }
 
                 @$messages = ();
                 push @$messages, $system_msg_saved if $system_msg_saved;
@@ -1036,6 +1049,44 @@ Returns:
 
 =cut
 
+=head2 _inject_summary_before_last_user($non_system, $summary)
+
+Inject a summary system message into the non-system message array
+BEFORE the last user message.
+
+This is the canonical placement: the model's final message must be the
+current user request so the provider treats it as the active turn.
+A trailing system message after USER breaks message alternation and
+tool_calling for OpenAI-compatible APIs and causes the model to lose
+the current turn — the reactive-trim stumble.
+
+If no user message exists in the array, the summary is appended at
+the end (best-effort fallback).
+
+Arguments:
+  $non_system - ArrayRef of messages (modified in place)
+  $summary    - Hashref to splice in before the last user
+
+Returns: nothing
+
+=cut
+
+sub _inject_summary_before_last_user {
+    my ($non_system, $summary) = @_;
+    return unless $non_system && @$non_system && $summary;
+
+    # Find the last USER message and inject before it.
+    my $inject_idx = scalar(@$non_system);
+    for (my $i = $#$non_system; $i >= 0; $i--) {
+        if (ref($non_system->[$i]) eq 'HASH'
+            && ($non_system->[$i]{role} // '') eq 'user') {
+            $inject_idx = $i;
+            last;
+        }
+    }
+    splice(@$non_system, $inject_idx, 0, $summary);
+}
+
 sub trim_for_token_limit {
     my ($wo, %args) = @_;
 
@@ -1184,10 +1235,16 @@ sub trim_for_token_limit {
                 next if $seen{$idx}++;
                 push @preserved, $non_system[$idx];
             }
-            push @preserved, @non_system[$start_idx..-1];
+            # Use $original_count - 1 (NOT -1): Perl's range operator does
+            # NOT support countdown ranges, so @non_system[$start_idx..-1]
+            # yields an EMPTY list when $start_idx >= 0. This was the root
+            # cause of the reactive-trim stumble: all kept non-system
+            # messages (including the current user message) were silently
+            # dropped, leaving only the compressed thread_summary.
+            push @preserved, @non_system[$start_idx..($original_count - 1)];
             @non_system = @preserved;
         } else {
-            @non_system = @non_system[$start_idx..-1];
+            @non_system = @non_system[$start_idx..($original_count - 1)];
         }
 
         if (@dropped_messages) {
@@ -1195,8 +1252,14 @@ sub trim_for_token_limit {
                 \@dropped_messages, $last_user_msg, $session, $messages, $wo->{prompt_builder}, $_ctx_window
             );
             if ($compressed) {
-                push @non_system, $compressed;
-                log_debug('ErrorHandler', "Injected compression summary for " . scalar(@dropped_messages) . " dropped messages");
+                # Inject the summary BEFORE the last user message, matching
+                # the canonical proactive-trim topology (MessageValidator
+                # _role_based_tail_walk). A trailing SYSTEM message after
+                # USER breaks message alternation and tool_calling for
+                # OpenAI-compatible APIs and causes the model to lose the
+                # current turn.
+                _inject_summary_before_last_user(\@non_system, $compressed);
+                log_debug('ErrorHandler', "Injected compression summary before last user for " . scalar(@dropped_messages) . " dropped messages");
             }
         }
     }
@@ -1222,8 +1285,8 @@ sub trim_for_token_limit {
                 \@dropped_messages, $last_user_msg, $session, $messages, $wo->{prompt_builder}, $_ctx_window
             );
             if ($compressed) {
-                push @non_system, $compressed;
-                log_debug('ErrorHandler', "Injected compression summary for " . scalar(@dropped_messages) . " dropped messages (retry 2)");
+                _inject_summary_before_last_user(\@non_system, $compressed);
+                log_debug('ErrorHandler', "Injected compression summary before last user for " . scalar(@dropped_messages) . " dropped messages (retry 2)");
             }
         }
     }
@@ -1246,8 +1309,8 @@ sub trim_for_token_limit {
                 \@dropped_messages, $last_user_msg, $session, $messages, $wo->{prompt_builder}, $_ctx_window
             );
             if ($compressed) {
-                push @non_system, $compressed;
-                log_debug('ErrorHandler', "Injected compression summary for " . scalar(@dropped_messages) . " dropped messages (retry 3 - minimal)");
+                _inject_summary_before_last_user(\@non_system, $compressed);
+                log_debug('ErrorHandler', "Injected compression summary before last user for " . scalar(@dropped_messages) . " dropped messages (retry 3 - minimal)");
             }
         }
     }

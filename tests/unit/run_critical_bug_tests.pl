@@ -11,6 +11,7 @@ my @tests = (
     'test_project_local_sessions.pl',
     'test_pwd_in_prompt.pl',
     'test_retry_malformed_json.pl',
+    'test_reactive_trim_topology.pl',
 );
 
 print "=" x 60 . "\n";

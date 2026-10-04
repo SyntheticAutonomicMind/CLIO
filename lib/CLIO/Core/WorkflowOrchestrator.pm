@@ -2901,8 +2901,10 @@ sub _compress_dropped_for_recovery {
         "Recovery context created: " . length($compressed->{content}) .
         " chars from " . scalar(@$dropped_messages) . " dropped messages");
 
-    # Return a clean system message with just the thread_summary content.
-    # No XML tags, no narration, no framework instructions.
+    # Return a clean system message with the thread_summary content.
+    # The content is wrapped in <thread_summary> tags — _role_based_tail_walk
+    # and trim_for_token_limit both pin/scan for these tags to preserve
+    # cross-cycle carryover.
     return {
         role => 'system',
         content => $compressed->{content},

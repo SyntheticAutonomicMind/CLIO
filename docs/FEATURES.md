@@ -816,11 +816,13 @@ If the trim still exceeds budget after protecting these, the proactive trim yiel
 
 ### Trim Layers
 
-1. **Reactive trim** (after API rejection) — If the API returns `token_limit_exceeded`, `validate_and_truncate` calls `MessageValidator::trim_with_noise_dropping` to strip reasoning_content from old assistant messages (the model produced it once, doesn't need to see it again), then walks the array newest-to-oldest dropping tool exchanges. The trim is by-message-unit, not by-percentage-of-context,.
+1. **Proactive trim** (before API call, every iteration after the first) — `MessageValidator::validate_and_truncate` walks the array newest-to-oldest, dropping whole tool_call/tool_result batches while pinning the system prompt `[0]`, the anchor (first user) message, any existing `<thread_summary>` system messages, and the current (last) user message. Dropped messages are re-compressed into a `<thread_summary>` system message injected *before* the last user message. `compute_prompt_budget($caps)` (context window minus output reserve minus tool tokens) sets the budget.
 
-3. **Proactive trim** (before API call, every iteration after the first) — Same role-based tail walk as the reactive path, but applied preventively based on the model capability's `compute_prompt_budget` minus estimated tool tokens. The proactive trim keeps `@messages` under budget each iteration so the API never sees an oversized request.
+2. **Reactive trim** (after API rejection) — `ErrorHandler::trim_for_token_limit` fires when the provider returns `token_limit_exceeded`. It uses a three-tier strategy: tier 1 (retry 1) keeps messages that fit `compute_prompt_budget`; tier 2 (retry 2) keeps the last 25%; tier 3 (retry 3+) keeps the current user message + the last two messages. Each tier compresses the dropped messages into a `<thread_summary>` system message and injects it *before* the last user message — preserving the canonical topology where the final message is always the current user request.
 
-There is **no third trim layer**. The earlier design (validation trimming + reactive progressive reduction) was superseded by the role-based trim which does both jobs.
+Both paths converge on the same canonical layout:
+`SYSTEM(system_prompt) → history → SYSTEM(thread_summary) → USER(current)`.
+The final message is always the current user request so the provider treats it as the active turn.
 
 ### Token Estimation
 
