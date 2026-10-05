@@ -40,7 +40,7 @@ use CLIO::Providers qw(build_endpoint_config get_provider);
 
 # ── Test 3: route_timeout is propagated for route-based providers ───
 {
-    my @route_providers = ('openrouter', 'orca');
+    my @route_providers = ('openrouter', 'orca', 'opper');
     for my $p (@route_providers) {
         my $cfg = build_endpoint_config($p, 'test-key');
         ok($cfg->{route_timeout} == 1,

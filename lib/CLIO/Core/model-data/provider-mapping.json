@@ -207,6 +207,10 @@
       "model_id_format": "provider/model",
       "models": []
     },
+    "opper": {
+      "model_id_format": "model",
+      "models": []
+    },
     "orca": {
       "model_id_format": "provider/model",
       "models": []

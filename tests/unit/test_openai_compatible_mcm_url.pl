@@ -66,6 +66,11 @@ is(_derive_models_url('https://api.kilo.ai/api/gateway/chat/completions'),
    'https://api.kilo.ai/api/gateway/models',
    'kilo: /api/gateway/chat/completions -> /api/gateway/models');
 
+# Test 3c: Opper
+is(_derive_models_url('https://api.opper.ai/v3/compat/chat/completions'),
+   'https://api.opper.ai/v3/compat/models',
+   'opper: /v3/compat/chat/completions -> /v3/compat/models');
+
 # Test 4: ollama_cloud
 is(_derive_models_url('https://ollama.com/v1/chat/completions'),
    'https://ollama.com/v1/models',

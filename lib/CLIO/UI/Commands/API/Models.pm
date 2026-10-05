@@ -345,6 +345,9 @@ sub _fetch_provider_models {
         } elsif ($provider_name eq 'kilo') {
             # Kilo uses /api/gateway/ path prefix, not the OAI-standard /v1/
             $models_url = 'https://api.kilo.ai/api/gateway/models';
+        } elsif ($provider_name eq 'opper') {
+            # Opper serves its OpenAI-compatible API under /v3/compat/, not /v1/
+            $models_url = 'https://api.opper.ai/v3/compat/models';
         } elsif ($api_base =~ m{^(https?://[^/]+)}) {
             $models_url = "$1/v1/models";
         }

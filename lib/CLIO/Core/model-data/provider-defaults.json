@@ -219,6 +219,16 @@
         "invalid_effort_default": "high"
       }
     },
+    "opper": {
+      "default_model": "claude-sonnet-4-6",
+      "max_context_tokens": 128000,
+      "max_output_tokens": 16384,
+      "supports_streaming": 1,
+      "supports_tools": 1,
+      "reasoning_schema": {
+        "mode": "disabled"
+      }
+    },
     "sam": {
       "default_model": "local-model",
       "exposes_props": 1,
