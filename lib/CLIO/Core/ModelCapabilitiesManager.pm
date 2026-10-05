@@ -2883,6 +2883,9 @@ sub _fetch_openai_compatible_capabilities {
         # meta sub-object (runtime vs training context).
         my $tp = ref($m->{top_provider}) eq 'HASH' ? $m->{top_provider} : {};
         my $meta = ref($m->{meta}) eq 'HASH' ? $m->{meta} : {};
+        # Opper nests max_output_tokens and a capabilities array under an
+        # 'opper' object on each /v3/compat/models entry.
+        my $opper_meta = ref($m->{opper}) eq 'HASH' ? $m->{opper} : {};
         my $context_window = $m->{context_length}
             || $m->{context_window}
             || $m->{max_tokens}
@@ -2930,11 +2933,13 @@ sub _fetch_openai_compatible_capabilities {
         }
         
         # Get max completion tokens. Check top-level first, then
-        # top_provider (where OpenRouter nests per-endpoint limits).
+        # top_provider (where OpenRouter nests per-endpoint limits),
+        # then the opper object (where Opper nests it).
         my $output_tokens = $m->{max_completion_tokens}
             || $m->{max_output_tokens}
             || $tp->{max_completion_tokens}
             || $tp->{max_output_tokens}
+            || $opper_meta->{max_output_tokens}
             || ($permuted_model ? ($permuted_model->{max_output_tokens}) : undef)
             || undef;
 
@@ -2973,6 +2978,10 @@ sub _fetch_openai_compatible_capabilities {
         # HyperCharm nests vision under capabilities.vision
         if (!$supports_vision && ref($m->{capabilities}) eq 'HASH') {
             $supports_vision = $m->{capabilities}{vision} || 0;
+        }
+        # Opper lists capabilities as an array of strings under opper.capabilities
+        if (!$supports_vision && ref($opper_meta->{capabilities}) eq 'ARRAY') {
+            $supports_vision = (grep { defined $_ && $_ eq 'vision' } @{$opper_meta->{capabilities}}) ? 1 : 0;
         }
         my $supports_tools = $m->{supports_tools} || $m->{function_call} || 0;
         # OpenRouter and other OpenAI-compatible APIs signal function-calling

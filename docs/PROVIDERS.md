@@ -17,6 +17,7 @@
 | **OpenRouter** | `openrouter` | API Key |
 | **OrcaRouter** | `orca` | API Key |
 | **KiloCode** | `kilo` | API Key |
+| **Opper** | `opper` | API Key |
 | **Ollama Cloud** | `ollama_cloud` | API Key |
 | **MiniMax** | `minimax` | API Key |
 | **MiniMax Token Plan** | `minimax_token` | API Key |
@@ -333,6 +334,37 @@ Models use the `upstream-provider/model` format:
 - Supports tools/function calling
 - Streaming responses
 - Automatic tool call repair and orphan cleanup
+
+---
+
+### Opper
+
+**Best for:** One API key for 700+ models from 50+ providers, EU-hosted gateway
+
+**Get API Key:**
+1. Go to [platform.opper.ai](https://platform.opper.ai) and sign in
+2. Create a key under API Keys
+
+**Configure CLIO:**
+```bash
+clio --new
+/api set provider opper
+/api set key <your-opper-key>
+/config save
+```
+
+**Available models:** Opper serves models from many providers through one OpenAI-compatible API at `https://api.opper.ai/v3/compat`. Use `/api models` for the current list. The default model is `claude-sonnet-4-6`.
+
+A bare model name is a pool: Opper routes each request across the providers that serve that model. A `provider/model` id pins one route. Keep the `opper/` prefix on those so CLIO does not read the first segment as a CLIO provider name:
+```bash
+/api set model opper/claude-sonnet-4-6
+/api set model opper/gpt-5.4-mini
+/api set model opper/anthropic/claude-sonnet-4-6
+```
+
+**Features:**
+- Supports tools/function calling
+- Streaming responses
 
 ---
 
@@ -711,7 +743,7 @@ CLIO applies a tiered `--max-time` to provider requests so a slow upstream does 
 | Tier | `--max-time` | When it applies |
 |------|--------------|------------------|
 | Cloud | **300 s** | Direct provider connections (OpenAI, Anthropic, Google, DeepSeek, NVIDIA, MiniMax, Z.AI, GitHub Copilot, Ollama Cloud, KiloCode) |
-| Route-based | **300 s** | Multi-hop providers that add an intermediate proxy (OpenRouter, OrcaRouter, Vercel AI Gateway) |
+| Route-based | **300 s** | Multi-hop providers that add an intermediate proxy (OpenRouter, OrcaRouter, Opper, Vercel AI Gateway) |
 | Local | **900 s** | Inference servers running on this machine (SAM, llama.cpp, LM Studio) |
 
 The tier is selected per provider via two flags propagated through `build_endpoint_config()`:

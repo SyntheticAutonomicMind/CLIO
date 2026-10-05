@@ -329,6 +329,26 @@ my %PROVIDERS = (
         },
     },
 
+    opper => {
+        name => 'Opper',
+        api_base => 'https://api.opper.ai/v3/compat/chat/completions',
+        model => 'claude-sonnet-4-6',
+        requires_auth => 'apikey',
+        supports_tools => 1,
+        supports_streaming => 1,
+        route_timeout => 1,  # Routes to upstream providers, extra latency from the intermediate hop
+        url_detection_patterns => [ qr{api\.opper\.ai}i ],
+        # Bare model ids (e.g. claude-sonnet-4-6) are pools that Opper
+        # routes across the providers serving that model. A provider/model
+        # id (e.g. anthropic/claude-sonnet-4-6) pins one route. The live
+        # /v3/compat/models list is the source of truth for capabilities.
+        endpoint => {
+            path_suffix => '',
+            temperature_range => [0.0, 2.0],
+            supports_tools => 1,
+        },
+    },
+
     google => {
         name => 'Google Gemini',
         api_base => 'https://generativelanguage.googleapis.com/v1beta',

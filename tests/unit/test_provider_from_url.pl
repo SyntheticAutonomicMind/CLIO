@@ -43,6 +43,8 @@ subtest 'standard API providers' => sub {
         'OrcaRouter detected');
     is(provider_from_url('https://api.kilo.ai/api/gateway/chat/completions'), 'kilo',
         'KiloCode detected');
+    is(provider_from_url('https://api.opper.ai/v3/compat/chat/completions'), 'opper',
+        'Opper detected');
 };
 
 # =============================================================================
