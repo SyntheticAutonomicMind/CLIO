@@ -58,6 +58,10 @@ use CLIO::Core::Defaults qw(
 );
 use CLIO::Core::Defaults qw(DEFAULT_MAX_OUTPUT_TOKENS DEFAULT_CONTEXT_WINDOW DEFAULT_LOCAL_CONTEXT_WINDOW DEFAULT_MAX_RESPONSE_TOKENS);
 
+# Digest::SHA for cache diagnostic fingerprints (SHA-256 of stable prefix
+# components). Only computed when debugging is enabled — never on hot path.
+use Digest::SHA qw(sha256_hex);
+
 # Define request states
 use constant {
     REQUEST_NONE => 0,
@@ -260,6 +264,16 @@ sub new {
         # Rate limiter for concurrent request limiting
         rate_limiter => CLIO::Core::RateLimiter->get_instance(),
 
+        # Cache diagnostics: request sequence counter (monotonic per
+        # APIManager instance, survives retries/continuations within a
+        # workflow). Used by _cache_diagnostics for traceability.
+        _request_seq           => 0,
+        _pending_cache_diag    => undef,
+        _last_system_hash      => undef,
+        _last_first_nonsys_hash => undef,
+        _last_nonsys_is_first   => 1,
+        _last_retry_reason     => undef,
+
         %args,
     };
     bless $self, $class;
@@ -327,7 +341,15 @@ sub set_session {
     
     # Clear the "warned once" flag so we log the first session association
     delete $self->{_warned_no_session_streaming};
-    
+
+    # Reset cache-diagnostics state so fingerprints don't carry stale
+    # values from the previous session into the new one.
+    $self->{_last_system_hash}         = undef;
+    $self->{_last_first_nonsys_hash}   = undef;
+    $self->{_last_nonsys_is_first}     = 1;
+    $self->{_pending_cache_diag}       = undef;
+    $self->{_request_seq}              = 0;
+
     if ($self->{debug}) {
         my $sid = $session && $session->can('session_id') 
             ? $session->session_id 
@@ -336,6 +358,221 @@ sub set_session {
     }
     
     return 1;
+}
+
+#==========================================================================
+# Cache Contract: Workflow Session Identity
+#
+# CLIO sessions have a stable identity (a UUID) that survives for the
+# lifetime of the workflow. OpenRouter uses a top-level `session_id` field
+# as its sticky-routing key for prompt caching. Without it, OpenRouter
+# derives the conversation identity by hashing the first system message
+# + first non-system message, which can change between turns (after
+# trimming, resume, or projection shifts), causing cache affinity loss.
+#
+# This method provides the stable identity. The CLIO session UUID is
+# namespaced with a 'clio:' prefix to avoid collisions and to make
+# CLIO-generated session IDs self-identifying in provider dashboards.
+# The total length (41 chars) is well within OpenRouter's 256-char limit.
+#
+# The identity is NOT regenerated per request. It is NOT derived from the
+# current prompt or projection. It survives retries, tool loops,
+# continuation, context trimming, and session resume.
+#==========================================================================
+
+=head2 _get_workflow_session_id
+
+Extract the stable CLIO workflow session identity from the session object.
+
+The session object may be a CLIO::Session::Manager (has session_id() method,
+or {session_id} hash key), a CLIO::Session::State (has {session_id} hash key),
+or a plain hashref with {session_id}. This helper handles all variants.
+
+Returns: 'clio:<uuid>' or undef (when no session is available — the
+caller should skip session_id entirely in that case).
+
+=cut
+
+sub _get_workflow_session_id {
+    my ($self) = @_;
+
+    my $session = $self->{session};
+    return unless $session;
+
+    my $raw_id;
+
+    # Handle blessed objects (CLIO::Session::Manager, Session::State, etc.)
+    if (blessed($session)) {
+        if ($session->can('session_id')) {
+            $raw_id = $session->session_id();
+        } elsif (exists $session->{session_id}) {
+            $raw_id = $session->{session_id};
+        }
+    } elsif (ref($session) eq 'HASH' && exists $session->{session_id}) {
+        # Plain hashref (e.g. State struct)
+        $raw_id = $session->{session_id};
+    }
+
+    return unless $raw_id;
+
+    # Namespace with 'clio:' prefix. OpenRouter's max is 256 chars; a
+    # UUID is 36 chars, so 'clio:' + 36 = 41 chars. Well within limits.
+    return "clio:$raw_id";
+}
+
+=head2 _cache_diagnostics
+
+Compute and log SHA-256 fingerprints of the stable request prefix
+components, plus request sequencing metadata.  These fingerprints let
+a developer answer — without exposing sensitive content — whether:
+
+- The stable system prompt changed between requests (it should NOT)
+- The first non-system message changed (it should NOT, within a session)
+- The tool definitions changed (they should NOT unless tools were registered)
+- The OpenRouter session_id changed (it MUST NOT, within a workflow)
+- The provider/model changed (can happen on fallback)
+
+The computed info is stored on $self->{_pending_cache_diag} so the
+response handler can enrich it with observed cached_tokens and
+finish_reason.
+
+Arguments:
+- $opts: hashref of the original _build_payload %opts (for stream flag)
+- $payload: the final sanitized payload hashref
+- $model: the model string
+- $endpoint_config: the endpoint config hashref
+
+=cut
+
+sub _cache_diagnostics {
+    my ($self, $opts, $payload, $model, $endpoint_config) = @_;
+
+    my $messages = $payload->{messages} || [];
+
+    # --- Identify the stable prefix components ---
+
+    # System prompt: first message with role => 'system'
+    my $system_msg;
+    for my $m (@$messages) {
+        if (ref($m) eq 'HASH' && ($m->{role} // '') eq 'system') {
+            $system_msg = $m;
+            last;
+        }
+    }
+    my $system_content = $system_msg ? ($system_msg->{content} // '') : '';
+    my $system_str = ref($system_content) eq 'ARRAY'
+        ? join('', map { ref($_) eq 'HASH' ? ($_->{text} // '') : $_ } @$system_content)
+        : $system_content;
+
+    # First non-system message: the first message with role != 'system'
+    my $first_nonsys;
+    for my $m (@$messages) {
+        if (ref($m) eq 'HASH' && ($m->{role} // '') ne 'system') {
+            $first_nonsys = $m;
+            last;
+        }
+    }
+    my $first_nonsys_content = $first_nonsys
+        ? ($first_nonsys->{content} // '')
+        : '';
+    my $first_nonsys_str = ref($first_nonsys_content) eq 'ARRAY'
+        ? join('', map { ref($_) eq 'HASH' ? ($_->{text} // '') : $_ } @$first_nonsys_content)
+        : $first_nonsys_content;
+
+    # Tools: serialized to a canonical string for deterministic hashing
+    my $tools = $payload->{tools} || [];
+    my $tools_str = safe_encode_json($tools);
+
+    # --- Compute fingerprints (SHA-256, truncated to 16 hex chars) ---
+    my $system_hash       = substr(sha256_hex($system_str), 0, 16);
+    my $first_nonsys_hash = substr(sha256_hex($first_nonsys_str), 0, 16);
+    my $tools_hash        = substr(sha256_hex($tools_str), 0, 16);
+
+    # --- Request sequence number (incremented in _build_payload) ---
+    my $seq = $self->{_request_seq};
+
+    # --- Provider label and session identity ---
+    my $provider_label = $endpoint_config->{name} || 'unknown';
+    my $workflow_sid   = $self->_get_workflow_session_id() // '(none)';
+
+    # --- Stable prefix fingerprint: system + first non-system + tools ---
+    my $prefix_hash = substr(sha256_hex($system_hash . $first_nonsys_hash . $tools_hash), 0, 16);
+
+    # --- Store on $self for response handler enrichment ---
+    $self->{_pending_cache_diag} = {
+        request_seq         => $seq,
+        system_prompt_hash  => $system_hash,
+        first_nonsys_hash   => $first_nonsys_hash,
+        tools_hash          => $tools_hash,
+        request_prefix_hash => $prefix_hash,
+        workflow_session_id => $workflow_sid,
+        provider            => $provider_label,
+        model               => $model,
+        message_count       => scalar(@$messages),
+        tool_count          => scalar(@$tools),
+        streaming           => $opts->{stream} ? 1 : 0,
+        retry_reason        => $self->{_last_retry_reason} // 'none',
+    };
+
+    # --- Log (debug level — never logs content, only hashes) ---
+    log_debug('CacheDiag', sprintf(
+        "req_seq=%d provider=%s model=%s stream=%d msgs=%d tools=%d | " .
+        "session_id=%s system=%s first_nonsys=%s tools=%s prefix=%s retry=%s",
+        $seq, $provider_label, $model, $opts->{stream} ? 1 : 0,
+        scalar(@$messages), scalar(@$tools),
+        $workflow_sid, $system_hash, $first_nonsys_hash, $tools_hash,
+        $prefix_hash, $self->{_last_retry_reason} // 'none'
+    ));
+
+    # Warn if the system prompt hash changed from the previous request.
+    # This is a correctness violation — the system prompt should be stable
+    # within a workflow. Log at WARNING level so it's visible.
+    if (defined $self->{_last_system_hash}) {
+        if ($self->{_last_system_hash} ne $system_hash) {
+            log_warning('CacheDiag', sprintf(
+                "SYSTEM PROMPT HASH CHANGED (was %s, now %s) — cache invalidation occurred " .
+                "between req_seq %d and %d. Check for profile/tool/skill changes.",
+                $self->{_last_system_hash}, $system_hash, $seq - 1, $seq
+            ));
+        }
+        if ($self->{_last_first_nonsys_hash} ne $first_nonsys_hash
+            && $self->{_last_nonsys_is_first} == 0) {
+            # The first non-system message changed — this is EXPECTED for
+            # OpenRouter with session_id (the dynamic UC is in later messages,
+            # not the first). But if the anchor changed, that indicates
+            # trimming or resume boundary issues. Log at DEBUG.
+            log_debug('CacheDiag', sprintf(
+                "FIRST NON-SYSTEM MESSAGE HASH CHANGED (was %s, now %s) — " .
+                "may indicate trimming or resume boundary (expected with session_id).",
+                $self->{_last_first_nonsys_hash}, $first_nonsys_hash
+            ));
+        }
+    }
+    $self->{_last_system_hash}         = $system_hash;
+    $self->{_last_first_nonsys_hash}   = $first_nonsys_hash;
+    $self->{_last_nonsys_is_first}     = 0;
+}
+
+=head2 _log_cache_response_diag
+
+Log a cache diagnostic message from the response side (cached_tokens,
+cache_write_tokens, finish_reason).  Called by both the streaming and
+non-streaming response paths.
+
+Arguments:
+- $msg : pre-formatted diagnostic string
+
+=cut
+
+sub _log_cache_response_diag {
+    my ($self, $msg) = @_;
+    return unless $self->{debug};
+    return unless $self->{_pending_cache_diag};
+    my $diag = $self->{_pending_cache_diag};
+    log_debug('CacheDiag', sprintf(
+        "req_seq=%d provider=%s model=%s | %s",
+        $diag->{request_seq}, $diag->{provider}, $diag->{model}, $msg
+    ));
 }
 
 =head2 _load_or_create_machine_id
@@ -2785,6 +3022,23 @@ sub _build_payload {
         log_debug('APIManager', "Including llama_user_id: $uid (session-isolated SSD cache)");
     }
 
+    # Add session_id for OpenRouter sticky routing / prompt-cache affinity.
+    # When session_id is present, OpenRouter uses it directly as the sticky
+    # routing key instead of deriving one from hashing the first system +
+    # first non-system message. This preserves cache affinity across turns
+    # where the message prefix varies (after trimming, resume, or projection
+    # shifts). The CLIO session UUID provides a stable workflow identity
+    # that survives retries, tool loops, continuation, and context trimming.
+    # Only sent to OpenRouter-compatible endpoints — other providers do not
+    # accept this top-level field.
+    if ($endpoint_config->{openrouter}) {
+        my $workflow_sid = $self->_get_workflow_session_id();
+        if ($workflow_sid) {
+            $payload->{session_id} = $workflow_sid;
+            log_debug('APIManager', "Including OpenRouter session_id: $workflow_sid");
+        }
+    }
+
     # Add previous_response_id for GitHub Copilot billing continuity
     # Skip if model has rejected previous_response_id (flagged by ResponseHandler)
     if ($endpoint_config->{requires_copilot_headers} && !$self->{response_handler}{_no_previous_response_id}) {
@@ -2865,7 +3119,22 @@ sub _build_payload {
             }
         }
     }
-    
+
+    # Increment request sequence counter (always, for traceability).
+    # The counter is monotonic per APIManager instance and survives
+    # retries/continuations within a workflow. It is reset by set_session().
+    $self->{_request_seq}++;
+
+    # Cache diagnostics: compute and log fingerprints of the stable
+    # request prefix components. Only runs when debugging is enabled —
+    # SHA-256 of the system prompt (often ~50KB) is O(n) and we avoid
+    # it on the hot path. Fingerprints are stored on $self so the
+    # streaming/non-streaming response handler can enrich them with
+    # cached_tokens and finish_reason.
+    if ($self->{debug} && $payload->{messages}) {
+        $self->_cache_diagnostics(\%opts, $payload, $model, $endpoint_config);
+    }
+
     return $payload;
 }
 
@@ -2939,6 +3208,16 @@ sub _build_request {
     if ($final_endpoint =~ m{openrouter\.ai}i) {
         $req->header('HTTP-Referer' => 'https://github.com/SyntheticAutonomicMind/CLIO');
         $req->header('X-Title' => 'CLIO');
+
+        # x-session-id header mirrors the top-level session_id in the
+        # request body. Per OpenRouter docs: "If both are provided, the body
+        # value takes precedence." The header is supplementary and covers
+        # non-Chat Completions endpoints (embeddings, TTS, etc.) that
+        # don't accept a body field. The value is stable per CLIO workflow.
+        my $or_session = $self->_get_workflow_session_id();
+        if ($or_session) {
+            $req->header('x-session-id' => $or_session);
+        }
     }
     
     # Apply provider extra headers (e.g., anthropic-version for Anthropic-compatible proxies)
@@ -3808,6 +4087,22 @@ sub _process_non_streaming_response {
             $tokens_in  ||= $data->{usage}{prompt_tokens} || $data->{usage}{input_tokens} || 0;
             $tokens_out ||= $data->{usage}{completion_tokens} || $data->{usage}{output_tokens} || 0;
             $self->_learn_from_api_response($data->{usage}, $messages);
+
+            # Extract and log OpenRouter prompt-cache metrics from the
+            # response usage object for diagnostics. These are separate
+            # from the token counts: cached_tokens = cache hit tokens,
+            # cache_write_tokens = cache write tokens.
+            my $pts = $data->{usage}{prompt_tokens_details};
+            my $cached = (ref($pts) eq 'HASH' && exists $pts->{cached_tokens})
+                ? $pts->{cached_tokens} : undef;
+            my $cw     = (ref($pts) eq 'HASH' && exists $pts->{cache_write_tokens})
+                ? $pts->{cache_write_tokens} : undef;
+            if (defined $cached || defined $cw) {
+                my $diag = "Non-streaming cache: cached=" . ($cached // 0);
+                $diag .= ", cache_write=" . ($cw // 0) if defined $cw;
+                $diag .= ", finish_reason=" . ($finish_reason // 'undef');
+                $self->_log_cache_response_diag($diag);
+            }
         }
 
         $self->{performance_monitor}->record_api_call($self->{api_base}, $model,
@@ -4173,7 +4468,24 @@ sub _process_sse_data {
         };
         $ss->{streaming_usage}{total_tokens} ||=
             $ss->{streaming_usage}{prompt_tokens} + $ss->{streaming_usage}{completion_tokens};
-        log_debug('APIManager', "Streaming usage: prompt=$ss->{streaming_usage}{prompt_tokens}, completion=$ss->{streaming_usage}{completion_tokens}");
+
+        # Extract OpenRouter prompt-cache metrics from prompt_tokens_details.
+        # These are separate from the token counts and report cache reuse
+        # (cached_tokens = cache hit tokens, cache_write_tokens = cache write
+        # tokens). Not all providers report these; guard each field.
+        my $pts = $data->{usage}{prompt_tokens_details};
+        if (ref($pts) eq 'HASH') {
+            $ss->{streaming_usage}{cached_tokens}      = $pts->{cached_tokens}      || 0
+                if exists $pts->{cached_tokens};
+            $ss->{streaming_usage}{cache_write_tokens}  = $pts->{cache_write_tokens}  || 0
+                if exists $pts->{cache_write_tokens};
+        }
+
+        log_debug('APIManager', "Streaming usage: prompt=$ss->{streaming_usage}{prompt_tokens}, completion=$ss->{streaming_usage}{completion_tokens}"
+            . (exists $ss->{streaming_usage}{cached_tokens}
+                ? ", cached=$ss->{streaming_usage}{cached_tokens}" : "")
+            . (exists $ss->{streaming_usage}{cache_write_tokens}
+                ? ", cache_write=$ss->{streaming_usage}{cache_write_tokens}" : ""));
     }
 
     # Capture copilot_usage from final streaming chunk (June 2026+ AI Credit billing)
@@ -4918,6 +5230,20 @@ sub _finalize_streaming_response {
     }
 
     $self->_log_streaming_response($response, $s{provider_label}, $tool_calls);
+
+    # Cache diagnostics: log observed cache metrics from the response
+    if ($self->{debug} && $self->{_pending_cache_diag}) {
+        my $diag = $self->{_pending_cache_diag};
+        my $cached = $usage->{cached_tokens} // 0;
+        my $cw     = $usage->{cache_write_tokens} // 0;
+        my $fr     = $response->{finish_reason} // 'undef';
+        log_debug('CacheDiag', sprintf(
+            "req_seq=%d provider=%s model=%s | cached_tokens=%d cache_write_tokens=%d finish_reason=%s",
+            $diag->{request_seq}, $diag->{provider}, $diag->{model},
+            $cached, $cw, $fr
+        ));
+    }
+
     $self->{response_handler}->release_broker_slot($resp, 200);
     
     # Update rate limit state and release slot (use lowercase for consistency with acquire)

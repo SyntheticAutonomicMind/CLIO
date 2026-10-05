@@ -2555,7 +2555,18 @@ sub _handle_api_error {
     my ($self, $api_response, $ctx) = @_;
 
     # Delegates to CLIO::Core::API::ErrorHandler (extracted to reduce module size)
-    return CLIO::Core::API::ErrorHandler::handle_api_error($self, $api_response, $ctx);
+    my $result = CLIO::Core::API::ErrorHandler::handle_api_error($self, $api_response, $ctx);
+
+    # If this was a retry/continue (not a fatal error), propagate the
+    # retry reason to the APIManager's cache diagnostics so the next
+    # request's fingerprint log shows why it was retried.
+    # Only non-ref (string) results indicate retry/continue.
+    if (!ref($result) && $self->{api_manager}) {
+        my $reason = $api_response->{error_type} || 'unknown';
+        $self->{api_manager}->{_last_retry_reason} = $result . ':' . $reason;
+    }
+
+    return $result;
 }
 
 sub _capture_file_before {
