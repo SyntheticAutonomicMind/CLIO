@@ -2,14 +2,18 @@
 # SPDX-License-Identifier: GPL-3.0-only
 # SPDX-FileCopyrightText: Copyright (c) 2026 Andrew Wyatt (Fewtarius)
 #
-# Unit tests for CLIO::Core::WorkflowCompletion — the layered
-# workflow-completion gate that replaces the old _looks_premature_stop
-# heuristic.
+# Unit tests for CLIO::Core::WorkflowCompletion — the internal nudge
+# guard that detects when an AI agent stopped mid-workflow.
 #
-# The old heuristic decided completion primarily by response length and
-# punctuation. The new gate inspects: API finish_reason, structured tool
-# results, verification commands, todo state, and textual signals — with
-# strong objective evidence dominating weak text signals.
+# The gate checks only two conditions:
+#   1. API finish_reason=length (token-limit truncation)
+#   2. Empty response after tool activity (reasoning-only turn, provider
+#      doesn't surface reasoning separately)
+#
+# When the gate detects incompleteness and retries remain, it nudges the
+# model with a continuation message (bounded to max_retries). When retries
+# are exhausted, the orchestrator ends the workflow with whatever content
+# exists — the gate never returns success=0 or surfaces errors to the user.
 
 use strict;
 use warnings;
@@ -22,17 +26,6 @@ use Test::More;
 use CLIO::Core::WorkflowCompletion;
 
 my $eval = CLIO::Core::WorkflowCompletion->new(debug => 0);
-
-# Helper: build a mock session with session_goals in its state.
-sub make_session {
-    my ($goals) = @_;
-    return bless {
-        session_id => 'test-' . int(rand(99999)),
-        _state     => { session_goals => $goals || [] },
-    }, 'MockSession';
-}
-sub MockSession::state { return $_[0]->{_state} }
-sub MockSession::id   { return $_[0]->{session_id} }
 
 # Helper: build a tool call record
 sub tc {
@@ -48,89 +41,123 @@ sub tc {
     };
 }
 
-# ── 1. Short legitimate final response after successful tool work ──
+# ── 1. Normal final response (no tools) = complete ──
 {
     my $r = $eval->evaluate(
-        content      => "Fixed the issue and all tests pass.",
-        tool_calls   => [tc(name => 'terminal_operations', operation => 'exec', exit_code => 0, result => "All tests pass")],
-        user_input   => "Fix the bug and run the tests",
+        content      => "The fix is complete. All tests pass.",
+        tool_calls   => [],
         retry_count  => 0,
     );
-    is($r->{decision}, 'complete', 'Test 1: Short legitimate final response after successful tool work = complete');
+    is($r->{decision}, 'complete', 'Test 1: Normal final response = complete');
     is(scalar(@{$r->{blockers}}), 0, 'Test 1: no blockers');
 }
 
-# ── 2. Short final response with no terminal punctuation, workflow state complete ──
+# ── 2. Empty response with no tool calls = complete ──
 {
     my $r = $eval->evaluate(
-        content      => "All done",
+        content      => "",
         tool_calls   => [],
-        user_input   => "fix it",
         retry_count  => 0,
     );
-    # No tool activity → no premature-stop check fires. Short response with
-    # no tools is a legitimate first-iteration answer.
-    is($r->{decision}, 'complete', 'Test 2: Short response with no punctuation, no tool activity = complete');
+    # No tool activity -> not the gate's concern. The orchestrator's
+    # outer loop (max_iterations) would catch this independently.
+    is($r->{decision}, 'complete', 'Test 2: Empty response, no tools = complete');
 }
 
-# ── 3. Long final response that is genuinely complete ──
+# ── 3. finish_reason=stop with content = complete ──
 {
-    my $long = "I have analyzed the codebase and identified the root cause. "
-             . "The issue was in the WorkflowOrchestrator, specifically in the "
-             . "premature-stop heuristic. I have replaced it with a layered "
-             . "completion gate that inspects objective evidence. All tests pass." x 3;
     my $r = $eval->evaluate(
-        content      => $long,
+        content       => "The task is complete.",
+        api_response  => { finish_reason => 'stop' },
+        tool_calls    => [],
+        retry_count   => 0,
+    );
+    is($r->{decision}, 'complete', 'Test 3: finish_reason=stop with content = complete');
+}
+
+# ── 4. Empty response after tool activity (no separate reasoning) = continue ──
+{
+    my $r = $eval->evaluate(
+        content      => "",
+        api_response  => { finish_reason => 'stop' },
+        tool_calls    => [tc(name => 'file_operations', operation => 'read_file', success => 1)],
+        retry_count  => 0,
+    );
+    is($r->{decision}, 'continue', 'Test 4: Empty response after tools = continue');
+    ok(grep { $_ eq 'empty_response' } @{$r->{blockers}}, 'Test 4: blocks on empty_response');
+}
+
+# ── 5. Empty response but provider has separate reasoning = complete ──
+{
+    my $r = $eval->evaluate(
+        content      => "",
+        api_response => {
+            finish_reason     => 'stop',
+            reasoning_content => "The answer is 42.",
+        },
+        tool_calls => [tc(name => 'file_operations', operation => 'read_file', success => 1)],
+        retry_count => 0,
+    );
+    is($r->{decision}, 'complete', 'Test 5: Empty content but separate reasoning = complete');
+    ok(!grep { $_ eq 'empty_response' } @{$r->{blockers}}, 'Test 5: NOT a blocker when reasoning is separate');
+}
+
+# ── 6. finish_reason=length = continue (truncation) ──
+{
+    my $r = $eval->evaluate(
+        content      => "Here is the beginning of",
+        api_response => { finish_reason => 'length' },
         tool_calls   => [],
-        user_input   => "investigate and fix",
         retry_count  => 0,
     );
-    is($r->{decision}, 'complete', 'Test 3: Long genuinely complete response = complete');
+    is($r->{decision}, 'continue', 'Test 6: finish_reason=length = continue');
+    ok(grep { $_ eq 'api_truncated' } @{$r->{blockers}}, 'Test 6: blocks on api_truncated');
 }
 
-# ── 4. A task that legitimately requires no verification ──
+# ── 7. finish_reason=content_filter = continue ──
 {
     my $r = $eval->evaluate(
-        content      => "Created the file.",
-        tool_calls   => [tc(name => 'file_operations', operation => 'write_file', success => 1)],
-        user_input   => "Create a hello world script",
-        retry_count  => 0,
-    );
-    is($r->{decision}, 'complete', 'Test 4: Write-only task with no verification requirement = complete');
-}
-
-# ── 5. Blocked todo (external) with final response explaining the block ──
-{
-    my $session = make_session([{
-        id => 1, title => 'Wait for API', status => 'blocked',
-        blockedReason => 'waiting for user to provide API key',
-    }]);
-    my $r = $eval->evaluate(
-        content      => "I am blocked waiting for the API key.",
+        content      => "I can't",
+        api_response => { finish_reason => 'content_filter' },
         tool_calls   => [],
-        session      => $session,
-        user_input   => "fix the code",
         retry_count  => 0,
     );
-    is($r->{decision}, 'complete', 'Test 5: External blocked todo with explanation = complete');
-    ok(!grep { $_ eq 'todo_blocked' } @{$r->{blockers}}, 'Test 5: does not block on external todo');
-    ok(grep { $_ eq 'todo_external_block' } @{$r->{reasons}}, 'Test 5: records external block as reason');
+    is($r->{decision}, 'continue', 'Test 7: finish_reason=content_filter = continue');
+    ok(grep { $_ eq 'api_truncated' } @{$r->{blockers}}, 'Test 7: blocks on api_truncated');
 }
 
-# ── 6. Agent edits a file and stops before explicitly required verification ──
+# ── 8. Non-truncated finish with separate reasoning channel = complete ──
 {
     my $r = $eval->evaluate(
-        content      => "Fixed the bug.",
-        tool_calls   => [tc(name => 'file_operations', operation => 'replace_string', success => 1)],
-        user_input   => "Fix the bug and run the tests to verify the fix",
-        retry_count  => 0,
+        content       => "Done.",
+        api_response  => {
+            finish_reason     => 'stop',
+            responses_reasoning_items => [{ type => 'reasoning' }],
+        },
+        tool_calls    => [],
+        retry_count   => 0,
     );
-    is($r->{decision}, 'continue', 'Test 6: File modified, verification required, not run = continue');
-    ok(grep { $_ eq 'verification_pending' } @{$r->{blockers}}, 'Test 6: blocks on verification_pending');
-    like($r->{continuation}, qr/verification/i, 'Test 6: continuation mentions verification');
+    is($r->{decision}, 'complete', 'Test 8: Responses API with reasoning_items = complete');
 }
 
-# ── 7. Agent runs tests and they fail, then says done ──
+# ── 9: Tool error does NOT block (agent should handle, not the gate) ──
+{
+    my $r = $eval->evaluate(
+        content      => "I hit an error but I'll fix it.",
+        tool_calls   => [
+            tc(name => 'file_operations', operation => 'write_file', success => 1),
+            tc(name => 'file_operations', operation => 'replace_string', success => 0, error => "Permission denied"),
+        ],
+        retry_count  => 0,
+    );
+    # Tool errors are not the gate's concern — the orchestrator's loop
+    # handles retries via the error loop. The gate only looks at the
+    # final text response.
+    is($r->{decision}, 'complete', 'Test 9: Tool error does not block completion');
+    ok(!grep { $_ eq 'tool_error' } @{$r->{blockers}}, 'Test 9: tool_error not a blocker');
+}
+
+# ── 10: Verification command failure does NOT block (agent's concern) ──
 {
     my $r = $eval->evaluate(
         content      => "Done.",
@@ -140,444 +167,155 @@ sub tc {
                exit_code => 1, arguments => '{"command":"npm test"}',
                result => "3 failing tests"),
         ],
-        user_input   => "Fix the bug and run the tests",
         retry_count  => 0,
     );
-    is($r->{decision}, 'continue', 'Test 7: Tests failed, says done = continue');
-    ok(grep { $_ eq 'verification_failed' } @{$r->{blockers}}, 'Test 7: blocks on verification_failed');
+    is($r->{decision}, 'complete', 'Test 10: Verification command failure does not block the gate');
+    ok(!grep { $_ eq 'verification_failed' } @{$r->{blockers}}, 'Test 10: verification_failed not a blocker');
 }
 
-# ── 8. Agent creates a regression test but never runs it when verification required ──
+# ── 11: Pre-existing/verification-failure-explained content = complete ──
 {
     my $r = $eval->evaluate(
-        content      => "I created a regression test.",
+        content      => "TestPreWarming fails identically on the original code. "
+                      . "These are pre-existing failures.",
         tool_calls   => [
-            tc(name => 'file_operations', operation => 'write_file', success => 1),
+            tc(name => 'terminal_operations', operation => 'exec', success => 1,
+               exit_code => 1, arguments => '{"command":"npm test"}',
+               result => "4 failing"),
         ],
-        user_input   => "Fix the bug and run the tests to verify",
         retry_count  => 0,
     );
-    is($r->{decision}, 'continue', 'Test 8: Test created but not run when required = continue');
-    ok(grep { $_ eq 'verification_pending' } @{$r->{blockers}}, 'Test 8: blocks on verification_pending');
+    is($r->{decision}, 'complete', 'Test 11: Agent explains pre-existing failures = complete');
 }
 
-# ── 9. Agent says "I still need to..." and stops ──
+# ── 12: Short response after tools = complete (no false positive) ──
 {
-    my $r = $eval->evaluate(
-        content      => "I still need to run the tests, but I will do that next.",
-        tool_calls   => [tc(name => 'file_operations', operation => 'write_file', success => 1)],
-        user_input   => "fix the bug",
-        retry_count  => 0,
-    );
-    is($r->{decision}, 'continue', 'Test 9: "I still need to..." = continue');
-    ok(grep { $_ eq 'text_unfinished' } @{$r->{blockers}}, 'Test 9: blocks on text_unfinished');
-}
-
-# ── 10. Agent performs an intermediate tool action and produces a clearly unfinished continuation ──
-{
-    my $r = $eval->evaluate(
-        content      => "Let me check the next file",
-        tool_calls   => [tc(name => 'file_operations', operation => 'read_file', success => 1)],
-        user_input   => "examine the codebase",
-        retry_count  => 0,
-    );
-    is($r->{decision}, 'continue', 'Test 10: Unfinished continuation after tool = continue');
-}
-
-# ── 11. Empty response after meaningful tool work ──
-{
-    my $r = $eval->evaluate(
-        content      => "",
-        tool_calls   => [tc(name => 'file_operations', operation => 'read_file', success => 1)],
-        user_input   => "read the file",
-        retry_count  => 0,
-    );
-    is($r->{decision}, 'continue', 'Test 11: Empty response after tools = continue');
-    ok(grep { $_ eq 'empty_response' } @{$r->{blockers}}, 'Test 11: blocks on empty_response');
-}
-
-# ── 12. Relevant todo remains in-progress when workflow has more work ──
-{
-    my $session = make_session([{
-        id => 1, title => 'Fix bug', status => 'in-progress',
-        description => 'Fix the login bug',
-    }]);
     my $r = $eval->evaluate(
         content      => "Done.",
+        tool_calls   => [tc(name => 'file_operations', operation => 'read_file', success => 1)],
+        retry_count  => 0,
+    );
+    is($r->{decision}, 'complete', 'Test 12: Short response with terminal punct after tools = complete');
+}
+
+# ── 13: Short response without terminal punct after tools = complete ──
+{
+    my $r = $eval->evaluate(
+        content      => "All done",
+        tool_calls   => [tc(name => 'file_operations', operation => 'read_file', success => 1)],
+        retry_count  => 0,
+    );
+    # We removed the incomplete_structure check — a short "All done"
+    # is a perfectly valid final response. The agent knows its own work.
+    is($r->{decision}, 'complete', 'Test 13: Short response without terminal punct = complete');
+}
+
+# ── 14: "I still need to..." pattern does NOT block ──
+{
+    my $r = $eval->evaluate(
+        content      => "I still need to do more work.",
         tool_calls   => [],
-        session      => $session,
-        user_input   => "fix the bug",
         retry_count  => 0,
     );
-    is($r->{decision}, 'continue', 'Test 12: In-progress todo = continue');
-    ok(grep { $_ eq 'todo_in_progress' } @{$r->{blockers}}, 'Test 12: blocks on todo_in_progress');
+    # Textual intent signals are not the gate's concern. The agent
+    # decides when it's done — the gate only catches empty/reasoning-only.
+    is($r->{decision}, 'complete', 'Test 14: "I still need to..." does not block (textual signals removed)');
 }
 
-# ── 13. Blocked todo whose block IS resolvable by agent should not be treated as legitimate completion ──
+# ── 15: "OK" after tool work = complete ──
 {
-    my $session = make_session([{
-        id => 1, title => 'Fix test', status => 'blocked',
-        blockedReason => 'test needs updating',
-    }]);
-    my $r = $eval->evaluate(
-        content      => "All done.",
-        tool_calls   => [],
-        session      => $session,
-        user_input   => "fix things",
-        retry_count  => 0,
-    );
-    is($r->{decision}, 'continue', 'Test 13: Actionable blocked todo = continue');
-    ok(grep { $_ eq 'todo_blocked' } @{$r->{blockers}}, 'Test 13: blocks on todo_blocked');
-}
-
-# ── 14. APIManager reports stream truncation ──
-{
-    # APIManager surfaces truncation as success => 0 with error_type =>
-    # 'truncated'. The completion gate only sees api_response with
-    # finish_reason. When finish_reason is absent entirely, that's a
-    # transport error handled by _handle_api_error before reaching us.
-    # Here we verify the gate handles a missing finish_reason gracefully.
-    my $r = $eval->evaluate(
-        content       => "Partial response",
-        api_response  => { success => 1, content => "Partial response" },
-        tool_calls    => [],
-        user_input    => "explain",
-        retry_count   => 0,
-    );
-    is($r->{decision}, 'complete', 'Test 14: Missing finish_reason but content present = complete (transport errors handled upstream)');
-}
-
-# ── 15. Legitimate finish_reason=stop with complete content ──
-{
-    my $r = $eval->evaluate(
-        content       => "The task is complete.",
-        api_response  => { finish_reason => 'stop' },
-        tool_calls    => [],
-        user_input    => "do something",
-        retry_count   => 0,
-    );
-    is($r->{decision}, 'complete', 'Test 15: finish_reason=stop with complete content = complete');
-    is($r->{finish_reason}, 'stop', 'Test 15: finish_reason is surfaced');
-}
-
-# ── 16. finish_reason=length = deterministic truncation ──
-{
-    my $r = $eval->evaluate(
-        content       => "Here is the beginning of",
-        api_response  => { finish_reason => 'length' },
-        tool_calls    => [],
-        user_input    => "explain",
-        retry_count   => 0,
-    );
-    is($r->{decision}, 'continue', 'Test 16: finish_reason=length = continue');
-    ok(grep { $_ eq 'api_truncated' } @{$r->{blockers}}, 'Test 16: blocks on api_truncated');
-}
-
-# ── 17. Responses API completion ──
-{
-    my $r = $eval->evaluate(
-        content       => "Done.",
-        api_response  => { finish_reason => 'stop', responses_reasoning_items => [{ type => 'reasoning' }] },
-        tool_calls    => [],
-        user_input    => "explain",
-        retry_count   => 0,
-    );
-    is($r->{decision}, 'complete', 'Test 17: Responses API with reasoning_items = complete (not truncated)');
-}
-
-# ── 18. OpenAI-compatible streaming completion ──
-{
-    my $r = $eval->evaluate(
-        content       => "All done.",
-        api_response  => { finish_reason => 'stop', tool_calls => [] },
-        tool_calls    => [],
-        user_input    => "fix it",
-        retry_count   => 0,
-    );
-    is($r->{decision}, 'complete', 'Test 18: Streaming stop with complete content = complete');
-}
-
-# ── 19. Reasoning-only / empty-visible-content provider responses ──
-{
-    my $r = $eval->evaluate(
-        content       => "",
-        api_response  => {
-            reasoning_content => "The answer is 42.",
-            finish_reason     => 'stop',
-        },
-        tool_calls    => [tc(name => 'file_operations', operation => 'read_file', success => 1)],
-        user_input    => "answer a question",
-        retry_count   => 0,
-    );
-    is($r->{decision}, 'complete', 'Test 19: Empty content but separate reasoning = complete (not premature)');
-}
-
-# ── Additional: Tool error followed by successful retry → resolved ──
-{
-    my $r = $eval->evaluate(
-        content      => "Done.",
-        tool_calls   => [
-            tc(name => 'terminal_operations', operation => 'exec', success => 0, error => "command not found", exit_code => 127),
-            tc(name => 'terminal_operations', operation => 'exec', success => 1, exit_code => 0, result => "All tests pass"),
-        ],
-        user_input   => "run tests",
-        retry_count  => 0,
-    );
-    is($r->{decision}, 'complete', 'Additional: Error then retry = complete (resolved)');
-}
-
-# ── Additional: Verification obligation does NOT trigger when no verification mentioned ──
-{
-    my $r = $eval->evaluate(
-        content      => "Done.",
-        tool_calls   => [tc(name => 'file_operations', operation => 'write_file', success => 1)],
-        user_input   => "Write a test script for connectivity",
-        retry_count  => 0,
-    );
-    is($r->{decision}, 'complete', 'Additional: "write a test script" does not trigger verification obligation');
-}
-
-# ── Additional: Exhausted budget surfaces as uncertain ──
-{
-    my $r = $eval->evaluate(
-        content      => "I still need to fix this.",
-        tool_calls   => [tc(name => 'file_operations', operation => 'read_file', success => 1)],
-        user_input   => "check something",
-        retry_count  => 2,
-        max_retries  => 2,
-    );
-    is($r->{decision}, 'uncertain', 'Additional: Exhausted budget = uncertain');
-    ok($r->{exhausted}, 'Additional: exhausted flag is set');
-    ok(length($r->{continuation}) > 10, 'Additional: exhausted continuation message is meaningful');
-}
-
-# ── Additional: Long mid-sentence response with tools = not premature ──
-{
-    my $r = $eval->evaluate(
-        content      => "I have started the analysis and gathered the initial data, but I still need to",
-        tool_calls   => [tc(name => 'file_operations', operation => 'read_file', success => 1)],
-        user_input   => "analyze code",
-        retry_count  => 0,
-    );
-    # Long content with "I still need to" → blocks on textual signal
-    is($r->{decision}, 'continue', 'Additional: Long mid-sentence with "I still need to" = continue');
-}
-
-# ── Additional: Short complete response after tool work, terminal punct ──
-{
-    my $r = $eval->evaluate(
-        content      => "The fix is complete. The tests pass.",
-        tool_calls   => [tc(name => 'terminal_operations', operation => 'exec', success => 1, exit_code => 0, result => "All tests passed!")],
-        user_input   => "Fix the bug and run the tests",
-        retry_count  => 0,
-    );
-    is($r->{decision}, 'complete', 'Additional: Short complete summary after successful test = complete');
-}
-
-# ── Additional: Non-verification terminal command (ls) does not count as verification ──
-{
-    my $r = $eval->evaluate(
-        content      => "Here are the files.",
-        tool_calls   => [
-            tc(name => 'file_operations', operation => 'write_file', success => 1),
-            tc(name => 'terminal_operations', operation => 'exec', success => 1, exit_code => 0,
-               arguments => '{"command":"ls -la"}', result => "total 0"),
-        ],
-        user_input   => "Fix the bug and run the tests",
-        retry_count  => 0,
-    );
-    # ls is not a verification command, so verification_pending should NOT fire
-    # even though requirements (a) and (b) are met
-    is($r->{decision}, 'continue', 'Additional: ls does not satisfy verification obligation');
-    ok(grep { $_ eq 'verification_pending' } @{$r->{blockers}}, 'Additional: verification still pending because ls is not verification');
-}
-
-# ── Additional: Content wrapped in [conversation] tags should not false-positive ──
-{
-    # APIManager wraps non-streaming responses in [conversation]...[/conversation].
-    # The orchestrator strips this before calling evaluate(). Here we simulate
-    # the stripped content to verify "OK" is treated as complete (not
-    # incomplete_structure because it ends in a letter).
     my $r = $eval->evaluate(
         content      => "OK",
         tool_calls   => [tc(name => 'file_operations', operation => 'read_file', success => 1)],
-        user_input   => "read the file",
         retry_count  => 0,
     );
-    is($r->{decision}, 'complete', 'Additional: "OK" after tool work = complete (ends in letter, no unfinished intent)');
+    is($r->{decision}, 'complete', 'Test 15: "OK" after tool work = complete');
 }
 
-# ── Additional: Both session_goals and TodoStore checked independently ──
-{
-    # session_goals has a completed todo, TodoStore has an in-progress todo
-    my $session = make_session([
-        { id => 1, title => 'Completed goal', status => 'completed' },
-    ]);
-    # Simulate TodoStore having an in_progress todo by making the session
-    # state also have it (in real usage, TodoStore is a separate file).
-    # The evaluator should check session_goals first, find nothing blocking,
-    # then check TodoStore. Since we can't easily mock TodoStore in a
-    # unit test, we test session_goals here.
-    my $r = $eval->evaluate(
-        content      => "Done.",
-        tool_calls   => [],
-        session      => $session,
-        user_input   => "do something",
-        retry_count  => 0,
-    );
-    is($r->{decision}, 'complete', 'Additional: Completed session_goals todo = complete');
-}
-
-# ── Additional: Tool error with no following success = unresolved ──
+# ── 16: Exhausted budget = uncertain (but content is still returned) ──
 {
     my $r = $eval->evaluate(
-        content      => "Done.",
-        tool_calls   => [
-            tc(name => 'file_operations', operation => 'write_file', success => 1),
-            tc(name => 'file_operations', operation => 'replace_string', success => 0, error => "Permission denied"),
-        ],
-        user_input   => "fix the file",
-        retry_count  => 0,
-    );
-    is($r->{decision}, 'continue', 'Additional: Unresolved tool error = continue');
-    ok(grep { $_ eq 'tool_error' } @{$r->{blockers}}, 'Additional: blocks on unresolved tool error');
-}
-
-# ── Additional: finish_reason=stop with tool_calls present ──
-{
-    # The completion gate is only reached when there are no tool calls in
-    # the CURRENT api_response. But finish_reason=stop is the normal case.
-    my $r = $eval->evaluate(
-        content      => "The fix is complete.",
+        content      => "",
         api_response  => { finish_reason => 'stop' },
-        tool_calls   => [tc(name => 'terminal_operations', operation => 'exec', success => 1, exit_code => 0, result => "All pass")],
-        user_input   => "Fix the bug and run tests",
-        retry_count  => 0,
+        tool_calls    => [tc(name => 'file_operations', operation => 'read_file', success => 1)],
+        retry_count  => 2,
+        max_retries  => 2,
     );
-    is($r->{decision}, 'complete', 'Additional: finish_reason=stop with successful tools = complete');
+    is($r->{decision}, 'uncertain', 'Test 16: Exhausted budget = uncertain');
+    ok($r->{exhausted}, 'Test 16: exhausted flag set');
+    ok(length($r->{continuation}) > 10, 'Test 16: continuation message is meaningful');
 }
 
-# ── Additional: Multiple unfinished intent patterns in one response ──
+# ── 17: Exhausted budget continuation message does not say "attempt(s)" ──
 {
     my $r = $eval->evaluate(
-        content      => "I still need to fix this and then verify the tests.",
-        tool_calls   => [],
-        user_input   => "fix it",
-        retry_count  => 0,
+        content      => "",
+        api_response  => { finish_reason => 'stop' },
+        tool_calls    => [tc(name => 'file_operations', operation => 'read_file', success => 1)],
+        retry_count  => 2,
+        max_retries  => 2,
     );
-    is($r->{decision}, 'continue', 'Additional: Multiple unfinished intent phrases = continue');
-    ok(grep { $_ eq 'text_unfinished' } @{$r->{blockers}}, 'Additional: blocks on text_unfinished');
+    unlike($r->{continuation}, qr/continuation attempt/i,
+        'Test 17: Exhausted message does not say "continuation attempt"');
+    like($r->{continuation}, qr/Blockers:/i,
+        'Test 17: Exhausted message says "Blockers:"');
 }
 
-# ── Additional: "Before I finish" pattern ──
-{
-    my $r = $eval->evaluate(
-        content      => "Before I finish, let me note that the tests need updating.",
-        tool_calls   => [],
-        user_input   => "fix it",
-        retry_count  => 0,
-    );
-    is($r->{decision}, 'continue', 'Additional: "Before I finish" = continue');
-}
-
-# ── Additional: "The next step is" pattern ──
-{
-    my $r = $eval->evaluate(
-        content      => "The next step is to run the test suite.",
-        tool_calls   => [],
-        user_input   => "fix it",
-        retry_count  => 0,
-    );
-    is($r->{decision}, 'continue', 'Additional: "The next step is" = continue');
-}
-
-# ── Additional: Incomplete structure (ends with colon, short, no tools) ──
-{
-    # No tool calls -> completion gate doesn't block on textual signals
-    # (the old heuristic also only fired with tool calls). But the
-    # shim passes synthetic tool calls. This test is for the raw evaluator.
-    my $r = $eval->evaluate(
-        content      => "Here are the results:",
-        tool_calls   => [],
-        user_input   => "check something",
-        retry_count  => 0,
-    );
-    is($r->{decision}, 'complete', 'Additional: Short response ending with colon, no tools = complete (no tool activity)');
-}
-
-# ── Additional: Verification command succeeds (exit 0) with verification required ──
-{
-    my $r = $eval->evaluate(
-        content      => "All tests pass.",
-        tool_calls   => [
-            tc(name => 'file_operations', operation => 'write_file', success => 1),
-            tc(name => 'terminal_operations', operation => 'exec', success => 1, exit_code => 0,
-               arguments => '{"command":"npm test"}', result => "All pass"),
-        ],
-        user_input   => "Fix the bug and run the tests to verify the fix",
-        retry_count  => 0,
-    );
-    is($r->{decision}, 'complete', 'Additional: Verification succeeded = complete');
-}
-
-# ── Additional: Backward compat — tool_calls_made without success field ──
-{
-    # Older tool_calls_made entries only have {name, arguments, result}.
-    # The evaluator should handle missing success field gracefully.
-    my $r = $eval->evaluate(
-        content      => "Done.",
-        tool_calls   => [{
-            name => 'file_operations',
-            arguments => '{}',
-            result => 'some output',
-            # no success field, no error field
-        }],
-        user_input   => "fix it",
-        retry_count  => 0,
-    );
-    # Without success field and without error field, the tool should be
-    # treated as successful (backward compat).
-    is($r->{decision}, 'complete', 'Additional: Missing success field treated as success (backward compat)');
-}
-
-# ── Additional: api_truncated continuation message is concise (no token budget mention) ──
+# ── 18: api_truncated continuation mentions continuing ──
 {
     my $r = $eval->evaluate(
         content      => "Here is the beginning of",
-        api_response  => { finish_reason => 'length' },
+        api_response => { finish_reason => 'length' },
         tool_calls   => [],
-        user_input   => "explain",
         retry_count  => 0,
     );
-    is($r->{decision}, 'continue', 'Additional: finish_reason=length = continue');
-    ok(grep { $_ eq 'api_truncated' } @{$r->{blockers}}, 'Additional: blocks on api_truncated');
-    # The continuation message should be concise and NOT mention token
-    # budgets (antipattern). It should instruct the model to continue
-    # and produce remaining content.
-    unlike($r->{continuation}, qr/token|budget|max_token|output.?token/i,
-        'Additional: api_truncated continuation does NOT mention token budgets');
-    like($r->{continuation}, qr/continu|remaining|finish|short|cut/i,
-        'Additional: api_truncated continuation mentions continuing/remaining content');
+    like($r->{continuation}, qr/continue|cut short|finish|remaining/i,
+        'Test 18: api_truncated continuation mentions continuing');
+    unlike($r->{continuation}, qr/token.?budget|max.?token/i,
+        'Test 18: api_truncated continuation does NOT mention token budgets');
 }
 
-# ── Additional: Truncated budget with in-progress todo surfaces both blockers ──
+# ── 19: empty_response continuation ──
 {
-    my $session = make_session([{
-        id => 1, title => 'Fix bug', status => 'in-progress',
-        description => 'Fix the login bug',
-    }]);
     my $r = $eval->evaluate(
-        content      => "Here is the beginning of",
-        api_response  => { finish_reason => 'length' },
-        tool_calls   => [],
-        session      => $session,
-        user_input   => "fix the bug",
+        content      => "",
+        api_response  => { finish_reason => 'stop' },
+        tool_calls    => [tc(name => 'file_operations', operation => 'read_file', success => 1)],
         retry_count  => 0,
     );
-    is($r->{decision}, 'continue', 'Additional: Truncated + in-progress todo = continue');
-    ok(grep { $_ eq 'api_truncated' } @{$r->{blockers}}, 'Additional: blocks on api_truncated');
-    ok(grep { $_ eq 'todo_in_progress' } @{$r->{blockers}}, 'Additional: blocks on todo_in_progress');
-    is(scalar(@{$r->{blockers}}), 2, 'Additional: exactly 2 blockers');
+    like($r->{continuation}, qr/empty|continue|finish/i,
+        'Test 19: empty_response continuation is meaningful');
+}
+
+# ── 20: No separate reasoning + thinking_content absent = empty_response ──
+{
+    my $r = $eval->evaluate(
+        content      => "",
+        api_response => {
+            finish_reason => 'stop',
+            reasoning_details => [],
+            responses_reasoning_items => [],
+        },
+        tool_calls => [tc(name => 'file_operations', operation => 'read_file', success => 1)],
+        retry_count => 0,
+    );
+    is($r->{decision}, 'continue', 'Test 20: Empty + no reasoning channels = continue');
+    ok(grep { $_ eq 'empty_response' } @{$r->{blockers}}, 'Test 20: blocks on empty_response');
+}
+
+# ── 21: Multiple reasoning channels = complete ──
+{
+    my $r = $eval->evaluate(
+        content      => "",
+        api_response => {
+            finish_reason => 'stop',
+            reasoning_content => "thinking",
+            accumulated_reasoning => "more thinking",
+        },
+        tool_calls => [tc(name => 'file_operations', operation => 'read_file', success => 1)],
+        retry_count => 0,
+    );
+    is($r->{decision}, 'complete', 'Test 21: Empty content + multiple reasoning channels = complete');
 }
 
 done_testing();

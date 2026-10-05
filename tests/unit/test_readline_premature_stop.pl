@@ -1,110 +1,113 @@
 #!/usr/bin/perl
-# Regression test: _looks_premature_stop catches mid-analysis stops.
+# SPDX-License-Identifier: GPL-3.0-only
+# SPDX-FileCopyrightText: Copyright (c) 2026 Andrew Wyatt (Fewtarius)
 #
-# The model returns a substantive response (200+ chars) with no tool
-# calls after making tool calls in a prior iteration. The response is
-# thinking-through-loud and ends mid-sentence (no terminal punctuation).
-# Previously, _looks_premature_stop only checked content < 200 chars,
-# so this 206-char response was treated as a "genuine final answer"
-# and the workflow ended prematurely.
+# Regression test: _looks_premature_stop catches empty/reasoning-only
+# responses after tool activity.
+#
+# The model made tool calls in prior iterations but the final response
+# has no content (the model emitted thinking/reasoning only, and
+# APIManager stripped it from the visible content). The workflow should
+# be nudged to continue, not treated as a final answer.
+#
+# The gate does NOT check text-based signals (intent patterns, punctuation,
+# character count) — those were removed because they caused false positives
+# and the agent itself decides when it is done.
 
 use strict;
 use warnings;
 use utf8;
 use FindBin;
+use lib "$FindBin::Bin/../../lib";
 use lib "$FindBin::Bin/../lib";
 use Test::More;
-use CLIO::Core::WorkflowOrchestrator;
+require CLIO::Core::WorkflowCompletion;
+require CLIO::Core::WorkflowOrchestrator;
 
-my $wf = CLIO::Core::WorkflowOrchestrator->new(
-    debug => 0,
-);
-
-# Need an APIManager for _looks_premature_stop to work
-# Actually, _looks_premature_stop doesn't use $self-> anything, so
-# we can call it on an incomplete object. But new() requires api_manager.
-# Let's check.
-
-# Actually, _looks_premature_stop is a simple method that doesn't
-# access $self, so we can call it even on a minimal object.
-# But WorkflowOrchestrator->new() requires args. Let's just test
-# the function directly.
+my $eval = CLIO::Core::WorkflowCompletion->new(debug => 0);
 
 # Simulate the debug-1.log scenario:
-# Model made tool calls in iteration 5, then in iteration 6 returned
-# 206 chars of thinking-through-loud ending with a backtick.
-my $debug_log_content = q{Now I can see the exact tokens: `3c 74 68 69 6e 6b 3e` = ``. So the tokens are:
+# Model made tool calls, then returned empty content (reasoning stripped).
+{
+    my @synthetic_calls = map { { name => 'unknown', operation => '', success => 1 } } 1..3;
+    my $r = $eval->evaluate(
+        content      => '',
+        tool_calls   => \@synthetic_calls,
+        api_response => { finish_reason => 'stop' },
+        retry_count  => 0,
+    );
+    is($r->{decision}, 'continue',
+       'debug-1.log scenario: empty content after tool calls = premature');
+    ok(grep { $_ eq 'empty_response' } @{$r->{blockers}},
+       'debug-1.log scenario: blocks on empty_response');
+}
 
-- `⟨|eos|⟩` (U+3008, |, E, O, S, |, U+3009) — the BOS/EOS special token
-- `<system>` / `</system>`
-- `<user>` / `</user>`};
+# Empty content with 0 simulated tool calls -> NOT premature
+# (the shim passes count > 0 to synthesize calls; with count=0 it returns 0)
+{
+    my $r = $eval->evaluate(
+        content      => '',
+        tool_calls   => [],
+        api_response => { finish_reason => 'stop' },
+        retry_count  => 0,
+    );
+    is($r->{decision}, 'complete',
+       'empty content + no tool activity = complete (not the gate\'s concern)');
+}
 
-# Test 1: The actual debug-1.log content should be detected as premature
-my $result = _looks_premature_stop_direct($debug_log_content, 1);
-is($result, 1,
-   "debug-1.log scenario: 206-char thinking-through-loud ends with backtick -> premature");
+# Legitimate final answers with content -> NOT premature
+{
+    is(_looks_premature_stop_direct("Done. All files have been updated.", 1), 0,
+       'legitimate: ends with period -> not premature');
+    is(_looks_premature_stop_direct("All done!", 1), 0,
+       'legitimate: ends with exclamation -> not premature');
+    is(_looks_premature_stop_direct("Shall I continue?", 1), 0,
+       'legitimate: ends with question mark -> not premature');
+    is(_looks_premature_stop_direct("Yes.", 1), 0,
+       'short final answer: ends with period -> not premature');
+}
 
-# Test 2: Same content with 0 tool calls -> NOT premature (no prior work context)
-$result = _looks_premature_stop_direct($debug_log_content, 0);
-is($result, 0,
-   "same content with 0 tool calls -> NOT premature (no work context)");
+# Responses with content (even mid-sentence) -> NOT premature
+# The gate does not check punctuation or sentence structure.
+{
+    my @synthetic_calls = map { { name => 'unknown', operation => '', success => 1 } } 1..1;
+    my $debug_log_content = "Now I can see the exact tokens. So the tokens are:";
 
-# Test 3: Legitimate final answers
-is(_looks_premature_stop_direct("Done. All files have been updated.", 1), 0,
-   "legitimate: ends with period -> not premature");
-is(_looks_premature_stop_direct("All done!", 1), 0,
-   "legitimate: ends with exclamation -> not premature");
-is(_looks_premature_stop_direct("Shall I continue?", 1), 0,
-   "legitimate: ends with question mark -> not premature");
-is(_looks_premature_stop_direct(q{Here is the result.
+    my $r = $eval->evaluate(
+        content      => $debug_log_content,
+        tool_calls   => \@synthetic_calls,
+        api_response => { finish_reason => 'stop' },
+        retry_count  => 0,
+    );
+    is($r->{decision}, 'complete',
+       'mid-sentence content after tool calls = complete (no text parsing)');
+}
 
-| Name | Value |
-|------|-------|
-| A    | 1     |}, 1), 1,
-   "table ending without terminal punctuation -> premature (model should add a summary)");
+# Long response (>500 chars) -> NOT premature
+{
+    my $long_mid = "This is a very long response that goes on and on about many " x 10;
+    $long_mid = substr($long_mid, 0, 600);
+    is(_looks_premature_stop_direct($long_mid, 1), 0,
+       'long response (>500 chars): NOT premature (length is not checked)');
+}
 
-# Test 4: Mid-sentence responses
-is(_looks_premature_stop_direct("Here is what I found:", 1), 1,
-   "mid-sentence: ends with colon -> premature");
-is(_looks_premature_stop_direct("The result is `x`", 1), 1,
-   "mid-sentence: ends with backtick -> premature");
-is(_looks_premature_stop_direct("Let me check", 1), 1,
-   "mid-sentence: no terminal punctuation -> premature");
-is(_looks_premature_stop_direct("Checking:", 1), 1,
-   "mid-sentence: ends with colon -> premature");
-
-# Test 5: Empty response after tool calls
-is(_looks_premature_stop_direct("", 1), 1,
-   "empty response after tool calls -> premature");
-
-# Test 6: Short response that's clearly a final answer
-is(_looks_premature_stop_direct("Yes.", 1), 0,
-   "short final answer: ends with period -> not premature");
-
-# Test 7: Long response (> 500 chars) that ends mid-sentence
-my $long_mid = "This is a very long response that goes on and on about many " x 10;
-$long_mid = substr($long_mid, 0, 600);
-is(_looks_premature_stop_direct($long_mid, 1), 0,
-   "long response (>500 chars): treated as genuine even mid-sentence");
-
-# Test 8: Response ending with backtick + close paren (no terminal punctuation)
-is(_looks_premature_stop_direct("Result: `value`)", 1), 1,
-   "ends with backtick + paren (no terminal punct) -> premature");
+# finish_reason=length -> premature (truncation)
+{
+    my $r = $eval->evaluate(
+        content      => "Here is the beginning of",
+        api_response => { finish_reason => 'length' },
+        tool_calls   => [],
+        retry_count  => 0,
+    );
+    is($r->{decision}, 'continue', 'finish_reason=length = premature');
+    ok(grep { $_ eq 'api_truncated' } @{$r->{blockers}}, 'blocks on api_truncated');
+}
 
 done_testing();
 
-# Direct call since we can't easily construct a full WorkflowOrchestrator
+# Direct call to _looks_premature_stop via a minimal orchestrator object.
 sub _looks_premature_stop_direct {
     my ($content, $tool_calls_count) = @_;
-    return 0 unless $tool_calls_count && $tool_calls_count > 0;
-    my $content_length = length($content // '');
-    return 1 if $content_length == 0;
-    if ($content_length < 500) {
-        my $trimmed = $content // '';
-        $trimmed =~ s/\s+$//;
-        if ($trimmed =~ /[:`({\[;,+=]\s*$/ || $trimmed !~ /[.!?][)\]`'"']*\s*$/) {
-            return 1;
-        }
-    }
-    return 0;
+    my $orch = bless({}, 'CLIO::Core::WorkflowOrchestrator');
+    return $orch->_looks_premature_stop($content, $tool_calls_count);
 }

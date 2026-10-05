@@ -68,13 +68,12 @@ The orchestrator:
 4. Loops back to AI until it returns a final answer
 5. Prevents infinite loops with max iterations
 6. Evaluates workflow completion using CLIO::Core::WorkflowCompletion,
-   which inspects objective evidence (API finish_reason, structured
-   tool results, verification state, todo state) rather than response
-   length or punctuation heuristics. When the gate detects an
-   incomplete workflow, it nudges the model with an evidence-specific
-   continuation message. The retry budget is bounded; when exhausted,
-   the orchestrator returns a structured failure rather than silently
-   declaring success.
+   an internal nudge guard that detects when the model stopped mid-workflow
+   (empty response after tool activity, or API truncation). When the gate
+   detects an incomplete state, it nudges the model with a continuation
+   message (bounded to max_premature_stop_retries). When retries are
+   exhausted, the workflow ends with whatever content exists — no error
+   is surfaced to the user.
 
 Based on SAM's AgentOrchestrator but simplified for CLIO.
 
@@ -282,22 +281,13 @@ sub new {
 }
 
 # _looks_premature_stop retained as a deprecated compatibility shim.
-# The real completion evaluation now lives in CLIO::Core::WorkflowCompletion->evaluate().
-# This shim delegates to the new evaluator for backward compatibility with any
-# external callers, but returns a simple boolean (1 = should continue, 0 = complete)
-# instead of the structured result the full evaluator produces.
+# Delegates to the WorkflowCompletion evaluator for backward compatibility.
 sub _looks_premature_stop {
     my ($self, $content, $tool_calls_count) = @_;
 
-    # No tool activity -> never premature. The old heuristic only engaged
-    # when tool_calls_count > 0; preserve that contract in the shim.
+    # No tool activity -> never premature (preserve the old contract).
     return 0 unless $tool_calls_count && $tool_calls_count > 0;
 
-    # Synthesize a minimal tool_calls array so the evaluator's empty-
-    # response and textual-signal checks fire correctly when the old
-    # API passed a count > 0. Each entry is marked successful so the
-    # structured failure checks don't fire (the shim has no structured
-    # result data to pass).
     my @synthetic_calls;
     for (1..$tool_calls_count) {
         push @synthetic_calls, { name => 'unknown', operation => '', success => 1 };
@@ -309,7 +299,6 @@ sub _looks_premature_stop {
         content      => $content,
         tool_calls   => \@synthetic_calls,
         api_response => {},
-        user_input   => '',
         retry_count  => 0,
     );
 
@@ -894,25 +883,20 @@ sub process_input {
             next;
         }
         
-        # No tool calls - evaluate whether the workflow has reached a
-        # legitimate completion state using objective execution evidence.
-        # The WorkflowCompletion gate inspects:
-        #   - API finish_reason (token-limit truncation vs. clean stop)
-        #   - Structured tool result success/error (unresolved failures)
-        #   - Verification commands that ran and failed
-        #   - Verification obligations inferred from explicit requirements + file mods
-        #   - Todo/task state (in-progress, blocked, external)
-        #   - Textual continuation signals (secondary, advisory only)
-        #   - Empty responses after tool activity
+        # No tool calls - use the WorkflowCompletion gate to detect whether
+        # the model stopped prematurely. The gate only checks two things:
+        #   - API finish_reason=length (token-limit truncation)
+        #   - Empty response after tool activity (reasoning-only turn)
+        # When the gate detects incompleteness and retries remain, we nudge
+        # the model with a continuation message. When retries are exhausted,
+        # the workflow ends gracefully with whatever content exists.
         # Transport-level truncation (no finish_reason, dropped connection)
         # is already handled upstream by APIManager as a retryable error.
         require CLIO::Core::WorkflowCompletion;
         my $completion_eval = CLIO::Core::WorkflowCompletion->new();
 
         # Strip [conversation] wrapper that APIManager adds to non-streaming
-        # responses. The wrapper would corrupt textual signal detection
-        # (e.g. content ending in ] instead of a letter triggers
-        # incomplete_structure on legitimate terse responses like "OK").
+        # responses.
         my $eval_content = $api_response->{content} // '';
         $eval_content =~ s/^\[conversation\]//;
         $eval_content =~ s/\[\/conversation\]$//;
@@ -922,8 +906,6 @@ sub process_input {
             content       => $eval_content,
             api_response  => $api_response,
             tool_calls    => \@tool_calls_made,
-            session       => $session,
-            user_input    => $user_input,
             retry_count   => $premature_stop_retries,
             max_retries   => $max_premature_stop_retries,
         );
@@ -990,13 +972,41 @@ sub process_input {
                 next;
             }
 
-            # Retry budget exhausted — do NOT silently treat as complete.
-            # Surface the incomplete state so the caller can recover.
+            # Retry budget exhausted. The premature-stop nudge is an
+            # internal best-effort retry — when it doesn't resolve the issue
+            # (usually a model that keeps emitting reasoning-only), end the
+            # workflow with whatever content exists. Do NOT surface a
+            # framework error to the user; the agent's final content is
+            # the answer, whether it's complete or partial.
             log_debug('WorkflowOrchestrator', "Completion budget exhausted (decision=$eval->{decision}, blockers=[" . join(',', @{$eval->{blockers}}) . "])");
 
             my $final_content = $api_response->{content} || '';
 
-            # Save partial content to session if we have tool activity history
+            # End the workflow gracefully with whatever content exists.
+            $premature_stop_retries = 0;
+            $reduce_thinking = 0;
+            $max_output_tokens_override = 0;
+
+            # AI has final answer (even if partial)
+            my $elapsed_time = time() - $start_time;
+
+            log_debug('WorkflowOrchestrator', "Workflow ended after exhausted budget ($iteration iterations, ${elapsed_time}s)");
+
+            # Capture final process stats
+            $self->{process_stats}->capture('session_end', {
+                iterations => $iteration,
+                elapsed_time => sprintf("%.1f", $elapsed_time),
+                tool_calls => scalar(@tool_calls_made),
+                hit_limit => 1,
+                completion_exhausted => 1,
+            }) if $self->{process_stats};
+
+            # Clean up response content
+            $final_content =~ s/^\[conversation\]//;
+            $final_content =~ s/\[\/conversation\]$//;
+            $final_content =~ s/^\s+|\s+$//g;
+
+            # Save final assistant text to session if we have tool activity
             if (@tool_calls_made > 0 && length($final_content) > 0 && $session && $session->can('add_message')) {
                 eval {
                     my $sanitized = sanitize_text($final_content);
@@ -1008,35 +1018,16 @@ sub process_input {
                     });
                 };
                 if ($@) {
-                    log_warning('WorkflowOrchestrator', "Failed to save final assistant response on exhausted budget: $@");
+                    log_warning('WorkflowOrchestrator', "Failed to save final assistant response: $@");
                 }
             }
 
-            # Build a structured failure result preserving the partial response
-            # and diagnostic information for the caller/session to recover.
-            my $exhausted_msg = $eval->{continuation}
-                || "Workflow did not reach a verified completion state. "
-                . "Blockers: " . join(', ', @{$eval->{blockers} || []}) . ". "
-                . "Partial response: " . substr($final_content, 0, 200) . (length($final_content) > 200 ? '...' : '');
-
-            my $elapsed_time = time() - $start_time;
-            $self->{process_stats}->capture('session_end', {
-                iterations => $iteration,
-                elapsed_time => sprintf("%.1f", $elapsed_time),
-                tool_calls => scalar(@tool_calls_made),
-                hit_limit => 1,
-                completion_exhausted => 1,
-            }) if $self->{process_stats};
-
             return {
-                success => 0,
-                error => $exhausted_msg,
-                error_type => 'completion_exhausted',
+                success => 1,
                 content => $final_content,
                 iterations => $iteration,
                 tool_calls_made => \@tool_calls_made,
                 elapsed_time => $elapsed_time,
-                completion_evaluation => $eval,
                 messages_saved_during_workflow => (@tool_calls_made > 0) ? 1 : 0,
                 reasoning_content => $api_response->{reasoning_content} // $api_response->{accumulated_reasoning},
                 reasoning_details => $api_response->{reasoning_details},
