@@ -566,7 +566,7 @@ sub _execute_read_tool_result {
     
     # Retrieve chunk from storage
     my $chunk = eval {
-        $self->{storage}->retrieve_chunk(
+        $self->{storage}->retrieveChunk(
             $tool_call_id,
             $self->{session}->{session_id},
             $offset,
@@ -584,14 +584,14 @@ sub _execute_read_tool_result {
         content => $chunk->{content},
         offset => $chunk->{offset},
         length => $chunk->{length},
-        total_length => $chunk->{total_length},
-        has_more => $chunk->{has_more} ? \1 : \0,
+        total_length => $chunk->{totalLength},
+        has_more => $chunk->{hasMore} ? \1 : \0,
     };
     
-    if ($chunk->{next_offset}) {
-        $result->{next_offset} = $chunk->{next_offset};
+    if ($chunk->{nextOffset}) {
+        $result->{next_offset} = $chunk->{nextOffset};
         $result->{message} = "Retrieved chunk $offset-" . ($offset + $chunk->{length}) . 
-                           " of $chunk->{total_length}. Use offset=$chunk->{next_offset} to continue.";
+                           " of $chunk->{totalLength}. Use offset=$chunk->{nextOffset} to continue.";
     } else {
         $result->{message} = "Final chunk retrieved.";
     }

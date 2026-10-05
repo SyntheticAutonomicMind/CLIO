@@ -66,7 +66,7 @@ my $store = CLIO::Session::ToolResultStore->new(
 
 # Test 3: Chunk retrieval - sequential reading within 32KB limit
 {
-    my $content = "z" x 100000;  # 100KB total (may grow due to line wrapping)
+    my $content = "z" x 100000;  # 100KB
     $store->processToolResult('test_chunked_789', $content, 'test_session_3');
     
     # Read first chunk (8KB default)
@@ -74,7 +74,7 @@ my $store = CLIO::Session::ToolResultStore->new(
     is($chunk1->{offset}, 0, 'First chunk: offset=0');
     is($chunk1->{length}, 8192, 'First chunk: length=8192');
     my $total = $chunk1->{totalLength};
-    ok($total >= 100000, "First chunk: totalLength=$total (>= 100000, may include line-wrap newlines)");
+    is($total, 100000, "First chunk: totalLength=$total (exact, no line-wrap newlines)");
     ok($chunk1->{hasMore}, 'First chunk: hasMore=true');
     is($chunk1->{nextOffset}, 8192, 'First chunk: nextOffset=8192');
     
@@ -131,6 +131,25 @@ my $store = CLIO::Session::ToolResultStore->new(
         $store->retrieveChunk('nonexistent_xyz', 'test_session_6', 0, 8192);
     };
     like($@, qr/not found/, 'Nonexistent result throws error');
+}
+
+# Test 7: Exact content retrieval (regression test for line-wrapping bug)
+{
+    my $content = "A" x 50000;
+    $store->processToolResult('test_exact_222', $content, 'test_session_7');
+    my $total = $store->retrieveChunk('test_exact_222', 'test_session_7', 0, 8192)->{totalLength};
+    is($total, 50000, "Exact retrieval: totalLength = 50000 (no wrapping newlines)");
+
+    # Reconstruct full content from chunks
+    my $reconstructed = '';
+    my $offset = 0;
+    while (1) {
+        my $chunk = $store->retrieveChunk('test_exact_222', 'test_session_7', $offset, 8192);
+        $reconstructed .= $chunk->{content};
+        last unless $chunk->{hasMore};
+        $offset = $chunk->{nextOffset};
+    }
+    is($reconstructed, $content, "Exact retrieval: full content round-trips character-for-character");
 }
 
 done_testing();

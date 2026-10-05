@@ -608,7 +608,7 @@ sub _validate_and_repair_history {
                 my $tc_id = $tc->{id};
                 next unless $tc_id;
                 
-                unless ($tool_result_ids{$tc_id}) {
+                unless (exists $tool_result_ids{$tc_id}) {
                     push @missing_ids, $tc_id;
                 }
             }

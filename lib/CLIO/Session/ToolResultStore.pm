@@ -32,22 +32,23 @@ markers that the AI can use to retrieve the full content via read_tool_result.
 
 **Storage Location**: sessions/<session_id>/tool_results/<toolCallId>.txt
 
-=head2 LINE WRAPPING (BUGFIX)
+=head2 EXACT CONTENT PRESERVATION
 
-Lines exceeding 1000 characters are automatically wrapped at word boundaries during
-persistence. This prevents ultra-long lines from causing AI context/tokenization issues.
+Tool results are stored to disk EXACTLY as received — no line wrapping,
+no transformation, no re-encoding. This ensures that retrieveChunk()
+returns an exact slice of the original output, which is critical when
+tool results contain structured data (JSON, source code, base64,
+compiler output, etc.) that would be corrupted by inserted newlines.
 
-**Why**: Very long lines (>2000 chars) can cause AI models to generate malformed JSON
-in subsequent responses, leading to cascading failures. This was observed in session
-2683331c-091c-45f3-b196-77d57231be2d where a 3,803-character package list caused
-11 consecutive JSON errors and session termination.
+Presentation-time wrapping (if needed) should happen in the display
+layer, not in the persistence layer.
 
-**Implementation**: Lines >1000 chars are split at word boundaries (spaces preferred).
-If no spaces exist, hard-breaks at 1000 chars. This preserves content while ensuring
-digestibility.
-
-**Impact**: Minimal - only affects extremely long lines (rare in normal output).
-Total content size remains unchanged, only newlines are added.
+**Why**: Persisting transformed content (e.g., line-wrapped) breaks the
+round-trip contract: retrieveChunk(original, offset, length) must equal
+the exact requested slice of the original. When long lines in JSON or
+source code were wrapped at 1000 chars during persistence, subsequent
+chunk retrieval returned content with spurious newlines, corrupting
+structured data and causing parse failures in downstream AI processing.
 
 =cut
 
@@ -115,7 +116,7 @@ sub processToolResult {
     eval {
         my $metadata = $self->persistResult($toolCallId, $content, $session_id);
         
-        # Use actual stored length (may differ from input due to line wrapping)
+        # Use actual stored length (exact original content — no transformation)
         my $stored_length = $metadata->{totalLength};
         
         # Generate preview chunk
@@ -193,7 +194,7 @@ sub _analyze_content_issues {
     }
     
     if ($max_line_length > 2000) {
-        push @warnings, "Contains lines up to $max_line_length characters (will be wrapped at 1000 chars for readability)";
+        push @warnings, "Contains lines up to $max_line_length characters (long lines preserved as-is in storage; wrapping is a presentation-time concern)";
     }
     
     # Check for very few newlines (might be binary or unformatted)
@@ -241,15 +242,17 @@ sub persistResult {
         croak "Failed to create tool_results directory: $error";
     }
     
-    # Wrap ultra-long lines to prevent AI context/JSON errors
-    # Lines >1000 chars can confuse AI models and cause malformed JSON responses
-    # See: session 2683331c-091c-45f3-b196-77d57231be2d failure with 3803-char line
-    my $wrapped_content = _wrap_long_lines($content, 1000);
+    my $stored_content = $content;
     
-    # Write content to file (using wrapped version)
+    # Write content to file (exact representation, no line wrapping)
+    # Line wrapping is a presentation-time concern; persisting transformed
+    # content would corrupt JSON, source code, base64, and other structured
+    # data when retrieved via retrieveChunk(). The original content must be
+    # round-trip exact: retrieveChunk(original, offset, length) must equal
+    # exact_requested_slice_of_original.
     eval {
         open my $fh, '>:utf8', $result_file or croak "Failed to open $result_file: $!";
-        print $fh $wrapped_content;
+        print $fh $stored_content;
         close $fh;
     };
     if ($@) {
@@ -258,7 +261,7 @@ sub persistResult {
         croak "Failed to write tool result file: $error";
     }
     
-    my $total_length = length($wrapped_content);
+    my $total_length = length($stored_content);
     my $created = time();
     
     return {

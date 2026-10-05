@@ -9,7 +9,7 @@ use utf8;
 use POSIX qw(ceil);
 use Exporter 'import';
 
-our @EXPORT_OK = qw(estimate_tokens estimate_messages_tokens get_effective_ratio compute_prompt_budget);
+our @EXPORT_OK = qw(estimate_tokens estimate_messages_tokens get_effective_ratio compute_prompt_budget message_character_count);
 
 =head1 NAME
 
@@ -146,8 +146,62 @@ sub estimate_tokens {
     return 0 unless length($text) > 0;
     
     my $ratio = get_effective_ratio();
-    my $char_count = length($text);
+    my $char_count = message_character_count($text);
     return int(ceil($char_count / $ratio));
+}
+
+=head2 message_character_count
+
+Compute the total character count of the textual content of a message's
+content field, handling all representations CLIO supports:
+
+- Scalar text: returns the character count of the string.
+- Arrayref (multimodal with text + image parts): sums the character
+  count of all text parts; image/binary parts contribute 0 (providers
+  count them as fixed image tokens, not as text characters).
+- undef or empty: returns 0.
+- Other references (hash, code, etc.): returns 0 (malformed/safe
+  fallback — the content is not valid text and must not be counted as
+  such).
+
+This is the AUTHORITATIVE definition of "the textual/tokenizable
+content of a message for token-budget estimation."  Both the token-
+ratio learning path (APIManager::_learn_from_api_response,
+APIManager::_resolve_streaming_usage) and the estimation path
+(TokenEstimator::estimate_tokens, MessageValidator::_estimate_tokens)
+must use this same logic so that the ratio learned from actual API
+responses is comparable to the estimates that drive trim decisions.
+
+Arguments:
+- $content: Scalar text, arrayref of content parts, or other
+
+Returns: Integer character count (0 for non-text content)
+
+=cut
+
+sub message_character_count {
+    my ($content) = @_;
+    return 0 unless defined $content;
+
+    # Handle arrayref content (multimodal messages with text + image parts)
+    if (ref($content) eq 'ARRAY') {
+        my $chars = 0;
+        for my $part (@$content) {
+            next unless ref($part) eq 'HASH';
+            if (($part->{type} // '') eq 'text' && defined $part->{text}) {
+                $chars += length($part->{text});
+            }
+            # image_url and other non-text parts contribute 0 characters
+            # (providers count them as fixed image tokens, not text characters)
+        }
+        return $chars;
+    }
+
+    # Any other ref type (hash, code, glob) is malformed content — return 0
+    return 0 if ref($content);
+
+    # Scalar text (including empty string)
+    return length($content);
 }
 
 =head2 exceeds_limit

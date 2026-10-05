@@ -2369,7 +2369,7 @@ sub _learn_from_api_response {
     # Calculate total character count of messages
     my $total_chars = 0;
     for my $msg (@$messages) {
-        $total_chars += length($msg->{content} || '');
+        $total_chars += CLIO::Memory::TokenEstimator::message_character_count($msg->{content});
         
         # Include tool_calls size
         if ($msg->{tool_calls} && ref($msg->{tool_calls}) eq 'ARRAY') {
@@ -3718,6 +3718,44 @@ sub _log_json_error {
 }
 
 # Log full API request to debug log (and /tmp/clio_api_debug.log when --debug)
+
+# Maximum size of the debug log file before we stop appending.
+# Prevents unbounded growth of sensitive data on disk.
+use constant DEBUG_LOG_MAX_SIZE => 1_048_576;  # 1MB
+
+# Open the debug log with restrictive permissions (0600) and enforce a size cap.
+# Returns a writable filehandle or undef (if capped or unopenable).
+sub _open_debug_log {
+    my ($self) = @_;
+    my $file = '/tmp/clio_api_debug.log';
+
+    # Enforce maximum file size: stop writing if the log has grown too large.
+    if (-f $file) {
+        my $size = -s $file;
+        if (defined $size && $size >= DEBUG_LOG_MAX_SIZE) {
+            log_debug('APIManager', "Debug log exceeds " . DEBUG_LOG_MAX_SIZE . " bytes — skipping write to prevent unbounded growth.");
+            return;
+        }
+    }
+
+    # Use sysopen with 0600 permissions so the debug log is not world/group-readable.
+    # This protects potentially sensitive request/response data captured in --debug mode.
+    my $fh;
+    unless (sysopen($fh, $file, &POSIX::O_CREAT | &POSIX::O_WRONLY | &POSIX::O_APPEND, 0600)) {
+        log_debug('APIManager', "Failed to open debug log $file: $!");
+        return;
+    }
+
+    # If the file was just created (empty), write a security notice.
+    if (-s $file == 0) {
+        print $fh "# CLIO API debug log\n";
+        print $fh "# WARNING: Contains API request/response data in --debug mode.\n";
+        print $fh "# Delete this file after debugging. Permissions: 0600 (owner-only).\n";
+        print $fh "# Max size: " . DEBUG_LOG_MAX_SIZE . " bytes.\n\n";
+    }
+
+    return $fh;
+}
 sub _log_api_request {
     my ($self, $req, $final_endpoint, $provider_label, $model, $json, $is_streaming, $use_responses_api) = @_;
     my $stream_label = $is_streaming ? "STREAMING " : "";
@@ -3809,61 +3847,65 @@ sub _log_api_request {
             log_debug('APIManager', "[$provider_label ${stream_label}REQUEST] payload_size: " . length($json) . " bytes");
         };
     }
-    if ($self->{debug} && open my $fh, '>>', '/tmp/clio_api_debug.log') {
-        print $fh "\n" . "=" x 80 . "\n";
-        print $fh "[" . scalar(localtime) . "] $provider_label ${stream_label}REQUEST\n";
-        print $fh "Endpoint: $final_endpoint\n";
-        print $fh "Model: $model\n";
-        # Structured summary before raw JSON body
-        eval {
-            my $p = decode_json($json);
-            print $fh "Payload size: " . length($json) . " bytes\n";
-            if (ref($p->{messages}) eq 'ARRAY') {
-                print $fh "Messages (" . scalar(@{$p->{messages}}) . "):\n";
-                for (my $i = 0; $i < @{$p->{messages}}; $i++) {
-                    my $msg = $p->{messages}[$i];
-                    my $role = $msg->{role} // 'unknown';
-                    my $content_len = 0;
-                    if (ref($msg->{content}) eq 'ARRAY') {
-                        for my $part (@{$msg->{content}}) {
-                            $content_len += length($part->{text} // '') if ref($part) eq 'HASH';
+    if ($self->{debug}) {
+        my $fh = $self->_open_debug_log();
+        if ($fh) {
+            print $fh "\n" . "=" x 80 . "\n";
+            print $fh "[" . scalar(localtime) . "] $provider_label ${stream_label}REQUEST\n";
+            print $fh "Endpoint: $final_endpoint\n";
+            print $fh "Model: $model\n";
+            # Structured summary (NO raw body — the summary above already
+            # contains message previews; writing the full JSON body would
+            # expose all user data in the debug log without redaction)
+            eval {
+                my $p = decode_json($json);
+                print $fh "Payload size: " . length($json) . " bytes\n";
+                if (ref($p->{messages}) eq 'ARRAY') {
+                    print $fh "Messages (" . scalar(@{$p->{messages}}) . "):\n";
+                    for (my $i = 0; $i < @{$p->{messages}}; $i++) {
+                        my $msg = $p->{messages}[$i];
+                        my $role = $msg->{role} // 'unknown';
+                        my $content_len = 0;
+                        if (ref($msg->{content}) eq 'ARRAY') {
+                            for my $part (@{$msg->{content}}) {
+                                $content_len += length($part->{text} // '') if ref($part) eq 'HASH';
+                            }
+                        } else {
+                            $content_len = length($msg->{content} // '');
                         }
-                    } else {
-                        $content_len = length($msg->{content} // '');
+                        my $tc_str = '';
+                        if ($msg->{tool_calls} && ref($msg->{tool_calls}) eq 'ARRAY' && @{$msg->{tool_calls}}) {
+                            my @tc_names = map { my $n = $_->{function}{name}; $n //= '?'; $n } @{$msg->{tool_calls}};
+                            $tc_str = " tool_calls=[" . join(',', @tc_names) . "]";
+                        }
+                        printf $fh "  [%d] %s (%d chars)%s\n", $i, $role, $content_len, $tc_str;
                     }
-                    my $tc_str = '';
-                    if ($msg->{tool_calls} && ref($msg->{tool_calls}) eq 'ARRAY' && @{$msg->{tool_calls}}) {
-                        my @tc_names = map { my $n = $_->{function}{name}; $n //= '?'; $n } @{$msg->{tool_calls}};
-                        $tc_str = " tool_calls=[" . join(',', @tc_names) . "]";
+                }
+                if (ref($p->{tools}) eq 'ARRAY') {
+                    print $fh "Tools (" . scalar(@{$p->{tools}}) . "):\n";
+                    for my $t (@{$p->{tools}}) {
+                        print $fh "  - " . ($t->{function}{name} // $t->{name} // 'unknown') . "\n";
                     }
-                    printf $fh "  [%d] %s (%d chars)%s\n", $i, $role, $content_len, $tc_str;
                 }
-            }
-            if (ref($p->{tools}) eq 'ARRAY') {
-                print $fh "Tools (" . scalar(@{$p->{tools}}) . "):\n";
-                for my $t (@{$p->{tools}}) {
-                    print $fh "  - " . ($t->{function}{name} // $t->{name} // 'unknown') . "\n";
+                if (ref($p->{input}) eq 'ARRAY') {
+                    print $fh "Input items (" . scalar(@{$p->{input}}) . "):\n";
+                    for (my $i = 0; $i < @{$p->{input}}; $i++) {
+                        my $item = $p->{input}[$i];
+                        my $type = $item->{type} // '?';
+                        my $role = $item->{role} // '';
+                        print $fh "  [$i] $role $type\n";
+                    }
                 }
+            };
+            # Headers (Bearer tokens redacted)
+            print $fh "Headers:\n";
+            for my $h ($req->headers->header_field_names) {
+                my $val = $req->header($h);
+                $val =~ s/(Bearer\s+).{8}/$1XXXX.../i if $h =~ /auth/i;
+                print $fh "  $h: $val\n";
             }
-            if (ref($p->{input}) eq 'ARRAY') {
-                print $fh "Input items (" . scalar(@{$p->{input}}) . "):\n";
-                for (my $i = 0; $i < @{$p->{input}}; $i++) {
-                    my $item = $p->{input}[$i];
-                    my $type = $item->{type} // '?';
-                    my $role = $item->{role} // '';
-                    print $fh "  [$i] $role $type\n";
-                }
-            }
-            print $fh "\n";
-        };
-        print $fh "Headers:\n";
-        for my $h ($req->headers->header_field_names) {
-            my $val = $req->header($h);
-            $val =~ s/(Bearer\s+).{8}(.*)/${1}XXXX.../ if $h =~ /auth/i;
-            print $fh "  $h: $val\n";
+            close $fh;
         }
-        print $fh "\nBody:\n$json\n";
-        close $fh;
     }
     log_debug('APIManager', "=" x 80);
 }
@@ -3878,18 +3920,26 @@ sub _log_api_response {
     log_debug('APIManager', "[$provider_label $label] Status: $status");
     log_debug('APIManager', "[$provider_label $label] Body: " . substr($body, 0, 1500)) unless $is_error;
 
-    if ($self->{debug} && open my $fh, '>>', '/tmp/clio_api_debug.log') {
-        print $fh "\n" . "-"x80 . "\n";
-        print $fh "[" . scalar(localtime) . "] $provider_label $label\n";
-        print $fh "Status: $status\n";
-        unless ($is_error) {
+    if ($self->{debug}) {
+        my $fh = $self->_open_debug_log();
+        if ($fh) {
+            print $fh "\n" . "-" x 80 . "\n";
+            print $fh "[" . scalar(localtime) . "] $provider_label $label\n";
+            print $fh "Status: $status\n";
+
+            # Headers (Bearer tokens redacted)
             print $fh "Headers:\n";
             for my $h ($resp->headers->header_field_names) {
-                print $fh "  $h: " . $resp->header($h) . "\n";
+                my $val = $resp->header($h);
+                $val =~ s/(Bearer\s+).{8}/$1XXXX.../i if $h =~ /auth/i;
+                print $fh "  $h: $val\n";
             }
+
+            # Body: truncated to 2000 chars to limit sensitive output exposure
+            my $truncated_body = $is_error ? substr($body, 0, 2000) : substr($body, 0, 2000);
+            print $fh "\nBody (truncated to 2000 chars):\n" . $truncated_body . "\n";
+            close $fh;
         }
-        print $fh "\nBody:\n" . substr($body, 0, ($is_error ? 2000 : length($body))) . "\n";
-        close $fh;
     }
 }
 
@@ -4031,9 +4081,10 @@ sub _process_non_streaming_response {
     # Log key fields
     eval {
         my $c = $data->{choices}[0] || {};
+        require CLIO::Memory::TokenEstimator;
         log_debug('APIManager', sprintf("[$provider_label] finish=%s tools=%d content=%d usage=%d/%d",
             $c->{finish_reason} || '?', ($c->{message}{tool_calls} ? scalar @{$c->{message}{tool_calls}} : 0),
-            length($c->{message}{content} || ''), $data->{usage}{prompt_tokens} || 0, $data->{usage}{completion_tokens} || 0));
+            CLIO::Memory::TokenEstimator::message_character_count($c->{message}{content}), $data->{usage}{prompt_tokens} || 0, $data->{usage}{completion_tokens} || 0));
     };
 
     $self->_extract_stateful_markers($data, $opts);
@@ -5418,9 +5469,13 @@ sub _resolve_streaming_usage {
 
     my $prompt_tokens = 0;
     if ($s->{messages} && ref($s->{messages}) eq 'ARRAY') {
-        $prompt_tokens += int(length($_->{content} || '') / 4) for @{$s->{messages}};
+        for my $msg (@{$s->{messages}}) {
+            my $chars = CLIO::Memory::TokenEstimator::message_character_count($msg->{content});
+            $prompt_tokens += int($chars / 4) if $chars > 0;
+        }
     } elsif ($s->{input}) {
-        $prompt_tokens = int(length($s->{input}) / 4);
+        require CLIO::Memory::TokenEstimator;
+        $prompt_tokens = int(CLIO::Memory::TokenEstimator::message_character_count($s->{input}) / 4);
     }
 
     log_debug('APIManager', "Estimated usage: prompt~$prompt_tokens, completion~$s->{token_count}");

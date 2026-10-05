@@ -576,6 +576,7 @@ sub _validate_or_passthrough {
     my %tc_id_to_idx;     # tool_call_id -> assistant msg index
     my %tr_id_to_idx;     # tool_call_id -> tool result msg index
     my %id_count;         # tool_call_id -> occurrence count
+    my %result_id_count;  # tool_call_id -> result occurrence count
 
     for my $i (0 .. $#$messages) {
         my $msg = $messages->[$i];
@@ -591,7 +592,10 @@ sub _validate_or_passthrough {
             }
         } elsif ($role eq 'tool') {
             my $id = $msg->{tool_call_id};
-            $tr_id_to_idx{$id} = $i if defined $id && length $id;
+            if (defined $id && length $id) {
+                $tr_id_to_idx{$id} = $i;
+                $result_id_count{$id}++;
+            }
         }
     }
 
@@ -613,10 +617,17 @@ sub _validate_or_passthrough {
         $has_orphan_results = 1, last unless exists $tc_id_to_idx{$id};
     }
 
+    # Check for duplicate tool RESULT IDs (more than one result per id)
+    my $has_dup_result = 0;
+    for my $id (keys %result_id_count) {
+        if ($result_id_count{$id} > 1) {
+            $has_dup_result = 1;
+            last;
+        }
+    }
+
     # If nothing needs fixing, return the original array reference.
-    # This is the byte-stability fast path: no re-serialization,
-    # original hash references preserved.
-    unless ($has_orphans || $has_dupes || $has_orphan_results) {
+    unless ($has_orphans || $has_dupes || $has_orphan_results || $has_dup_result) {
         log_debug('MessageValidator',
             "validate_or_passthrough: no orphans/dupes — passing " .
             scalar(@$messages) . " messages through unchanged (byte stable)");
@@ -625,7 +636,7 @@ sub _validate_or_passthrough {
 
     # Something needs fixing — re-serialize via the full validation path.
     log_debug('MessageValidator',
-        "validate_or_passthrough: orphans=$has_orphans dupes=$has_dupes orphan_results=$has_orphan_results — running validate_tool_message_pairs");
+        "validate_or_passthrough: orphans=$has_orphans dupes=$has_dupes orphan_results=$has_orphan_results dup_results=$has_dup_result — running validate_tool_message_pairs");
     return validate_tool_message_pairs($messages);
 }
 
@@ -694,6 +705,22 @@ sub validate_tool_message_pairs {
         }
     }
 
+    # Detect duplicate tool_result IDs (same id appearing as a tool
+    # message more than once). Providers reject duplicate tool_call_ids;
+    # duplicate results for the same id are similarly invalid. We keep
+    # the FIRST occurrence and mark subsequent ones for removal.
+    my %duplicate_tr_ids;
+    my %seen_tr_ids;
+    for (my $i = 0; $i < @$messages; $i++) {
+        my $msg = $messages->[$i];
+        next unless $msg->{role} && $msg->{role} eq 'tool' && $msg->{tool_call_id};
+        my $id = $msg->{tool_call_id};
+        if ($seen_tr_ids{$id}++) {
+            $duplicate_tr_ids{$i} = 1;  # key by message index
+            log_debug('MessageValidator', "Duplicate tool_result_id: $id at index $i (already seen)");
+        }
+    }
+
     # Identify orphaned tool_call IDs (no matching result) and orphaned result IDs (no matching call)
     my %orphaned_tc_ids;
     for my $tc_id (keys %tc_id_to_assistant_idx) {
@@ -743,7 +770,7 @@ sub validate_tool_message_pairs {
     # input). So we always take the rebuild path when duplicates
     # exist, which is fine for performance (messages are bounded
     # by the post-trim count, usually <1000).
-    if (!keys %orphaned_tc_ids && !keys %orphaned_result_indices && !%duplicate_tc_ids) {
+    if (!keys %orphaned_tc_ids && !keys %orphaned_result_indices && !%duplicate_tc_ids && !%duplicate_tr_ids) {
         log_debug('MessageValidator', "Tool message validation: all pairs valid");
         return $messages;
     }
@@ -765,6 +792,13 @@ sub validate_tool_message_pairs {
         # Drop orphaned tool results
         if ($orphaned_result_indices{$i}) {
             log_debug('MessageValidator', "Removing orphaned tool_result at index $i");
+            $fixes++;
+            next;
+        }
+
+        # Drop duplicate tool results (keep first occurrence only)
+        if (exists $duplicate_tr_ids{$i}) {
+            log_debug('MessageValidator', "Removing duplicate tool_result at index $i");
             $fixes++;
             next;
         }
@@ -855,7 +889,7 @@ sub preflight_validate {
     my @errors;
     my %tool_call_ids;
     my %tool_result_ids;
-    my %seen_ids;
+    my %seen_result_ids;
     
     for (my $i = 0; $i < @$messages; $i++) {
         my $msg = $messages->[$i];
@@ -865,14 +899,15 @@ sub preflight_validate {
             for my $tc (@{$msg->{tool_calls}}) {
                 my $id = $tc->{id};
                 if ($id) {
-                    push @errors, "Duplicate tool_call_id: $id" if $seen_ids{$id};
-                    $seen_ids{$id} = $i;
+                    push @errors, "Duplicate tool_call_id: $id" if $tool_call_ids{$id};
                     $tool_call_ids{$id} = $i;
                 }
             }
         }
         
         if ($role eq 'tool' && $msg->{tool_call_id}) {
+            push @errors, "Duplicate tool_result_id: $msg->{tool_call_id}" if $seen_result_ids{$msg->{tool_call_id}};
+            $seen_result_ids{$msg->{tool_call_id}} = $i;
             $tool_result_ids{$msg->{tool_call_id}} = $i;
         }
     }
