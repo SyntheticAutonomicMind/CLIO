@@ -2962,10 +2962,49 @@ sub _build_payload {
     # Clear the override after applying so it doesn't persist across calls
     delete $self->{_max_output_tokens_override};
     
-    # Build base payload
+    # Build base payload.
+    # CRITICAL: clone messages before assigning to payload. Provider-specific
+    # transforms in adapt_request_for_endpoint (delete cache_control,
+    # convert system->user) mutate message hashes IN PLACE. Without this
+    # clone, those mutations corrupt the original @messages array held by
+    # WorkflowOrchestrator — which is reused across iterations in the same
+    # turn and can leak into the next turn's request. The clone is
+    # shallow-deep: each message hash is copied, and nested arrayrefs that
+    # provider transforms touch (tool_calls, content arrayref, reasoning
+    # arrays) are copied too; string values are immutable and need no copy.
+    my @cloned_messages;
+    if ($messages && ref($messages) eq 'ARRAY') {
+        for my $msg (@$messages) {
+            next unless ref($msg) eq 'HASH';
+            my $clone = { %$msg };
+            # Clone nested arrays that provider transforms may mutate
+            for my $key (qw(tool_calls reasoning_details reasoning_blocks responses_reasoning_items)) {
+                if (ref($clone->{$key}) eq 'ARRAY') {
+                    $clone->{$key} = [ @{$clone->{$key}} ];
+                    # Clone nested hashes in tool_calls (function args)
+                    if ($key eq 'tool_calls') {
+                        for my $tc (@{$clone->{tool_calls}}) {
+                            if (ref($tc) eq 'HASH') {
+                                $tc = { %$tc };
+                                if (ref($tc->{function}) eq 'HASH') {
+                                    $tc->{function} = { %{$tc->{function}} };
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            # Clone content arrayref blocks (multimodal content parts)
+            if (ref($clone->{content}) eq 'ARRAY') {
+                $clone->{content} = [ map { ref($_) eq 'HASH' ? { %$_ } : $_ } @{$clone->{content}} ];
+            }
+            push @cloned_messages, $clone;
+        }
+    }
+
     my $payload = {
         model => $model,
-        messages => $messages,
+        messages => \@cloned_messages,
         max_tokens => $max_tokens,
     };
 

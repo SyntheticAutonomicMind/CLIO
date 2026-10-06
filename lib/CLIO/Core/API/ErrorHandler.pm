@@ -9,6 +9,7 @@ use utf8;
 use CLIO::UI::Terminal qw(ui_char);
 use CLIO::Core::Logger qw(log_debug log_warning should_log);
 use CLIO::Memory::TokenEstimator qw(estimate_tokens compute_prompt_budget);
+use CLIO::Core::API::MessageValidator qw(remove_existing_thread_summaries);
 use CLIO::Util::RateLimit qw(get_rate_limit_type_name);
 use CLIO::Core::Diagnostics qw(dump_diagnostic display_rate_limit_info get_tool_specific_guidance);
 use CLIO::Core::Defaults qw(DEFAULT_CONTEXT_WINDOW);
@@ -1098,6 +1099,7 @@ sub trim_for_token_limit {
     my $retry_count     = $args{retry_count};
     my $session         = $args{session};
     my $tool_calls_made = $args{tool_calls_made};
+    my $raw_user_input  = $args{raw_user_input} // '';
 
     # retry_count is passed by caller as a scalar reference
     # (retry_count => \$retry_count) so handle_api_error can increment the
@@ -1285,15 +1287,15 @@ sub trim_for_token_limit {
 
         if (@dropped_messages) {
             my $compressed = CLIO::Core::WorkflowOrchestrator::_compress_dropped_for_recovery(
-                \@dropped_messages, $last_user_msg, $session, $messages, $wo->{prompt_builder}, $_ctx_window
+                \@dropped_messages, $last_user_msg, $session, $messages, $wo->{prompt_builder}, $_ctx_window, $raw_user_input,
+                ($wo->{_current_projection} ? $wo->{_current_projection}{active_todos} : undef) || [],
+                ($wo->{_current_projection} ? $wo->{_current_projection}{unresolved} : undef)  || [],
+                ($wo->{_current_projection} ? $wo->{_current_projection}{relevant_memory} : undef) || [],
             );
             if ($compressed) {
-                # Inject the summary BEFORE the last user message, matching
-                # the canonical proactive-trim topology (MessageValidator
-                # _role_based_tail_walk). A trailing SYSTEM message after
-                # USER breaks message alternation and tool_calling for
-                # OpenAI-compatible APIs and causes the model to lose the
-                # current turn.
+                # Canonical single-artifact invariant: remove old
+                # thread_summaries before injecting the new one.
+                @non_system = @{ remove_existing_thread_summaries(\@non_system) };
                 _inject_summary_before_last_user(\@non_system, $compressed);
                 log_debug('ErrorHandler', "Injected compression summary before last user for " . scalar(@dropped_messages) . " dropped messages");
             }
@@ -1318,9 +1320,13 @@ sub trim_for_token_limit {
 
         if (@dropped_messages) {
             my $compressed = CLIO::Core::WorkflowOrchestrator::_compress_dropped_for_recovery(
-                \@dropped_messages, $last_user_msg, $session, $messages, $wo->{prompt_builder}, $_ctx_window
+                \@dropped_messages, $last_user_msg, $session, $messages, $wo->{prompt_builder}, $_ctx_window, $raw_user_input,
+                ($wo->{_current_projection} ? $wo->{_current_projection}{active_todos} : undef) || [],
+                ($wo->{_current_projection} ? $wo->{_current_projection}{unresolved} : undef)  || [],
+                ($wo->{_current_projection} ? $wo->{_current_projection}{relevant_memory} : undef) || [],
             );
             if ($compressed) {
+                @non_system = @{ remove_existing_thread_summaries(\@non_system) };
                 _inject_summary_before_last_user(\@non_system, $compressed);
                 log_debug('ErrorHandler', "Injected compression summary before last user for " . scalar(@dropped_messages) . " dropped messages (retry 2)");
             }
@@ -1342,9 +1348,13 @@ sub trim_for_token_limit {
 
         if (@dropped_messages > 2) {
             my $compressed = CLIO::Core::WorkflowOrchestrator::_compress_dropped_for_recovery(
-                \@dropped_messages, $last_user_msg, $session, $messages, $wo->{prompt_builder}, $_ctx_window
+                \@dropped_messages, $last_user_msg, $session, $messages, $wo->{prompt_builder}, $_ctx_window, $raw_user_input,
+                ($wo->{_current_projection} ? $wo->{_current_projection}{active_todos} : undef) || [],
+                ($wo->{_current_projection} ? $wo->{_current_projection}{unresolved} : undef)  || [],
+                ($wo->{_current_projection} ? $wo->{_current_projection}{relevant_memory} : undef) || [],
             );
             if ($compressed) {
+                @non_system = @{ remove_existing_thread_summaries(\@non_system) };
                 _inject_summary_before_last_user(\@non_system, $compressed);
                 log_debug('ErrorHandler', "Injected compression summary before last user for " . scalar(@dropped_messages) . " dropped messages (retry 3 - minimal)");
             }

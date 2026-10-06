@@ -9,6 +9,7 @@ use utf8;
 use CLIO::Core::Logger qw(log_debug log_warning);
 use CLIO::Memory::TokenEstimator qw(estimate_tokens compute_prompt_budget);
 use CLIO::Util::JSON qw(safe_encode_json);
+use CLIO::Core::MessageFingerprinter qw(trace_context_transition);
 
 
 =head1 NAME
@@ -45,6 +46,7 @@ our @EXPORT_OK = qw(
     validate_and_truncate
     validate_tool_message_pairs
     preflight_validate
+    remove_existing_thread_summaries
     _validate_or_passthrough
 );
 
@@ -160,6 +162,9 @@ sub validate_and_truncate {
     $effective_limit = 1000 if $effective_limit < 1000;
 
     my $active_task = $args{active_task} // '';
+    my $active_todos = $args{active_todos} || [];
+    my $unresolved   = $args{unresolved}   || [];
+    my $ltm_entries  = $args{ltm_entries}  || [];
 
     log_debug('MessageValidator', "Token budget: max=$max_prompt, tools=$tool_tokens, budget=$prompt_budget, effective=$effective_limit");
     
@@ -171,6 +176,13 @@ sub validate_and_truncate {
         return validate_tool_message_pairs($messages);
     }
 
+    trace_context_transition(
+        phase           => 'before-proactive-trim',
+        messages        => $messages,
+        effective_limit => $effective_limit,
+        current_task    => $active_task,
+    ) if $debug;
+
     # Walk from the oldest end and drop messages until we fit,
     # while preserving the first user message (the original task
     # anchor) and keeping tool_call/tool_result pairs together so
@@ -179,7 +191,36 @@ sub validate_and_truncate {
                   || $caps->{context_window}
                   || $caps->{max_prompt_tokens}
                   || 0;
-    return _role_based_tail_walk($messages, $effective_limit, $debug, $active_task, $ctx_window);
+    my $result = _role_based_tail_walk($messages, $effective_limit, $debug, $active_task, $ctx_window, $active_todos, $unresolved, $ltm_entries);
+
+    trace_context_transition(
+        phase           => 'after-proactive-trim',
+        messages        => $result,
+        effective_limit => $effective_limit,
+        current_task    => $active_task,
+        extra           => {
+            original_count => scalar(@$messages),
+            trimmed_to     => scalar(@$result),
+        },
+    ) if $debug;
+
+    # Post-trim budget verification: the trim must not silently return a
+    # request that still exceeds the effective budget. The walk has bail-out
+    # paths that return the original (untrimmed) array when pinned messages
+    # alone exceed the budget — we must NOT hand the provider an oversized
+    # request and rely on a 400 to trigger another round of mutation.
+    # If pinned messages make the budget impossible, log a warning so the
+    # failure is visible instead of silent.
+    my $result_tokens = _estimate_tokens($result, $token_ratio);
+    if ($result_tokens > $effective_limit) {
+        log_warning('MessageValidator',
+            "Post-trim verification FAILED: result has $result_tokens tokens "
+            . "but effective_limit is $effective_limit (overshoot="
+            . ($result_tokens - $effective_limit) . " tokens). "
+            . "Pinned messages exceed budget; provider will likely reject.");
+    }
+
+    return $result;
 }
 
 =head2 _role_based_tail_walk
@@ -209,7 +250,7 @@ Returns: Trimmed ArrayRef (possibly with a thread_summary appended)
 =cut
 
 sub _role_based_tail_walk {
-    my ($messages, $effective_limit, $debug, $active_task, $context_window) = @_;
+    my ($messages, $effective_limit, $debug, $active_task, $context_window, $active_todos, $unresolved, $ltm_entries) = @_;
 
     return $messages unless $messages && @$messages;
 
@@ -467,40 +508,47 @@ sub _role_based_tail_walk {
     }
 
     # Re-compress dropped messages into a thread_summary system message.
-    # The projection's compressed_tail only covers turns dropped by the
+    # The projection's compressed_tail (now rendered as a <thread_summary>
+    # system message by WorkflowOrchestrator) covers turns dropped by the
     # projection (before the recent window). The proactive trim can also
     # drop messages from within the recent window — e.g. after a large
     # tool result pushes the total over budget. Without this
     # re-compression, those messages are permanently lost, causing the
     # model to forget recent work and reset to earlier tasks.
     #
-    # We inject a <thread_summary> system message (which is pinned by
-    # _role_based_tail_walk on subsequent turns) so the summary survives
-    # future trims. The summary is only injected when the proactive trim
-    # actually drops messages AND an active_task is available — otherwise
-    # the projection's existing compressed_tail (in the dynamic UC) is
-    # sufficient.
+    # Canonical compaction invariant: there is at most ONE
+    # <thread_summary> system message in the working array. Before
+    # injecting a new one we remove all existing ones (the new summary
+    # already carries their state via previous_summary extraction). This
+    # prevents the accumulation of summary A -> B -> C across
+    # proactive -> reactive -> proactive retry cycles.
     if (@dropped && length($active_task // '')) {
         my $summary = eval {
             require CLIO::Memory::YaRN;
             my $yarn = CLIO::Memory::YaRN->new();
             # Extract previous thread_summary from the FULL message array
-            # (not just @dropped). Pinned thread_summaries from prior trims
-            # within this turn are still in $messages but are NOT in @dropped
-            # (they're pinned/kept). Scanning only @dropped would miss them
-            # and silently reset the cross-cycle carryover on every proactive
-            # trim — the same class of bug as the collaboration/decision fixes.
+            # (not just @dropped). The existing summary may be in the kept
+            # (pinned) set, so scanning only @dropped would miss it and
+            # silently reset the cross-cycle carryover.
             my $prev_summary = $yarn->_extract_thread_summary_from_messages($messages);
             $yarn->compress_for_context_recovery(\@dropped,
                 original_task    => $active_task,
                 previous_summary => $prev_summary,
                 context_window   => $context_window || 0,
+                active_todos     => $active_todos,
+                unresolved       => $unresolved,
+                ltm_entries      => $ltm_entries,
             );
         };
         if ($summary && ref($summary) eq 'HASH'
             && defined $summary->{content}
             && length($summary->{content})
             && ($summary->{content} =~ /<thread_summary>/)) {
+            # ENFORCE single-artifact invariant: remove all existing
+            # thread_summary system messages before injecting the new one.
+            # The new summary already incorporates the old state via
+            # previous_summary, so the old artifact is redundant.
+            @trimmed = @{ remove_existing_thread_summaries(\@trimmed) };
             # Inject as a system message before the last user message
             # (the current user input is pinned by the walk). If there
             # is no user message in the trimmed set, append at end.
@@ -518,7 +566,7 @@ sub _role_based_tail_walk {
             });
             log_debug('MessageValidator',
                 "Injected thread_summary for " . scalar(@dropped) .
-                " proactively-dropped messages (before idx $inject_idx)");
+                " proactively-dropped messages (before idx $inject_idx); replaced existing summary");
         }
     }
 
@@ -926,6 +974,24 @@ sub preflight_validate {
 # Private helper functions
 # ================================================================
 
+sub remove_existing_thread_summaries {
+    my ($messages) = @_;
+    return [] unless $messages && ref($messages) eq 'ARRAY' && @$messages;
+
+    # Remove ALL system messages whose content contains a <thread_summary>
+    # block. This enforces the "zero or one canonical compaction artifact"
+    # invariant: when a new compaction occurs, the old artifact is removed
+    # (its state having already been extracted via previous_summary)
+    # rather than left behind to accumulate.
+    my @result = grep {
+        !(ref($_) eq 'HASH'
+          && ($_->{role} // '') eq 'system'
+          && ($_->{content} // '') =~ /<thread_summary>/)
+    } @$messages;
+
+    return \@result;
+}
+
 sub _calculate_tool_tokens {
     my ($tools) = @_;
     return 0 unless $tools && ref($tools) eq 'ARRAY' && @$tools;
@@ -974,6 +1040,34 @@ sub _estimate_tokens {
                     $total += _estimate_tokens_with_ratio($json || '', $ratio);
                 } else {
                     $total += estimate_tokens($json || '');
+                }
+            }
+        }
+
+        # Reasoning/thinking fields count toward provider token limits.
+        # Without this, trim decisions ignore the token footprint of
+        # thinking blocks — the largest component in sessions with
+        # extended reasoning — causing under-trimming and incorrect
+        # budget calculations.
+        if (defined $msg->{reasoning_content}) {
+            if (defined $ratio) {
+                $total += _estimate_tokens_with_ratio($msg->{reasoning_content}, $ratio);
+            } else {
+                $total += estimate_tokens($msg->{reasoning_content});
+            }
+        }
+        for my $key (qw(reasoning_details reasoning_blocks responses_reasoning_items)) {
+            if (ref($msg->{$key}) eq 'ARRAY') {
+                for my $block (@{$msg->{$key}}) {
+                    next unless ref($block) eq 'HASH';
+                    my $text = $block->{text} // $block->{thinking} // $block->{content} // '';
+                    if (length $text) {
+                        if (defined $ratio) {
+                            $total += _estimate_tokens_with_ratio($text, $ratio);
+                        } else {
+                            $total += estimate_tokens($text);
+                        }
+                    }
                 }
             }
         }

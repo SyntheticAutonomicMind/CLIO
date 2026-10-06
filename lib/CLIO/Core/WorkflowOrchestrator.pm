@@ -561,6 +561,9 @@ sub process_input {
                 debug              => $self->{debug},
                 model              => $model,
                 active_task        => $self->{_active_task_for_trim} // '',
+                active_todos       => ($self->{_current_projection} ? $self->{_current_projection}{active_todos} : undef) || [],
+                unresolved         => ($self->{_current_projection} ? $self->{_current_projection}{unresolved} : undef) || [],
+                ltm_entries        => ($self->{_current_projection} ? $self->{_current_projection}{relevant_memory} : undef) || [],
             );
             if ($trimmed && scalar(@$trimmed) < $pre_count) {
                 # DIAGNOSTIC: Dump state before and after proactive trim (CLIO_TRIM_DIAG=1 to enable)
@@ -743,6 +746,7 @@ sub process_input {
                 max_server_retries  => $max_server_retries,
                 max_session_errors  => $max_session_errors,
                 max_rate_limit_retries => $max_rate_limit_retries,
+                raw_user_input      => $self->{_raw_user_input} // '',
             });
 
             # Fatal - propagate return value from process_input
@@ -1363,6 +1367,14 @@ sub _build_turn_context {
         # build a cancel/continue message.
         $self->{_current_projection} = $projection;
         $self->{_active_task_for_trim} = $self->_active_task_text($session, $user_input);
+        # Store the raw user input for use by the reactive trim path
+        # (ErrorHandler::trim_for_token_limit -> _compress_dropped_for_recovery).
+        # The reactive trim must never derive original_task from the RENDERED
+        # user message content (which includes dynamic UC: compressed_tail,
+        # todos, context files, LTM entries) — that would embed a YaRN summary
+        # inside the new summary's "Current task:" line, creating a recursive
+        # reference. The raw user input is the actual task the user typed.
+        $self->{_raw_user_input} = $user_input;
         log_debug('WorkflowOrchestrator',
             "Added role-based history (" . scalar(@{$projection->{turns} || []}) . " recent turn(s))");
         log_debug('WorkflowOrchestrator', "Stashed projection for interrupt handling only");
@@ -1378,6 +1390,21 @@ sub _build_turn_context {
         $user_message .= $dynamic_uc;
     }
     $user_message .= $user_input;
+
+   # Inject the canonical compaction artifact (if any) as a
+   # <thread_summary> system message before the user message. This is
+   # the single canonical compaction state for the request — the
+   # proactive trim (validate_and_truncate) and reactive trim
+   # (trim_for_token_limit) find, extract, and REPLACE this system
+   # message rather than accumulating duplicates. The compressed_tail
+   # (YaRN summary of projection-dropped turns) carries <thread_summary>
+   # wrapper tags so the trim paths can detect it via the same regex
+   # used for proactively/reactively-injected summaries.
+   if ($projection && (my $tail = $projection->{compressed_tail})) {
+        if (length $tail) {
+            push @messages, { role => 'system', content => $tail };
+        }
+    }
    push @messages, { role => 'user', content => $user_message };
 
     # If image attachments are present, convert user message to array-format content
@@ -2915,12 +2942,18 @@ no XML tags, no framework narration, no separate topic/todo/git sections
 
 Arguments:
 - $dropped_messages: Arrayref of message hashes that were dropped
-- $last_user_msg:    The most recent user message (for current task context)
+- $last_user_msg:    The most recent user message (for API compatibility;
+                     used for placeholder detection and as fallback)
 - $session:          Session object (unused — kept for API compatibility)
 - $all_messages:     Arrayref of ALL messages before trimming (for
                      previous_summary extraction when the old summary
                      was kept, not dropped)
 - $prompt_builder:   Unused — kept for API compatibility
+- $raw_user_input:   The raw user input string (NOT the rendered dynamic
+                     UC message). Used as original_task for the compressor
+                     so the summary's "Current task:" line reflects only
+                     what the user actually typed, never the framework-
+                     rendered context block.
 
 Returns: Message hashref with role 'system' containing the thread_summary,
          or undef if compression fails or produces empty content.
@@ -2928,16 +2961,27 @@ Returns: Message hashref with role 'system' containing the thread_summary,
 =cut
 
 sub _compress_dropped_for_recovery {
-    my ($dropped_messages, $last_user_msg, $session, $all_messages, $prompt_builder, $context_window) = @_;
+    my ($dropped_messages, $last_user_msg, $session, $all_messages, $prompt_builder, $context_window, $raw_user_input, $active_todos, $unresolved, $ltm_entries) = @_;
 
     return undef unless $dropped_messages && @$dropped_messages;
 
-    my $original_task = '';
-    if ($last_user_msg && ref($last_user_msg) eq 'HASH') {
+    # Use raw_user_input as the primary original_task. This is the actual
+    # user input, NOT the rendered message that includes dynamic UC
+    # (compressed_tail, active_todos, context_files, relevant_memory,
+    # user_context). Using the rendered content would embed a YaRN summary
+    # inside the new summary's "Current task:" line, creating a recursive
+    # reference. The compressed_tail is already carried forward via
+    # previous_summary extraction; it must NOT also be re-compressed as
+    # the "task."
+    my $original_task = $raw_user_input // '';
+
+    # If raw_user_input is absent or empty, fall back to the last user
+    # message content (for callers/tests that don't set raw_user_input).
+    if (!length $original_task && $last_user_msg && ref($last_user_msg) eq 'HASH') {
         $original_task = $last_user_msg->{content} || '';
     }
 
-    # If the last user message is an interrupt placeholder (e.g.
+    # If the original_task is an interrupt placeholder (e.g.
     # "[No response - user cancelled interrupt]" or the new
     # continuation prompt we inject on cancel), scan earlier user
     # messages for the real task. Using the placeholder as
@@ -2993,6 +3037,9 @@ sub _compress_dropped_for_recovery {
             original_task    => $original_task,
             previous_summary => $prev,
             context_window   => $context_window,
+            active_todos     => $active_todos,
+            unresolved       => $unresolved,
+            ltm_entries      => $ltm_entries,
         );
     };
     if ($@) {

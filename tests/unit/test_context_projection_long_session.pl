@@ -155,7 +155,12 @@ sub make_long_history {
     my $combined = messages_to_prose_dynamic($proj);
     my $dynamic = CLIO::Core::MessageHistory::messages_to_prose_dynamic($proj);
 
-    like($combined, qr/Original substantive task/, "Prose renderer emits compressed tail (dynamic section)");
+    # compressed_tail is NO LONGER rendered in the dynamic UC prose.
+    # It is emitted as a <thread_summary> system message by
+    # WorkflowOrchestrator::_build_turn_context. The projection still
+    # carries it in the compressed_tail field (as a tagged system message).
+    unlike($combined, qr/<thread_summary>/, "Dynamic UC does not contain compressed_tail (now a system message)");
+    like($proj->{compressed_tail}, qr/<thread_summary>/, "Projection compressed_tail has <thread_summary> tags (canonical artifact)");
     unlike($combined, qr/^# Task\b/m, "Prose renderer omits # Task (now role-based)");
     unlike($combined, qr/# Recent work/, "Prose renderer omits # Recent work (now role-based)");
     is($combined, $dynamic, "messages_to_prose_dynamic renders consistently");

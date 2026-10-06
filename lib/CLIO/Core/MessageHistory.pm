@@ -152,13 +152,15 @@ sub messages_to_prose_dynamic {
         }
     }
 
-    # Compressed tail: the YaRN-compressed summary of dropped turns.
-    # Only present when budget pressure caused older turns to be
-    # collapsed. Rendered as-is (YaRN output has its own section
-    # labels). No framing narration.
-    if (my $tail = $projection->{compressed_tail}) {
-        $out .= $tail . "\n\n";
-    }
+    # Compressed tail is NOT rendered here. It is emitted as a
+    # canonical <thread_summary> system message by
+    # WorkflowOrchestrator::_build_turn_context (placed before the user
+    # message). This keeps the dynamic UC (active_todos, context_files,
+    # relevant_memory) in the user message for per-turn volatility while
+    # the compaction state stays a separate, replaceable system message
+    # — enforcing the "zero or one canonical compaction artifact"
+    # invariant. The proactive/reactive trim paths find, extract, and
+    # replace this system message rather than accumulating duplicates.
 
     # Context files: pre-rendered block of file contents added via
     # /context add. Placed last so its content churn (file contents

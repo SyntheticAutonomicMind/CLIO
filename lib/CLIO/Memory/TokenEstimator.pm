@@ -350,6 +350,44 @@ sub estimate_messages_tokens {
                 $total += TOOL_CALL_OVERHEAD;  # JSON structure overhead
             }
         }
+
+        # Reasoning/thinking fields count toward provider token limits.
+        # These are sent on assistant messages that carry prior chain-of-
+        # thought for cross-turn reasoning continuity. Without this
+        # estimate, trim decisions ignore the token footprint of thinking
+        # blocks, causing proactive trim to under-trim and reactive trim
+        # to drop the wrong messages (the thinking block is the largest
+        # component but wasn't counted).
+        # - reasoning_content: string (DeepSeek, Anthropic native, Qwen)
+        # - reasoning_details: arrayref of {text} hashes (OpenAI Responses,
+        #   OpenRouter, MiniMax)
+        # - reasoning_blocks: arrayref of {thinking/text} hashes (Anthropic)
+        # - responses_reasoning_items: arrayref of reasoning items (OpenAI
+        #   Responses API native format)
+        if (defined $msg->{reasoning_content}) {
+            $total += estimate_tokens($msg->{reasoning_content});
+        }
+        if (ref($msg->{reasoning_details}) eq 'ARRAY') {
+            for my $block (@{$msg->{reasoning_details}}) {
+                if (ref($block) eq 'HASH' && defined $block->{text}) {
+                    $total += estimate_tokens($block->{text});
+                }
+            }
+        }
+        if (ref($msg->{reasoning_blocks}) eq 'ARRAY') {
+            for my $block (@{$msg->{reasoning_blocks}}) {
+                if (ref($block) eq 'HASH') {
+                    $total += estimate_tokens($block->{thinking} // $block->{text} // '');
+                }
+            }
+        }
+        if (ref($msg->{responses_reasoning_items}) eq 'ARRAY') {
+            for my $item (@{$msg->{responses_reasoning_items}}) {
+                if (ref($item) eq 'HASH' && defined $item->{content}) {
+                    $total += estimate_tokens($item->{content});
+                }
+            }
+        }
     }
 
     return $total;

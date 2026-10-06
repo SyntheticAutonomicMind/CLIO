@@ -184,7 +184,7 @@ sub build_projection {
         _select_turns($turns, $session, $history, $active_task);
 
     # Build the compressed tail if any turns were dropped
-    my $compressed_tail = _build_compressed_tail($dropped_turns, $active_task, $context_window);
+    my $compressed_tail = _build_compressed_tail($dropped_turns, $active_task, $context_window, $active_todos, $unresolved, $ltm);
 
     my @deduped_recent = @$recent_turns;
 
@@ -837,7 +837,7 @@ Returns '' when there are no dropped turns.
 =cut
 
 sub _build_compressed_tail {
-    my ($dropped_turns, $active_task, $context_window) = @_;
+    my ($dropped_turns, $active_task, $context_window, $active_todos, $unresolved, $ltm) = @_;
 
     return '' unless $dropped_turns && @$dropped_turns;
 
@@ -877,7 +877,7 @@ sub _build_compressed_tail {
     }
 
     # Try YaRN compression first.
-    my $yarn_out = _yarn_compress_dropped(\@flat_msgs, $active_task, $context_window, $OVERALL_CAP);
+    my $yarn_out = _yarn_compress_dropped(\@flat_msgs, $active_task, $context_window, $OVERALL_CAP, $active_todos, $unresolved, $ltm);
 
     my $tail;
     if (defined $yarn_out && length $yarn_out) {
@@ -958,11 +958,12 @@ sub _compute_compressed_tail_cap {
 # shape YaRN::compress_messages expects) and an optional task hint,
 # calls compress_for_context_recovery (which extracts previous_summary
 # from any <thread_summary> blocks in the array for cross-cycle carryover),
-# and returns a thread_summary string with the XML wrapper tags stripped
-# and NO framework narration. Returns undef if the result is empty /
-# YaRN is unavailable.
+# and returns a thread_summary string WITH <thread_summary> wrapper tags
+# intact (so it can be rendered as a canonical system message by
+# WorkflowOrchestrator, and found/replaced by the trim paths). Returns
+# undef if the result is empty / YaRN is unavailable.
 sub _yarn_compress_dropped {
-    my ($flat_msgs, $active_task, $context_window, $max_chars) = @_;
+    my ($flat_msgs, $active_task, $context_window, $max_chars, $active_todos, $unresolved, $ltm) = @_;
 
     return undef unless $flat_msgs && @$flat_msgs;
 
@@ -975,6 +976,9 @@ sub _yarn_compress_dropped {
             original_task  => ($active_task // ''),
             context_window => $context_window,
             max_chars      => $max_chars,
+            active_todos   => $active_todos,
+            unresolved     => $unresolved,
+            ltm_entries    => $ltm,
         );
     };
     return undef if $@ || !$compressed || !ref($compressed);
@@ -982,10 +986,25 @@ sub _yarn_compress_dropped {
     my $content = $compressed->{content} // '';
     return undef unless length $content;
 
-    # Strip <thread_summary> wrapper tags and trim.
-    $content =~ s{</?thread_summary>}{}g;
-    $content =~ s/^\s+//;
-    $content =~ s/\s+$//;
+    # Ensure content is wrapped in <thread_summary> tags. YaRN's
+    # compress_messages always emits these tags, but the fallback
+    # template does not — normalize here so callers can always
+    # detect the canonical compaction artifact by tag presence.
+    # But first strip tags to check whether there is any MEANINGFUL
+    # content inside — an empty summary (just tags + whitespace) is
+    # treated as no-op so the caller falls through to the template
+    # fallback or returns empty.
+    my $inner = $content;
+    $inner =~ s{</?thread_summary>}{}g;
+    $inner =~ s/^\s+//;
+    $inner =~ s/\s+$//;
+    return undef unless length $inner;
+
+    # Re-wrap with tags (YaRN's output already has them; this handles
+    # the case where compress_messages returned untagged content).
+    unless ($content =~ /<thread_summary>/) {
+        $content = "<thread_summary>\n" . $inner . "\n</thread_summary>";
+    }
     return undef unless length $content;
 
     return $content;
@@ -1039,7 +1058,10 @@ sub _build_compressed_tail_template {
         $out = _truncate($out, $overall_cap);
         $out .= '...';
     }
-    return $out;
+
+    # Wrap in <thread_summary> tags so the fallback is a canonical
+    # compaction artifact just like the YaRN-backed path.
+    return "<thread_summary>\n" . $out . "\n</thread_summary>";
 }
 
 sub _truncate {

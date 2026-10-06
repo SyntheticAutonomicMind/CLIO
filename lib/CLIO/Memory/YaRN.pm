@@ -249,9 +249,13 @@ our $DEFAULT_MAX_COLLABORATION     = 10;
 our $DEFAULT_MAX_FILES             = 50;
 our $DEFAULT_MAX_COMMITS           = 30;
 our $DEFAULT_MAX_TOOL_TYPES        = 8;
+our $DEFAULT_MAX_DISCOVERIES       = 8;
+our $DEFAULT_MAX_BLOCKERS          = 4;
 our $DEFAULT_USER_REQUEST_LEN      = 600;
 our $DEFAULT_DECISION_LEN          = 500;
 our $DEFAULT_COLLABORATION_LEN     = 1500;
+our $DEFAULT_DISCOVERY_LEN         = 400;
+our $DEFAULT_NEXT_ACTION_LEN       = 300;
 
 # Summary cap bounds (characters). The actual cap is derived from the
 # model's context window via _compute_summary_cap(); these prevent
@@ -336,28 +340,35 @@ sub _compute_limits {
         files              => $DEFAULT_MAX_FILES,
         commits            => $DEFAULT_MAX_COMMITS,
         tool_types         => $DEFAULT_MAX_TOOL_TYPES,
+        discoveries        => $DEFAULT_MAX_DISCOVERIES,
+        blockers           => $DEFAULT_MAX_BLOCKERS,
         user_request_len   => $DEFAULT_USER_REQUEST_LEN,
         decision_len       => $DEFAULT_DECISION_LEN,
         collaboration_len  => $DEFAULT_COLLABORATION_LEN,
+        discovery_len      => $DEFAULT_DISCOVERY_LEN,
+        next_action_len    => $DEFAULT_NEXT_ACTION_LEN,
     );
 
     if ($context_window < 131072) {
         my $scale = $context_window / 131072;
-        for my $k (qw(user_requests decisions collaboration files commits)) {
+        for my $k (qw(user_requests decisions collaboration files commits discoveries)) {
             $limits{$k} = int($limits{$k} * $scale);
         }
-        $limits{user_requests}  = 5  if $limits{user_requests}  < 5;
-        $limits{decisions}      = 2  if $limits{decisions}      < 2;
-        $limits{collaboration}  = 2  if $limits{collaboration}  < 2;
-        $limits{files}          = 10 if $limits{files}          < 10;
-        $limits{commits}        = 5  if $limits{commits}        < 5;
+        $limits{user_requests}   = 5  if $limits{user_requests}   < 5;
+        $limits{decisions}       = 2  if $limits{decisions}       < 2;
+        $limits{collaboration}   = 2  if $limits{collaboration}   < 2;
+        $limits{files}           = 10 if $limits{files}           < 10;
+        $limits{commits}         = 5  if $limits{commits}         < 5;
+        $limits{discoveries}     = 2  if $limits{discoveries}     < 2;
+        $limits{blockers}        = 1  if $limits{blockers}        < 1;
     }
     elsif ($context_window >= 262144) {
         my $scale = 1.5;  # 256K and above: start at 1.5x
         $scale = 2.0 if $context_window >= 524288;
         $scale = 4.0 if $context_window >= 1048576;
         for my $k (qw(user_requests decisions collaboration files commits
-                      user_request_len decision_len collaboration_len)) {
+                      user_request_len decision_len collaboration_len
+                      discovery_len next_action_len)) {
             $limits{$k} = int($limits{$k} * $scale);
         }
     }
@@ -419,6 +430,10 @@ sub compress_messages {
     my $max_ur_display     = $limits->{user_requests};
     my $max_collab_len     = $limits->{collaboration_len};
     my $max_decision_len   = $limits->{decision_len};
+    my $max_discoveries    = $limits->{discoveries};
+    my $max_blockers       = $limits->{blockers};
+    my $max_discovery_len  = $limits->{discovery_len};
+    my $max_next_action_len = $limits->{next_action_len};
 
     # Extraction buckets
     my @user_requests;
@@ -426,16 +441,29 @@ sub compress_messages {
     my @files_touched;
     my @decisions;
     my @collaboration_exchanges;  # Agent question + user response pairs
+    my @discoveries;               # Key findings, conclusions, discoveries
+    my @blockers;                  # Current blockers / unresolved issues
+    my $next_action = '';
     my %tool_counts;              # tool_name => total call count (cumulative)
+
+    # Optional opts for richer work-state preservation.
+    # - active_todos: arrayref of {status, content} — used to surface
+    #   completed objectives and current blockers.
+    # - unresolved:   arrayref of strings — surfaced as blockers.
+    # - ltm_entries:  arrayref of {content, type, confidence} —
+    #   discoveries/conclusions from prior sessions.
+    my $active_todos   = $opts{active_todos}  || [];
+    my $unresolved     = $opts{unresolved}    || [];
+    my $ltm_entries    = $opts{ltm_entries}   || [];
 
     # Track collaboration tool_call IDs so we can pair them with responses
     my %collab_tool_calls;  # tool_call_id => agent's question text
 
     # Seed buckets from previous summary so accumulated history isn't lost
     # across trim cycles. _parse_previous_summary parses ALL sections
-    # (commits, files, decisions, collaboration, tool counts) — not just
-    # user requests — so no historical information is silently dropped
-    # between compression cycles.
+    # (commits, files, decisions, collaboration, tool counts, discoveries,
+    # blockers, next_action) — not just user requests — so no historical
+    # information is silently dropped between compression cycles.
     if ($previous_summary) {
         _parse_previous_summary($previous_summary, {
             commits                 => \@commits,
@@ -444,7 +472,14 @@ sub compress_messages {
             user_requests           => \@user_requests,
             collaboration_exchanges => \@collaboration_exchanges,
             tool_counts             => \%tool_counts,
+            discoveries             => \@discoveries,
+            blockers                => \@blockers,
         });
+        # Extract carried forward next_action
+        if ($previous_summary =~ /^Next action: (.+)$/m) {
+            $next_action = $1;
+            $next_action =~ s/\s+$//;
+        }
     }
 
     # Carry forward the original task marker. Anchored to the bullet
@@ -530,6 +565,37 @@ sub compress_messages {
                     }
                 }
             }
+
+            # Extract discoveries / key findings from assistant content.
+            # Looks for natural-language patterns indicating findings,
+            # conclusions, or important observations. These are surfaced
+            # as "Discoveries" so the model can see what it already
+            # investigated without reconstructing it from scratch.
+            if (length $content >= 30) {
+                # Match sentences containing discovery-related keywords
+                for my $sent (split /[.!\n]\s+/, $content) {
+                    next if length($sent) < 20;
+                    if ($sent =~ /\b(discovered|found that|conclusion|key finding|important|significant|revealed|shows that|indicates that|turns out|actually)\b/i) {
+                        $sent =~ s/\s+/ /g;
+                        push @discoveries, substr($sent, 0, $max_discovery_len);
+                    }
+                }
+            }
+
+            # Extract next intended action from assistant content.
+            # We always update $next_action — the LAST assistant message
+            # in the array overwrites earlier ones, so the most recent
+            # intended action wins. This tells the model what it was
+            # about to do when interrupted by compaction.
+            if (length $content >= 20) {
+                if ($content =~ /\b(?:next[^\n]*?,?\s*(?:I'll|we should|will)\b|\bnext step[^\n]*:|\bafter that[^\n]*,?\s*(?:I'll|we'll|let's|will)\b|\bthen[^\n]*,?\s*(?:I'll|we'll|let's|will)\b)/i) {
+                    my ($m) = $content =~ /\b((?:next[^\n]*?,?\s*(?:I'll|we should|will)[^.]{0,80}|next step[^\n]*:[^\n]{0,80}|after that[^\n]*,?\s*(?:I'll|we'll|let's|will)[^.]{0,80}|then[^\n]*,?\s*(?:I'll|we'll|let's|will)[^.]{0,80}))/i;
+                    if ($m) {
+                        $m =~ s/\s+/ /g;
+                        $next_action = substr($m, 0, $max_next_action_len);
+                    }
+                }
+            }
         }
         elsif ($role eq 'tool') {
             # Pair collaboration responses with their questions
@@ -556,6 +622,38 @@ sub compress_messages {
                 my $entry = "$1: $2";
                 push @commits, $entry unless grep { $_ eq $entry } @commits;
             }
+        }
+    }
+
+    # Integrate LTM entries and unresolved state into discovery/blocker
+    # buckets. LTM discoveries (type=discovery, confidence>=0.5) and
+    # conclusions (from assistant extraction) are merged so the summary
+    # preserves important findings from prior sessions AND the current
+    # session's analysis.
+    if (ref($ltm_entries) eq 'ARRAY') {
+        for my $entry (@$ltm_entries) {
+            next unless ref($entry) eq 'HASH';
+            my $type = $entry->{type} // '';
+            next unless $type =~ /^(discovery|solution|failure|pattern)$/;
+            my $conf = $entry->{confidence};
+            next if defined $conf && $conf < 0.5;
+            my $content = $entry->{content} // '';
+            next unless length $content;
+            $content =~ s/\s+/ /g;
+            push @discoveries, substr($content, 0, $max_discovery_len);
+        }
+    }
+
+    # Carry forward carried-over discoveries from previous summary
+    # (already seeded via _parse_previous_summary into @discoveries).
+
+    # Add unresolved state as blockers
+    if (ref($unresolved) eq 'ARRAY') {
+        for my $item (@$unresolved) {
+            next unless defined $item && length($item);
+            my $b = $item;
+            $b =~ s/\s+/ /g;
+            push @blockers, substr($b, 0, $max_discovery_len);
         }
     }
 
@@ -624,6 +722,13 @@ sub compress_messages {
     my $effective_task;
     if ($opts{_carried_task} && length($opts{_carried_task})) {
         $effective_task = $opts{_carried_task};
+    } elsif (length($original_task) >= 50) {
+        # The original_task (raw user input) is substantive — use it
+        # directly as the current task. Do NOT scan dropped messages
+        # for a "better" task: the dropped user requests are OLD, not
+        # the current task. Using them would overwrite the current
+        # task with outdated work — the context-loss bug.
+        $effective_task = $original_task;
     } else {
         $effective_task = find_substantive_task(
             $original_task,
@@ -702,6 +807,41 @@ sub compress_messages {
             push @parts, "- Q: " . $q;
             push @parts, "  A: " . $a;
         }
+        push @parts, "";
+    }
+
+    # Discoveries / important conclusions / key findings.
+    # Deduplicated, most recent kept (reverse/dedup/reverse).
+    if (@discoveries) {
+        @discoveries = reverse(@discoveries);
+        @discoveries = do { my %s; grep { !$s{$_}++ } @discoveries };
+        @discoveries = reverse(@discoveries);
+        splice(@discoveries, 0,
+            @discoveries > $max_discoveries
+                ? @discoveries - $max_discoveries : 0);
+        push @parts, "Discoveries:";
+        for my $d (@discoveries) {
+            push @parts, "- " . substr($d, 0, $max_discovery_len);
+        }
+        push @parts, "";
+    }
+
+    # Current blockers (from unresolved state or discovered issues).
+    if (@blockers) {
+        @blockers = do { my %s; grep { !$s{$_}++ } @blockers };
+        splice(@blockers, 0,
+            @blockers > $max_blockers
+                ? @blockers - $max_blockers : 0);
+        push @parts, "Current blockers:";
+        for my $b (@blockers) {
+            push @parts, "- " . substr($b, 0, $max_discovery_len);
+        }
+        push @parts, "";
+    }
+
+    # Next intended action (so the model can resume immediately).
+    if ($next_action) {
+        push @parts, "Next action: " . substr($next_action, 0, $max_next_action_len);
         push @parts, "";
     }
 
@@ -887,6 +1027,8 @@ sub _parse_previous_summary {
     my $commits                = $buckets->{commits}                || [];
     my $collaboration_exchanges = $buckets->{collaboration_exchanges} || [];
     my $tool_counts            = $buckets->{tool_counts}            || {};
+    my $discoveries            = $buckets->{discoveries}            || [];
+    my $blockers               = $buckets->{blockers}               || [];
 
     # Parse a bulleted section: captures lines starting with "- " after
     # the header line, stopping at the next header (Capitalized words +
@@ -995,6 +1137,21 @@ sub _parse_previous_summary {
         }
     }
 
+    # --- Discoveries (key findings, conclusions) ---
+    @items = $parse_bullets->($summary_text, qr/Discoveries/i);
+    push @$discoveries, @items if @items;
+
+    # --- Current blockers ---
+    @items = $parse_bullets->($summary_text, qr/Current blockers/i);
+    push @$blockers, @items if @items;
+
+    # --- Next action ---
+    if ($summary_text =~ /^Next action: (.+)$/m) {
+        my $na = $1;
+        $na =~ s/\s+$//;
+        $buckets->{next_action} = $na if length $na;
+    }
+
     return 1;
 }
 
@@ -1059,6 +1216,9 @@ sub compress_for_context_recovery {
         original_task    => $opts{original_task} || '',
         context_window   => $opts{context_window},
         max_chars        => $opts{max_chars},
+        active_todos     => $opts{active_todos},
+        unresolved       => $opts{unresolved},
+        ltm_entries      => $opts{ltm_entries},
     );
 }
 
