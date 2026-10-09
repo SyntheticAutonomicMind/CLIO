@@ -3045,22 +3045,6 @@ sub _build_payload {
         }
     }
 
-    # Inject llama_user_id for local SSD-backed inference servers (llama.cpp,
-    # LM Studio, SAM). Each CLIO session gets its own SSD cache directory
-    # on the server (ssd-cache/u/<hash>/), preventing cross-session
-    # checkpoint contamination. All CLIO sessions with the same model share
-    # the same conv_hash, so anonymous continuation matching would otherwise
-    # pull checkpoints from unrelated sessions. Stripped of UUID hyphens
-    # for cleaner filenames and to fit the 64-char limit comfortably.
-    if ($endpoint_config->{llama_user_id_supported}
-        && $self->{session}
-        && $self->{session}{session_id}) {
-        my $uid = $self->{session}{session_id};
-        $uid =~ s/-//g;  # strip UUID hyphens
-        $payload->{llama_user_id} = $uid;
-        log_debug('APIManager', "Including llama_user_id: $uid (session-isolated SSD cache)");
-    }
-
     # Add session_id for OpenRouter sticky routing / prompt-cache affinity.
     # When session_id is present, OpenRouter uses it directly as the sticky
     # routing key instead of deriving one from hashing the first system +

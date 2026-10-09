@@ -3,7 +3,7 @@
 # route_timeout flags so APIManager can select the correct HTTP timeout.
 #
 # Background: Previously build_endpoint_config only propagated
-# supports_reasoning, llama_user_id_supported, and reasoning_schema.
+# supports_reasoning, slow_api, and reasoning_schema.
 # The slow_api flag (set for local providers: sam, llama.cpp, lmstudio)
 # was missing from the endpoint config, so all providers got the 300s
 # cloud default timeout. This test ensures slow_api and route_timeout

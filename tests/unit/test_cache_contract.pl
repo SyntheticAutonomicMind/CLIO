@@ -452,4 +452,45 @@ sub sample_messages {
         'System prompt byte-identical after cache invalidation (no config change)');
 }
 
+# =============================================================================
+# Test 16: llama_user_id is NOT sent to local inference providers
+# (CachyLLama SSD cache deprecated; stale llama_user_id caused
+# "non-consecutive token position" warnings when message structure
+# changed between turns)
+# =============================================================================
+{
+    my $api = make_api_manager('test-uuid-for-llama-user-id');
+
+    # Local inference endpoint configs (no llama_user_id_supported flag)
+    my $local_ec = {
+        name                    => 'llama.cpp',
+        local_inference         => 1,
+        exposes_props           => 1,
+        slow_api                => 1,
+        supports_tools          => 1,
+        supports_streaming      => 1,
+        requires_copilot_headers => 0,
+        auth_header             => 'Authorization',
+        auth_value              => 'Bearer ',
+        temperature_range       => [0.0, 2.0],
+    };
+
+    my $payload = $api->_build_payload(sample_messages(), 'local-model', $local_ec);
+    ok(!exists $payload->{llama_user_id},
+        'llama_user_id NOT present in local-inference (llama.cpp) payload');
+}
+
+# =============================================================================
+# Test 17: OpenRouter session_id (workflow identity) is still sent
+# (independent of llama_user_id removal — this tests they are separate)
+# =============================================================================
+{
+    my $api = make_api_manager('test-session-uuid');
+    my $payload = $api->_build_payload(sample_messages(), 'openrouter:model', openrouter_ec());
+    ok(exists $payload->{session_id},
+        'OpenRouter session_id still present (independent of llama_user_id)');
+    like($payload->{session_id}, qr/^clio:/,
+        'OpenRouter session_id has clio: prefix');
+}
+
 done_testing();

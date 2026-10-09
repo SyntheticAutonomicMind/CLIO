@@ -65,7 +65,6 @@ my %PROVIDERS = (
         supports_tools => 1,
         supports_streaming => 1,
         slow_api => 1,  # Local inference is significantly slower than cloud APIs
-        llama_user_id_supported => 1,
         # Provider-feature flags (replaces scattered `provider =~ /^sam$/`
         # checks in MessageValidator/APIManager/MCM). See the helper
         # functions is_local_inference() and exposes_props() below for
@@ -182,13 +181,12 @@ my %PROVIDERS = (
         supports_tools => 1,
         supports_streaming => 1,
         slow_api => 1,  # Local inference is significantly slower than cloud APIs
-        # Per-session SSD cache directory on the inference server. CLIO
-        # injects the session_id as llama_user_id so each session gets
-        # its own ssd-cache/u/<hash>/ dir, preventing cross-session
-        # checkpoint contamination (all CLIO sessions with the same
-        # model share the same conv_hash, so continuation matching
-        # would otherwise pull checkpoints from unrelated sessions).
-        llama_user_id_supported => 1,
+        # CachyLLama SSD cache (which required llama_user_id for per-session
+        # isolation) has been deprecated; the server now handles prompt cache
+        # reuse via slot similarity matching without needing a client-supplied
+        # user ID. Injecting a stale llama_user_id caused "non-consecutive
+        # token position" warnings when CLIO's message structure changes
+        # between turns (thread_summary folding, dynamic UC, separators).
         local_inference => 1,
         exposes_props => 1,
         capability_fetcher => 'llama_cpp',
@@ -217,7 +215,6 @@ my %PROVIDERS = (
         supports_tools => 1,
         supports_streaming => 1,
         slow_api => 1,  # Local inference is significantly slower than cloud APIs
-        llama_user_id_supported => 1,
         local_inference => 1,
         exposes_props => 1,
         capability_fetcher => 'llama_cpp',  # LM Studio is OpenAI-compatible with /props
@@ -824,11 +821,6 @@ sub build_endpoint_config {
     if ($provider && $provider->{supports_reasoning}) {
         $endpoint->{supports_reasoning} //= $provider->{supports_reasoning};
     }
-    # Propagate llama_user_id_supported so APIManager can inject the
-    # session_id as llama_user_id for SSD-backed local inference servers.
-    if ($provider && $provider->{llama_user_id_supported}) {
-        $endpoint->{llama_user_id_supported} = 1;
-    }
     # Propagate slow_api so APIManager can use extended HTTP timeouts
     # for local inference providers (llama.cpp, SAM, LM Studio).
     if ($provider && $provider->{slow_api}) {
@@ -944,7 +936,7 @@ Local inference is flagged when:
   rather than forwarding tokens to a third-party API. Local servers
   are RAM-limited, so DEFAULT_LOCAL_CONTEXT_WINDOW is the safe fallback
   when the /v1/models endpoint doesn't report a context.
-- Server-defined extras (llama_user_id, conservative timeout) apply.
+- Server-defined extras (conservative timeout) apply.
 
 Arguments:
 - $provider_name: provider key (e.g. 'sam', 'llama.cpp')
