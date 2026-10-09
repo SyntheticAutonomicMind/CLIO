@@ -1200,14 +1200,15 @@ sub compress_for_context_recovery {
         $previous_summary = $self->_extract_thread_summary_from_messages($messages);
     }
 
-    # Filter out old thread_summary system messages so they are not
+    # Filter out old thread_summary messages so they are not
     # processed as regular content during compression (system messages
     # are skipped by compress_messages' role loop anyway, but filtering
-    # avoids inflating the compressed_count / token estimate).
+    # avoids inflating the compressed_count / token estimate). Also
+    # filters user messages that carry a thread_summary for local
+    # inference providers.
     my @compress_msgs = grep {
         my $m = $_;
         !(ref($m) eq 'HASH'
-          && ($m->{role} // '') eq 'system'
           && ($m->{content} // '') =~ /<thread_summary>/);
     } @$messages;
 
@@ -1242,7 +1243,8 @@ sub _extract_thread_summary_from_messages {
 
     for my $msg (reverse @$messages) {
         next unless ref($msg) eq 'HASH';
-        next unless ($msg->{role} // '') eq 'system';
+        # Scan ALL message roles, not just system: local-inference
+        # providers fold thread_summary into the user message.
         my $content = _extract_content_text($msg->{content});
         if ($content =~ /<thread_summary>.*?<\/thread_summary>/s) {
             return $content;

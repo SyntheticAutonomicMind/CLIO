@@ -281,13 +281,16 @@ sub _role_based_tail_walk {
         && 0 != $first_user_idx) {
         unshift @pinned, 0;
     }
-    # Pin all <thread_summary> system messages so YaRN compressed
+    # Pin all <thread_summary> messages so YaRN compressed
     # summaries survive trimming. The system_prompt (idx 0) is NOT
     # a thread_summary — the regex check avoids pinning it twice.
+    # Scanning all roles: local-inference providers fold thread_summary
+    # into the user message, so we must pin those too (though the last
+    # user message is already pinned above, older user messages carrying
+    # a reloaded thread_summary need explicit protection).
     for my $i (0 .. $#$messages) {
         my $msg = $messages->[$i];
         next unless ref($msg) eq 'HASH';
-        next unless ($msg->{role} // '') eq 'system';
         my $content = $msg->{content} // '';
         if ($content =~ /<thread_summary>/) {
             push @pinned, $i unless grep { $_ == $i } @pinned;
@@ -978,14 +981,23 @@ sub remove_existing_thread_summaries {
     my ($messages) = @_;
     return [] unless $messages && ref($messages) eq 'ARRAY' && @$messages;
 
-    # Remove ALL system messages whose content contains a <thread_summary>
-    # block. This enforces the "zero or one canonical compaction artifact"
-    # invariant: when a new compaction occurs, the old artifact is removed
-    # (its state having already been extracted via previous_summary)
-    # rather than left behind to accumulate.
+    # Remove ALL messages whose content contains a <thread_summary>
+    # block. This enforces the "zero or one canonical compaction
+    # artifact" invariant: when a new compaction occurs, the old
+    # artifact is removed (its state having already been extracted via
+    # previous_summary) rather than left behind to accumulate.
+    #
+    # The scan covers ALL message roles, not just system messages:
+    # - Cloud providers (OpenAI, Anthropic, Copilot): thread_summary is
+    #   emitted as role => 'system', so scanning all roles catches it.
+    # - Local inference (SAM, llama.cpp, LM Studio): thread_summary is
+    #   folded into the user message to avoid llama.cpp chat-template
+    #   ambiguity with mid-conversation system messages. Scanning all
+    #   roles catches it there.
+    # The <thread_summary> tags are self-identifying, so the same regex
+    # works regardless of which role carries the message.
     my @result = grep {
         !(ref($_) eq 'HASH'
-          && ($_->{role} // '') eq 'system'
           && ($_->{content} // '') =~ /<thread_summary>/)
     } @$messages;
 
