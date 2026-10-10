@@ -29,6 +29,21 @@ sub _parse_model_provider {
 }
 
 
+=head2 log_path_for($agent_id)
+
+Return the log file path for a given agent ID. Centralized so all
+callers (SubAgent, UI commands, SubAgentOperations) use the same
+path regardless of platform.
+
+=cut
+
+sub log_path_for {
+    my ($class, $agent_id) = @_;
+    my $tmpdir = $^O eq 'MSWin32' ? ($ENV{TEMP} || $ENV{TMP} || 'C:\\Temp') : '/tmp';
+    return File::Spec->catfile($tmpdir, "clio-agent-$agent_id.log");
+}
+
+
 =head1 NAME
 
 CLIO::Coordination::SubAgent - Spawn and manage CLIO sub-agents
@@ -125,6 +140,8 @@ sub spawn_agent {
         mode => $mode,
         started => time(),
         ($working_dir ? (working_dir => $working_dir) : ()),
+        ($options{model_candidates} ? (model_candidates => $options{model_candidates}) : ()),
+        (defined $options{route_name} ? (route_name => $options{route_name}) : ()),
     };
     
     return $agent_id;
@@ -156,8 +173,7 @@ sub run_subagent {
     setsid() or die "Cannot start new session: $!";
     
     # Redirect ALL I/O to log file (completely detach from parent terminal)
-    my $tmpdir = $^O eq 'MSWin32' ? ($ENV{TEMP} || $ENV{TMP} || 'C:\\Temp') : '/tmp';
-    my $log_path = File::Spec->catfile($tmpdir, "clio-agent-$agent_id.log");
+    my $log_path = __PACKAGE__->log_path_for($agent_id);
     my $nulldev = $^O eq 'MSWin32' ? 'nul' : '/dev/null';
     open(STDIN, '<', $nulldev) or die "Cannot redirect STDIN: $!";
     open(STDOUT, '>>', $log_path) or die "Cannot open log: $!";
@@ -223,18 +239,22 @@ sub _run_agent_loop {
     use CLIO::Core::Config;
     use CLIO::Session::Manager;
     
+    # Create Config and Session (same as main CLIO initialization)
+    # NOTE: $debug must be declared before Client creation so it can be
+    # used to configure the broker client's debug flag.
+    my $debug = $options{debug} || 0;
+    
     # Create broker client
     my $client = CLIO::Coordination::Client->new(
         session_id => $self->{session_id},
         agent_id => $agent_id,
         task => $task,
-        debug => 1,
+        debug => $debug,
     );
     
     # Create Config and Session (same as main CLIO initialization)
     my $config = CLIO::Core::Config->new();
     my $model = $options{model} || croak "No model specified for sub-agent";
-    my $debug = $options{debug} || 0;
     
     # Configure the sub-agent's model and provider on the Config object.
     # Without this, get_current_model() reads the main session's model from
@@ -252,6 +272,18 @@ sub _run_agent_loop {
     }
     
     log_debug('SubAgent', "Agent $agent_id configured: model=$model provider=" . ($model_provider // $config->get('provider')));
+    
+    # Propagate model routing configuration from the parent session.
+    # Without this, the sub-agent gets a fresh Config with empty candidates,
+    # so cycle_model() in APIManager has nothing to cycle through.
+    if ($options{model_candidates} && ref($options{model_candidates}) eq 'ARRAY' && @{$options{model_candidates}}) {
+        $config->set_model_candidates($options{model_candidates});
+        $config->set_model_routing_index($options{model_routing_index} // 0);
+        log_debug('SubAgent', "Propagated " . scalar(@{$options{model_candidates}}) . " routing candidates (index=" . ($options{model_routing_index} // 0) . ")");
+    }
+    if (defined $options{route_name}) {
+        $config->set('route_name', $options{route_name}, 0);
+    }
     
     # Create a session for this agent (required for API tracking, history, etc.)
     my $session = CLIO::Session::Manager->create(
@@ -355,7 +387,7 @@ sub _run_agent_loop {
         initial_task => $task,
         on_task => $task_handler,
         oneshot => $oneshot,
-        debug => 1,
+        debug => $debug,
     );
     
     eval {
@@ -412,6 +444,15 @@ sub kill_agent {
     kill 'TERM', $agent->{pid};
     $agent->{status} = 'killed';
     
+    # Reap the child process to prevent zombies. Use WNOHANG to avoid
+    # blocking if the process hasn't exited yet (it may need time to
+    # clean up after SIGTERM).
+    my $kid = waitpid($agent->{pid}, 1);  # WNOHANG
+    unless ($kid == -1) {
+        # Process reaped, or still running (WNOHANG returns 0 for still-running)
+        $agent->{status} = 'completed' if $kid > 0;
+    }
+    
     return 1;
 }
 
@@ -427,6 +468,11 @@ sub wait_all {
     for my $agent_id (keys %{$self->{agents}}) {
         my $agent = $self->{agents}{$agent_id};
         if ($agent->{status} eq 'running') {
+            waitpid($agent->{pid}, 0);
+            $agent->{status} = 'completed';
+        }
+        elsif ($agent->{status} eq 'killed') {
+            # Reap killed agents that haven't been waited on yet
             waitpid($agent->{pid}, 0);
             $agent->{status} = 'completed';
         }

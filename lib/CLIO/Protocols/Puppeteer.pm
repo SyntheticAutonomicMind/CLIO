@@ -262,10 +262,14 @@ sub _parse_gitmodules {
             push @modules, $current;
         }
         elsif ($current && $line =~ /^\s*path\s*=\s*(.+?)\s*$/) {
-            $current->{path} = $1;
+            my $val = $1;
+            $val =~ s/^"(.*)"$/$1/;  # Strip surrounding quotes if present
+            $current->{path} = $val;
         }
         elsif ($current && $line =~ /^\s*url\s*=\s*(.+?)\s*$/) {
-            $current->{url} = $1;
+            my $val = $1;
+            $val =~ s/^"(.*)"$/$1/;  # Strip surrounding quotes if present
+            $current->{url} = $val;
         }
     }
     

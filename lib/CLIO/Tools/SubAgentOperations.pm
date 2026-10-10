@@ -278,14 +278,12 @@ sub _get_subagent_handler {
         $mock_chat->{writeline} = sub { };
         $mock_chat->{colorize} = sub { return $_[1] };
         
-        # Create a minimal broker_client stub for non-UI contexts
-        # This prevents "can't call method on undef" errors when broker isn't running
-        my $mock_broker_client = {
-            poll_status_updates  => sub { [] },
-            poll_user_inbox      => sub { [] },
-            acknowledge_messages => sub { 1 },  # Return success
-            send_message         => sub { undef },  # No-op
-        };
+        # Create a minimal broker_client stub for non-UI contexts.
+        # Must be a blessed object (not a plain hashref) because callers
+        # use method-call syntax: $handler->{broker_client}->poll_user_inbox()
+        # A plain hashref with coderef values would fail with "Can't call
+        # method ... on unblessed reference".
+        my $mock_broker_client = CLIO::Coordination::BrokerClient::Mock->new();
         
         # Cache the handler so subsequent calls reuse the same instance
         $self->{_subagent_handler} = CLIO::UI::Commands::SubAgent->new(
@@ -313,10 +311,10 @@ sub spawn {
     my ($self, $params, $handler, $context) = @_;
     
     my $task = $params->{task};
- return $self->error_result("Missing required parameter: task") unless $task;
+    return $self->error_result("Missing required parameter: task") unless $task;
     
     # Use explicitly requested model, or inherit the current session model
-    my $model = $params->{model} || ($context && $context->{current_model}) || 'unknown';
+    my $model = $params->{model} || ($context && $context->{current_model}) || ($context && $context->{api_manager} && $context->{api_manager}->can('get_current_model') && $context->{api_manager}->get_current_model()) || 'unknown';
     my $persistent = $params->{persistent} ? 1 : 0;
     my $working_dir = $params->{working_dir};
 
@@ -351,19 +349,49 @@ sub spawn {
     $args .= qq{ --dir "$working_dir"} if $working_dir;
     $args .= qq{ --skills "${\(join(',', @preloaded_skills))}"} if @preloaded_skills;
     
+    # Extract model routing config from the parent context so it can be
+    # passed through cmd_spawn -> spawn_agent -> _run_agent_loop.
+    # The UI path (cmd_spawn) extracts this from $self->{chat}{config},
+    # but the tool path goes through a mock chat, so we need to pass it
+    # explicitly via the args string.
+    my $routing_args = '';
+    my @route_candidates;
+    my $route_index;
+    my $route_name;
+    if ($context && $context->{api_manager} && $context->{api_manager}{config}) {
+        my $parent_config = $context->{api_manager}{config};
+        my $candidates = $parent_config->get_model_candidates();
+        if ($candidates && ref($candidates) eq 'ARRAY' && @$candidates) {
+            @route_candidates = @$candidates;
+            $route_index = $parent_config->get_model_routing_index() // 0;
+            $routing_args .= " --route-candidates " . join(',', map { quotemeta($_) } @$candidates);
+            $routing_args .= " --route-index " . int($route_index);
+        }
+        $route_name = $parent_config->get('route_name');
+        if (defined $route_name && length($route_name)) {
+            $routing_args .= " --route-name " . quotemeta($route_name);
+        }
+    }
+    
     # Suppress direct display - we'll return expanded_content instead
     $handler->{suppress_display} = 1;
     
     # Call the spawn command (display suppressed)
-    my $result = $handler->cmd_spawn($args);
+    my $result = $handler->cmd_spawn($args . $routing_args);
 
     delete $handler->{suppress_display};
     
     # Extract agent ID from result if available
     if ($handler->{manager}) {
         my $agents = $handler->{manager}->list_agents();
-        my @ids = sort { $b cmp $a } keys %$agents;  # Get newest
-        my $agent_id = $ids[0] || 'unknown';
+        # Get newest agent by numeric ID (not string sort, which
+        # would put agent-10 before agent-2)
+        my @ids = sort {
+            my ($an) = $a =~ /(\d+)/;
+            my ($bn) = $b =~ /(\d+)/;
+            ($an // 0) <=> ($bn // 0)
+        } keys %$agents;
+        my $agent_id = $ids[-1] || 'unknown';
         
         my $mode_str = $persistent ? 'persistent' : 'oneshot';
         my @expanded = (
@@ -408,6 +436,9 @@ sub spawn {
             mode => $mode_str,
             ($working_dir ? (working_dir => $working_dir) : ()),
             (@preloaded_skills ? (preloaded_skills => \@preloaded_skills) : ()),
+            (@route_candidates ? (model_candidates => \@route_candidates) : ()),
+            (defined $route_index ? (model_routing_index => $route_index) : ()),
+            (defined $route_name ? (route_name => $route_name) : ()),
         );
     }
 
@@ -494,10 +525,10 @@ sub wait {
                         timestamp => $msg->{timestamp},
                     };
                 }
-                # Acknowledge so they don't re-appear on next poll
-                if (@msg_ids) {
-                    eval { $handler->{broker_client}->acknowledge_messages(@msg_ids) };
-                }
+                # Acknowledge so they don't re-appear on next poll.
+                # Consistent with inbox() design: messages should only be
+                # acknowledged when the AI explicitly calls acknowledge().
+                # Here we leave them unread so the AI can review them via inbox().
             }
 
             # Check for status updates
@@ -621,7 +652,7 @@ sub status {
     my $elapsed = time() - $agent->{started};
     
     # Get log tail if available
-    my $log_path = "/tmp/clio-agent-$agent_id.log";
+    my $log_path = CLIO::Coordination::SubAgent->log_path_for($agent_id);
     my $log_tail = '';
     if (-f $log_path) {
         $log_tail = ($^O eq "MSWin32" ? "" : `tail -20 "$log_path" 2>/dev/null`);
@@ -647,7 +678,7 @@ sub kill {
     my ($self, $params, $handler, $context) = @_;
     
     my $agent_id = $params->{agent_id};
- return $self->error_result("Missing required parameter: agent_id") unless $agent_id;
+    return $self->error_result("Missing required parameter: agent_id") unless $agent_id;
 
     my $action_desc = "terminating $agent_id";
     
@@ -986,5 +1017,18 @@ L<CLIO::Coordination::Broker> - Central coordination broker
 L<CLIO::Coordination::Client> - Broker client library
 
 =cut
+
+# Mock broker client for non-interactive contexts (no broker running).
+# Provides no-op returns so inbox/status/list operations degrade
+# gracefully instead of crashing on method calls to a non-object.
+package CLIO::Coordination::BrokerClient::Mock;
+sub new { bless {}, shift }
+sub poll_status_updates  { return [] }
+sub poll_user_inbox      { return [] }
+sub acknowledge_messages { return 1 }
+sub send_message         { return undef }
+sub get_message_history  { return [] }
+sub get_status           { return { type => 'status' } }
+sub disconnect           { }
 
 1;

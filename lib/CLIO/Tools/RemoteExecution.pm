@@ -595,14 +595,13 @@ sub execute_parallel {
         return $self->error_result("Missing required parameter: model. Specify a model or run from a session with a configured model.");
     }
     
-    # Auto-populate API provider from current session
-    unless ($api_provider) {
+    # Auto-populate API provider from current session (same logic as execute_remote)
+    unless ($api_provider && $api_provider ne 'github_copilot') {
         if ($context && $context->{api_manager} && $context->{api_manager}->can('get_current_provider')) {
             $api_provider = $context->{api_manager}->get_current_provider();
         } elsif ($context && $context->{config}) {
             $api_provider = $context->{config}->get('provider');
         }
-        $api_provider ||= 'github_copilot';  # Fallback default
     }
     
     # Auto-populate API base from current session (for custom proxies)
@@ -640,49 +639,108 @@ sub execute_parallel {
     
     log_debug('RemoteExecution', "Parallel execution on " . scalar(@devices) . " device(s)");
     
-    # Execute on all devices
-    # For simplicity and reliability, execute sequentially for now
-    # Sequential execution is sufficient; parallel would need fork/IPC coordination
-    my @results;
+    # Execute on all devices in parallel via fork.
+    # Each child runs execute_remote and writes its result (as JSON)
+    # to a temp file; the parent collects results after all children finish.
+    # NOTE: CLEANUP => 0 because forked children inherit the temp dir
+    # object and would delete result files before the parent reads them.
+    my $local_staging = tempdir(CLEANUP => 0);
+    my @pids;
+    my @result_files;
     
     for my $device (@devices) {
-        log_debug('RemoteExecution', "Executing on: $device->{name} ($device->{host})");
+        log_debug('RemoteExecution', "Spawning parallel execution on: $device->{name} ($device->{host})");
         
         my $start_time = time();
+        my $result_file = File::Spec->catfile($local_staging, "result-$device->{name}.json");
+        push @result_files, { device => $device->{name}, host => $device->{host}, file => $result_file };
         
-        my $result = eval {
-            $self->execute_remote({
-                host => $device->{host},
-                command => $command,
-                model => $model,
-                api_key => $api_key,
-                api_provider => $api_provider,
-                api_base => $api_base,
-                timeout => $timeout,
-                ssh_port => $device->{ssh_port} || 22,
-                ssh_key => $device->{ssh_key},
-            }, $context);
-        };
+        my $pid = fork();
+        croak "Cannot fork for parallel execution: $!" unless defined $pid;
         
-        my $elapsed = time() - $start_time;
-        
-        if ($@ || !$result) {
-                push @results, {
+        if ($pid == 0) {
+            # Child process - execute remote task and write result to file
+            my $result = eval {
+                $self->execute_remote({
+                    host => $device->{host},
+                    command => $command,
+                    model => $model,
+                    api_key => $api_key,
+                    api_provider => $api_provider,
+                    api_base => $api_base,
+                    timeout => $timeout,
+                    ssh_port => $device->{ssh_port} || 22,
+                    ssh_key => $device->{ssh_key},
+                }, $context);
+            };
+            
+            my $elapsed = time() - $start_time;
+            
+            my $output;
+            if ($@ || !$result) {
+                $output = {
                     device => $device->{name},
                     host => $device->{host},
                     success => 0,
                     error => ($@ ? $self->_clean_eval_error($@) : '') || "No result returned",
                     elapsed_seconds => $elapsed,
                 };
-        } else {
-            push @results, {
-                device => $device->{name},
-                host => $device->{host},
-                %$result,
-                elapsed_seconds => $elapsed,
+            } else {
+                $output = {
+                    device => $device->{name},
+                    host => $device->{host},
+                    %$result,
+                    elapsed_seconds => $elapsed,
+                };
+            }
+            
+            # Write result to temp file as JSON
+            eval {
+                open my $fh, '>:encoding(UTF-8)', $result_file;
+                print $fh encode_json($output);
+                close $fh;
             };
+            exit 0;
+        }
+        
+        push @pids, $pid;
+    }
+    
+    # Parent: wait for all children
+    my @results;
+    for my $i (0 .. $#pids) {
+        waitpid($pids[$i], 0);
+        my $entry = $result_files[$i];
+        my $device_name = $entry->{device};
+        my $device_host = $entry->{host};
+        
+        # Read result from temp file
+        my $output = eval {
+            open my $fh, '<:encoding(UTF-8)', $entry->{file};
+            my $json = do { local $/; <$fh> };
+            close $fh;
+            decode_json($json);
+        };
+        
+        if ($@ || !$output) {
+            push @results, {
+                device => $device_name,
+                host => $device_host,
+                success => 0,
+                error => "Child process failed to produce result: " . ($@ || 'unknown error'),
+                elapsed_seconds => 0,
+            };
+        } else {
+            push @results, $output;
         }
     }
+    
+    # Clean up temp files (CLEANUP => 0 means we manage it manually)
+    eval {
+        require File::Path;
+        File::Path::remove_tree($local_staging, { error => \my $err });
+        log_debug('RemoteExecution', "Cleaned up staging dir: $local_staging") if should_log('DEBUG');
+    };
     
     # Aggregate results
     my $success_count = scalar grep { $_->{success} } @results;
@@ -803,6 +861,7 @@ sub prepare_remote {
             host => $host,
             install_dir => $install_dir,
             clio_version => $download_result->{version},
+            method => $download_result->{method},
         );
     };
     
@@ -929,6 +988,18 @@ sub check_remote {
             croak "Neither curl nor wget available on remote";
         }
         
+        # Check for rsync (required by _copy_local_clio_to_remote)
+        my $rsync = $self->_ssh_exec(
+            host => $host,
+            ssh_key => $ssh_key,
+            ssh_port => $ssh_port,
+            command => "command -v rsync",
+        );
+        
+        unless ($rsync->{success}) {
+            croak "rsync not available on remote (required for CLIO deployment)";
+        }
+        
         # Check disk space in /tmp
         my $disk = $self->_ssh_exec(
             host => $host,
@@ -953,6 +1024,7 @@ sub check_remote {
             host => $host,
             perl_available => 1,
             download_tool => $curl->{stdout} =~ /curl/ ? 'curl' : 'wget',
+            rsync_available => 1,
             disk_space_mb => $available_mb,
         );
     };
@@ -1114,6 +1186,7 @@ sub retrieve_files {
 
 sub _shell_quote {
     my ($self, $str) = @_;
+    return "''" unless defined $str;
     $str =~ s/'/'\\''/g;
     return "'$str'";
 }
@@ -1557,7 +1630,21 @@ sub _copy_local_clio_to_remote {
         success => 1,
         clio_path => "$remote_dir/clio",
         method => 'local_copy',
+        version => $self->_get_local_version($local_clio_dir),
     };
+}
+
+# Read the VERSION file from the local CLIO directory
+sub _get_local_version {
+    my ($self, $local_clio_dir) = @_;
+    my $version_file = File::Spec->catfile($local_clio_dir, 'VERSION');
+    if (open my $fh, '<', $version_file) {
+        my $version = <$fh>;
+        chomp $version;
+        close $fh;
+        return $version if $version;
+    }
+    return 'unknown';
 }
 
 sub _create_remote_config {
@@ -1667,7 +1754,7 @@ sub _execute_clio_remote {
     my $remote_dir = $args{remote_dir};
     my $model = $args{model};
     my $api_key = $args{api_key};
-    my $streaming = $args{streaming} // 0;  # New parameter for streaming support
+    my $streaming = $args{streaming} // 0;  # Optional: stream output without --exit
     
     # Validate paths used in shell script
     for my $path ($clio_path, $config_dir, $remote_dir) {

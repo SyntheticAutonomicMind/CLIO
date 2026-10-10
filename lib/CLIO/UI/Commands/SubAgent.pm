@@ -189,6 +189,23 @@ sub cmd_spawn {
         @preloaded_skills = grep { defined $_ && length $_ } @preloaded_skills;
     }
     
+    # Parse model routing flags passed from SubAgentOperations tool path.
+    # These are normally extracted from $self->{chat}{config} directly,
+    # but the tool path passes them via args string since it uses a mock chat.
+    my @route_candidates;
+    if ($task =~ s/\s*--route-candidates\s+(\S+)\s*//) {
+        @route_candidates = split(/,/, $1);
+        @route_candidates = grep { length } @route_candidates;
+    }
+    my $route_index;
+    if ($task =~ s/\s*--route-index\s+(\d+)\s*//) {
+        $route_index = int($1);
+    }
+    my $route_name;
+    if ($task =~ s/\s*--route-name\s+(\S+)\s*//) {
+        $route_name = $1;
+    }
+    
     # Persistent mode requires a running broker - default to oneshot
     # Users can explicitly set persistent=true when a broker is available
     
@@ -205,14 +222,46 @@ sub cmd_spawn {
     # Clean up extra whitespace
     $task =~ s/^\s+|\s+$//g;
     
-    # Spawn agent
-    my $agent_id = $self->{manager}->spawn_agent($task,
+    # Propagate model routing config from the parent session so sub-agents
+    # can cycle through candidates when the primary agent uses model routing.
+    # Without this, the sub-agent gets a fresh Config with empty candidates
+    # and cycle_model() has nothing to switch to on error.
+    my @spawn_opts = (
         model => $model,
         persistent => $persistent,
         debug => $self->{debug},
-        ($working_dir ? (working_dir => $working_dir) : ()),
-        (@preloaded_skills ? (preloaded_skills => \@preloaded_skills) : ()),
     );
+    push @spawn_opts, working_dir => $working_dir if $working_dir;
+    push @spawn_opts, preloaded_skills => \@preloaded_skills if @preloaded_skills;
+    
+    # Pass model routing config. Priority: parsed args (from tool path) >
+    # parent chat config (from UI path). The tool path passes routing info
+    # via --route-candidates args since it uses a mock chat without config;
+    # the UI path reads directly from $self->{chat}{config}.
+    my @all_candidates;
+    my $all_route_index;
+    my $all_route_name;
+    
+    if (@route_candidates) {
+        @all_candidates = @route_candidates;
+        $all_route_index = $route_index;
+        $all_route_name = $route_name;
+    } elsif ($self->{chat} && $self->{chat}{config}) {
+        my $parent_config = $self->{chat}{config};
+        my $candidates = $parent_config->get_model_candidates();
+        if ($candidates && ref($candidates) eq 'ARRAY' && @$candidates) {
+            @all_candidates = @$candidates;
+            $all_route_index = $parent_config->get_model_routing_index() // 0;
+            $all_route_name = $parent_config->get('route_name');
+        }
+    }
+    
+    push @spawn_opts, model_candidates => \@all_candidates if @all_candidates;
+    push @spawn_opts, model_routing_index => $all_route_index if defined $all_route_index;
+    push @spawn_opts, route_name => $all_route_name if defined $all_route_name;
+    
+    # Spawn agent
+    my $agent_id = $self->{manager}->spawn_agent($task, @spawn_opts);
     
     my $mode_str = $persistent ? 'persistent' : 'oneshot';
     
@@ -364,7 +413,7 @@ sub cmd_status {
     return unless $self->display_key_value("Task", $agent->{task});
 
     # Check log file
-    my $log_path = "/tmp/clio-agent-$agent_id.log";
+    my $log_path = CLIO::Coordination::SubAgent->log_path_for($agent_id);
     if (-f $log_path) {
         return unless $self->writeline("", markdown => 0);
         return unless $self->display_key_value("Log", $log_path);

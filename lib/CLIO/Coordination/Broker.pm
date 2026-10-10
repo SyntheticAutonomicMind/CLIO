@@ -129,6 +129,9 @@ sub new {
         
         # Activity streaming: tool events from child agents
         activity_log => [],
+        
+        # Status update queue for child agent state reporting
+        status_updates => [],
     };
     
     return bless $self, $class;
@@ -699,13 +702,18 @@ sub handle_send_message {
         $self->log_debug("Message from $sender to user: $message_type");
     }
     elsif ($recipient eq 'all') {
-        # Broadcast to all agents
+        # Broadcast to all agents AND the user. The 'user' recipient reads
+        # from user_inbox (via poll_user_inbox), not from agent_inboxes,
+        # so we must deliver to both buckets to ensure the primary user sees
+        # broadcasts from sub-agents.
+        push @{$self->{user_inbox}}, $message;
+        push @{$self->{user_inbox_history}}, $message;
         for my $agent_id (keys %{$self->{agent_status}}) {
-            next if $agent_id eq $sender;  # Don't send to self
+            next if $agent_id eq $sender || $agent_id eq 'user';  # Don't send to self or user (already handled above)
             $self->{agent_inboxes}{$agent_id} ||= [];
             push @{$self->{agent_inboxes}{$agent_id}}, $message;
         }
-        $self->log_debug("Broadcast from $sender to all agents");
+        $self->log_debug("Broadcast from $sender to all agents and user");
     }
     else {
         # Direct message to specific agent
@@ -718,6 +726,7 @@ sub handle_send_message {
     $self->send_message($fd, {
         type => 'ack',
         request_type => 'send_message',
+        success => \1,
         message_id => $message->{id},
     });
 }
@@ -788,7 +797,7 @@ sub handle_acknowledge_messages {
     
     $self->send_message($fd, {
         type => 'acknowledge_result',
-        success => 1,
+        success => \1,
     });
 }
 
@@ -1070,7 +1079,7 @@ sub handle_release_api_slot {
 
     $self->send_message($fd, {
         type => 'ack',
-        success => 1,
+        success => \1,
     });
 }
 
@@ -1115,7 +1124,7 @@ sub handle_report_api_tokens {
     @$window   = grep { $_->{t} > $now - 60 } @$window;
     push @$window, { t => $now, tokens => int($tokens) };
 
-    $self->send_message($fd, { type => 'ack', success => 1 });
+    $self->send_message($fd, { type => 'ack', success => \1 });
 }
 
 # Update per-model Anthropic ITPM/OTPM/RPM snapshot from response headers
@@ -1186,7 +1195,7 @@ sub handle_status_update {
         splice(@{$self->{status_updates}}, 0, scalar(@{$self->{status_updates}}) - 100);
     }
     
-    $self->send_message($fd, { type => 'ack', success => 1 });
+    $self->send_message($fd, { type => 'ack', success => \1 });
 }
 
 # Poll status updates - returns and clears pending updates
@@ -1308,7 +1317,11 @@ sub handle_activity_stream {
 
     $self->log_debug("Activity from $agent_id: $entry->{action}" . ($entry->{tool_name} ? " ($entry->{tool_name})" : ''));
 
-    $self->send_message($fd, { type => 'ack', request_type => 'activity_stream', success => \1 });
+    $self->send_message($fd, {
+        type => 'ack',
+        request_type => 'activity_stream',
+        success => \1,
+    });
 }
 
 # Activity streaming: return and clear accumulated activity log
@@ -1464,7 +1477,7 @@ sub _calculate_api_token_delay {
 
 sub log_warn {
     my ($self, $msg) = @_;
-    CLIO::Core::Logger::log_debug('Broker', $msg);
+    CLIO::Core::Logger::log_warning('Broker', $msg);
 }
 
 sub log_debug {
@@ -1475,8 +1488,8 @@ sub log_debug {
 
 sub DESTROY {
     my ($self) = @_;
-    if ($self->{listener}) {
-        close($self->{listener});
+    if ($self->{server}) {
+        close($self->{server});
     }
     if ($self->{socket_path} && -e $self->{socket_path}) {
         unlink $self->{socket_path};
@@ -1494,6 +1507,5 @@ Fewtarius
 =head1 LICENSE
 
 See main CLIO LICENSE file.
-
 
 1;
