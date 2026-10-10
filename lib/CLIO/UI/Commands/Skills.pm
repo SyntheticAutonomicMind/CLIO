@@ -293,10 +293,9 @@ sub _show_help {
     $self->writeline("", markdown => 0);
 
     $self->display_section_header("SCOPES");
-    $self->writeline("  user       - ~/.clio/skills.json (visible in all projects)", markdown => 0);
-    $self->writeline("  project    - .clio/skills.json in the current project", markdown => 0);
+    $self->writeline("  user       - ~/.clio/skills/*.md (visible in all projects)", markdown => 0);
+    $self->writeline("  project    - .clio/skills/*.md in the current project", markdown => 0);
     $self->writeline("  session    - .clio/sessions/<id>/skills.json (cleared on session end)", markdown => 0);
-    $self->writeline("  freeform   - .clio/skills/*.md files (edit the .md to modify)", markdown => 0);
     $self->writeline("  repository - skills pulled from a configured git repository", markdown => 0);
     $self->writeline("  builtin    - read-only skills shipped with CLIO", markdown => 0);
     $self->writeline("", markdown => 0);
@@ -478,7 +477,6 @@ sub _list_skills {
             ['user',       $by_scope{user}       // []],
             ['project',    $by_scope{project}    // []],
             ['session',    $by_scope{session}    // []],
-            ['freeform',   $by_scope{freeform}   // []],
             ['repository', $by_scope{repository} // []],
             ['builtin',    $by_scope{builtin}    // []],
         );
@@ -504,13 +502,15 @@ sub _list_skills {
     }
     
     # Render one section per bucket. Order is consistent: user, project,
-    # session, freeform, repository, builtin. A single bucket section is
-    # omitted when empty so the output stays focused.
+    # session, repository, builtin. A single bucket section is omitted
+    # when empty so the output stays focused.
+    # Note: freeform .md skills are now loaded into the user/project
+    # buckets (scope = 'user' or 'project'), not a separate 'freeform'
+    # bucket. The .md files live in .clio/skills/ and ~/.clio/skills/.
     my %scope_descriptions = (
-        user       => 'Stored in your user skills file. Visible across all projects.',
-        project    => 'Stored in this project\'s .clio/skills.json. Visible only here.',
+        user       => 'Freeform .clio/skills/*.md files (edit the .md to modify).',
+        project    => 'Freeform .clio/skills/*.md files in this project (edit the .md to modify).',
         session    => 'Stored in this session\'s skills.json. Cleared when the session ends.',
-        freeform   => 'Loaded from .clio/skills/*.md files. Edit the .md to modify.',
         repository => 'Loaded from a configured skill repository.',
         builtin    => 'Built into CLIO. Read-only.',
     );
@@ -535,8 +535,11 @@ sub _list_skills {
             if ($scope eq 'repository' && $s->{source_repo}) {
                 $source_label = " (repo: $s->{source_repo})";
             }
-            elsif ($scope eq 'freeform' && $s->{location}) {
-                $source_label = " (from $s->{location} dir)";
+            elsif ($scope eq 'user' && $s->{source}) {
+                $source_label = " (freeform: user)";
+            }
+            elsif ($scope eq 'project' && $s->{source}) {
+                $source_label = " (freeform: project)";
             }
             $self->display_key_value($name, $desc . $source_label . $indicator, 16);
         }
@@ -559,7 +562,6 @@ sub _list_skills {
                        scalar(@{$by_scope{session}// []});
     my $builtin_count = scalar(@{$by_scope{builtin} // []});
     my $repo_count    = scalar(@{$by_scope{repository} // []});
-    my $freeform_count= scalar(@{$by_scope{freeform} // []});
     my $loaded_count  = scalar(@$loaded);
 
     my $summary;
@@ -573,10 +575,9 @@ sub _list_skills {
         $summary .= " | " . $self->colorize("$loaded_count", 'DATA') . " loaded" if $loaded_count > 0;
     }
     else {
-        my $total = $custom_count + $builtin_count + $repo_count + $freeform_count;
+        my $total = $custom_count + $builtin_count + $repo_count;
         $summary = $self->colorize("Total: ", 'LABEL') .
                    $self->colorize("$custom_count", 'DATA') . " custom, " .
-                   $self->colorize("$freeform_count", 'DATA') . " freeform, " .
                    $self->colorize("$repo_count", 'DATA') . " repo, " .
                    $self->colorize("$builtin_count", 'DATA') . " built-in" .
                    " (" . $self->colorize("$total", 'SUCCESS') . " total)";
@@ -599,7 +600,6 @@ sub _list_skills {
     $self->{chat}->display_command_row("/skills --scope=user", "Show user-level skills only", 35);
     $self->{chat}->display_command_row("/skills --scope=project", "Show project-level skills only", 35);
     $self->{chat}->display_command_row("/skills --scope=session", "Show session-level skills only", 35);
-    $self->{chat}->display_command_row("/skills --scope=freeform", "Show freeform .md skills only", 35);
     $self->writeline("", markdown => 0);
 
     $self->display_section_header("CATALOG");

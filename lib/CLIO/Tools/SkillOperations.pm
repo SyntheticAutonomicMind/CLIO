@@ -268,8 +268,20 @@ sub _get_skill_manager {
         );
     }
 
+    # Resolve the project skills file explicitly when CLIO_PROJECT_DIR is
+    # set (the runtime sets it). This avoids relying solely on the env
+    # var inside SkillManager's constructor and keeps the project scope
+    # resolution deterministic across all entry points.
+    my $project_skills_file = undef;
+    if ($ENV{CLIO_PROJECT_DIR}) {
+        $project_skills_file = File::Spec->catfile(
+            $ENV{CLIO_PROJECT_DIR}, '.clio', 'skills.json'
+        );
+    }
+
     return CLIO::Core::SkillManager->new(
         debug => $self->{debug},
+        project_skills_file => $project_skills_file,
         session_skills_file => $session_file,
     );
 }

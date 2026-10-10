@@ -430,6 +430,17 @@ if ($working_dir) {
     log_debug('Main', "Working directory resolved to: $working_dir");
 }
 
+# Communicate the project root to all components that construct a
+# SkillManager without an explicit project_skills_file. SkillManager
+# reads CLIO_PROJECT_DIR to resolve .clio/skills.json and the freeform
+# .clio/skills/ directory relative to the true project root — not the
+# process CWD, which may differ when --dir is used or when file_operations
+# chdir. This keeps skill discovery in sync with where tools write.
+if (defined $working_dir && length $working_dir) {
+    $ENV{CLIO_PROJECT_DIR} = $working_dir;
+    log_debug('Main', "Set CLIO_PROJECT_DIR=$working_dir");
+}
+
 # Validate --style: the style must exist in the available styles.
 if ($style_override) {
     require CLIO::UI::Theme;
@@ -878,6 +889,18 @@ if ($mode eq 'new' || $mode eq 'chat') {
     }
     $session_id = $session->{session_id} // ($session->{state} ? $session->{state}->{session_id} : undef) if $session;
     log_debug('Main', "Created new session: $session_id") if $session_id;
+
+    # If --dir wasn't given, working_dir was empty and Session::Manager
+    # resolved it to getcwd() internally. Surface that resolved value to
+    # CLIO_PROJECT_DIR so SkillManager and other components get the same
+    # absolute project root regardless of how the session was started.
+    if (!$ENV{CLIO_PROJECT_DIR} && $session && $session->can('working_directory')) {
+        my $resolved = $session->working_directory();
+        if ($resolved) {
+            $ENV{CLIO_PROJECT_DIR} = $resolved;
+            log_debug('Main', "Set CLIO_PROJECT_DIR=$resolved (from session)");
+        }
+    }
     log_debug('Main', 'After new: session defined? ' . (defined $session ? 'yes' : 'no'));
     
     # NOTE: The system prompt is NOT added to session history at
@@ -1031,6 +1054,19 @@ if (!$session) {
     exit 2;
 }
 log_debug('Main', "Using session: $session_id");
+
+# Ensure CLIO_PROJECT_DIR is set to the session's working directory so all
+# components (SkillManager, PromptBuilder, etc.) resolve project-local paths
+# against the same absolute root regardless of how the session started.
+# Covered cases: --dir (already set above), default cwd (resolved by
+# Session::Manager), and resumed sessions (restore the original working dir).
+if (!$ENV{CLIO_PROJECT_DIR} && $session && $session->can('working_directory')) {
+    my $wd = $session->working_directory();
+    if ($wd) {
+        $ENV{CLIO_PROJECT_DIR} = $wd;
+        log_debug('Main', "Set CLIO_PROJECT_DIR=$wd (from resolved session)");
+    }
+}
 
 # Check for broker coordination (sub-agent mode)
 my $broker_client;

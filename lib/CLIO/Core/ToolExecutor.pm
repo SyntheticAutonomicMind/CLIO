@@ -72,6 +72,7 @@ sub new {
         broker_client => $args{broker_client},  # Broker client for multi-agent coordination
         api_manager => $args{api_manager},  # API manager for current model info
         debug => $args{debug} || 0,
+        orchestrator => $args{orchestrator},  # Orchestrator for cache invalidation
         storage => CLIO::Session::ToolResultStore->new(debug => $args{debug}),
     };
     
@@ -495,6 +496,19 @@ sub execute_tool {
         # Pass through metadata for display (e.g. file diffs)
         if ($result->{metadata} && ref($result->{metadata}) eq 'HASH') {
             $response->{metadata} = $result->{metadata};
+        }
+        
+        # Invalidate the PromptBuilder skills-section cache when a skill
+        # is created or deleted, so the catalog stays fresh on the next
+        # system-prompt build. skill_operations is gated on
+        # auto_discover_skills in PromptBuilder, so we only need to invalidate
+        # when the orchestrator's prompt_builder is present.
+        if ($tool_name eq 'skill_operations' && $operation =~ /^(create|delete|load|unload)$/) {
+            my $orch = $self->{orchestrator};
+            if ($orch && $orch->can('invalidate_tool_cache')) {
+                $orch->invalidate_tool_cache();
+                log_debug('ToolExecutor', "Invalidated prompt cache after skill_operations.$operation");
+            }
         }
         
         return encode_json($response);

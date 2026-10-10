@@ -75,7 +75,7 @@ ok_test('add_freeform_skill: returns path', defined $result->{path} && -f $resul
 ok_test('add_freeform_skill: path ends with .md', $result->{path} =~ /\.md$/);
 ok_test('add_freeform_skill: skill returned', defined $result->{skill});
 ok_test('add_freeform_skill: name set', $result->{skill}{name} eq 'test-auto-skill');
-ok_test('add_freeform_skill: scope is freeform', $result->{skill}{scope} eq 'freeform');
+ok_test('add_freeform_skill: scope matches location', $result->{skill}{scope} eq 'project');
 ok_test('add_freeform_skill: type is freeform', $result->{skill}{type} eq 'freeform');
 ok_test('add_freeform_skill: readonly set', $result->{skill}{readonly});
 
@@ -185,6 +185,79 @@ ok_test('SkillOperations create path: file contains name',
         $src =~ /auto_create_skills/);
     ok_test('PromptBuilder: respects skip_custom (incognito)',
         $src =~ /skip_custom/);
+}
+
+# --- Cross-instance discovery (the core bug: project freeform skills
+# created by one SkillManager must be visible to a fresh instance, as
+# PromptBuilder builds a fresh SkillManager for catalog generation) ---
+{
+    # Add a freeform project skill using the already-configured $sm
+    # (points at $freeform_dir for project scope).
+    my $r = $sm->add_freeform_skill(
+        'cross-instance-test',
+        'Cross-instance discovery test',
+        "---\nname: cross-instance-test\ndescription: 'Test skill'\n---\n# Test\n\nReview \${code}.",
+        scope => 'project',
+    );
+    ok_test('cross-instance: add_freeform_skill success', $r->{success});
+
+    # Construct a fresh SkillManager pointing at the same project file.
+    # This mirrors how PromptBuilder::generate_skills_section works.
+    my $sm2 = CLIO::Core::SkillManager->new(
+        debug => 0,
+        project_skills_file => $project_skills_file,
+        freeform_project_dir => $freeform_dir,
+    );
+    my $catalog = $sm2->list_skill_catalog();
+    my %by_name = map { $_->{name} => $_ } @$catalog;
+    ok_test('cross-instance: skill visible in fresh catalog', exists $by_name{'cross-instance-test'});
+    if ($by_name{'cross-instance-test'}) {
+        ok_test('cross-instance: scope is project', $by_name{'cross-instance-test'}{scope} eq 'project');
+        ok_test('cross-instance: variables extracted', scalar(@{$by_name{'cross-instance-test'}{variables}}) == 1);
+        ok_test('cross-instance: variables correct', $by_name{'cross-instance-test'}{variables}[0] eq 'code');
+    }
+
+    # Also test add_skill delegation to freeform .md
+    my $r2 = $sm->add_skill('add-skill-delegation', 'Analyze \${data} for \${pattern}',
+        description => 'Delegation test', scope => 'project');
+    ok_test('cross-instance: add_skill delegates to .md', $r2->{success});
+    ok_test('cross-instance: add_skill returns scope', ($r2->{prompt}{scope} // '') eq 'project');
+
+    my $sm3 = CLIO::Core::SkillManager->new(
+        debug => 0,
+        project_skills_file => $project_skills_file,
+        freeform_project_dir => $freeform_dir,
+    );
+    my $cat3 = $sm3->list_skill_catalog();
+    ok_test('cross-instance: add_skill skill visible to fresh instance',
+        grep { $_->{name} eq 'add-skill-delegation' } @$cat3);
+
+    # Test delete_skill on .md-backed freeform skill
+    my $del = $sm->delete_skill('add-skill-delegation');
+    ok_test('cross-instance: delete_skill on .md succeeds', $del->{success});
+    my $sm4 = CLIO::Core::SkillManager->new(
+        debug => 0,
+        project_skills_file => $project_skills_file,
+        freeform_project_dir => $freeform_dir,
+    );
+    my $cat4 = $sm4->list_skill_catalog();
+    ok_test('cross-instance: skill gone after delete',
+        !grep { $_->{name} eq 'add-skill-delegation' } @$cat4);
+}
+
+# --- _has_project_scope path normalization ---
+{
+    # With CLIO_PROJECT_DIR set, a fresh SkillManager (no explicit args)
+    # should resolve project scope correctly.
+    my $prev = $ENV{CLIO_PROJECT_DIR};
+    $ENV{CLIO_PROJECT_DIR} = $project_dir;
+    my $sm_proj = CLIO::Core::SkillManager->new(debug => 0);
+    ok_test('path-normalization: _has_project_scope returns 1 with CLIO_PROJECT_DIR', $sm_proj->_has_project_scope());
+    ok_test('path-normalization: project_skills_file is absolute',
+        $sm_proj->{project_skills_file} =~ m{^/});
+    ok_test('path-normalization: freeform_project_dir is absolute',
+        $sm_proj->{freeform_project_dir} =~ m{^/});
+    $ENV{CLIO_PROJECT_DIR} = $prev;
 }
 
 print "\n$passed/$tests tests passed\n";

@@ -155,6 +155,26 @@ delete $ENV{CLIO_PRELOADED_SKILLS};
 my $section2 = $builder->generate_skills_section();
 ok_test('skills section cached (same length)', length($section) == length($section2));
 
+# --- Cross-instance discovery: a skill written by one SkillManager
+# (without explicit project args, relying on CLIO_USER_SKILLS) must be
+# visible to a fresh SkillManager instance, as PromptBuilder does. ---
+{
+    # $sm already wrote 'test-skill' to $ENV{CLIO_USER_SKILLS} above.
+    # Construct a fresh SM with the same user file and verify it loads.
+    my $sm_fresh = CLIO::Core::SkillManager->new(debug => 0);
+    my $fresh_catalog = $sm_fresh->list_skill_catalog();
+    my %fresh_by = map { $_->{name} => $_ } @$fresh_catalog;
+    ok_test('cross-instance: user skill visible to fresh SM',
+        exists $fresh_by{'test-skill'});
+    if ($fresh_by{'test-skill'}) {
+        ok_test('cross-instance: scope is user or project',
+            ($fresh_by{'test-skill'}{scope} || '') =~ /^(user|project)$/);
+        ok_test('cross-instance: variables preserved',
+            ref($fresh_by{'test-skill'}{variables}) eq 'ARRAY' &&
+            scalar(@{$fresh_by{'test-skill'}{variables}}) == 2);
+    }
+}
+
 # Cleanup: remove the test skill so we don't leave behind state.
 $sm->delete_skill('test-skill');
 $sm->delete_skill('long-desc-skill');

@@ -472,14 +472,26 @@ sub new {
         $project_file = File::Spec->catfile($project_dir, '.clio', 'skills.json');
     }
 
+    # Resolve freeform .md directories. These are the source of truth for
+    # skill discovery (--scan). We derive them from the skills.json paths
+    # so that overrides (CLIO_USER_SKILLS, CLIO_PROJECT_DIR) stay in sync.
+    my $user_dir_resolved = $opts{freeform_user_dir};
+    unless ($user_dir_resolved) {
+        my ($u_vol, $u_dir) = File::Spec->splitpath($user_file);
+        $user_dir_resolved = File::Spec->catdir($u_dir, 'skills');
+    }
+    my $project_dir_resolved = $opts{freeform_project_dir};
+    unless ($project_dir_resolved) {
+        my ($p_vol, $p_dir) = File::Spec->splitpath($project_file);
+        $project_dir_resolved = File::Spec->catdir($p_dir, 'skills');
+    }
+
     my $self = {
         debug => $opts{debug} || 0,
         user_skills_file => $user_file,
         project_skills_file => $project_file,
-        freeform_user_dir => $opts{freeform_user_dir} ||
-            File::Spec->catdir((File::Spec->splitpath($user_file))[1], 'skills'),
-        freeform_project_dir => $opts{freeform_project_dir} ||
-            File::Spec->catdir((File::Spec->splitpath($project_file))[1], 'skills'),
+        freeform_user_dir => $user_dir_resolved,
+        freeform_project_dir => $project_dir_resolved,
         session_skills_file => $opts{session_skills_file},
         skills => {},
         active_prompt => undef,
@@ -516,9 +528,12 @@ sub _load_skills {
     # Load repository skills (low-medium priority)
     $self->_load_repository_skills();
 
-    # Load freeform .md skills (user then project, both editable in-place)
+    # Load freeform .md skills (user then project, both editable in-place).
+    # Always scan both directories — the old _has_project_scope() gate was
+    # broken for relative paths and is no longer needed: _load_freeform_skills
+    # already no-ops when the directory does not exist.
     $self->_load_freeform_skills($self->{freeform_user_dir}, 'user');
-    $self->_load_freeform_skills($self->{freeform_project_dir}, 'project') if $self->_has_project_scope();
+    $self->_load_freeform_skills($self->{freeform_project_dir}, 'project');
 
     # Load user skills (medium priority)
     if (-f $self->{user_skills_file}) {
@@ -558,11 +573,20 @@ sub _has_project_scope {
     return 0 unless $user && $project;
     return 0 if $user eq $project;
 
+    # Normalize both paths to absolute form before comparing. The project
+    # path may be relative ('.clio/skills.json') which breaks the old
+    # regex-based suffix strip that required a leading '/'. Using rel2abs
+    # resolves '.' to the absolute CWD, so the canonical layout check
+    # below works regardless of how the path was constructed.
+    require Cwd;
+    my $user_abs = Cwd::abs_path($user) || $user;
+    my $project_abs = Cwd::abs_path($project) || $project;
+    return 0 if $user_abs eq $project_abs;
+
     # Require the canonical layout: project file ends in /.clio/skills.json.
-    # This matches the path the SkillManager constructor produces and the
-    # paths real project layouts use. Anything else is treated as "no
-    # project context" so add_skill defaults stay safe.
-    my $project_root = $project;
+    # After absolution, /abs/path/.clio/skills.json -> strip suffix -> /abs/path
+    # which is -d true for a real project root.
+    my $project_root = $project_abs;
     $project_root =~ s|/\.clio/skills\.json\z||;
     return -d $project_root ? 1 : 0;
 }
@@ -622,14 +646,14 @@ sub _load_freeform_skills {
         next unless defined $content && length $content;
 
         my ($name, $description) = $self->_parse_freeform_meta($content, $entry);
+        my $body = _strip_frontmatter($content);
         my $skill = {
             name => $name,
             description => $description,
             prompt => $content,
-            variables => [],
+            variables => [$self->_extract_variables($body)],
             type => 'freeform',
-            scope => 'freeform',
-            location => $scope,
+            scope => $scope,           # 'user' or 'project' — matches location for routing
             source => $path,
             _source_file => $path,
             readonly => 1,  # user edits the file directly
@@ -839,8 +863,8 @@ sub add_skill {
         };
     }
     
-    # Resolve target scope. Default to project when a .clio directory is
-    # present in the current working directory, otherwise user.
+    # Resolve target scope. Default to project when a project context is
+    # detected (via _has_project_scope or CLIO_PROJECT_DIR), otherwise user.
     my $scope = $opts{scope} // ($self->_has_project_scope() ? 'project' : 'user');
     unless ($scope =~ /^(user|project|session)$/) {
         return {
@@ -862,39 +886,61 @@ sub add_skill {
         }
     }
 
-    # Extract variables from prompt
-    my @variables = $self->_extract_variables($prompt_text);
-    
-    my $source_file = $self->_file_for_scope($scope);
-    unless ($source_file) {
-        return {
-            success => 0,
-            error => "No writable location for scope '$scope' (session_skills_file not configured)"
+    # Session-scoped custom skills are still written to the session's
+    # skills.json because they are transient (cleared on session end) and
+    # there is no directory scan for session skills.
+    if ($scope eq 'session') {
+        my $source_file = $self->_file_for_scope($scope);
+        unless ($source_file) {
+            return {
+                success => 0,
+                error => "No writable location for scope '$scope' (session_skills_file not configured)"
+            };
+        }
+
+        my $prompt = {
+            name => $name,
+            description => $opts{description} || "Custom skill",
+            prompt => $prompt_text,
+            variables => [$self->_extract_variables($prompt_text)],
+            type => 'custom',
+            scope => $scope,
+            source => $source_file,
+            _source_file => $source_file,
+            readonly => 0,
+            created => time(),
+            modified => time(),
+            usage_count => 0,
+            tags => $opts{tags} || []
         };
+
+        $self->{skills}{$name} = $prompt;
+        $self->_save_skills();
+
+        log_debug('SkillManager', "Added $scope prompt '$name'");
+
+        return { success => 1, prompt => $prompt };
     }
 
-    my $prompt = {
-        name => $name,
-        description => $opts{description} || "Custom skill",
-        prompt => $prompt_text,
-        variables => \@variables,
-        type => 'custom',
-        scope => $scope,
-        source => $source_file,
-        _source_file => $source_file,
-        readonly => 0,
-        created => time(),
-        modified => time(),
-        usage_count => 0,
-        tags => $opts{tags} || []
+    # user and project scopes now write freeform .md files (the canonical
+    # storage format), delegating to add_freeform_skill so the same file
+    # is written whether the caller uses /skills add or
+    # skill_operations(create). skills.json is no longer written for new
+    # skills — it is only read for legacy compatibility.
+    my $content = $self->_build_freeform_content($name, $opts{description}, $prompt_text);
+    my $result = $self->add_freeform_skill($name, $opts{description} || "Custom skill", $content, scope => $scope);
+    unless ($result->{success}) {
+        return $result;
+    }
+
+    # Maintain the legacy return shape: { success => 1, prompt => $prompt }
+    # so existing callers (Skills.pm _add_skill, _install_skill) that access
+    # $result->{prompt}{scope} and $result->{prompt}{source} keep working.
+    return {
+        success => 1,
+        prompt => $result->{skill},
+        path => $result->{path},
     };
-    
-    $self->{skills}{$name} = $prompt;
-    $self->_save_skills();
-
-    log_debug('SkillManager', "Added $scope prompt '$name' with variables: " . join(", ", @variables) . "");
-
-    return { success => 1, prompt => $prompt };
 }
 
 =head2 add_freeform_skill
@@ -1006,18 +1052,21 @@ sub add_freeform_skill {
     # Build the in-memory representation. This mirrors the structure that
     # _load_freeform_skills produces, so the new skill is immediately
     # usable without an explicit reload. readonly is true because the file
-    # is the source of truth - edits happen on disk, not through add_skill.
+    # is on disk; for skills created via add_skill (user/project scope)
+    # the scope field retains the originating location so list_skills and
+    # delete_skill can route correctly.
+    my $body = _strip_frontmatter($content);
     my $skill = {
         name => $name,
         description => $description || "Custom freeform skill",
         prompt => $content,
-        variables => [],
+        variables => [$self->_extract_variables($body)],
         type => 'freeform',
-        scope => 'freeform',
+        scope => $scope,           # 'user' or 'project' — preserved for routing
         location => $scope,
         source => $path,
         _source_file => $path,
-        readonly => 1,  # The file is on disk; user edits it directly.
+        readonly => 1,  # The file is on disk; edits happen on disk.
     };
 
     $self->{skills}{$name} = $skill;
@@ -1071,13 +1120,17 @@ sub delete_skill {
         };
     }
     
-    if ($scope eq 'freeform') {
-        return {
-            success => 0,
-            error => "Cannot delete freeform skill '$name' (edit the .md file at: $skill->{source})"
-        };
+    # Freeform .md skills (user/project scope) can be deleted from disk.
+    # This covers skills created via add_skill (now .md), add_freeform_skill,
+    # or skill_operations(create).
+    if ($skill->{type} eq 'freeform' && $skill->{_source_file} && -f $skill->{_source_file}) {
+        unlink($skill->{_source_file});
+        log_debug('SkillManager', "Deleted freeform skill file: $skill->{_source_file}");
+        delete $self->{skills}{$name};
+        return { success => 1 };
     }
 
+    # JSON-backed custom skills (session scope, or legacy user/project).
     # If the user explicitly added a same-name skill to a higher-priority
     # scope (project shadows user), deleting the project entry should
     # restore the user version. We surface the original 'user' skill by
@@ -1482,9 +1535,41 @@ sub _extract_variables {
     return @vars;
 }
 
+=head2 _build_freeform_content
+
+Build a SKILL.md document (YAML frontmatter + body) for a skill created
+via add_skill or add_freeform_skill. Centralised here so both call paths
+produce identical file formats.
+
+Arguments:
+- $name: Skill name (kebab-case slug)
+- $description: One-line description (may be empty)
+- $prompt_text: The skill body / template
+
+Returns: String with frontmatter + body
+
+=cut
+
+sub _build_freeform_content {
+    my ($self, $name, $description, $prompt_text) = @_;
+
+    $description //= '';
+    $description =~ s/\n/ /g;  # Keep frontmatter on single line
+    $description =~ s/"/'/g;   # Avoid quote escaping issues
+    unless (length $description) {
+        $description = "(no description)";
+    }
+
+    return "---\nname: $name\ndescription: \"$description\"\n---\n$prompt_text";
+}
+
 =head2 _save_skills
 
-Save custom skills to user-level JSON file.
+Save custom skills to their backing .json files. Deprecated for new
+ writes — user and project skills now live in .md files (see
+add_freeform_skill). This method persists only session-scoped custom
+skills, which remain JSON-backed because sessions are ephemeral and
+have no directory scan.
 
 =cut
 

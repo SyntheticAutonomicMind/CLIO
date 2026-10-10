@@ -418,19 +418,26 @@ sub generate_skills_section {
         $section .= "Skills are read-only - you cannot create, modify, or delete them through tools. ";
         $section .= "The user controls which skills are installed.\n\n";
 
-        my %by_type;
+        my %by_scope;
         for my $entry (@$catalog) {
-            push @{$by_type{$entry->{type} || 'custom'}}, $entry;
+            my $bucket = $entry->{type} eq 'builtin'     ? 'builtin'
+                       : $entry->{type} eq 'repository'  ? 'repository'
+                       : $entry->{scope}                 // 'user';
+            push @{$by_scope{$bucket}}, $entry;
         }
 
-        for my $type (sort keys %by_type) {
-            my $label = $type eq 'builtin' ? 'Built-in'
-                      : $type eq 'repository' ? 'Repository'
-                      : $type eq 'project' ? 'Project'
-                      : $type eq 'session' ? 'Session'
-                      : 'Custom';
+        my %scope_label = (
+            builtin    => 'Built-in',
+            repository => 'Repository',
+            project    => 'Project',
+            session    => 'Session',
+            user       => 'User',
+        );
+
+        for my $scope (sort keys %by_scope) {
+            my $label = $scope_label{$scope} // 'Custom';
             $section .= "### $label\n\n";
-            for my $entry (@{$by_type{$type}}) {
+            for my $entry (@{$by_scope{$scope}}) {
                 $section .= "- **$entry->{name}**";
                 $section .= " - $entry->{description}" if $entry->{description};
                 if ($entry->{variables} && @{$entry->{variables}}) {
