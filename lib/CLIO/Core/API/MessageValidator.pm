@@ -115,7 +115,27 @@ sub validate_and_truncate {
     # discarded — the global TokenEstimator ratio was used instead).
     # The ratio may differ from the global if a test injects a custom
     # value, and threading it ensures consistent token budget decisions.
-    
+
+    # Determine if the current provider is a local-inference server
+    # (llama.cpp, SAM, LM Studio). Local inference providers use Jinja
+    # chat templates that may reject mid-conversation role=system messages
+    # (e.g. Qwen3's "System message must be at the beginning" check).
+    # When true, thread_summary compaction artifacts are folded into the
+    # last user message instead of emitted as a separate system message.
+    my $is_local_inference = 0;
+    if ($config && $config->can('get')) {
+        my $provider = $config->get('provider') || '';
+        if ($provider) {
+            $is_local_inference = CLIO::Providers::is_local_inference($provider);
+        }
+    }
+    if (!$is_local_inference && $api_base) {
+        my $detected = CLIO::Providers::provider_from_url($api_base);
+        if ($detected && CLIO::Providers::is_local_inference($detected)) {
+            $is_local_inference = 1;
+        }
+    }
+
     # Determine max prompt tokens
     require CLIO::Providers;
     my $max_prompt;
@@ -191,7 +211,7 @@ sub validate_and_truncate {
                   || $caps->{context_window}
                   || $caps->{max_prompt_tokens}
                   || 0;
-    my $result = _role_based_tail_walk($messages, $effective_limit, $debug, $active_task, $ctx_window, $active_todos, $unresolved, $ltm_entries);
+    my $result = _role_based_tail_walk($messages, $effective_limit, $debug, $active_task, $ctx_window, $active_todos, $unresolved, $ltm_entries, $is_local_inference);
 
     trace_context_transition(
         phase           => 'after-proactive-trim',
@@ -230,27 +250,42 @@ Preserves the first user message (original task anchor) and keeps
 tool_call/tool_result pairs together (never leaves a tool_result
 without its call, or vice versa).
 
-When messages are dropped, a YaRN-compressed thread_summary system
-message is injected so the model retains a factual record of what
-was trimmed. The projection's compressed_tail only covers turns
-dropped by the projection (before the recent window); the proactive
-trim can additionally drop messages from within the recent window
-(e.g. after a large tool result pushes the total over budget).
-Without this re-compression, those messages are permanently lost —
-the model forgets what it just did and resets to earlier tasks.
+When messages are dropped, a YaRN-compressed thread_summary is injected
+so the model retains a factual record of what was trimmed. For local-
+inference providers (llama.cpp, SAM, LM Studio), the summary is folded
+into the last user message — these providers use Jinja chat templates
+(e.g. Qwen3) that reject mid-conversation role=system messages with
+"System message must be at the beginning" errors. For cloud providers,
+the summary is emitted as a system message (the canonical placement).
+The projection's compressed_tail only covers turns dropped by the
+projection (before the recent window); the proactive trim can also drop
+messages from within the recent window (e.g. after a large tool result
+pushes the total over budget). Without this re-compression, those
+messages are permanently lost — the model forgets what it just did and
+resets to earlier tasks.
 
 Arguments:
-- $messages:  ArrayRef of message hashes
+- $messages: ArrayRef of message hashes
 - $effective_limit: Token budget for the resulting array
 - $debug: 1 to emit debug logs
 - $active_task: Scalar task text to seed the thread_summary (optional)
+- $context_window: Model context window in tokens (optional)
+- $active_todos: ArrayRef of active todo texts (optional)
+- $unresolved: ArrayRef of unresolved state items (optional)
+- $ltm_entries: ArrayRef of LTM entries (optional)
+- $is_local_inference: Boolean; when true, fold thread_summary into
+  the last user message instead of creating a system message
 
-Returns: Trimmed ArrayRef (possibly with a thread_summary appended)
+Returns: Trimmed ArrayRef (possibly with a thread_summary folded into
+the last user message for local-inference providers, or as a system
+message for cloud providers)
 
 =cut
 
 sub _role_based_tail_walk {
-    my ($messages, $effective_limit, $debug, $active_task, $context_window, $active_todos, $unresolved, $ltm_entries) = @_;
+    my ($messages, $effective_limit, $debug, $active_task, $context_window, $active_todos, $unresolved, $ltm_entries, $is_local_inference) = @_;
+
+    $is_local_inference //= 0;
 
     return $messages unless $messages && @$messages;
 
@@ -535,12 +570,12 @@ sub _role_based_tail_walk {
             # silently reset the cross-cycle carryover.
             my $prev_summary = $yarn->_extract_thread_summary_from_messages($messages);
             $yarn->compress_for_context_recovery(\@dropped,
-                original_task    => $active_task,
-                previous_summary => $prev_summary,
-                context_window   => $context_window || 0,
-                active_todos     => $active_todos,
-                unresolved       => $unresolved,
-                ltm_entries      => $ltm_entries,
+               original_task    => $active_task,
+               previous_summary => $prev_summary,
+               context_window   => $context_window || 0,
+               active_todos     => $active_todos,
+               unresolved       => $unresolved,
+               ltm_entries      => $ltm_entries,
             );
         };
         if ($summary && ref($summary) eq 'HASH'
@@ -548,13 +583,13 @@ sub _role_based_tail_walk {
             && length($summary->{content})
             && ($summary->{content} =~ /<thread_summary>/)) {
             # ENFORCE single-artifact invariant: remove all existing
-            # thread_summary system messages before injecting the new one.
+            # thread_summary artifacts before injecting the new one.
             # The new summary already incorporates the old state via
             # previous_summary, so the old artifact is redundant.
-            @trimmed = @{ remove_existing_thread_summaries(\@trimmed) };
-            # Inject as a system message before the last user message
-            # (the current user input is pinned by the walk). If there
-            # is no user message in the trimmed set, append at end.
+            @trimmed = @{ remove_existing_thread_summaries(\@trimmed, $is_local_inference) };
+            # Find the last USER message for injection placement.
+            # (The current user input is pinned by the walk, so it
+            # survives trimming and is the correct injection point.)
             my $inject_idx = scalar(@trimmed);
             for my $i (reverse 0 .. $#trimmed) {
                 if (ref($trimmed[$i]) eq 'HASH'
@@ -563,13 +598,56 @@ sub _role_based_tail_walk {
                     last;
                 }
             }
-            splice(@trimmed, $inject_idx, 0, {
-                role    => 'system',
-                content => $summary->{content},
-            });
-            log_debug('MessageValidator',
-                "Injected thread_summary for " . scalar(@dropped) .
-                " proactively-dropped messages (before idx $inject_idx); replaced existing summary");
+            if ($is_local_inference) {
+                # For local-inference providers (llama.cpp, SAM, LM Studio),
+                # fold the thread_summary INTO the last user message instead
+                # of creating a separate system message. These providers use
+                # Jinja chat templates (e.g. Qwen3) that require system
+                # messages to appear ONLY at position 0. A mid-conversation
+                # role=system message triggers "System message must be at
+                # the beginning" Jinja exceptions, causing 500 errors.
+                # Folding into the user message preserves the summary
+                # payload while keeping it self-identifying via the
+                # <thread_summary> tags (same regexes the trim paths use).
+                if ($inject_idx < scalar(@trimmed)
+                    && ref($trimmed[$inject_idx]) eq 'HASH'
+                    && ($trimmed[$inject_idx]{role} // '') eq 'user') {
+                    my $content = $trimmed[$inject_idx]{content} // '';
+                    if (ref($content) eq 'ARRAY') {
+                        # Multimodal user message - prepend as text part
+                        unshift @$content, {
+                            type => 'text',
+                            text => $summary->{content} . "\n\n",
+                        };
+                    } else {
+                        $trimmed[$inject_idx]{content} =
+                            $summary->{content} . "\n\n" . $content;
+                    }
+                } else {
+                    # No user message found; fall back to system message
+                    # (rare edge case — local inference with no user msg
+                    # is already invalid for the API, so this is best-effort)
+                    push @trimmed, {
+                        role    => 'system',
+                        content => $summary->{content},
+                    };
+                }
+                log_debug('MessageValidator',
+                    "Folded thread_summary into user message for local-inference provider (" .
+                    scalar(@dropped) . " proactively-dropped messages)");
+            } else {
+                # Cloud providers (OpenAI, Anthropic, Copilot, etc.):
+                # inject as a system message before the last user message.
+                # These APIs handle mid-conversation system messages
+                # correctly and it is the canonical placement.
+                splice(@trimmed, $inject_idx, 0, {
+                    role    => 'system',
+                    content => $summary->{content},
+                });
+                log_debug('MessageValidator',
+                    "Injected thread_summary for " . scalar(@dropped) .
+                    " proactively-dropped messages (before idx $inject_idx); replaced existing summary");
+            }
         }
     }
 
@@ -978,28 +1056,71 @@ sub preflight_validate {
 # ================================================================
 
 sub remove_existing_thread_summaries {
-    my ($messages) = @_;
+    my ($messages, $is_local_inference) = @_;
     return [] unless $messages && ref($messages) eq 'ARRAY' && @$messages;
 
-    # Remove ALL messages whose content contains a <thread_summary>
-    # block. This enforces the "zero or one canonical compaction
-    # artifact" invariant: when a new compaction occurs, the old
-    # artifact is removed (its state having already been extracted via
-    # previous_summary) rather than left behind to accumulate.
+    # Remove the <thread_summary> block from the message array. This
+    # enforces the "zero or one canonical compaction artifact" invariant:
+    # when a new compaction occurs, the old artifact is removed (its
+    # state having already been extracted via previous_summary) rather
+    # than left behind to accumulate.
     #
-    # The scan covers ALL message roles, not just system messages:
+    # Behavior depends on provider type:
     # - Cloud providers (OpenAI, Anthropic, Copilot): thread_summary is
-    #   emitted as role => 'system', so scanning all roles catches it.
+    #   emitted as role => 'system', so the entire message is removed.
     # - Local inference (SAM, llama.cpp, LM Studio): thread_summary is
-    #   folded into the user message to avoid llama.cpp chat-template
-    #   ambiguity with mid-conversation system messages. Scanning all
-    #   roles catches it there.
+    #   folded into the user message. The ENTIRE user message must NOT
+    #   be removed — it carries the user's actual input. Instead, only
+    #   the <thread_summary>...</thread_summary> block is stripped from
+    #   the content, preserving the rest of the message.
+    #
+    # The scan covers ALL message roles, not just system messages.
     # The <thread_summary> tags are self-identifying, so the same regex
     # works regardless of which role carries the message.
-    my @result = grep {
-        !(ref($_) eq 'HASH'
-          && ($_->{content} // '') =~ /<thread_summary>/)
-    } @$messages;
+    my @result;
+    for my $msg (@$messages) {
+        next unless ref($msg) eq 'HASH';
+        my $content = $msg->{content} // '';
+        my $role = $msg->{role} // '';
+
+        # Detect whether the message content contains a <thread_summary>
+        # block, handling both string and arrayref (multimodal) content.
+        my $has_summary = 0;
+        if (ref($content) eq 'ARRAY') {
+            for my $part (@$content) {
+                if (ref($part) eq 'HASH' && (($part->{text} // '') =~ /<thread_summary>/)) {
+                    $has_summary = 1;
+                    last;
+                }
+            }
+        } elsif (!ref($content)) {
+            $has_summary = ($content =~ /<thread_summary>/);
+        }
+
+        if ($has_summary) {
+            if ($is_local_inference && $role ne 'system') {
+                # For local inference, the thread_summary is folded into
+                # a user message. Strip the <thread_summary> block from
+                # the content, preserving the rest of the message (user input).
+                if (ref($content) eq 'ARRAY') {
+                    for my $part (@$content) {
+                        if (ref($part) eq 'HASH' && exists $part->{text}) {
+                            $part->{text} =~ s/<thread_summary>.*?<\/thread_summary>\s*//s;
+                        }
+                    }
+                } else {
+                    $content =~ s/<thread_summary>.*?<\/thread_summary>\s*//s;
+                    $content =~ s/^\n+//;
+                    $msg->{content} = $content;
+                }
+                push @result, $msg;
+            }
+            # For system messages (all providers) or non-local-inference
+            # non-system messages: remove entirely (don't add to @result).
+        } else {
+            push @result, $msg;
+        }
+    }
 
     return \@result;
 }

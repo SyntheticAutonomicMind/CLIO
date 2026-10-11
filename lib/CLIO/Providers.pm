@@ -947,7 +947,28 @@ Returns: 1 if local inference, 0 otherwise (including unknown providers).
 
 sub is_local_inference {
     my ($provider_name) = @_;
-    my $p = get_provider($provider_name);
+
+    # Fast path: built-in providers don't need Config. This covers
+    # the common case (llama.cpp, sam, lmstudio, openai, etc.) without
+    # the overhead of loading and instantiating CLIO::Core::Config.
+    if (defined $provider_name && exists $PROVIDERS{$provider_name}) {
+        return $PROVIDERS{$provider_name}{local_inference} ? 1 : 0;
+    }
+
+    # Resolve custom provider aliases (e.g. 'flip') to their base
+    # provider type (e.g. 'llama.cpp') so that local_inference is
+    # correctly inherited. Without this, custom aliases that wrap a
+    # local-inference provider always return 0, causing thread_summary
+    # to be emitted as a mid-conversation system message — which Jinja
+    # chat templates (e.g. Qwen3) reject with "System message must be
+    # at the beginning" errors.
+    my $config;
+    eval {
+        require CLIO::Core::Config;
+        $config = CLIO::Core::Config->new();
+    };
+    my $resolved_name = resolve_custom_provider($provider_name, $config);
+    my $p = get_provider($resolved_name);
     return 0 unless $p;
     return $p->{local_inference} ? 1 : 0;
 }

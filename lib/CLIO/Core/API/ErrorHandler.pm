@@ -615,6 +615,25 @@ sub handle_api_error {
         my $system_msg = ucfirst($error_type) . " detected. Retrying in ${retry_delay}s... (attempt $$retry_count_ref" . ($allow_infinite_retry ? "" : "/$retry_display") . ")";
 
         # ── Per-error-type handling ──
+        # Compute is_local_inference once for all error-type branches that
+        # push recovery system messages (malformed_tool_json) or inject
+        # thread_summary (token_limit_exceeded). Local inference providers
+        # use Jinja chat templates that reject mid-conversation system
+        # messages (e.g. Qwen3's "System message must be at the beginning").
+        my $is_local_inference = 0;
+        if ($wo->{api_manager} && $wo->{api_manager}->can('get_current_provider')) {
+            my $provider = $wo->{api_manager}->get_current_provider() || '';
+            if ($provider) {
+                require CLIO::Providers;
+                $is_local_inference = CLIO::Providers::is_local_inference($provider);
+            }
+        }
+        if (!$is_local_inference && $wo->{api_base}) {
+            my $detected = CLIO::Providers::provider_from_url($wo->{api_base});
+            if ($detected && CLIO::Providers::is_local_inference($detected)) {
+                $is_local_inference = 1;
+            }
+        }
         if ($api_response->{error_type} && $api_response->{error_type} eq 'unsupported_param') {
             $error_type  = "unsupported parameter";
             $system_msg  = undef;
@@ -650,19 +669,19 @@ sub handle_api_error {
 
                 my $tool_guidance = get_tool_specific_guidance($failed_tool_name);
 
-                push @$messages, {
-                    role    => 'system',
-                    content => "Your previous tool call had invalid JSON parameters.\n\n" .
-                               "Common issues:\n" .
-                               "- Missing parameter values (e.g., \"offset\":, instead of \"offset\":0)\n" .
-                               "- Unescaped quotes in strings\n" .
-                               "- Trailing commas\n" .
-                               "- Missing required parameters\n\n" .
-                               "ALL parameters must have valid values - no empty/missing values permitted.\n" .
-                               "$tool_schema\n\n" .
-                               "${tool_guidance}" .
-                               "Please retry the operation with correct JSON, or try a different approach if the tool call isn't critical.",
-                };
+                _push_recovery_message($messages,
+                    "Your previous tool call had invalid JSON parameters.\n\n" .
+                    "Common issues:\n" .
+                    "- Missing parameter values (e.g., \"offset\":, instead of \"offset\":0)\n" .
+                    "- Unescaped quotes in strings\n" .
+                    "- Trailing commas\n" .
+                    "- Missing required parameters\n\n" .
+                    "ALL parameters must have valid values - no empty/missing values permitted.\n" .
+                    "$tool_schema\n\n" .
+                    "${tool_guidance}" .
+                    "Please retry the operation with correct JSON, or try a different approach if the tool call isn't critical.",
+                    $is_local_inference,
+                );
 
                 $error_type = "malformed tool JSON";
                 $system_msg = "AI generated invalid JSON parameters. Removed bad message, adding guidance and retrying... (attempt $$retry_count_ref/$max_retries)";
@@ -675,15 +694,15 @@ sub handle_api_error {
                     log_debug('ErrorHandler', "Removed second malformed assistant message");
                 }
 
-                push @$messages, {
-                    role    => 'system',
-                    content => "TOOL CALL FAILED: The previous tool call still had invalid JSON after correction attempt. " .
-                               "The tool call has been removed from history. You can:\n" .
-                               "1. Try a different approach to accomplish the same goal\n" .
-                               "2. Continue with other work\n" .
-                               "3. Ask the user for clarification if needed\n\n" .
-                               "Your conversation context is preserved - continue your work.",
-                };
+                _push_recovery_message($messages,
+                    "TOOL CALL FAILED: The previous tool call still had invalid JSON after correction attempt. " .
+                    "The tool call has been removed from history. You can:\n" .
+                    "1. Try a different approach to accomplish the same goal\n" .
+                    "2. Continue with other work\n" .
+                    "3. Ask the user for clarification if needed\n\n" .
+                    "Your conversation context is preserved - continue your work.",
+                    $is_local_inference,
+                );
 
                 $$retry_count_ref = 0;
                 log_debug('ErrorHandler', "Malformed JSON persisted - agent informed, continuing workflow");
@@ -1050,10 +1069,14 @@ Returns:
 
 =cut
 
-=head2 _inject_summary_before_last_user($non_system, $summary)
+=head2 _inject_summary_before_last_user($non_system, $summary, $is_local_inference)
 
-Inject a summary system message into the non-system message array
-BEFORE the last user message.
+Inject a summary into the non-system message array. For cloud providers,
+injects a system message BEFORE the last user message. For local-inference
+providers (llama.cpp, SAM, LM Studio), folds the summary content INTO the
+last user message — these providers use Jinja chat templates (e.g. Qwen3)
+that reject mid-conversation role=system messages with "System message
+must be at the beginning" errors.
 
 This is the canonical placement: the model's final message must be the
 current user request so the provider treats it as the active turn.
@@ -1062,21 +1085,22 @@ tool_calling for OpenAI-compatible APIs and causes the model to lose
 the current turn — the reactive-trim stumble.
 
 If no user message exists in the array, the summary is appended at
-the end (best-effort fallback).
+the end (best-effort fallback, only for cloud providers).
 
 Arguments:
-  $non_system - ArrayRef of messages (modified in place)
-  $summary    - Hashref to splice in before the last user
+  $non_system         - ArrayRef of messages (modified in place)
+  $summary            - Hashref to inject (has role and content keys)
+  $is_local_inference - Boolean; when true, fold into last user message
 
 Returns: nothing
 
 =cut
 
 sub _inject_summary_before_last_user {
-    my ($non_system, $summary) = @_;
+    my ($non_system, $summary, $is_local_inference) = @_;
     return unless $non_system && @$non_system && $summary;
 
-    # Find the last USER message and inject before it.
+    # Find the last USER message for placement.
     my $inject_idx = scalar(@$non_system);
     for (my $i = $#$non_system; $i >= 0; $i--) {
         if (ref($non_system->[$i]) eq 'HASH'
@@ -1085,7 +1109,86 @@ sub _inject_summary_before_last_user {
             last;
         }
     }
+
+    if ($is_local_inference) {
+        # For local-inference providers, fold the summary content into
+        # the last user message instead of creating a system message.
+        # Jinja chat templates (e.g. Qwen3) require system messages
+        # only at position 0; a mid-conversation system message triggers
+        # "System message must be at the beginning" errors.
+        if ($inject_idx < scalar(@$non_system)
+            && ref($non_system->[$inject_idx]) eq 'HASH'
+            && ($non_system->[$inject_idx]{role} // '') eq 'user') {
+            my $content = $non_system->[$inject_idx]{content} // '';
+            if (ref($content) eq 'ARRAY') {
+                unshift @$content, {
+                    type => 'text',
+                    text => $summary->{content} . "\n\n",
+                };
+            } else {
+                $non_system->[$inject_idx]{content} =
+                    $summary->{content} . "\n\n" . $content;
+            }
+        } else {
+            # No user message found; fall back to system message
+            splice(@$non_system, $inject_idx, 0, $summary);
+        }
+        return;
+    }
+
+    # Cloud providers: inject as a system message before the last user
+    # message. These APIs handle mid-conversation system messages
+    # correctly and it is the canonical placement.
     splice(@$non_system, $inject_idx, 0, $summary);
+}
+
+=head2 _push_recovery_message($messages, $content, $is_local_inference)
+
+Push a recovery/guidance message onto the messages array. For cloud
+providers, pushes a role=system message (canonical placement). For
+local-inference providers (llama.cpp, SAM, LM Studio), folds the
+content into the last user message to avoid Jinja chat-template
+rejections of mid-conversation system messages.
+
+Arguments:
+  $messages           - ArrayRef of messages (modified in place)
+  $content            - String content for the recovery message
+  $is_local_inference - Boolean; when true, fold into last user message
+
+Returns: nothing
+
+=cut
+
+sub _push_recovery_message {
+    my ($messages, $content, $is_local_inference) = @_;
+    return unless $messages && @$messages && defined $content;
+
+    if ($is_local_inference) {
+        # For local inference, fold into the last user message instead
+        # of creating a mid-conversation system message (which Jinja
+        # chat templates like Qwen3 would reject with "System message
+        # must be at the beginning" errors).
+        for (my $i = $#$messages; $i >= 0; $i--) {
+            my $msg = $messages->[$i];
+            if (ref($msg) eq 'HASH' && ($msg->{role} // '') eq 'user') {
+                my $existing = $msg->{content} // '';
+                if (ref($existing) eq 'ARRAY') {
+                    unshift @$existing, {
+                        type => 'text',
+                        text => $content . "\n\n",
+                    };
+                } else {
+                    $msg->{content} = $content . "\n\n" . $existing;
+                }
+                return;
+            }
+        }
+        # No user message found; fall back to system message
+        push @$messages, { role => 'system', content => $content };
+    } else {
+        # Cloud providers: push as system message
+        push @$messages, { role => 'system', content => $content };
+    }
 }
 
 sub trim_for_token_limit {
@@ -1140,6 +1243,19 @@ sub trim_for_token_limit {
         log_debug('ErrorHandler', "Extracted provider max input limit from error: $provider_max_input tokens");
     }
 
+    # Determine if the current provider is local inference (llama.cpp, SAM,
+    # LM Studio). Local inference providers use Jinja chat templates that
+    # reject mid-conversation role=system messages (e.g. Qwen3's
+    # "System message must be at the beginning"). When true, thread_summary
+    # is folded into user messages instead of emitted as system messages.
+    my $is_local_inference = 0;
+    if ($wo->{api_manager} && $wo->{api_manager}->can('get_current_provider')) {
+        my $provider = $wo->{api_manager}->get_current_provider() || '';
+        if ($provider) {
+            require CLIO::Providers;
+            $is_local_inference = CLIO::Providers::is_local_inference($provider);
+        }
+    }
 
     dump_diagnostic(
         trigger     => 'trim',
@@ -1295,8 +1411,8 @@ sub trim_for_token_limit {
             if ($compressed) {
                 # Canonical single-artifact invariant: remove old
                 # thread_summaries before injecting the new one.
-                @non_system = @{ remove_existing_thread_summaries(\@non_system) };
-                _inject_summary_before_last_user(\@non_system, $compressed);
+                @non_system = @{ remove_existing_thread_summaries(\@non_system, $is_local_inference) };
+                _inject_summary_before_last_user(\@non_system, $compressed, $is_local_inference);
                 log_debug('ErrorHandler', "Injected compression summary before last user for " . scalar(@dropped_messages) . " dropped messages");
             }
         }
@@ -1326,8 +1442,8 @@ sub trim_for_token_limit {
                 ($wo->{_current_projection} ? $wo->{_current_projection}{relevant_memory} : undef) || [],
             );
             if ($compressed) {
-                @non_system = @{ remove_existing_thread_summaries(\@non_system) };
-                _inject_summary_before_last_user(\@non_system, $compressed);
+                @non_system = @{ remove_existing_thread_summaries(\@non_system, $is_local_inference) };
+                _inject_summary_before_last_user(\@non_system, $compressed, $is_local_inference);
                 log_debug('ErrorHandler', "Injected compression summary before last user for " . scalar(@dropped_messages) . " dropped messages (retry 2)");
             }
         }
@@ -1354,8 +1470,8 @@ sub trim_for_token_limit {
                 ($wo->{_current_projection} ? $wo->{_current_projection}{relevant_memory} : undef) || [],
             );
             if ($compressed) {
-                @non_system = @{ remove_existing_thread_summaries(\@non_system) };
-                _inject_summary_before_last_user(\@non_system, $compressed);
+                @non_system = @{ remove_existing_thread_summaries(\@non_system, $is_local_inference) };
+                _inject_summary_before_last_user(\@non_system, $compressed, $is_local_inference);
                 log_debug('ErrorHandler', "Injected compression summary before last user for " . scalar(@dropped_messages) . " dropped messages (retry 3 - minimal)");
             }
         }
