@@ -9,7 +9,6 @@ use utf8;
 use Time::HiRes qw(usleep time);
 use POSIX ();
 use CLIO::Core::Logger qw(log_debug);
-use CLIO::Core::Logger qw(log_debug);
 
 
 =head1 NAME

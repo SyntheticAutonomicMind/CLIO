@@ -455,9 +455,12 @@ Query the terminal for the current cursor position using the DSR
 (Device Status Report) sequence C<ESC[6n>. The terminal responds
 with C<ESC[row;colR> on stdin.
 
-Must be called while the terminal is in normal (cooked) mode so the
-response can be read via ReadKey. Returns C<(row, col)> where row is
-0-indexed, or C<(0, 1)> if the query fails (e.g. not a TTY, timeout).
+Calls ReadMode(1) (cbreak mode, echo disabled) before sending the
+DSR request, so the terminal's ESC[row;colR response is not echoed
+back to stdout. The terminal is left in cbreak mode; readline() calls
+ReadMode('raw') immediately after this returns. Returns C<(row, col)>
+where row is 0-indexed, or C<(0, 1)> if the query fails (e.g. not a
+TTY, timeout).
 
 This is used at readline() start to record C<base_cursor_row> — the
 physical terminal row where the input area begins. Without this, the
@@ -476,6 +479,15 @@ sub _query_cursor_pos {
 
     # Only meaningful on a real TTY
     return (0, 1) unless -t STDOUT && -t STDIN;
+
+    # Disable echo before sending the DSR query. In cooked mode the kernel
+    # line discipline echoes characters received on stdin back to stdout, so
+    # without this the terminal's ESC[row;colR response to our ESC[6n query
+    # would be echoed to stdout and show up in the prompt output.
+    # ReadMode('raw') is called in readline() right after this returns, so
+    # we leave the terminal in cbreak mode here — ReadKey won't try to
+    # save/restore mode since _get_current_mode() will already be 1.
+    ReadMode(1);
 
     # Send DSR request — write directly (bypass _emit_text since we
     # haven't started tracking for this readline yet).
@@ -1105,7 +1117,7 @@ sub readline {
     # The prompt is typically not at the top of the screen (previous
     # chat output fills the terminal), so we must record the actual
     # starting row to compute all subsequent screen-row movements.
-    # DSR is safe to send in normal mode — ReadMode('raw') is set below.
+    # _query_cursor_pos handles mode switching internally (cbreak then raw).
     my ($base_row, $base_col) = $self->_query_cursor_pos();
     $self->{base_cursor_row} = $base_row;
     $self->{last_cursor_row} = $base_row;
