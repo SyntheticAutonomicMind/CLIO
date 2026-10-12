@@ -268,7 +268,12 @@ sub get_additional_parameters {
         },
         max_results => {
             type => "integer",
-            description => "[OPTIONAL] Maximum number of results to return from search.",
+            description => "[OPTIONAL] Maximum number of matches to return (grep_search) or files to return (file_search). Default: 50 for grep_search, 200 for file_search.",
+        },
+        max_files => {
+            type => "integer",
+            description => "[OPTIONAL for grep_search] Cap on how many files to search through. Default: 0 (no limit — search all files up to the 120-second timeout). Set to a positive integer to bound effort on very large codebases.",
+            default => 0,
         },
         
         # Read tool result parameters (for chunked large results)
@@ -1085,14 +1090,16 @@ sub _check_one_file_errors {
 sub file_search {
     my ($self, $params, $context) = @_;
     
-    my $pattern = $params->{pattern};
-    my $directory = $self->_clean_path($params->{directory}) || '.';
-    
-    return $self->error_result("Missing required parameter: pattern") unless $pattern;
-    
-    my $max_results = $params->{max_results} || 200;  # Limit result count
-    
-    # Sandbox check for directory
+   my $pattern = $params->{pattern};
+   my $directory = $self->_clean_path($params->{directory}) || '.';
+   
+   return $self->error_result("Missing required parameter: pattern") unless $pattern;
+   
+    # max_results=0 means "return all matches (no limit)".
+    # Use defined() check so that 0 is a valid value; || would treat 0 as false.
+    my $max_results = defined($params->{max_results}) ? $params->{max_results} : 200;
+   
+   # Sandbox check for directory
     my $sandbox_check = $self->_check_sandbox($directory, $context);
     return $self->error_result($sandbox_check->{error}) unless $sandbox_check->{allowed};
     
@@ -1158,11 +1165,13 @@ sub file_search {
             # These are informational only - the find continues despite them
             open my $devnull, '>', '/dev/null' or die "Cannot open /dev/null: $!";
             my $old_stderr = \*STDERR;
+            my $limit_reached = 0;
             {
                 local *STDERR = $devnull;
                 eval {
                     File::Find::find({
                         wanted => sub {
+                        return if $limit_reached;  # Hard stop: halt all processing once limit met
                         return unless -f $_;  # Only match files
                         
                         # Get path relative to search directory
@@ -1177,17 +1186,24 @@ sub file_search {
                                 type => 'file',
                                 size => -s $File::Find::name,
                             };
-                            # Stop if we hit the limit
-                            $File::Find::prune = 1 if @matches >= $max_results;
+                            # Stop if we hit the limit (0 means no limit)
+                            if ($max_results > 0 && @matches >= $max_results) {
+                                $limit_reached = 1;
+                                $File::Find::prune = 1;
+                            }
                             # Poll for interrupt every N matches so a recursive
                             # search across a big tree can be cancelled.
                             if (@matches % 100 == 0 && $self->check_interrupt($context)) {
+                                $limit_reached = 1;
                                 $File::Find::prune = 1;
                                 return;
                             }
                         }
                         },
                         preprocess => sub {
+                            # Once limit is reached, return empty list so File::Find
+                            # stops processing entries in all remaining directories.
+                            return () if $limit_reached;
                             return grep { !$skip_dirs{$_} } @_;
                         },
                     }, $directory);
@@ -1277,12 +1293,16 @@ sub _escape_unescaped_braces {
 }
 
 sub grep_search {
-    my ($self, $params, $context) = @_;
+   my ($self, $params, $context) = @_;
 
-    my $query = $params->{query};
-    my $pattern = $params->{pattern} || '**/*';
-    my $is_regex = $params->{is_regex} || 0;
-    my $max_results = $params->{max_results} || 50;  # Prevent runaway searches
+   my $query = $params->{query};
+   my $pattern = $params->{pattern} || '**/*';
+   my $is_regex = $params->{is_regex} || 0;
+   my $max_results = $params->{max_results} || 50;  # Prevent runaway searches
+    # Optional cap on how many files to search. Default 0 = no limit (search
+    # all files up to the 120-second timeout). A small positive value can be
+    # set by agents that want to cap effort on very large codebases.
+    my $max_files = $params->{max_files} || 0;
 
     # Resolve the search directory. 'directory' is canonical (matches file_search);
     # 'path' is accepted as an explicit alias for callers who expect that parameter
@@ -1318,7 +1338,7 @@ sub grep_search {
     my $SEARCH_TIMEOUT   = 120;        # 2 minutes wall-clock limit
     my $BINARY_CHECK_SIZE = 8_192;     # 8KB sample for null byte detection
     
-    log_debug('FileOp', "Grep search: query=$query, pattern=$pattern, regex=$is_regex, max_results=$max_results");
+    log_debug('FileOp', "Grep search: query=$query, pattern=$pattern, regex=$is_regex, max_results=$max_results, max_files=$max_files");
     
     my $result;
     eval {
@@ -1361,7 +1381,12 @@ sub grep_search {
             log_debug('FileOp', "grep_search: single-file mode, searching $resolved");
         } elsif (-d $directory) {
             # Directory mode: find files matching the glob pattern.
-            my $file_result = $self->file_search({ pattern => $pattern, directory => $directory }, $context);
+            # Pass max_results=0 so file_search returns ALL matching files,
+            # not just the first 200. grep_search relies on the per-file
+            # safeguards (file size, binary detection, wall-clock timeout)
+            # rather than a file-count cap to avoid silently missing matches
+            # in large codebases.
+            my $file_result = $self->file_search({ pattern => $pattern, directory => $directory, max_results => 0 }, $context);
             unless ($file_result->{success}) {
                 $result = $file_result;
                 return;
@@ -1371,16 +1396,18 @@ sub grep_search {
 
             # Sort files to prioritize code files over docs/other files
             @files = sort {
-                my $a_code = ($a->{path} =~ /\.(pm|pl|t|py|js|ts|rb|go|rs|java|c|h|cpp|hpp)$/i) ? 0 : 1;
-                my $b_code = ($b->{path} =~ /\.(pm|pl|t|py|js|ts|rb|go|rs|java|c|h|cpp|hpp)$/i) ? 0 : 1;
+                my $a_code = ($a->{path} =~ /\.(pm|pl|t|py|js|ts|rb|go|rs|java|c|h|cpp|hpp|swift|m|mm|cs|kt|scala|dart|lua|sh|sql|css|scss|sass|html?|xml|yaml|yml|toml|ini|cfg|conf|r|ex|exs|erl|hs|clj|cljs|cljc|el|vim|pod|php|awk|lisp|lsp|scm)$/i) ? 0 : 1;
+                my $b_code = ($b->{path} =~ /\.(pm|pl|t|py|js|ts|rb|go|rs|java|c|h|cpp|hpp|swift|m|mm|cs|kt|scala|dart|lua|sh|sql|css|scss|sass|html?|xml|yaml|yml|toml|ini|cfg|conf|r|ex|exs|erl|hs|clj|cljs|cljc|el|vim|pod|php|awk|lisp|lsp|scm)$/i) ? 0 : 1;
                 $a_code <=> $b_code || $a->{path} cmp $b->{path};
             } @files;
 
-            # Limit files searched to prevent slowdown with large codebases
-            my $max_files_to_search = 200;
-            if (scalar(@files) > $max_files_to_search) {
+            # Optional cap on files searched. Default 0 = no limit — the
+            # 120-second timeout is the primary safeguard against runaway
+            # searches. A positive max_files value is available for agents
+            # that want to bound effort on very large codebases.
+            if ($max_files > 0 && scalar(@files) > $max_files) {
                 $search_truncated = 1;
-                @files = @files[0..$max_files_to_search-1];
+                @files = @files[0..$max_files-1];
             }
         } else {
             # Path does not exist at all.
