@@ -287,8 +287,8 @@ use Test::More tests => 22;
 # With the fix: display_lines = 6, last_cursor_input_row = 5
 #
 # When Ctrl-K (kill to end) triggers redraw_line, rows_to_top differs:
-#   Bug:  4  (rows_to_top = last_cursor_input_row = 4)
-#   Fix:  5  (rows_to_top = last_cursor_input_row = 5)
+#   With the fix: display_lines = 6, last_cursor_input_row = 5
+#   rows_to_top = old_cursor_input_row = 5
 #
 # We detect this by counting \e[NA\e[J patterns (the redraw_line clear pattern)
 # and summing N.

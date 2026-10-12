@@ -435,6 +435,7 @@ Returns: indented and wrapped text
 sub _indent_and_wrap {
     my ($self, $text, $skip_first) = @_;
     
+    my $ui = $self->{ui};
     my $indent = '    ';
     my ($term_cols) = GetTerminalSize();
     $term_cols ||= 80;
@@ -456,10 +457,7 @@ sub _indent_and_wrap {
         }
         
         # Compute visible text (without ANSI escapes)
-        my $visible = $line;
-        $visible =~ s/\e\[[0-9;]*[A-Za-z]//g;
-        $visible =~ s/\e\[\?\d+[lh]//g;
-        $visible =~ s/\e\]8;;[^\e]*\e\\//g;
+        my $visible = $ui->{ansi}->strip_ansi($line);
         
         # Skip word-wrapping for code block lines (2-space prefix from markdown renderer)
         # and table rows (start with |)

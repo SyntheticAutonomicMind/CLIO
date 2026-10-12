@@ -1696,10 +1696,13 @@ sub _execute_tool_round {
 
         # Handle first tool call: stop spinner, display unstreamed content
         if ($first_tool_call) {
+            if ($self->{ui} && $self->{ui}->can('hide_busy_indicator')) {
+                $self->{ui}->hide_busy_indicator();
+            }
             if ($self->{spinner} && $self->{spinner}->can('stop')) {
                 $self->{spinner}->stop();
-                log_debug('WorkflowOrchestrator', "Stopped spinner before tool output");
             }
+            log_debug('WorkflowOrchestrator', "Stopped spinner before tool output");
 
             my $content = $api_response->{content} // '';
             $content =~ s/^\s+|\s+$//g;
@@ -2872,7 +2875,15 @@ sub _handle_interrupt {
     # also logs the clear event so we have a single trail of interrupts.
     CLIO::Core::Interrupt::clear(session => $session);
     
-    # Stop spinner before showing interact prompt
+    # Stop spinner before showing interact prompt. Use the UI's
+    # hide_busy_indicator as the authoritative stop path — it checks
+    # the Chat-level spinner (which may have been recreated by
+    # show_busy_indicator with a different object). The direct
+    # $self->{spinner}->stop() covers the case where the UI delegate
+    # is unavailable.
+    if ($self->{ui} && $self->{ui}->can('hide_busy_indicator')) {
+        $self->{ui}->hide_busy_indicator();
+    }
     if ($self->{spinner} && $self->{spinner}->can('stop')) {
         $self->{spinner}->stop();
     }

@@ -326,6 +326,58 @@ sub clear_system_message_flag {
     $self->{_last_was_system_message} = 0;
 }
 
+=head2 _get_or_create_spinner
+
+Get the shared spinner instance, creating it if needed or recreating it
+if the theme/style has changed. This is the single creation point for
+the Chat-level spinner, used by show_busy_indicator() and
+_process_ai_request().
+
+Returns: ProgressSpinner object, or undef if spinners are unavailable
+         (non-interactive mode, no TTY).
+
+=cut
+
+sub _get_or_create_spinner {
+    my ($self) = @_;
+
+    # Skip in non-interactive mode or when stdout is not a TTY
+    return undef if $self->{non_interactive};
+    return undef unless -t STDOUT;
+
+    # In host mode, the host renders its own spinner
+    return undef if $self->{host_proto}->active();
+
+    # Check if we need to recreate (or create) the spinner.
+    my $spinner_frames = $self->{theme_mgr}->get_spinner_frames();
+    my $needs_recreation = 0;
+
+    if (!$self->{spinner}) {
+        $needs_recreation = 1;
+    } elsif ($self->{spinner}->{frames}) {
+        my $current_frames = join(',', @{$self->{spinner}->{frames}});
+        my $new_frames = join(',', @$spinner_frames);
+        if ($current_frames ne $new_frames) {
+            $needs_recreation = 1;
+            # Stop old spinner before recreating. Call stop() directly
+            # (not guarded by is_running) so the spinner text is cleared
+            # even if the child already died.
+            $self->{spinner}->stop();
+        }
+    }
+
+    if ($needs_recreation) {
+        $self->{spinner} = CLIO::UI::ProgressSpinner->new(
+            theme_mgr => $self->{theme_mgr},
+            delay => 100000,
+            inline => 1,
+        );
+        log_debug('Chat', "Created spinner via _get_or_create_spinner");
+    }
+
+    return $self->{spinner};
+}
+
 =head2 show_busy_indicator
 
 Show the busy spinner to indicate system is processing.
@@ -350,36 +402,12 @@ sub show_busy_indicator {
         return 1;
     }
     
-    # Ensure spinner is initialized or recreate if theme changed
-    # Check if spinner needs to be recreated due to theme change
-    my $spinner_frames = $self->{theme_mgr}->get_spinner_frames();
-    my $needs_recreation = 0;
-    
-    if (!$self->{spinner}) {
-        $needs_recreation = 1;
-    } elsif ($self->{spinner}->{frames}) {
-        # Check if frames changed (theme/style was switched)
-        my $current_frames = join(',', @{$self->{spinner}->{frames}});
-        my $new_frames = join(',', @$spinner_frames);
-        if ($current_frames ne $new_frames) {
-            $needs_recreation = 1;
-            # Stop old spinner before recreating
-            $self->{spinner}->stop() if $self->{spinner}->is_running();
-        }
-    }
-    
-    if ($needs_recreation) {
-        $self->{spinner} = CLIO::UI::ProgressSpinner->new(
-            theme_mgr => $self->{theme_mgr},  # Use theme-managed frames
-            delay => 100000,
-            inline => 1,
-        );
-        log_debug('Chat', "Created spinner in show_busy_indicator");
-    }
-    
+    # Get or create the shared spinner instance (unified creation path).
+    my $spinner = $self->_get_or_create_spinner() or return 0;
+
     # Only start if not already running
-    if (!$self->{spinner}->is_running()) {
-        $self->{spinner}->start();
+    if (!$spinner->is_running()) {
+        $spinner->start();
         log_debug('Chat', "Busy indicator started");
     }
     
@@ -402,9 +430,11 @@ sub hide_busy_indicator {
         return 1;
     }
     
-    # Stop spinner if it exists and is running
-    # Use is_running() (validates child process is alive)
-    if ($self->{spinner} && $self->{spinner}->is_running()) {
+    # Stop spinner if it exists. Call stop() unconditionally — it is
+    # idempotent and handles the case where the child has already died
+    # (is_running() may return false after reaping the zombie, but the
+    # spinner text still needs clearing and the cursor may still be hidden).
+    if ($self->{spinner}) {
         $self->{spinner}->stop();
         log_debug('Chat', "Busy indicator stopped");
     }
@@ -745,7 +775,7 @@ sub _make_thinking_callback {
                 $think_stream->{in_code_block}   = 0;
                 $think_stream->{in_table}        = 0;
                 $think_stream->{md_line_count}   = 0;
-                $spinner->stop();
+                $spinner->stop() if $spinner;
                 # Defer header/hrule until the first real content chunk;
                 # if no content ever arrives, skip them entirely (the
                 # summarizer returned an empty string).
@@ -800,7 +830,7 @@ sub _make_thinking_callback {
 
         if (!$header_printed) {
             $thinking_active = 1;
-            $spinner->stop();
+            $spinner->stop() if $spinner;
             # First real content chunk: print header and top hrule now.
             # If $header_printed is already set, we've already emitted them
             # for an earlier stream within the same callback's lifetime.
@@ -967,7 +997,7 @@ sub _handle_ai_response {
     CLIO::Core::Interrupt::uninstall_alrm_handler();
     log_debug('Chat', "Disabled periodic ALRM after streaming ($alarm_count interrupts)");
     
-    $spinner->stop();
+    $spinner->stop() if $spinner;
     $self->{streaming}->flush();
     $self->{pager}->line_count(0);
     
@@ -1228,28 +1258,21 @@ sub _process_ai_request {
 
     
     # Show progress indicator while waiting for AI response
-    # Use persistent spinner stored on Chat object
-    # This ensures tools can access the SAME spinner instance via context
-    unless ($self->{spinner}) {
-        # Create persistent spinner on first use with frames from current style
-        # Use inline mode so spinner animates after text we print
-        my $spinner_frames = $self->{theme_mgr}->get_spinner_frames();
-        $self->{spinner} = CLIO::UI::ProgressSpinner->new(
-            frames => $spinner_frames,
-            delay => 100000,  # 100ms between frames for smooth block animation
-            inline => 1,      # Inline mode: don't clear entire line, just the spinner
-        );
-        log_debug('Chat', "Created persistent spinner in inline mode");
+    # Use persistent spinner stored on Chat object via the unified
+    # _get_or_create_spinner method (shared with show_busy_indicator).
+    # This ensures tools can access the SAME spinner instance via context.
+    my $spinner = $self->_get_or_create_spinner();
+    if ($spinner) {
+        # DON'T print agent prefix here - we'll print it in on_chunk when actual content arrives
+        # This prevents the prefix from appearing for tool-only responses or system messages
+        # Start the inline spinner (will animate until first chunk arrives)
+        $spinner->start();
+        log_debug('Chat', "Started spinner (will print agent prefix on first content chunk)");
     }
     
-    # DON'T print agent prefix here - we'll print it in on_chunk when actual content arrives
-    # This prevents the prefix from appearing for tool-only responses or system messages
-    # Start the inline spinner (will animate until first chunk arrives)
-    $self->{spinner}->start();
-    log_debug('Chat', "Started spinner (will print agent prefix on first content chunk)");
-    
-    # Reference for use in closures below
-    my $spinner = $self->{spinner};
+    # Reference for use in closures below — use the spinner we just
+    # started (or undef if spinner was unavailable in non-interactive/host mode)
+    # No separate my $spinner needed; the one above is used by closures below.
     
     # Reset pagination state before streaming
     $self->{pager}->reset();
@@ -1359,6 +1382,17 @@ sub _process_ai_request {
     # ALWAYS restore normal terminal mode, even on exception
     ReadMode(0);
     log_debug('Chat', "process_user_request returned, success=" . ($result ? ($result->{success} ? "yes" : "no") : "exception"));
+    
+    # ALWAYS stop the spinner, even on exception. Previously this was only
+    # done in _handle_ai_response, which is skipped when process_user_request
+    # throws. The forked spinner child keeps animating and the cursor stays
+    # hidden (spinner start hides it via \e[?25l). Call stop() directly
+    # (not guarded by is_running) so cleanup happens even if the child
+    # already died.
+    if ($self->{spinner}) {
+        $self->{spinner}->stop();
+        log_debug('Chat', "Spinner stopped before error re-throw");
+    }
     
     # Re-throw if process_user_request died
     croak $process_error if $process_error;
@@ -1556,8 +1590,10 @@ sub get_input {
     my ($self) = @_;
     
         # Stop spinner before any input operation
-    # The spinner MUST be stopped before readline/input to prevent interference with typing
-    if ($self->{spinner} && $self->{spinner}->is_running()) {
+    # The spinner MUST be stopped before readline/input to prevent interference with typing.
+    # Call stop() directly (not guarded by is_running) so cleanup happens even
+    # if the child already died — the cursor may still be hidden.
+    if ($self->{spinner}) {
         $self->{spinner}->stop();
         log_debug('Chat', "Spinner stopped at get_input entry");
     }
@@ -1965,8 +2001,10 @@ sub request_collaboration {
     log_debug('Chat', "request_collaboration called");
     
     # Stop spinner before displaying collaboration prompt
-    # The spinner MUST be stopped and MUST NOT restart until user response is complete
-    if ($self->{spinner} && $self->{spinner}->is_running()) {
+    # The spinner MUST be stopped and MUST NOT restart until user response is complete.
+    # Call stop() directly (not guarded by is_running) so cleanup happens even
+    # if the child already died.
+    if ($self->{spinner}) {
         $self->{spinner}->stop();
         log_debug('Chat', "Spinner stopped at request_collaboration entry");
     }
@@ -1997,10 +2035,7 @@ sub request_collaboration {
     
     for my $line (@lines) {
         # Compute visible length
-        my $visible = $line;
-        $visible =~ s/\e\[[0-9;]*[A-Za-z]//g;
-        $visible =~ s/\e\[\?\d+[lh]//g;
-        $visible =~ s/\e\]8;;[^\e]*\e\\//g;
+        my $visible = $self->{ansi}->strip_ansi($line);
         
         # Skip wrapping for code/table lines
         my $is_preformatted = ($visible =~ /^  \S/ || $visible =~ /^\|/
@@ -2014,10 +2049,7 @@ sub request_collaboration {
             my $current = '';
             my $current_vis = 0;
             for my $w (@words) {
-                my $wvis = $w;
-                $wvis =~ s/\e\[[0-9;]*[A-Za-z]//g;
-                $wvis =~ s/\e\[\?\d+[lh]//g;
-                $wvis =~ s/\e\]8;;[^\e]*\e\\//g;
+                my $wvis = $self->{ansi}->strip_ansi($w);
                 my $wlen = length($wvis);
                 
                 if ($current eq '' && $w =~ /^ +$/) { next; }
@@ -3293,30 +3325,30 @@ sub colorize {
     # Legacy color key mapping (for backward compatibility)
     my %key_map = (
         ASSISTANT => 'agent_label',
-        THEME => 'banner',
-        DATA => 'data',
+        THEME => 'secondary',
+        DATA => 'value',
         USER => 'user_text',
         PROMPT => 'prompt_indicator',
         SYSTEM => 'system_message',
-        ERROR => 'error_message',
-        DIM => 'dim',
-        LABEL => 'theme_header',
-        SUCCESS => 'user_prompt',  # Green
-        WARN => 'error_message',   # Red
-        WARNING => 'error_message',  # Red
-        SEPARATOR => 'dim',
-        BOLD => 'command_value',    # Emphasis (bright white)
+        ERROR => 'error',
+        DIM => 'subtle',
+        LABEL => 'label',
+        SUCCESS => 'success',
+        WARN => 'warning',
+        WARNING => 'warning',
+        SEPARATOR => 'subtle',
+        BOLD => 'value',           # Bright white emphasis
         GREEN => 'success',
         CYAN => 'info',
         YELLOW => 'warning',
         RED => 'error',
         MAGENTA => 'primary',
         WHITE => 'normal',
-        SECTION_HEADER => 'command_subheader',
+        SECTION_HEADER => 'secondary',
         CLIO => 'agent_label',
         TOOL => 'command',
-        COLLAB_HEADER => 'banner',
-        COLLAB_CONTEXT => 'data',
+        COLLAB_HEADER => 'secondary',
+        COLLAB_CONTEXT => 'value',
         COLLAB_PROMPT => 'agent_label',
         COLLAB_ARROW => 'prompt_indicator',
     );

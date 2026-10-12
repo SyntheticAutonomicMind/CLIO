@@ -273,21 +273,28 @@ sub new {
         # Computed from input state via _compute_display_lines; used by
         # redraw_line for vertical movement.
         display_lines => 1,
-        # Cursor position tracking. Updated by _emit_text (clamped to
-        # max_row), reposition_cursor, redraw_line. Read only by _emit_text
-        # as the starting point for the next emit.
-        last_cursor_row => 0,
-        last_cursor_col => 1,
+       # Cursor position tracking. Updated by _emit_text (clamped to
+       # max_row), reposition_cursor, redraw_line. Read only by _emit_text
+       # as the starting point for the next emit.
+       last_cursor_row => 0,
+       last_cursor_col => 1,
+        # The physical terminal row (0-indexed) where the input area starts.
+        # Queried via DSR (\e[6n) at readline() start before the prompt is
+        # printed. All screen-row calculations are offset by this value so
+        # that cursor movement works correctly when the prompt is not at
+        # the top of the terminal (the common case — previous chat output
+        # fills most of the screen).
+        base_cursor_row => 0,
         # How many input rows are scrolled off the top of the screen.
         # DERIVED state (max(0, display_lines - term_height)), recomputed
         # by _refresh_geometry whenever content or geometry changes.
         # Used by _input_row_to_screen_row to convert input rows to screen rows.
         scroll_offset => 0,
-        # How many rows the cursor is from the top of the input area
-        # (0 = first row). Written by redraw_line, reposition_cursor,
-        # _redraw_line_external, and the fast-path insert/backspace.
-        last_cursor_input_row => 0,
-        # Kill ring for line-editing commands (Ctrl-K, Ctrl-U, Ctrl-W, etc.)
+       # How many rows the cursor is from the top of the input area
+       # (0 = first row). Written by redraw_line, reposition_cursor,
+       # _redraw_line_external, and the fast-path insert/backspace.
+       last_cursor_input_row => 0,
+       # Kill ring for line-editing commands (Ctrl-K, Ctrl-U, Ctrl-W, etc.)
         # Mirrors GNU readline: text killed by these commands is saved so
         # the user can yank it back with Ctrl-Y. Consecutive kills (without
         # any other command in between) accumulate into a single entry.
@@ -442,6 +449,66 @@ sub _max {
     return $a > $b ? $a : $b;
 }
 
+=head2 _query_cursor_pos
+
+Query the terminal for the current cursor position using the DSR
+(Device Status Report) sequence C<ESC[6n>. The terminal responds
+with C<ESC[row;colR> on stdin.
+
+Must be called while the terminal is in normal (cooked) mode so the
+response can be read via ReadKey. Returns C<(row, col)> where row is
+0-indexed, or C<(0, 1)> if the query fails (e.g. not a TTY, timeout).
+
+This is used at readline() start to record C<base_cursor_row> — the
+physical terminal row where the input area begins. Without this, the
+cursor-tracking code assumes the input starts at row 0, which is only
+true when the prompt is at the top of a blank terminal. After chat
+output fills the screen, the prompt starts at some row R > 0, and all
+screen-row calculations must be offset by R.
+
+The query is sent to stdout and the response is read from stdin. A
+short timeout (0.1s) prevents stalling if the terminal doesn't respond.
+
+=cut
+
+sub _query_cursor_pos {
+    my ($self) = @_;
+
+    # Only meaningful on a real TTY
+    return (0, 1) unless -t STDOUT && -t STDIN;
+
+    # Send DSR request — write directly (bypass _emit_text since we
+    # haven't started tracking for this readline yet).
+    print "\e[6n";
+    STDOUT->flush() if STDOUT->can('flush');
+
+    # Read response: ESC [ row ; col R
+    my $resp = '';
+    my $deadline = time() + 0.1;  # 100ms
+
+    while (time() < $deadline) {
+        my $rin = '';
+        vec($rin, fileno(STDIN), 1) = 1;
+        my $nfound = select(my $rout = $rin, undef, undef, 0.01);
+        last unless $nfound && $nfound > 0;
+        my $byte = ReadKey(-1);
+        last unless defined $byte;
+        $resp .= $byte;
+        last if $resp =~ /R$/;  # DSR response ends with 'R'
+    }
+
+    # Parse ESC[row;colR
+    if ($resp =~ /\e\[(\d+);(\d+)R/) {
+        my ($row, $col) = ($1 - 1, $2);  # row: 1-indexed -> 0-indexed
+        log_debug('ReadLine', "DSR cursor position: row=$row col=$col");
+        return ($row, $col);
+    }
+
+    # Fallback: couldn't determine, assume top of screen
+    log_debug('ReadLine', "DSR cursor query failed, assuming row=0");
+    return (0, 1);
+}
+
 =head2 _get_prompt_disp
 
 Return cached display width of the visible prompt (ANSI codes stripped).
@@ -451,6 +518,7 @@ Set once per readline() call since the prompt doesn't change mid-input.
 
 sub _get_prompt_disp {
     my ($self, $prompt) = @_;
+
     unless (defined $self->{_prompt_disp_cache}) {
         $self->{_prompt_disp_cache} = _display_width(_strip_ansi($prompt // ''));
     }
@@ -540,7 +608,8 @@ sub _input_row_to_screen_row {
     my $term_height = $self->_get_term_height();
     my $max_row = $term_height - 1;
     my $scroll_offset = $self->{scroll_offset} || 0;
-    my $screen_row = $input_row - $scroll_offset;
+    my $base_row = $self->{base_cursor_row} || 0;
+    my $screen_row = $input_row - $scroll_offset + $base_row;
     return $screen_row > $max_row ? $max_row : ($screen_row < 0 ? 0 : $screen_row);
 }
 
@@ -629,10 +698,13 @@ sub _emit_text {
     # If the row went past the bottom of the screen, the terminal
     # scrolled. Clamp last_cursor_row to the visible area so the next
     # _emit_text call continues from the correct screen position.
+    # The max row is base_cursor_row + term_height - 1, because the
+    # input area starts at base_cursor_row (not row 0) and the terminal
+    # has term_height rows total.
     # scroll_offset is NOT accumulated here — it is derived by
     # _refresh_geometry from the total content height.
     my $term_height = $self->_get_term_height();
-    my $max_row = $term_height - 1;
+    my $max_row = ($self->{base_cursor_row} || 0) + $term_height - 1;
     if ($row > $max_row) {
         $row = $max_row;
         $col = 1;
@@ -652,8 +724,10 @@ sub _emit_newline {
     my ($self) = @_;
     print "\r\n";
     # Newline: move to (row+1, col 1).
+    # The max row accounts for base_cursor_row so the clamp is against
+    # the actual bottom of the terminal, not row (term_height-1).
     my $term_height = $self->_get_term_height();
-    my $max_row = $term_height - 1;
+    my $max_row = ($self->{base_cursor_row} || 0) + $term_height - 1;
     my $row = $self->{last_cursor_row} + 1;
     if ($row > $max_row) {
         $row = $max_row;
@@ -850,12 +924,15 @@ sub redraw_line {
 
     # Move to (row 0, col 1) of the input area.
     # Move up by the cursor's actual distance from the top of the input
-    # (last_cursor_input_row), NOT by display_lines - 1 which assumes
-    # the cursor is at the bottom. When the user navigates back to a
-    # previous line with arrow keys, the cursor is on a middle row;
-    # using display_lines - 1 would overshoot past the top of the
-    # input, scrolling terminal content above the input upward by one
-    # row per keystroke.
+    # area in SCREEN rows, NOT input rows. When the terminal has scrolled
+    # (scroll_offset > 0) or the input starts at a non-zero row
+    # (base_cursor_row > 0), the input row and screen row diverge.
+    # We use old_cursor_input_row as the row count (not the clamped
+    # screen row) because: in a real terminal, scrolling keeps the cursor
+    # at the bottom row (max_row), and moving up old_cursor_input_row
+    # rows clamps to the top (correct); in a VT/mock that doesn't scroll,
+    # the cursor sits at row old_cursor_input_row in overflow territory,
+    # and moving up that many rows reaches row 0 (correct).
     print "\r";
     $self->{last_cursor_col} = 1;
     my $rows_to_top = $old_cursor_input_row;
@@ -867,7 +944,7 @@ sub redraw_line {
     if ($rows_to_top > 0) {
         print "\e[${rows_to_top}A";
     }
-    $self->{last_cursor_row} = 0;
+    $self->{last_cursor_row} = $self->{base_cursor_row} || 0;
 
     # Clear from here to end of screen, then redraw prompt + input
     print "\e[J";
@@ -940,17 +1017,21 @@ sub _redraw_line_external {
     # Move to column 0 of current row, clear to end of screen,
     # then redraw prompt + input.
     print "\r";
-    # Move up to the top of the input area (same logic as redraw_line).
+    # Move up to the top of the input area.
+    # Use old_cursor_input_row as the row distance (same rationale as
+    # redraw_line — works for both real terminals and VTs without
+    # scroll support).
     my $old_display_lines = $self->{display_lines} || 1;
     my $rows_to_top = $old_cursor_input_row;
     if ($rows_to_top > $old_display_lines - 1) {
         $rows_to_top = $old_display_lines - 1;
     }
+    if ($rows_to_top < 0) { $rows_to_top = 0; }
     if ($rows_to_top > 0) {
         print "\e[${rows_to_top}A";
     }
     $self->{last_cursor_col} = 1;
-    $self->{last_cursor_row} = 0;
+    $self->{last_cursor_row} = $self->{base_cursor_row} || 0;
     print "\e[J";
     $self->_emit_text($prompt);
     $self->_emit_text($$input_ref);
@@ -995,8 +1076,6 @@ sub readline {
 
     # Reset display lines tracking for new input
     $self->{display_lines} = 1;
-    $self->{last_cursor_row} = 0;
-    $self->{last_cursor_col} = 1;
     $self->{scroll_offset} = 0;
     $self->{last_cursor_input_row} = 0;
 
@@ -1021,6 +1100,16 @@ sub readline {
 
     # Reset performance caches for this readline session
     $self->{_prompt_disp_cache} = undef;
+
+    # Query the terminal cursor position before printing the prompt.
+    # The prompt is typically not at the top of the screen (previous
+    # chat output fills the terminal), so we must record the actual
+    # starting row to compute all subsequent screen-row movements.
+    # DSR is safe to send in normal mode — ReadMode('raw') is set below.
+    my ($base_row, $base_col) = $self->_query_cursor_pos();
+    $self->{base_cursor_row} = $base_row;
+    $self->{last_cursor_row} = $base_row;
+    $self->{last_cursor_col} = $base_col;
 
     # Install SIGWINCH handler
     my $resize_flag = 0;
@@ -1131,6 +1220,35 @@ sub readline {
 
         # Enter key
         if ($ord == 10 || $ord == 13) {
+            # If the cursor is not at the end of the input, move it there
+            # so the line is accepted from the end. Standard readline
+            # repositions to EOL before returning; without this, text
+            # after the cursor position remains visible on screen (the
+            # cursor sits mid-line, Enter drops to the next row, and
+            # trailing characters are left orphaned on the previous line).
+            if ($cursor_pos < length($input)) {
+                # Reposition cursor to the end of the input using
+                # computed screen positions (pure function).
+                my ($old_row, $old_col) = $self->_cursor_at_codepoint($input, $cursor_pos, $prompt);
+                my ($end_row, $end_col) = $self->_cursor_at_codepoint($input, length($input), $prompt);
+                my $old_sr = $self->_input_row_to_screen_row($old_row);
+                my $end_sr = $self->_input_row_to_screen_row($end_row);
+
+                print "\r";
+                if ($end_sr > $old_sr) {
+                    print "\e[" . ($end_sr - $old_sr) . "B";
+                } elsif ($end_sr < $old_sr) {
+                    print "\e[" . ($old_sr - $end_sr) . "A";
+                }
+                print "\e[" . ($end_col - 1) . "C" if $end_col > 1;
+
+                $cursor_pos = length($input);
+                $self->{last_cursor_input_row} = $end_row;
+                $self->{last_cursor_row} = $end_sr;
+                $self->{last_cursor_col} = $end_col;
+            }
+            # Clear from cursor to end of line before newline
+            print "\e[K";
             $self->_emit_newline();
             ReadMode('restore');
 
@@ -1306,6 +1424,7 @@ sub readline {
             # After clearing, the cursor is at (0,0) and the screen is blank.
             # Reset scroll and display tracking so redraw_line starts fresh.
             $self->{scroll_offset} = 0;
+            $self->{base_cursor_row} = 0;
             $self->{last_cursor_row} = 0;
             $self->{last_cursor_col} = 1;
             $self->{display_lines} = 1;

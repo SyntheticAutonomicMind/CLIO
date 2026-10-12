@@ -9,6 +9,7 @@ use utf8;
 use Time::HiRes qw(usleep time);
 use POSIX ();
 use CLIO::Core::Logger qw(log_debug);
+use CLIO::Core::Logger qw(log_debug);
 
 
 =head1 NAME
@@ -56,11 +57,15 @@ sub new {
         @frames = @DEFAULT_FRAMES;
     }
     
-    # Calculate max frame width for clean erasure
+    # Calculate max frame width for clean erasure using display width,
+    # not character count. Wide characters (CJK, emoji, regional
+    # indicators) occupy 2 columns but length() returns 1 per codepoint,
+    # causing the spinner's inline backspace-padding in stop() to erase
+    # the wrong number of columns and leave trailing characters.
     my $max_width = 0;
     for my $f (@frames) {
-        my $len = length($f);
-        $max_width = $len if $len > $max_width;
+        my $w = _spinner_display_width($f);
+        $max_width = $w if $w > $max_width;
     }
     
     my $self = {
@@ -102,21 +107,18 @@ sub start {
     # Hide cursor before animation begins
     print "\e[?25l";
     STDOUT->flush() if STDOUT->can('flush');
-    
-    # Windows: fork() is unreliable, skip animation subprocess
+
+    # Windows: fork() is unreliable, skip animation subprocess.
+    # Cursor was just hidden — show() will be called by stop().
+    # Set running so stop() proceeds to clean up (show cursor).
     if ($^O eq 'MSWin32') {
         $self->{running} = 1;
         $self->{_started_at} = time();
         return;
     }
-    
-    # Skip spinner on Windows (fork not reliable)
-    if ($^O eq 'MSWin32') {
-        return;
-    }
-    
+
     my $pid = fork();
-    
+
     if (!defined $pid) {
         log_debug('ProgressSpinner', "Failed to fork progress spinner: $!");
         print "\e[?25h";
@@ -155,11 +157,13 @@ sub stop {
     return unless $self->{running};
     
     $self->{running} = 0;
-    
-    # Reduced motion: just erase the static indicator
+
+    # Reduced motion: just erase the static indicator. No child process
+    # was forked in this mode, so there's no pid to reap. Show cursor
+    # as safety net (in case a previous non-reduced start hid it).
     if ($self->{theme_mgr} && $self->{theme_mgr}->can('is_reduced_motion')
         && $self->{theme_mgr}->is_reduced_motion()) {
-        print "\r\e[K";
+        print "\r\e[K\e[?25h";
         STDOUT->flush() if STDOUT->can('flush');
         return;
     }
@@ -214,21 +218,27 @@ Check if the spinner is active (validates child process is alive).
 
 sub is_running {
     my ($self) = @_;
-    
+
     return 0 unless $self->{running};
-    
-    if ($self->{pid}) {
-        my $result = waitpid($self->{pid}, POSIX::WNOHANG());
-        if ($result == $self->{pid} || $result == -1) {
+
+    # Check child liveness. We use waitpid(WNOHANG) to both detect a
+    # dead child AND reap it (preventing zombies), but we do NOT mutate
+    # running/running state or print cursor-restore sequences here.
+    # The old implementation mutated {running} and printed \e[?25h in
+    # is_running(), which caused stop() to become a no-op (it early-
+    # returns when running=0) and the spinner text was never cleared.
+    # All state mutation and visual cleanup is stop()'s responsibility.
+    if (my $pid = $self->{pid}) {
+        my $result = waitpid($pid, POSIX::WNOHANG());
+        if ($result == $pid || $result == -1) {
+            # Child has exited (or was already reaped). Mark pid as
+            # gone but do NOT set running=0 — caller (stop()) needs
+            # to run to clear the spinner text and restore cursor.
             $self->{pid} = undef;
-            $self->{running} = 0;
-            # Show cursor if child died unexpectedly
-            print "\e[?25h";
-            STDOUT->flush() if STDOUT->can('flush');
             return 0;
         }
     }
-    
+
     return $self->{running};
 }
 
@@ -250,20 +260,21 @@ sub _run_animation {
     
     while (1) {
         my $frame = $frames->[$frame_index];
+        my $frame_disp = _spinner_display_width($frame);
         
         if ($inline) {
             if ($first_frame) {
                 # Pad to max width so all frames occupy the same space
-                print $frame . (' ' x ($max_width - length($frame)));
+                print $frame . (' ' x ($max_width - $frame_disp));
                 $first_frame = 0;
             } else {
                 # Back up, write frame padded, back up trailing spaces
                 print "\b" x $max_width;
-                print $frame . (' ' x ($max_width - length($frame)));
+                print $frame . (' ' x ($max_width - $frame_disp));
             }
         } else {
             # Standalone: carriage return + frame padded to max width
-            print "\r" . $frame . (' ' x ($max_width - length($frame)));
+            print "\r" . $frame . (' ' x ($max_width - $frame_disp));
         }
         
         STDOUT->flush() if STDOUT->can('flush');
@@ -290,6 +301,54 @@ sub _locale_supports_utf8 {
         return 1 if $var =~ /UTF-?8/i;
     }
     return 0;
+}
+
+# Compute the terminal display width of $str using the same logic as
+# CLIO::Core::ReadLine::_display_width, but without a hard dependency on
+# that module (which would risk a circular require at load time). We
+# replicate the essential cases: CJK/fullwidth = 2 cols, combining marks
+# and zero-width chars = 0, ASCII = 1. If Unicode::GCString is available
+# (it usually is in a Perl installation with Unicode), we prefer it for
+# accuracy.
+sub _spinner_display_width {
+    my ($str) = @_;
+    return 0 unless defined $str && length($str);
+
+    # Fast path: if all chars are ASCII, width == length.
+    if ($str =~ /^[\x20-\x7E]*$/) {
+        return length($str);
+    }
+
+    # Use Unicode::GCString if available (same as ReadLine).
+    if (eval { require Unicode::GCString; 1 }) {
+        return Unicode::GCString->new($str)->columns();
+    }
+
+    # Fallback: process grapheme clusters via \X.
+    my $width = 0;
+    while ($str =~ /(\X)/g) {
+        my $cluster = $1;
+        for my $i (0 .. length($cluster) - 1) {
+            my $ch = substr($cluster, $i, 1);
+            my $cp = ord($ch);
+            # Zero-width: combining marks, ZWJ, ZWNJ, VS, etc.
+            next if $ch =~ /\p{Mn}/;
+            next if $ch =~ /\p{Me}/;
+            next if $cp == 0x200B || $cp == 0x200C || $cp == 0x200D
+                 || $cp == 0x2060 || $cp == 0xFEFF
+                 || ($cp >= 0xFE00 && $cp <= 0xFE0F)
+                 || ($cp >= 0xE0001 && $cp <= 0xE007F);
+            # Wide: CJK, fullwidth, regional indicators
+            if ($ch =~ /\p{EA=Wide}/ || $ch =~ /\p{EA=Fullwidth}/
+                || ($cp >= 0x1F1E6 && $cp <= 0x1F1FF)) {
+                $width += 2;
+            } else {
+                $width += 1;
+            }
+            last;  # only count the first non-zero-width char of the cluster
+        }
+    }
+    return $width;
 }
 
 sub DESTROY {

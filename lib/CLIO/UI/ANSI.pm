@@ -338,12 +338,21 @@ sub strip_ansi {
     return '' unless defined $text;
     
     # Remove ANSI CSI sequences (colors, cursor movement, etc.)
-    $text =~ s/\e\[[0-9;]*[A-Za-z]//g;
-    
+    $text =~ s/\e\[[0-9;?]*[A-Za-z]//g;
+
     # Remove private-mode sequences (cursor hide/show: \e[?25l, \e[?25h)
     $text =~ s/\e\[\?\d+[lh]//g;
-    
-    # Remove OSC 8 hyperlinks: \e]8;;URL\e\\text\e]8;;\e\\ -> text
+
+    # Remove OSC sequences: \e] ... terminated by BEL (\x07) or ST (ESC \)
+    $text =~ s/\e\].*?(\x07|\e\\)//g;
+
+    # Remove DCS sequences: \eP ... ST (ESC \)
+    $text =~ s/\eP.*?(\e\\)//g;
+
+    # Remove OSC 8 hyperlinks (already covered by OSC above, but keep
+    # this as a safety net for the inner text portion if the first
+    # pass left remnants due to non-greedy matching across multi-line
+    # content).
     $text =~ s/\e\]8;;[^\e]*\e\\//g;
     
     return $text;
