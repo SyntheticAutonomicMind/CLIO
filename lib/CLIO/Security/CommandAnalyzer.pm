@@ -40,6 +40,34 @@ Instead, this module identifies B<categories of risky behavior>:
 When a risky behavior is detected, the caller decides what to do:
 prompt the user, block the command, or allow it based on security level.
 
+=head2 SECURITY MODEL
+
+B<This module is NOT a security boundary.>
+
+CommandAnalyzer uses keyword and regex patterns to B<classify> commands —
+it does NOT B<block> them. The classification is intentionally
+opportunistic and can be bypassed by an adversarial or creative agent:
+
+  - Full binary paths (e.g. /usr/bin/curl) may slip past exact matches
+  - Renamed binaries (e.g. my_downloader) will not match any pattern
+  - Interpreter-based exfiltration (python -c "import socket; ...")
+    can bypass command-level detection
+  - Shell encoding (base64, hex, octal escape sequences) defeats
+    string matching
+  - Shell built-ins (e.g. bash's /dev/tcp) are not detected
+  - Process substitution, xargs, find -exec, and similar constructs
+    can invoke blocked commands indirectly
+
+The B<only> reliable security control in CLIO is the B<--sandbox flag>,
+which blocks entire operations at the tool level (e.g. TerminalOperations
+refuses to execute any command, WebOperations refuses all HTTP). When
+sandbox mode is enabled, CommandAnalyzer's classification is secondary —
+the tool should fail closed regardless of what CommandAnalyzer returns.
+
+In non-sandbox mode, CommandAnalyzer's prompts are the last line of
+defense, not the first. User confirmation for flagged commands is
+the actual control.
+
 This module does NOT block commands. It classifies them. The enforcement
 decision belongs to the caller (TerminalOperations, WorkflowOrchestrator).
 

@@ -377,32 +377,21 @@ sub retrieveChunk {
     
     log_debug('ToolResultStore', "Retrieving chunk: toolCallId=$toolCallId, offset=$offset, length=$length");
     
-    # Security check: Verify file exists in session's directory
-    # If not found, try fuzzy matching to handle AI hallucination of tool call IDs
+    # Security check: Verify file exists in session's directory.
+    # If not found, provide fuzzy match suggestions — but NEVER
+    # auto-correct to a different toolCallId. Silent auto-correction
+    # creates a confusion attack: the LLM requests result X but receives
+    # the content of result Y, and never knows the mismatch occurred.
     unless (-f $result_file) {
-        # Only log the "not found" warning in debug mode - if we auto-correct, user doesn't need to know
         log_debug('ToolResultStore', "Result not found: $toolCallId in session $session_id (trying fuzzy match)");
-        
-        # Try to find similar files (handles AI hallucination of IDs)
+
         my $suggestions = $self->findSimilarResults($toolCallId, $session_id);
-        
-        # If exactly ONE close match exists, auto-correct to it
-        # This handles common AI hallucination where 1-2 characters are wrong
-        if ($suggestions && @$suggestions == 1) {
-            my $corrected_id = $suggestions->[0];
-            # Only log auto-correction in debug mode - silent recovery is the goal
-            log_debug('ToolResultStore', "Auto-corrected toolCallId: $toolCallId -> $corrected_id");
-            $toolCallId = $corrected_id;
-            $result_file = File::Spec->catfile($tool_results_dir, "$toolCallId.txt");
-        }
-        # If multiple close matches, show suggestions and let AI pick
-        elsif ($suggestions && @$suggestions > 1) {
+
+        if ($suggestions && @$suggestions > 0) {
             my $suggestion_text = join("\n", map { "  - $_" } @$suggestions);
-            croak "Tool result not found: $toolCallId\n\nMultiple similar results found. Did you mean one of these?\n$suggestion_text";
-        }
-        # No matches at all
-        else {
-            croak "Tool result not found: $toolCallId";
+            croak "Tool result not found: $toolCallId\n\nSimilar results found. Did you mean one of these?\n$suggestion_text\n\nIf none match, the result may not have been persisted (small results are sent inline, not stored to disk).";
+        } else {
+            croak "Tool result not found: $toolCallId\n\nThe result may not have been persisted (small results are sent inline, not stored to disk).";
         }
     }
     

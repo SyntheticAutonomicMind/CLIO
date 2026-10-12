@@ -64,6 +64,30 @@ QUICK EXAMPLE:
     );
 }
 
+=head2 before_route
+
+Block all terminal operations in sandbox mode. The CommandAnalyzer denylist
+is defense-in-depth only — it cannot reliably classify all commands (full
+paths, encoding, interpreter exfiltration, etc.). In sandbox mode, no shell
+command should execute.
+
+=cut
+
+sub before_route {
+    my ($self, $operation, $params, $context) = @_;
+
+    if ($context && $context->{config} && $context->{config}->get('sandbox')) {
+        log_debug('TerminalOps', "Sandbox: BLOCKED terminal_operations.$operation");
+        return $self->error_result(
+            "Sandbox mode: Terminal operations are disabled.\n\n" .
+            "The --sandbox flag blocks all command execution to prevent arbitrary shell access. " .
+            "This is a security feature — there is no safe subset of shell commands to allow in sandboxed mode."
+        );
+    }
+
+    return undef;
+}
+
 =head2 get_tool_definition
 
 Override to mark command parameter as required for exec/execute operations.

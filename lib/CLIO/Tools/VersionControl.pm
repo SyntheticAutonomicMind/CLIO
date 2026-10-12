@@ -420,7 +420,7 @@ sub commit {
 
     my $repo_path = $params->{repository_path} || '.';
     my $message = $params->{message};
-    my $auto_stage = $params->{auto_stage} // 1;  # Default to true for backward compat
+    my $auto_stage = $params->{auto_stage} // 0;  # Default: false - require explicit opt-in
     my $result;
 
  return $self->error_result("Missing required parameter: message") unless $message;
@@ -626,15 +626,27 @@ sub blame {
     
  return $self->error_result("Missing required parameter: file") unless $file;
 
+    # Validate start_line and max_lines as non-negative integers. The JSON
+    # schema declares these as type "integer", but types are advisory — an
+    # adversarial LLM can send a string like "1; rm -rf /" that gets
+    # interpolated into the git blame -L flag, enabling command injection.
+    my $start_line = $params->{start_line};
+    if (defined $start_line) {
+        unless ($start_line =~ /^\d+$/) {
+            return $self->error_result("Invalid 'start_line' parameter: must be a non-negative integer");
+        }
+        $start_line = int($start_line);
+    }
+    my $max_lines = $params->{max_lines};
+    if (defined $max_lines) {
+        unless ($max_lines =~ /^\d+$/) {
+            return $self->error_result("Invalid 'max_lines' parameter: must be a non-negative integer");
+        }
+        $max_lines = int($max_lines);
+    }
+
     eval {
         $result = _in_repo($repo_path, sub {
-            my $start_line = $params->{start_line};
-            my $max_lines  = $params->{max_lines};
-
-            # Scope blame output to avoid dumping entire large files
-            # into the context window. git blame -L <start>,<end> limits
-            # the annotated lines. Default to 200 lines starting from
-            # line 1 (or the requested start_line).
             my $blame_args = _sq($file);
             if (defined $max_lines || defined $start_line) {
                 my $start = defined $start_line ? $start_line : 1;

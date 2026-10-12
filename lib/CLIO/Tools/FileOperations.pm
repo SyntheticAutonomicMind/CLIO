@@ -656,7 +656,7 @@ sub read_file {
     # Sandbox check
     my $sandbox_check = $self->_check_sandbox($path, $context);
     return $self->error_result($sandbox_check->{error}) unless $sandbox_check->{allowed};
-    
+
     return $self->error_result("File not found: $path") unless -f $path;
     return $self->error_result("File not readable: $path") unless -r $path;
 
@@ -969,7 +969,17 @@ sub get_errors {
         @paths = ($params->{path});
     }
 
-    return $self->error_result("Missing required parameter: paths") unless @paths;
+return $self->error_result("Missing required parameter: paths") unless @paths;
+
+    # Sandbox check: get_errors runs perl -c on files, which can leak file
+    # contents and existence info. Enforce sandbox containment.
+    for my $p (@paths) {
+        my $clean_p = $self->_clean_path($p);
+        my $sandbox_check = $self->_check_sandbox($clean_p, $context);
+        unless ($sandbox_check->{allowed}) {
+            return $self->error_result($sandbox_check->{error});
+        }
+    }
 
     my @all_errors;
     my %per_file;
@@ -1014,18 +1024,19 @@ sub get_errors {
 sub _check_one_file_errors {
     my ($self, $path, $context) = @_;
 
-    return $self->error_result("File not found: $path") unless -f $path;
+    my $clean_path = $self->_clean_path($path);
+    return $self->error_result("File not found: $path") unless -f $clean_path;
 
-    log_debug('FileOp', "Checking syntax: $path");
+    log_debug('FileOp', "Checking syntax: $clean_path");
 
     # Only works for Perl files
-    unless ($path =~ /\.p[lm]$/) {
+    unless ($clean_path =~ /\.p[lm]$/) {
         my $action_desc = "syntax check skipped (not Perl)";
         return $self->success_result(
             [],
             action_description => $action_desc,
             message => "Syntax checking only supported for Perl files (.pl, .pm)",
-            path => $path,
+            path => $clean_path,
         );
     }
 
@@ -1045,7 +1056,7 @@ sub _check_one_file_errors {
     if ($pid == 0) {
         # Child: merge stderr into stdout, then exec perl with list args
         open(STDERR, '>&', 'STDOUT') or POSIX::_exit(127);
-        exec('perl', '-Ilib', '-c', $path) or POSIX::_exit(127);
+        exec('perl', '-Ilib', '-c', $clean_path) or POSIX::_exit(127);
     }
     # Parent: read combined output, then reap child
     {
@@ -1065,14 +1076,14 @@ sub _check_one_file_errors {
                     message => $1,
                     line => $2,
                     severity => 'error',
-                    path => $path,
+                    path => $clean_path,
                 };
             }
         }
     }
 
     my $status = scalar(@errors) > 0 ? scalar(@errors) . " errors" : "no errors";
-    my $action_desc = "checking syntax of $path ($status)";
+    my $action_desc = "checking syntax of $clean_path ($status)";
 
     return $self->success_result(
         \@errors,
@@ -2017,6 +2028,32 @@ sub write_file {
         # accurate at the moment of the write.
         $file_existed = -f $path;
         $vault_type = $file_existed ? 'modify' : 'create';
+
+        # Prompt for confirmation when overwriting a non-empty file.
+        # This prevents accidental data loss when the LLM misidentifies a
+        # file path. Append mode is excluded — it's an intentional
+        # append, not a destructive overwrite. Non-interactive contexts
+        # (no UI, or --input mode) skip the prompt but log a warning.
+        if (!$append && $file_existed && -s $path) {
+            my $ui = $context->{ui} if $context;
+            my $has_tty = -t STDIN;
+            if ($ui && $ui->can('colorize') && $has_tty) {
+                my $existing_size = -s $path;
+                my $approved = $self->_prompt_overwrite_confirmation($path, $existing_size, $context);
+                unless ($approved) {
+                    log_debug('FileOp', "User DENIED overwrite: $path ($existing_size bytes)");
+                    return $self->error_result(
+                        "Overwrite denied by user.\n\n" .
+                        "File '$path' already exists ($existing_size bytes). " .
+                        "The user chose not to overwrite this file."
+                    );
+                }
+                log_debug('FileOp', "User APPROVED overwrite: $path");
+            } else {
+                log_debug('FileOp', "Overwrite confirmation skipped: non-interactive context or no UI for $path");
+            }
+        }
+
         $self->_vault_capture($path, $vault_type, $context);
 
         # Determine action verb from the re-checked existence state
@@ -2085,9 +2122,21 @@ sub replace_string {
     # Sandbox check
     my $sandbox_check = $self->_check_sandbox($path, $context);
     return $self->error_result($sandbox_check->{error}) unless $sandbox_check->{allowed};
-    
+
+    # Authorization check for writes outside session directory
+    my $auth_result = $self->_check_write_authorization($path, 'replace_string', $context);
+    if ($auth_result->{status} eq 'requires_authorization') {
+        return $self->error_result(
+            "Authorization required: $auth_result->{reason}\n\n" .
+            "This operation requires user permission because the path is outside the session directory.\n" .
+            "Use interact tool to request authorization."
+        );
+    } elsif ($auth_result->{status} eq 'denied') {
+        return $self->error_result("Authorization denied: $auth_result->{reason}");
+    }
+
     return $self->error_result("File not found: $path") unless -f $path;
-    
+
     # Multi-agent coordination: Request file lock via broker
     my ($lock_acquired, $lock_error) = $self->_acquire_file_lock($path, $context);
     return $self->error_result($lock_error) if $lock_error;
@@ -2320,7 +2369,19 @@ sub insert_at_line {
     # Sandbox check
     my $sandbox_check = $self->_check_sandbox($path, $context);
     return $self->error_result($sandbox_check->{error}) unless $sandbox_check->{allowed};
-    
+
+    # Authorization check for writes outside session directory
+    my $auth_result = $self->_check_write_authorization($path, 'insert_at_line', $context);
+    if ($auth_result->{status} eq 'requires_authorization') {
+        return $self->error_result(
+            "Authorization required: $auth_result->{reason}\n\n" .
+            "This operation requires user permission because the path is outside the session directory.\n" .
+            "Use interact tool to request authorization."
+        );
+    } elsif ($auth_result->{status} eq 'denied') {
+        return $self->error_result("Authorization denied: $auth_result->{reason}");
+    }
+
     return $self->error_result("File not found: $path") unless -f $path;
     return $self->error_result("Invalid line number") unless $line_number > 0;
     
@@ -2794,6 +2855,62 @@ Reset script writing session grants. Called at session end.
 
 sub reset_script_session_grants {
     %_script_write_grants = ();
+}
+
+=head2 _prompt_overwrite_confirmation
+
+Prompt the user to confirm overwriting an existing non-empty file.
+
+Arguments:
+- $path: File that would be overwritten
+- $existing_size: Size of the existing file in bytes
+- $context: Execution context with UI
+
+Returns: 1 if approved, 0 if denied
+
+=cut
+
+sub _prompt_overwrite_confirmation {
+    my ($self, $path, $existing_size, $context) = @_;
+
+    my $ui = $context->{ui};
+    my $spinner = $context->{spinner};
+
+    # Suspend ALRM + terminal during prompt (same pattern as _prompt_script_confirmation)
+    my $saved_alrm = $SIG{ALRM};
+    my $remaining_alarm = alarm(0);
+
+    require CLIO::Compat::Terminal;
+    while (defined(eval { CLIO::Compat::Terminal::ReadKey(-1) })) { }
+    CLIO::Compat::Terminal::ReadMode(0);
+
+    my $theme_mgr = $ui->{theme_mgr};
+    if ($theme_mgr && $theme_mgr->can('get_security_prompt')) {
+        my ($prompt_line, $input_line) = $theme_mgr->get_security_prompt(
+            $path,
+            [{ severity => 'medium', description => "File exists ($existing_size bytes) and will be overwritten" }],
+            '(y)es overwrite | (n)o, cancel',
+        );
+        print "\n$prompt_line\n$input_line";
+    } else {
+        print "\n* Overwrite Warning | $path\n  Existing file ($existing_size bytes) will be replaced.\n  (y)es overwrite | (n)o, cancel: ";
+    }
+
+    my $old_fh = select(STDOUT);
+    $| = 1; select($old_fh);
+
+    my $response = <STDIN>;
+    chomp($response) if defined $response;
+    $response = lc($response || 'n');
+
+    CLIO::Compat::Terminal::ReadMode(1);
+    $SIG{ALRM} = $saved_alrm || 'DEFAULT';
+    alarm($remaining_alarm) if $remaining_alarm;
+
+    $spinner->start() if $spinner && $spinner->can('start');
+
+    return 1 if ($response eq 'y' || $response eq 'yes');
+    return 0;
 }
 
 =head2 _get_umask

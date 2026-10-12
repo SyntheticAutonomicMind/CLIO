@@ -186,6 +186,64 @@ sub get_additional_parameters {
     };
 }
 
+sub _sanitize_key {
+    my ($self, $key) = @_;
+    return undef unless defined $key;
+
+    # Reject keys containing path separators or traversal components.
+    # File::Spec->catfile does not normalize ../ — an adversarial key
+    # like "foo/../../.ssh/authorized_keys" would escape the memory_dir.
+    return undef if $key =~ m{[/\\]} || $key =~ /\.\./;
+    return undef if $key =~ /\0/;  # null bytes
+
+    # Restrict to a safe charset: alphanumerics, dash, underscore, dot.
+    # Dots are allowed for namespaced keys (e.g. "module.config") but
+    # the ../ check above already blocks traversal.
+    return $key if $key =~ /^[a-zA-Z0-9._-]+$/;
+
+    return undef;
+}
+
+=head2 _validate_memory_dir
+
+Ensure the memory_dir is within the project directory or the user's
+CLIO config directory. When memory_dir is user-supplied (from the LLM),
+it must not escape to arbitrary filesystem paths.
+
+=cut
+
+sub _validate_memory_dir {
+    my ($self, $memory_dir, $context) = @_;
+    return 1 unless defined $memory_dir && length $memory_dir;
+
+    # Resolve to absolute path
+    require Cwd;
+    my $real = Cwd::abs_path($memory_dir) || $memory_dir;
+
+    # Default memory dir
+    require CLIO::Util::PathResolver;
+    my $default_dir = eval { CLIO::Util::PathResolver::get_project_memory_dir() } || '.clio/memory';
+    my $default_real = Cwd::abs_path($default_dir) || $default_dir;
+
+    # Allow if it matches the default project memory dir
+    return 1 if $real eq $default_real;
+
+    # Allow if inside the default memory dir
+    $default_real =~ s{/+$}{};
+    $real =~ s{/+$}{};
+    return 1 if $real =~ m{^\Q$default_real\E/};
+
+    # Allow if inside the user's CLIO config dir (~/.clio or $XDG_CONFIG_HOME/clio)
+    my $config_dir = CLIO::Util::PathResolver::get_config_dir();
+    if ($config_dir) {
+        my $config_real = Cwd::abs_path($config_dir) || $config_dir;
+        $config_real =~ s{/+$}{};
+        return 1 if $real eq $config_real || $real =~ m{^\Q$config_real\E/};
+    }
+
+    return 0;
+}
+
 sub store {
     my ($self, $params, $context) = @_;
 
@@ -195,6 +253,19 @@ sub store {
 
     return $self->error_result("Missing 'key' parameter") unless $key;
     return $self->error_result("Missing 'content' parameter") unless $content;
+
+    # Validate key to prevent path traversal. File::Spec->catfile does not
+    # normalize ../ — a key like "foo/../../.ssh/authorized_keys" would
+    # escape the memory directory.
+    my $safe_key = $self->_sanitize_key($key);
+    unless ($safe_key) {
+        return $self->error_result("Invalid 'key' parameter: must be alphanumeric with only . _ - characters, no path separators");
+    }
+
+    # Validate memory_dir to prevent arbitrary filesystem access
+    unless ($self->_validate_memory_dir($memory_dir, $context)) {
+        return $self->error_result("Invalid 'memory_dir' parameter: must be within the project or CLIO config directory");
+    }
 
     # session_goals is routed to session state (not a separate file) so
     # it survives context trims, is race-free across concurrent sessions,
@@ -224,7 +295,7 @@ sub store {
     eval {
         mkdir $memory_dir unless -d $memory_dir;
 
-        my $file_path = File::Spec->catfile($memory_dir, "$key.json");
+        my $file_path = File::Spec->catfile($memory_dir, "$safe_key.json");
         open my $fh, '>:utf8', $file_path or croak "Cannot write $file_path: $!";
 
         my $data = {
@@ -262,6 +333,17 @@ sub retrieve {
 
     return $self->error_result("Missing 'key' parameter") unless $key;
 
+    # Validate key to prevent path traversal
+    my $safe_key = $self->_sanitize_key($key);
+    unless ($safe_key) {
+        return $self->error_result("Invalid 'key' parameter: must be alphanumeric with only . _ - characters, no path separators");
+    }
+
+    # Validate memory_dir
+    unless ($self->_validate_memory_dir($memory_dir, $context)) {
+        return $self->error_result("Invalid 'memory_dir' parameter: must be within the project or CLIO config directory");
+    }
+
     # session_goals lives in session state (not a separate file). Reads
     # come from there first; the file is only a backward-compat fallback
     # for sessions that wrote goals before the routing was added.
@@ -285,7 +367,7 @@ sub retrieve {
 
     my $result;
     eval {
-        my $file_path = File::Spec->catfile($memory_dir, "$key.json");
+        my $file_path = File::Spec->catfile($memory_dir, "$safe_key.json");
 
         if (-f $file_path) {
             open my $fh, '<:utf8', $file_path or croak "Cannot read $file_path: $!";
@@ -321,7 +403,12 @@ sub search {
     my $memory_dir = strip_path_quotes($params->{memory_dir}) || do { require CLIO::Util::PathResolver; eval { CLIO::Util::PathResolver::get_project_memory_dir() } || '.clio/memory'; };
     
     return $self->error_result("Missing required parameter: query") unless $query;
-    
+
+    # Validate memory_dir to prevent arbitrary filesystem enumeration
+    unless ($self->_validate_memory_dir($memory_dir, $context)) {
+        return $self->error_result("Invalid 'memory_dir' parameter: must be within the project or CLIO config directory");
+    }
+
     my $result;
     eval {
         my @matches;
@@ -408,6 +495,11 @@ sub list_memories {
     
     my $memory_dir = strip_path_quotes($params->{memory_dir}) || do { require CLIO::Util::PathResolver; eval { CLIO::Util::PathResolver::get_project_memory_dir() } || '.clio/memory'; };
     
+    # Validate memory_dir to prevent arbitrary filesystem enumeration
+    unless ($self->_validate_memory_dir($memory_dir, $context)) {
+        return $self->error_result("Invalid 'memory_dir' parameter: must be within the project or CLIO config directory");
+    }
+    
     my $result;
     eval {
         if (-d $memory_dir) {
@@ -446,10 +538,21 @@ sub delete {
     my $memory_dir = strip_path_quotes($params->{memory_dir}) || do { require CLIO::Util::PathResolver; eval { CLIO::Util::PathResolver::get_project_memory_dir() } || '.clio/memory'; };
     
     return $self->error_result("Missing required parameter: key") unless $key;
+
+    # Validate key to prevent path traversal
+    my $safe_key = $self->_sanitize_key($key);
+    unless ($safe_key) {
+        return $self->error_result("Invalid 'key' parameter: must be alphanumeric with only . _ - characters, no path separators");
+    }
+
+    # Validate memory_dir
+    unless ($self->_validate_memory_dir($memory_dir, $context)) {
+        return $self->error_result("Invalid 'memory_dir' parameter: must be within the project or CLIO config directory");
+    }
     
     my $result;
     eval {
-        my $file_path = File::Spec->catfile($memory_dir, "$key.json");
+        my $file_path = File::Spec->catfile($memory_dir, "$safe_key.json");
         
         if (-f $file_path) {
             unlink $file_path or croak "Cannot delete $file_path: $!";

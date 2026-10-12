@@ -100,6 +100,28 @@ Operations:
     return $self;
 }
 
+=head2 before_route
+
+Block all code intelligence operations in sandbox mode. File traversal
+across the filesystem should not be allowed when sandboxed.
+
+=cut
+
+sub before_route {
+    my ($self, $operation, $params, $context) = @_;
+
+    if ($context && $context->{config} && $context->{config}->get('sandbox')) {
+        log_debug('CodeIntelligence', "Sandbox: BLOCKED code_intelligence.$operation");
+        return $self->error_result(
+            "Sandbox mode: Code intelligence operations are disabled.\n\n" .
+            "The --sandbox flag blocks filesystem traversal operations. " .
+            "This is a security feature to prevent the agent from reading files outside the project directory."
+        );
+    }
+
+    return undef;
+}
+
 sub dispatch_table {
     return {
         list_usages    => 'list_usages',
@@ -454,7 +476,20 @@ sub list_usages {
     my $symbol_name = $params->{symbol_name};
     my $file_paths = $params->{file_paths};
     my $context_lines = $params->{context_lines} || 0;
-    
+
+    # Validate context_lines as a non-negative integer. The JSON schema
+    # declares this as type "integer", but schema types are advisory —
+    # an adversarial LLM can send a string that would be interpolated
+    # into the git grep -C flag, enabling command injection.
+    if (defined $params->{context_lines}) {
+        unless ($params->{context_lines} =~ /^\d+$/) {
+            return $self->error_result(
+                "Invalid 'context_lines' parameter: must be a non-negative integer"
+            );
+        }
+        $context_lines = int($params->{context_lines});
+    }
+
     # Normalize file_paths to an array. Handle three cases:
     # 1. undefined/empty -> default to git repo root
     # 2. string (single path) -> wrap in array
@@ -468,16 +503,16 @@ sub list_usages {
         # Single string path - wrap in array
         $file_paths = [$file_paths];
     }
-    
-    return $self->error_result("Missing required parameter: symbol_name", 
+
+    return $self->error_result("Missing required parameter: symbol_name",
         action_description => "Error: Missing required parameter: symbol_name"
     ) unless $symbol_name;
-    
+
     log_debug('CodeIntelligence', "Searching for symbol: $symbol_name");
     log_debug('CodeIntelligence', "Search paths: " . join(', ', @$file_paths));
-    
+
     my @usages = ();
-    
+
     # Try git grep first (much faster if in a git repo)
     if ($self->_has_git_grep()) {
         @usages = $self->_git_grep_search($symbol_name, $file_paths, $context_lines, $context);
@@ -585,6 +620,12 @@ sub _file_grep_search {
     my @results = ();
     my @files_to_search = ();
     
+    # Limits to prevent DoS via massive directory trees or huge files
+    my $MAX_FILES       = 10_000;
+    my $MAX_FILE_BYTES  = 10_485_760;  # 10MB per file
+    my $SEARCH_TIMEOUT  = 120;          # 2 minute wall-clock limit
+    my $start_time      = time();
+    
     # Collect all files to search
     foreach my $path (@$paths) {
         if (-f $path) {
@@ -597,6 +638,18 @@ sub _file_grep_search {
                 push @files_to_search, $File::Find::name;
             }, $path);
         }
+        
+        # Enforce file count limit
+        if (@files_to_search >= $MAX_FILES) {
+            log_debug('CodeIntelligence', "Hit max files limit ($MAX_FILES), truncating");
+            last;
+        }
+        
+        # Enforce wall-clock timeout
+        if (time() - $start_time > $SEARCH_TIMEOUT) {
+            log_debug('CodeIntelligence', "Search timed out after $SEARCH_TIMEOUT seconds");
+            last;
+        }
     }
     
     log_debug('CodeIntelligence', "Searching " . scalar(@files_to_search) . " files");
@@ -605,11 +658,22 @@ sub _file_grep_search {
     foreach my $file (@files_to_search) {
         next unless -f $file && -r $file;
 
-        # Allow ESC interrupt during code searches across many files. A
-        # codebase-wide grep can take many seconds; without polling the user
-        # waits for the entire search to complete.
+        # Skip files over the size limit
+        my $fsize = -s $file;
+        if (defined $fsize && $fsize > $MAX_FILE_BYTES) {
+            log_debug('CodeIntelligence', "Skipping large file: $file ($fsize bytes)");
+            next;
+        }
+
+        # Allow ESC interrupt during code searches across many files.
         if ($self->check_interrupt($ext_context)) {
             log_debug('CodeIntelligence', "User interrupt during search after " . scalar(@results) . " match(es)");
+            last;
+        }
+
+        # Enforce wall-clock timeout
+        if (time() - $start_time > $SEARCH_TIMEOUT) {
+            log_debug('CodeIntelligence', "Search timed out after $SEARCH_TIMEOUT seconds");
             last;
         }
 

@@ -331,7 +331,11 @@ require CLIO::Tools::MemoryOperations;
 
 my $mem = CLIO::Tools::MemoryOperations->new();
 
-my $mem_dir = File::Spec->catdir($test_dir, ".clio-test-mem");
+# Use a memory_dir within the user's CLIO config directory so the
+# path validation in MemoryOperations._validate_memory_dir allows it.
+require CLIO::Util::PathResolver;
+my $config_base = CLIO::Util::PathResolver::get_config_dir();
+my $mem_dir = File::Spec->catdir($config_base // $test_dir, ".clio-test-mem-" . time());
 $result = $mem->execute(
     { operation => 'store', key => 'test-key', content => 'test-content', memory_dir => $DQ . $mem_dir . $DQ },
     $ctx
@@ -345,6 +349,9 @@ $passed++ if test_case("memory store: file at expected location", -f $mem_file);
 
 # Cleanup test memory directory
 remove_tree($mem_dir) if -d $mem_dir;
+# Also clean up from the old location if test was run before the fix
+my $old_mem_dir = File::Spec->catdir($test_dir, ".clio-test-mem");
+remove_tree($old_mem_dir) if -d $old_mem_dir;
 
 print "\n=== Results: $passed passed, $failed failed ===\n";
 exit($failed > 0 ? 1 : 0);
