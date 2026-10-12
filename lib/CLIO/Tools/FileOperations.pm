@@ -1596,14 +1596,19 @@ sub _semantic_search_hybrid {
     # Use alternation to match any keyword
     my $combined_regex = join('|', map { quotemeta($_) } @keywords);
     
-    # Use proper glob pattern
-    my $pattern = ($scope eq '.' || !$scope) ? '**/*' : "$scope/**/*";
+    # Use proper glob pattern. When scope is a specific directory, pass it
+    # as the search directory so File::Find traverses it directly — using
+    # scope only in the pattern (as the old code did) meant the pattern
+    # '/abs/path/**/*' never matched files found by traversing '.'.
+    my $pattern = ($scope eq '.' || !$scope) ? '**/*' : '**/*';
+    my $directory = ($scope eq '.' || !$scope) ? '.' : $scope;
     
     my $grep_result = $self->grep_search({
         query => $combined_regex,
         pattern => $pattern,
+        directory => $directory,
         is_regex => 1,
-        max_results => 500,  # Higher limit for semantic search
+        max_results => 0,  # No limit — semantic_search ranks the pool via top_k below
     }, $context);
     
     my %file_scores = ();  # file => score

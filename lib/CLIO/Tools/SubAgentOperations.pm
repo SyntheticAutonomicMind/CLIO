@@ -784,7 +784,8 @@ sub inbox {
                 $content_preview = $content->{status};
                 $content_preview .= ": $content->{current_task}" if $content->{current_task};
             } else {
-                my @parts = map { "$_: $content->{$_}" } (sort keys %$content)[0..1];  # First 2 keys
+                # Show all key fields in the preview — not just the first 2
+                my @parts = map { "$_: $content->{$_}" } (sort keys %$content);
                 $content_preview = join(', ', @parts);
             }
         } else {

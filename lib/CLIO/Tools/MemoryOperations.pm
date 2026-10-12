@@ -112,11 +112,11 @@ sub get_additional_parameters {
         },
         max_sessions => {
             type        => "integer",
-            description => "[OPTIONAL] Max sessions to search (newest first). Default: 10.",
+            description => "[OPTIONAL] Max sessions to search (newest first). Default: 10. Capped at 50.",
         },
         max_results => {
             type        => "integer",
-            description => "[OPTIONAL] Max matches to return. Default: 5.",
+            description => "[OPTIONAL] Max matches to return. Default: 10. Capped at 100 to prevent excessive memory use.",
         },
         fact => {
             type => "string",
@@ -490,11 +490,11 @@ sub recall_sessions {
     
     my $query = $params->{query};
     my $max_sessions = $params->{max_sessions} || 10;
-    my $max_results = $params->{max_results} || 5;
-    
+    my $max_results = $params->{max_results} || 10;
+
     # Enforce hard limits to prevent OOM
     $max_sessions = 50 if $max_sessions > 50;
-    $max_results = 20 if $max_results > 20;
+    $max_results = 100 if $max_results > 100;
     
  return $self->error_result("Missing required parameter: query") unless $query;
     

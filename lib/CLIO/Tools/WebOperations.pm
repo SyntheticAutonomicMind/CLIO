@@ -504,12 +504,13 @@ sub _check_local_history {
         readdir($dh);
     closedir $dh;
     
-    # Search only last 3 sessions
-    @files = @files[0..2] if @files > 3;
-    
+    # Search all sessions (sorted newest-first). The local-history check is
+    # a best-effort pre-search — file I/O is cheap and limiting the session
+    # count arbitrarily causes silent misses (the same antipattern that
+    # affected grep_search's 200-file cap).
+    # No match-count cap — return every session that contains the query.
+
     for my $file (@files) {
-        last if @matches >= 2;
-        
         eval {
             open my $fh, '<', $file or die;
             local $/;

@@ -665,9 +665,9 @@ sub handle_add {
     } elsif ($count == 2) {
         $action_desc = "adding todos: " . join(", ", map { $_->{title} } @$new_todos);
     } else {
-        # For 3+ todos, just show count
-        my @titles = map { $_->{title} } @$new_todos[0..1];
-        $action_desc = "adding $count todos: " . join(", ", @titles) . ", ...";
+        # For 3+ todos, show all titles in the summary
+        my @titles = map { $_->{title} } @$new_todos;
+        $action_desc = "adding $count todos: " . join(", ", @titles);
     }
     
     return $self->success_result($output, action_description => $action_desc);

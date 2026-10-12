@@ -171,6 +171,11 @@ sub get_additional_parameters {
             type => "string",
             description => "[OPTIONAL] Filter by commit author name or email.",
         },
+        max_commits => {
+            type => "integer",
+            description => "[OPTIONAL] Maximum number of commits to scan from git history. Default: 0 (no limit, bounded by the 120-second git log timeout). Set to a positive integer to cap effort on very large repos.",
+            default => 0,
+        },
     };
 }
 
@@ -186,6 +191,7 @@ Parameters:
 - max_results: Maximum commits to return (optional, default: 20)
 - since: Only search commits after this date (optional, YYYY-MM-DD)
 - author: Filter by author name/email (optional)
+- max_commits: Maximum number of commits to scan from git history (optional, default: 0 = no limit)
 
 Returns: Hash with:
 - success: Boolean
@@ -201,6 +207,7 @@ sub search_history {
     
     my $query = $params->{query};
     my $max_results = $params->{max_results} || 20;
+    my $max_commits = $params->{max_commits} || 0;
     my $since = $params->{since};
     my $author = $params->{author};
     
@@ -227,7 +234,7 @@ sub search_history {
     log_debug('CodeIntelligence', "Keywords: " . join(', ', @keywords));
     
     # Fetch commits from git log
-    my @commits = $self->_fetch_commits($since, $author);
+    my @commits = $self->_fetch_commits($since, $author, $max_commits);
     
     log_debug('CodeIntelligence', "Fetched " . scalar(@commits) . " commits");
     
@@ -274,7 +281,7 @@ sub search_history {
     my $message = "Found $total_matches commits matching '$query'";
     $message .= " (showing top $max_results)" if $total_matches > $max_results;
     
-    my $action_desc = "searching git history for '$query' ($total_matches matches)";
+    my $action_desc = "searching git history for '$query' ($total_matches matches, scanned " . scalar(@commits) . " commits)" if @commits;
     
     log_debug('CodeIntelligence', "Returning " . scalar(@scored_commits) . " results");
     
@@ -295,7 +302,7 @@ Fetch commits from git log with optional filters.
 =cut
 
 sub _fetch_commits {
-    my ($self, $since, $author) = @_;
+    my ($self, $since, $author, $max_commits) = @_;
     
     # Build git log command
     # Format: hash|date|author|subject|body (use | as delimiter since it's unlikely in commits)
@@ -311,8 +318,10 @@ sub _fetch_commits {
         push @cmd_parts, "--author=$author";
     }
     
-    # Limit to reasonable number of commits to search (can be a lot!)
-    push @cmd_parts, '-n', '500';
+    # cap on commit count (0 = no limit, bounded by git's own timeout)
+    if ($max_commits > 0) {
+        push @cmd_parts, '-n', int($max_commits);
+    }
     
     my $cmd = join(' ', map { quotemeta($_) } @cmd_parts) . " 2>$NULLDEV";
     
