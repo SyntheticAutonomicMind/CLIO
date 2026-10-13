@@ -502,11 +502,40 @@ sub _query_cursor_pos {
         my $rin = '';
         vec($rin, fileno(STDIN), 1) = 1;
         my $nfound = select(my $rout = $rin, undef, undef, 0.01);
-        last unless $nfound && $nfound > 0;
+        # Retry on select timeout - do NOT exit the loop.  Some terminals
+        # (notably xterm-based Linux emulators) take longer than 10ms to
+        # respond to DSR queries.  Using 'last' here would exit on the first
+        # timeout, leaving the entire DSR response in the stdin buffer where
+        # it would be read by the main readline loop as user input (the
+        # trailing 'R' is especially visible - it gets printed after the
+        # prompt).  Keep retrying until the deadline.
+        next unless $nfound && $nfound > 0;
         my $byte = ReadKey(-1);
-        last unless defined $byte;
+        next unless defined $byte;
         $resp .= $byte;
         last if $resp =~ /R$/;  # DSR response ends with 'R'
+    }
+
+    # Safety net: drain any remaining stdin bytes that may have arrived
+    # after our read loop ended (e.g. the terminal responded between the
+    # last select timeout and loop exit).  Without this, leftover DSR
+    # response bytes - especially the trailing 'R' - would be read by the
+    # main readline loop as user input and displayed after the prompt.
+    if (!$resp || $resp !~ /R$/) {
+        use Fcntl qw(F_GETFL F_SETFL O_NONBLOCK);
+        my $flags = fcntl(STDIN, F_GETFL, 0);
+        my $flags_ok = defined $flags;
+        if ($flags_ok) {
+            fcntl(STDIN, F_SETFL, $flags | O_NONBLOCK);
+        }
+        while (1) {
+            my $byte = '';
+            my $r = sysread(STDIN, $byte, 1);
+            last unless $r && $r > 0;
+            $resp .= $byte;
+            last if $resp =~ /R$/;
+        }
+        fcntl(STDIN, F_SETFL, $flags) if $flags_ok;
     }
 
     # Parse ESC[row;colR
