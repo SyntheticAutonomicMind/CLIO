@@ -484,9 +484,6 @@ sub _query_cursor_pos {
     # line discipline echoes characters received on stdin back to stdout, so
     # without this the terminal's ESC[row;colR response to our ESC[6n query
     # would be echoed to stdout and show up in the prompt output.
-    # ReadMode('raw') is called in readline() right after this returns, so
-    # we leave the terminal in cbreak mode here — ReadKey won't try to
-    # save/restore mode since _get_current_mode() will already be 1.
     ReadMode(1);
 
     # Send DSR request — write directly (bypass _emit_text since we
@@ -495,47 +492,30 @@ sub _query_cursor_pos {
     STDOUT->flush() if STDOUT->can('flush');
 
     # Read response: ESC [ row ; col R
+    #
+    # Use select() + ReadKey(-1) in a timed loop.  ReadKey(-1) sets
+    # binmode(STDIN, ':bytes') which is required because STDIN has a
+    # :utf8 layer set by 'use open ":std", ":encoding(UTF-8)"' in
+    # loaded modules (Chat.pm, Logger.pm, etc.), and sysread() cannot
+    # be used on :utf8 handles.
+    #
+    # The select() timeout is 10ms per attempt; we retry with `next`
+    # (NOT `last`) until the 200ms deadline.  The original bug used
+    # `last`, exiting on the first 10ms timeout before slow terminals
+    # (notably Linux xterm) could respond, leaving the DSR response
+    # stranded in the kernel TTY buffer.
     my $resp = '';
-    my $deadline = time() + 0.1;  # 100ms
+    my $deadline = time() + 0.2;  # 200ms
 
     while (time() < $deadline) {
         my $rin = '';
         vec($rin, fileno(STDIN), 1) = 1;
         my $nfound = select(my $rout = $rin, undef, undef, 0.01);
-        # Retry on select timeout - do NOT exit the loop.  Some terminals
-        # (notably xterm-based Linux emulators) take longer than 10ms to
-        # respond to DSR queries.  Using 'last' here would exit on the first
-        # timeout, leaving the entire DSR response in the stdin buffer where
-        # it would be read by the main readline loop as user input (the
-        # trailing 'R' is especially visible - it gets printed after the
-        # prompt).  Keep retrying until the deadline.
-        next unless $nfound && $nfound > 0;
+        next unless $nfound && $nfound > 0;  # retry on timeout
         my $byte = ReadKey(-1);
-        next unless defined $byte;
+        next unless defined $byte;          # retry if no byte available
         $resp .= $byte;
         last if $resp =~ /R$/;  # DSR response ends with 'R'
-    }
-
-    # Safety net: drain any remaining stdin bytes that may have arrived
-    # after our read loop ended (e.g. the terminal responded between the
-    # last select timeout and loop exit).  Without this, leftover DSR
-    # response bytes - especially the trailing 'R' - would be read by the
-    # main readline loop as user input and displayed after the prompt.
-    if (!$resp || $resp !~ /R$/) {
-        use Fcntl qw(F_GETFL F_SETFL O_NONBLOCK);
-        my $flags = fcntl(STDIN, F_GETFL, 0);
-        my $flags_ok = defined $flags;
-        if ($flags_ok) {
-            fcntl(STDIN, F_SETFL, $flags | O_NONBLOCK);
-        }
-        while (1) {
-            my $byte = '';
-            my $r = sysread(STDIN, $byte, 1);
-            last unless $r && $r > 0;
-            $resp .= $byte;
-            last if $resp =~ /R$/;
-        }
-        fcntl(STDIN, F_SETFL, $flags) if $flags_ok;
     }
 
     # Parse ESC[row;colR
@@ -545,7 +525,12 @@ sub _query_cursor_pos {
         return ($row, $col);
     }
 
-    # Fallback: couldn't determine, assume top of screen
+    # Fallback: couldn't determine, assume top of screen.
+    # Note: if the DSR response arrived late (after our 200ms select), the
+    # bytes are still in the stdin buffer.  The escape-sequence handler in
+    # the main readline loop (handle_escape_sequence) detects and silently
+    # consumes any DSR response pattern (ESC[\d+;\d+R) that leaks through,
+    # so this is safe.
     log_debug('ReadLine', "DSR cursor query failed, assuming row=0");
     return (0, 1);
 }
@@ -1396,7 +1381,10 @@ sub readline {
         if ($ord == 27) {
             my $seq = $char;
 
-            for my $i (1..5) {
+            # Read up to 7 bytes after ESC - DSR responses (ESC[row;colR)
+            # can be up to 7 bytes (e.g. ESC[999;99R), and we need to
+            # capture the full response to detect and silently consume it.
+            for my $i (1..7) {
                 my $next = ReadKey(0.1);
                 last unless defined $next;
                 $seq .= $next;
@@ -1691,6 +1679,17 @@ sub handle_escape_sequence {
     my ($self, $seq, $input_ref, $cursor_pos_ref, $prompt) = @_;
 
     log_debug('ReadLine', "Escape sequence: " . join(' ', map { sprintf('%02X', ord($_)) } split //, $seq) . " = '$seq'");
+
+    # DSR (Device Status Report) cursor position response - this is a
+    # terminal reply to our ESC[6n query, not user input.  If it leaks
+    # into the escape-sequence reader (the query timed out before we
+    # could consume it), silently discard it.  Without this check, the
+    # trailing 'R' would fall through to the printable-character handler
+    # and be echoed after the prompt.
+    if ($seq =~ /^\e\[\d+;\d+R$/) {
+        log_debug('ReadLine', "DSR response consumed: '$seq'");
+        return;
+    }
 
     # Arrow keys: ESC [ A/B/C/D
     if ($seq =~ /^\e\[([ABCD])$/) {
