@@ -168,6 +168,7 @@ familiar English form still dispatches correctly.
             insert_line insert delete remove rename mv make_directory mkdir
             create_file append_file
         )],
+        default_operation => 'read_file',
         %opts,
     );
     
@@ -396,6 +397,69 @@ sub dispatch_table {
 }
 
 #
+
+=head2 _infer_operation_from_params (Internal)
+
+Override of Tool.pm base method. Adds context-aware inference for
+FileOperations: when the model omits the C<operation> field but provides
+a combination of parameters that uniquely identifies one operation,
+silently infer the operation.
+
+This is critical for resilience: LLMs frequently forget C<operation>
+when emitting parallel file_operations calls. The parent method only
+scans parameter *keys* for operation-name matches (e.g.
+C<< {"read_file": true} >>); this override adds parameter *combination*
+heuristics so common patterns are auto-recovered:
+
+  - {toolCallId}                       -> read_tool_result
+  - {old_path, new_path}               -> rename_file
+  - {replacements}                     -> multi_replace_string
+  - {line, content}                    -> insert_at_line
+  - {old_string, new_string}           -> replace_string
+  - {content} (no old_string, no line) -> write_file
+  - {query, pattern}                   -> grep_search
+  - {query, scope}                     -> semantic_search
+  - {pattern} (no query)               -> file_search
+  - {start_line} or {end_line}         -> read_file
+
+For ambiguous cases (e.g. C<path> alone could be read_file,
+file_exists, or get_file_info), this method returns C<undef> and
+relies on C<default_operation> (set to C<read_file>) as fallback.
+
+The model is never informed - it just sees a successful result.
+
+=cut
+
+sub _infer_operation_from_params {
+    my ($self, $params) = @_;
+
+    # First try the parent's key-matching logic (e.g., model used
+    # {"read_file": true, "path": "..."} instead of an operation field).
+    my $op = $self->SUPER::_infer_operation_from_params($params);
+    return $op if $op;
+
+    return undef unless $params && ref($params) eq 'HASH';
+
+    my %p = %$params;
+
+    # Unambiguous parameter combinations (checked in order of specificity).
+    # Only infer when exactly one operation matches the given parameters.
+    return 'read_tool_result'  if exists $p{toolCallId};
+    return 'rename_file'       if exists $p{old_path} && exists $p{new_path};
+    return 'multi_replace_string' if exists $p{replacements};
+    return 'insert_at_line'    if exists $p{line} && exists $p{content};
+    return 'replace_string'    if exists $p{old_string} && exists $p{new_string};
+    return 'write_file'       if exists $p{content} && !exists $p{old_string} && !exists $p{line};
+    return 'grep_search'      if exists $p{query} && exists $p{pattern};
+    return 'semantic_search'  if exists $p{query} && exists $p{scope};
+    return 'file_search'      if exists $p{pattern} && !exists $p{query};
+    return 'read_file'       if exists $p{start_line} || exists $p{end_line};
+
+    # Ambiguous case: {path} alone could be read_file, file_exists,
+    # or get_file_info. Let default_operation (read_file) handle it.
+    return undef;
+}
+
 # AUTHORIZATION HELPERS
 #
 

@@ -2409,7 +2409,13 @@ sub _prepare_tool_round {
         my $tool_name = $tool_call->{function}->{name} || 'unknown';
 
         # Resolve tool aliases
-        my $params = {};
+        # Must start as undef (NOT {}) so the unless() guard below fires
+        # for non-alias tool calls. If initialized to {}, ref($params)
+        # eq 'HASH' is already true and the guard skips populating
+        # $params from _parsed_args, leaving $params empty for every
+        # direct (non-alias) tool name (e.g. "file_operations" vs alias
+        # "read_file").
+        my $params;
 
         my $alias_info = $self->{tool_registry}->get_alias_info($tool_name);
         if ($alias_info) {
