@@ -47,7 +47,7 @@ Incremental state retained for fast-path operations and viewport math
 - C<last_cursor_col>: cursor screen column after the last C<_emit_text>
   call. Read by C<_emit_text> as the starting column for the next emit.
   Written back by every cursor-moving operation.
-- C<scroll_offset>: DERIVED state — C<max(0, display_lines - term_height)>.
+- C<scroll_offset>: DERIVED state — C<max(0, display_lines - (term_height - base_cursor_row))>.
   Recomputed by C<_refresh_geometry> whenever content or geometry changes.
   Used by C<_input_row_to_screen_row> to convert input rows to screen rows.
 - C<last_cursor_input_row>: the cursor's row within the input buffer
@@ -286,8 +286,8 @@ sub new {
         # fills most of the screen).
         base_cursor_row => 0,
         # How many input rows are scrolled off the top of the screen.
-        # DERIVED state (max(0, display_lines - term_height)), recomputed
-        # by _refresh_geometry whenever content or geometry changes.
+        # DERIVED state (max(0, display_lines - (term_height - base_cursor_row))),
+        # recomputed by _refresh_geometry whenever content or geometry changes.
         # Used by _input_row_to_screen_row to convert input rows to screen rows.
         scroll_offset => 0,
        # How many rows the cursor is from the top of the input area
@@ -419,29 +419,53 @@ sub _invalidate_yank {
     $self->{yank_index} = 0;
 }
 
+=head2 _compute_scroll_offset
+
+Compute how many input rows are scrolled off the top of the terminal
+when the prompt starts at C<base_cursor_row> (queried via DSR at
+readline start) and the input occupies C<$display_lines> rows.
+
+The available vertical space below the prompt is C<term_height - base_cursor_row>.
+When the input exceeds that, the terminal scrolls. scroll_offset
+tracks how many input rows are above the visible window.
+
+    scroll_offset = max(0, display_lines - (term_height - base_cursor_row))
+
+Returns: number of scrolled-off rows (>= 0).
+
+=cut
+
+sub _compute_scroll_offset {
+    my ($self, $display_lines) = @_;
+    my $term_height = $self->_get_term_height();
+    my $base_row = $self->{base_cursor_row} || 0;
+    my $available_height = $term_height - $base_row;
+    return _max(0, $display_lines - $available_height);
+}
+
 =head2 _refresh_geometry
 
 Recompute all derived geometry state from the current input and prompt:
 display_lines, scroll_offset, last_cursor_input_row. This is the
 single place where derived geometry is updated, ensuring consistency.
 
-scroll_offset = max(0, display_lines - term_height)
+scroll_offset = max(0, display_lines - (term_height - base_cursor_row))
 The cursor's input row is derived from the cursor position via
 _cursor_at_codepoint (called by the caller as needed).
 
 =cut
 
 sub _refresh_geometry {
-    my ($self, $input, $cursor_pos, $prompt) = @_;
-    my $prompt_disp = $self->_get_prompt_disp($prompt);
-    my $total_disp = $prompt_disp + _display_width($input);
-    my $term_height = $self->_get_term_height();
-    my $display_lines = $self->_compute_display_lines($total_disp);
-    $self->{display_lines} = $display_lines;
-    $self->{scroll_offset} = _max(0, $display_lines - $term_height);
-    my ($cursor_input_row, $cursor_col) = $self->_cursor_at_codepoint($input, $cursor_pos, $prompt);
-    $self->{last_cursor_input_row} = $cursor_input_row;
-    return;
+   my ($self, $input, $cursor_pos, $prompt) = @_;
+   my $prompt_disp = $self->_get_prompt_disp($prompt);
+   my $total_disp = $prompt_disp + _display_width($input);
+   my $term_height = $self->_get_term_height();
+   my $display_lines = $self->_compute_display_lines($total_disp);
+   $self->{display_lines} = $display_lines;
+   $self->{scroll_offset} = $self->_compute_scroll_offset($display_lines);
+   my ($cursor_input_row, $cursor_col) = $self->_cursor_at_codepoint($input, $cursor_pos, $prompt);
+   $self->{last_cursor_input_row} = $cursor_input_row;
+   return;
 }
 
 sub _max {
@@ -621,9 +645,10 @@ Convert an input row (as returned by _cursor_at_codepoint) to a
 screen row, accounting for terminal scrolling.
 
 When the input is taller than the terminal, the terminal scrolls the
-content up. The visible portion is the last term_height rows of the
-input. scroll_offset (derived by _refresh_geometry) tracks how many
-input rows are above the visible window.
+content up. The visible portion is the last (term_height - base_cursor_row)
+rows of the input. scroll_offset (derived by _refresh_geometry via
+_compute_scroll_offset) tracks how many input rows are above the visible
+window, accounting for the prompt's starting row.
 
 Returns: screen row (0-indexed, clamped to 0..max_row).
 
@@ -724,13 +749,13 @@ sub _emit_text {
     # If the row went past the bottom of the screen, the terminal
     # scrolled. Clamp last_cursor_row to the visible area so the next
     # _emit_text call continues from the correct screen position.
-    # The max row is base_cursor_row + term_height - 1, because the
-    # input area starts at base_cursor_row (not row 0) and the terminal
-    # has term_height rows total.
+    # The terminal's actual maximum screen row is term_height - 1
+    # (0-indexed). When the cursor advances past this row, the terminal
+    # scrolls content up and the cursor stays at the last row.
     # scroll_offset is NOT accumulated here — it is derived by
     # _refresh_geometry from the total content height.
     my $term_height = $self->_get_term_height();
-    my $max_row = ($self->{base_cursor_row} || 0) + $term_height - 1;
+    my $max_row = $term_height - 1;
     if ($row > $max_row) {
         $row = $max_row;
         $col = 1;
@@ -750,10 +775,9 @@ sub _emit_newline {
     my ($self) = @_;
     print "\r\n";
     # Newline: move to (row+1, col 1).
-    # The max row accounts for base_cursor_row so the clamp is against
-    # the actual bottom of the terminal, not row (term_height-1).
+    # Clamp to the terminal's actual maximum screen row (0-indexed).
     my $term_height = $self->_get_term_height();
-    my $max_row = ($self->{base_cursor_row} || 0) + $term_height - 1;
+    my $max_row = $term_height - 1;
     my $row = $self->{last_cursor_row} + 1;
     if ($row > $max_row) {
         $row = $max_row;
@@ -1364,7 +1388,7 @@ sub readline {
 
                         my $total_disp = $prompt_disp + $input_disp;
                         $self->{display_lines} = $self->_compute_display_lines($total_disp);
-                        $self->{scroll_offset} = _max(0, $self->{display_lines} - $self->_get_term_height());
+                        $self->{scroll_offset} = $self->_compute_scroll_offset($self->{display_lines});
                         $self->{last_cursor_input_row} = $self->{display_lines} - 1;
                     } else {
                         $self->redraw_line(\$input, \$cursor_pos, $prompt);
@@ -1575,7 +1599,7 @@ sub readline {
                 # case) since _display_width falls back to length().
                 my $total_disp = $self->_get_prompt_disp($prompt) + _display_width($input);
                 $self->{display_lines} = $self->_compute_display_lines($total_disp);
-                $self->{scroll_offset} = _max(0, $self->{display_lines} - $self->_get_term_height());
+                $self->{scroll_offset} = $self->_compute_scroll_offset($self->{display_lines});
                 # Cursor is at the end of the input, so it's on the last row.
                 $self->{last_cursor_input_row} = $self->{display_lines} - 1;
             } else {

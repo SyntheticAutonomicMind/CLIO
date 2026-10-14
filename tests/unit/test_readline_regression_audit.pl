@@ -440,4 +440,40 @@ use Test::More;
     is($rl->{scroll_offset}, 6, "refresh_geometry(200 chars): scroll_offset=6");
 }
 
+# ============================================================
+# Regression 13: scroll_offset accounts for base_cursor_row
+# ============================================================
+# The DSR fix (20261013.1) correctly set base_cursor_row to the actual
+# terminal row where the prompt starts. But the scroll_offset formula
+# (max(0, display_lines - term_height)) ignored base_cursor_row. When
+# the prompt is near the bottom of the terminal and the input wraps,
+# scroll_offset was 0 instead of the correct value, causing two input
+# rows to collapse to the same screen row and breaking left-arrow
+# movement across the wrap boundary.
+
+{
+    my $rl = CLIO::Core::ReadLine->new(prompt => '> ');
+    $rl->{_term_size_cache} = [20, 24];
+    $rl->{_term_size_time} = time();
+
+    # base_cursor_row = 23 (prompt at last terminal row).
+    # Available height = 24 - 23 = 1. 2 display lines -> 1 scroll.
+    $rl->{base_cursor_row} = 23;
+    is($rl->_compute_scroll_offset(2), 1,
+       "scroll_offset with base_cursor_row=23: 2 lines -> 1 (was 0 with old formula)");
+
+    # _input_row_to_screen_row must return different rows for 0 and 1.
+    $rl->{scroll_offset} = 1;
+    ok($rl->_input_row_to_screen_row(0) != $rl->_input_row_to_screen_row(1),
+       "screen_row: input rows 0 and 1 are different with base_cursor_row=23 (collapse was the bug)");
+
+    # _refresh_geometry must set scroll_offset correctly.
+    $rl->_refresh_geometry('a' x 19, 19, '> ');
+    is($rl->{scroll_offset}, 1, "refresh_geometry: base=23, 19 chars -> scroll_offset=1");
+
+    # base_cursor_row = 0 must give the same results as before (backward compat).
+    $rl->{base_cursor_row} = 0;
+    is($rl->_compute_scroll_offset(5), 0, "scroll_offset with base=0: 5 lines -> 0 (unchanged)");
+}
+
 done_testing();
