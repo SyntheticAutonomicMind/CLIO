@@ -167,16 +167,28 @@ clio/
           RateLimiter.pm    # API rate limiting
           PluginManager.pm  # Plugin system
           Defaults.pm       # Default configuration values
+          ContextBuilder.pm # Context projection and LTM relevance
+          MessageHistory.pm # Message rendering
+          Diagnostics.pm    # Diagnostics and health checks
+          Interrupt.pm      # Interrupt handling
+          MessageFingerprinter.pm # Message fingerprinting for dedup
+          ModelCapabilitiesManager.pm # Model capability discovery + static maps
+          ModelDataLoader.pm # Unified model data loader
+          RouteManager.pm   # Route management and strategy
+          TaskClassifier.pm # Task classification
+          WorkflowCompletion.pm # Workflow completion
           API/              # API sub-modules
               MessageValidator.pm  # Message validation and proactive trimming
               ResponseHandler.pm   # AI provider response parsing
+              ErrorHandler.pm      # API error handling
+              PayloadSanitizer.pm  # Payload sanitization
           ReadLine.pm  Editor.pm
           HashtagParser.pm  TabCompletion.pm
           GitHubAuth.pm  GitHubCopilotModelsAPI.pm  CopilotUserAPI.pm
       Tools/                # Tool implementations
           Tool.pm           # Base tool class
           Registry.pm       # Tool registry
-          FileOperations.pm # File tools (17 operations)
+          FileOperations.pm # File tools (16 operations)
           VersionControl.pm # Git tools (11 operations)
           TerminalOperations.pm
           MemoryOperations.pm
@@ -229,8 +241,9 @@ clio/
       Security/             # Auth/authz
           Auth.pm           # Authentication
           Authz.pm          # Authorization
+          AuthorizationRelay.pm  # Authorization relay
+          CommandAnalyzer.pm    # Command risk classification
           PathAuthorizer.pm # File access control
-          Manager.pm        # Security management
           SecretRedactor.pm # PII/secret redaction
           InvisibleCharFilter.pm  # Invisible Unicode character defense
       Memory/               # Context/memory
@@ -243,7 +256,9 @@ clio/
           Manager.pm        # Profile storage and injection
       Providers/            # Native API providers
           Base.pm           # Provider base class
+          Anthropic.pm      # Anthropic native API
           Google.pm         # Google Gemini native API
+          NVIDIA.pm         # NVIDIA NIM native API
       MCP/                  # Model Context Protocol
           Manager.pm        # MCP server management
           Client.pm         # MCP client
@@ -251,8 +266,6 @@ clio/
           Transport/Stdio.pm  Transport/HTTP.pm
       Code/                 # Code intelligence
           TreeSitter.pm     # Tree-sitter integration
-          Symbols.pm        # Symbol extraction
-          Relations.pm      # Code relations
       Logging/              # Logging system
           ToolLogger.pm     # Tool operation logging
           ProcessStats.pm   # Process statistics
@@ -273,9 +286,9 @@ clio/
       Compat/               # Compatibility layers
           HTTP.pm  Terminal.pm
   docs/                     # User documentation
-  styles/                   # Color style files (25 themes)
+  styles/                   # Color style files (25 styles, not themes)
   tests/                    # Test suites
-  sessions/                 # Saved sessions (gitignored)
+  # Sessions are stored in ~/.clio/projects/<uuid>/sessions/
 ```
 
 ### Module Naming Conventions

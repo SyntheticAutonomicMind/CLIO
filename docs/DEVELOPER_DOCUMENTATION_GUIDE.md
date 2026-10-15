@@ -737,13 +737,13 @@ Added interactive mode detection to skip pagination in pipes.
 | `CLIO::UI::Commands::` | Slash command handlers | AI, API, Billing, Config, Context, Device, File, Git, Log, Memory, Mux, Profile, Project, Prompt, Session, Skills, Spec, Stats, SubAgent, System, Todo, Update |
 | `CLIO::Session::` | Session management | Manager, State, FileVault, Lock, Export, TodoStore, ToolResultStore |
 | `CLIO::Memory::` | Context/memory | ShortTerm, LongTerm, YaRN, TokenEstimator |
-| `CLIO::Providers::` | Provider registry + native providers | Anthropic, Google, NVIDIA, Base (18 providers configured in Providers.pm) |
+| `CLIO::Providers::` | Provider registry + native providers | 20 providers in `Providers.pm`: SAM, GitHub Copilot, OpenAI, Anthropic, Google, DeepSeek, llama.cpp, LM Studio, Ollama Cloud, OpenRouter, Vercel AI Gateway, OrcaRouter, KiloCode, Opper, Charm Hyper, MiniMax, MiniMax Token Plan, Z.A.I (Chat), Z.A.I (Coding), NVIDIA NIM |
 | `CLIO::Coordination::` | Multi-agent coordination | Broker, Client, SubAgent |
 | `CLIO::MCP::` | Model Context Protocol | Manager, Client, Transport::Stdio, Transport::HTTP, Auth::OAuth |
 | `CLIO::Profile::` | User profiling | Analyzer, Manager |
 | `CLIO::Protocols::` | Complex workflows | Puppeteer |
 | `CLIO::Security::` | Auth/authz | Auth, Authz, AuthorizationRelay, CommandAnalyzer, InvisibleCharFilter, PathAuthorizer, SecretRedactor |
-| `CLIO::Logging::` | Structured logging | Logger, ProcessStats, ToolLogger |
+| `CLIO::Logging::` | Structured logging | ToolLogger, ProcessStats |
 | `CLIO::Compat::` | Compatibility | Terminal (ReadKey, ReadMode), HTTP |
 | `CLIO::Util::` | Utilities | PathResolver, TextSanitizer, JSONRepair, JSON, YAML, ImageAttachment, ImageDisplay, ConfigPath, AtomicWrite, RateLimit, GitIgnore, AnthropicXMLParser, CABundle, Curl, InputHelpers, Proxy, UUID |
 | `CLIO::Spec::` | OpenSpec integration | Manager (spec lifecycle management) |

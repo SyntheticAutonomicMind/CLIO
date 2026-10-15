@@ -310,9 +310,10 @@ clio --sandbox --new
 | CommandAnalyzer | `lib/CLIO/Security/CommandAnalyzer.pm` | `analyze_command()` |
 | InvisibleCharFilter | `lib/CLIO/Security/InvisibleCharFilter.pm` | `sanitize_text()` |
 | SecretRedactor | `lib/CLIO/Security/SecretRedactor.pm` | `redact_secrets()` |
-| PathAuthorizer | `lib/CLIO/Security/PathAuthorizer.pm` | OO interface |
+| Auth | `lib/CLIO/Security/Auth.pm` | OAuth |
+| PathAuthorizer | `lib/CLIO/Security/PathAuthorizer.pm` | File access control |
 | Authz | `lib/CLIO/Security/Authz.pm` | OO interface |
-| Manager | `lib/CLIO/Security/Manager.pm` | Security orchestration |
+| AuthorizationRelay | `lib/CLIO/Security/AuthorizationRelay.pm` | Authorization token forwarding |
 
 ---
 

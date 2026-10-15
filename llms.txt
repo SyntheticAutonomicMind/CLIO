@@ -51,19 +51,19 @@ User Input → Terminal UI (Chat.pm)
 ## Supported Operations
 
 ### File Operations
-read_file, write_file, create_file, delete_file, list_dir, grep_search, semantic_search, file_search
+read_file, read_tool_result, write_file (create/overwrite/append), replace_string, multi_replace_string, insert_at_line, delete_file, rename_file, create_directory, list_dir, file_exists, get_file_info, get_errors, file_search, grep_search, semantic_search
 
 ### Version Control
-status, log, diff, branch, commit, push, pull, blame, stash, tag
+status, log, diff, branch, commit, push, pull, blame, stash, tag, worktree
 
 ### Terminal
 exec (with safety validation and timeout)
 
 ### Memory
-store, retrieve, search, list, delete, recall_sessions, add_discovery, add_solution, add_pattern
+store, retrieve, search, list, delete, recall_sessions, add_discovery, add_solution, add_pattern, add_corroboration, update_ltm, prune_ltm, ltm_stats
 
 ### Multi-Agent
-spawn, list, status, kill, inbox, send, broadcast
+spawn, list, status, wait, kill, inbox, acknowledge, send, broadcast, history
 
 ## Testing
 

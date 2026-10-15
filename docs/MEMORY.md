@@ -499,16 +499,22 @@ Note on task continuity: the **anchor turn** is the first substantive user messa
 
 ## Data Layout
 
-All memory data is stored in the `.clio/` directory within the project root:
+All memory data is stored in `~/.clio/projects/<uuid>/` (where `<uuid>` is read from `.clio/project_uuid` in your project root). User-authored files stay in the project's `.clio/` directory:
 
 ```text
-.clio/
+~/.clio/projects/<uuid>/
   ltm.json                          # Long-Term Memory (project knowledge)
   memory/
     session_progress.md             # Checkpoint written before trim events
     <key>.json                      # Session-level key-value pairs
   sessions/
     <session-id>.json               # Full session state (history, STM, YaRN, billing)
+
+<project>/.clio/                    # Project-local (user-authored, stays here)
+  instructions.md                   # Custom instructions
+  skills.json                       # Project-scoped skills
+  skills/                           # Freeform skill files
+  project_uuid                      # Stable project identifier
 ```
 
 ### Session File Format

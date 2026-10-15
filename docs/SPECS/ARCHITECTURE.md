@@ -52,7 +52,7 @@ SYSTEM: [terminal] - Executing: perl -c lib/Module.pm
 
 Conversations are **automatically saved** with full history and can be resumed exactly.
 
-**Storage:** JSON files in `sessions/` directory  
+**Storage:** JSON files in `~/.clio/projects/<uuid>/sessions/`  
 **Format:** Complete conversation history + metadata  
 **Resumption:** Full state restoration including tool results
 
@@ -322,7 +322,7 @@ flowchart TD
     C --> D[AI Responses]
     D --> E[Session Manager - Collect State]
     E --> F[Serialize to JSON]
-    F --> G[Write to sessions/sess_*.json]
+    F --> G[Write to ~/.clio/projects/<uuid>/sessions/UUID.json]
     G --> H[Later: Resume Session]
     H --> I[Load from JSON]
     I --> J[Restore Conversation History]
@@ -370,15 +370,14 @@ sub route_operation {
 ### Available Tools
 
 **FileOperations** (`lib/CLIO/Tools/FileOperations.pm`)
-- read_file, write_file, create_file, delete_file
-- list_dir, file_search, grep_search, semantic_search
-- replace_string, get_file_info, file_exists
-- get_errors, list_code_usages, read_tool_result
+- read_file, read_tool_result, write_file, replace_string, multi_replace_string
+- insert_at_line, delete_file, rename_file, create_directory
+- list_dir, file_exists, get_file_info, get_errors
+- file_search, grep_search, semantic_search
+- Note: create_file and append_file are aliases, not separate operations
 
 **VersionControl** (`lib/CLIO/Tools/VersionControl.pm`)
-- git_status, git_diff, git_log
-- git_commit, git_push, git_pull
-- git_branch, git_checkout, git_merge, git_reset, git_blame, git_stash, git_tag, git_worktree
+- status, log, diff, branch, commit, push, pull, blame, stash, tag, worktree
 
 **TerminalOperations** (`lib/CLIO/Tools/TerminalOperations.pm`)
 - execute_command (with ESC interrupt and process group isolation)

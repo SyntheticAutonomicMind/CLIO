@@ -38,11 +38,11 @@ This document is the deep reference - the place to understand the detailed capab
 14. [MCP Integration](#14-mcp-integration)
 15. [Security](#15-security)
 16. [Themes and Styles](#16-themes-and-styles)
-18. [Undo System](#18-undo-system)
-19. [Billing and Usage Tracking](#19-billing-and-usage-tracking)
-20. [Host Application Protocol](#20-host-application-protocol)
-21. [How It All Comes Together](#21-how-it-all-comes-together)
-22. [OpenSpec Integration](#22-openspec-integration)
+17. [Undo System](#17-undo-system)
+18. [Billing and Usage Tracking](#18-billing-and-usage-tracking)
+19. [Host Application Protocol](#19-host-application-protocol)
+20. [How It All Comes Together](#20-how-it-all-comes-together)
+21. [OpenSpec Integration](#21-openspec-integration)
 
 ---
 
@@ -243,14 +243,13 @@ Tools are CLIO's hands and eyes. They let the AI interact with your filesystem, 
 
 ### File Operations
 
-The most-used tool. 17 operations for working with files:
+The most-used tool. 16 canonical operations for working with files:
 
 | Operation | What It Does |
 |-----------|-------------|
 | `read_file` | Read a file's content (with optional line range) |
-| `write_file` | Overwrite an existing file |
-| `create_file` | Create a new file |
-| `append_file` | Add content to the end of a file |
+| `read_tool_result` | Read persisted large tool results in chunks |
+| `write_file` | Write content to a file (creates or overwrites; `append` for append) |
 | `replace_string` | Find and replace text in a file |
 | `multi_replace_string` | Batch replacements across multiple files |
 | `insert_at_line` | Insert content at a specific line number |
@@ -264,6 +263,8 @@ The most-used tool. 17 operations for working with files:
 | `file_search` | Find files matching a glob pattern |
 | `grep_search` | Search file contents with text or regex |
 | `semantic_search` | Hybrid keyword + symbol search across the codebase |
+
+**`create_file` and `append_file`** are aliases for `write_file` (without and with `append=true` respectively), not separate operations.
 
 **Semantic search** understands code structure. Asking "where is authentication implemented" will find relevant files even if they don't contain the word "authentication."
 
@@ -1163,7 +1164,7 @@ Skills live in one of six scopes. The list and show commands surface the scope a
 |-------|--------|----------|---------|
 | `user` | `~/.clio/skills.json` | yes | Personal skills you want in every project |
 | `project` | `<cwd>/.clio/skills.json` | yes | Skills tied to a single codebase, commit to the repo |
-| `session` | `sessions/<id>/skills.json` | yes | Throwaway skills for the current session, cleared on exit |
+| `session` | `.clio/sessions/<id>/skills.json` | yes | Throwaway skills for the current session, cleared on exit |
 | `freeform` | `<dir>/.clio/skills/<name>.md` | yes (edit the .md) | Long-form skills version controlled alongside code |
 | `repository` | `~/.clio/skill-cache/<repo>/` | no (re-sync instead) | Skills pulled from a configured Git repository |
 | `builtin` | bundled with CLIO | no | Read-only skills shipped with CLIO |
@@ -1496,14 +1497,16 @@ CLIO separates **color** (themes) from **layout** (styles), giving you full cont
 
 ### Themes (Colors)
 
-4 built-in themes:
+6 built-in themes:
 
 | Theme | Description |
 |-------|-------------|
-| `default` | Balanced colors for dark terminals |
-| `compact` | Minimal color use |
-| `verbose` | Rich, detailed color coding |
-| `console` | Classic console look |
+| `default` | Standard output format with all elements visible |
+| `compact` | Minimal output format - less visual noise |
+| `dense` | Maximum information density - minimal spacing, short labels |
+| `spacious` | Maximum breathing room - generous spacing, descriptive labels |
+| `verbose` | Detailed output format with extra context |
+| `console` | Traditional console output - plain text, minimal decoration |
 
 ```text
 /theme default
@@ -1562,7 +1565,7 @@ CLIO renders markdown in the terminal with full support for:
 
 ---
 
-## 18. Undo System
+## 17. Undo System
 
 CLIO automatically tracks every file change made by the AI agent, giving you instant undo capability at any time.
 
@@ -1581,7 +1584,7 @@ Before the AI modifies any file through its tools (file operations, apply_patch)
 ### What's Covered
 
 The undo system tracks changes made through CLIO's file tools:
-- **File writes** - `write_file`, `create_file`, `append_file`
+- **File writes** - `write_file` (all write modes, including append)
 - **Text edits** - `replace_string`, `multi_replace_string`, `insert_at_line`
 - **File management** - `delete_file`, `rename_file`
 - **Patches** - `apply_patch` (create, update, delete operations)
@@ -1599,7 +1602,7 @@ Changes made by **shell commands** (`terminal_operations`) are not tracked. If t
 
 ---
 
-## 19. Billing and Usage Tracking
+## 18. Billing and Usage Tracking
 
 CLIO tracks token usage and costs across providers:
 
@@ -1631,7 +1634,7 @@ See [coding plan docs](https://docs.z.ai/devpack/overview) for details.
 
 ---
 
-## 20. Host Application Protocol
+## 19. Host Application Protocol
 
 When CLIO is embedded inside a GUI application, it emits structured events via OSC escape sequences that the host intercepts to drive native UI elements.
 
@@ -1694,7 +1697,7 @@ The host application's terminal title callback intercepts sequences starting wit
 
 ---
 
-## 21. How It All Comes Together
+## 20. How It All Comes Together
 
 CLIO's power comes from how these components integrate. Here's what happens during a typical session:
 
@@ -1788,7 +1791,7 @@ The result is an AI assistant that gets smarter with every session, works autono
 
 ---
 
-## 22. OpenSpec Integration
+## 21. OpenSpec Integration
 
 CLIO has native support for [OpenSpec](https://github.com/Fission-AI/OpenSpec), a spec-driven development framework that helps you and the AI agree on what to build before any code is written.
 

@@ -61,24 +61,24 @@ MCPBridge [dynamic], PluginBridge [dynamic]
 | `lib/CLIO/Test/` | Test infrastructure (MockAPI) |
 | `lib/CLIO/Tools/` | AI-callable tools (16 modules) |
 | `lib/CLIO/UI/` | Terminal UI (Chat, Markdown, Theme, Commands, SessionReplay, Multiplexer) |
-| `lib/CLIO/UI/Commands/` | Slash command handlers (23 command modules across multiple categories, plus SessionReplay integration) |
+| `lib/CLIO/UI/Commands/` | Slash command handlers (22 command modules + Base.pm + 3 API sub-command modules) |
 | `lib/CLIO/UI/Multiplexer/` | Terminal multiplexer support |
 | `lib/CLIO/Session/` | Session management (Manager, State, FileVault, Lock, Export, TodoStore, ToolResultStore) |
 | `lib/CLIO/Memory/` | Context/memory system (YaRN, TokenEstimator, ShortTerm, LongTerm) |
 | `lib/CLIO/Profile/` | User personality profile (Analyzer, Manager) |
 | `lib/CLIO/Protocols/` | Complex workflows (Puppeteer) |
-| `lib/CLIO/Providers/` | Direct API providers (Anthropic, Google, NVIDIA, Base, DeepSeek, MiniMax, Z.A.I, OpenRouter, OrcaRouter, KiloCode, Ollama Cloud, GitHub Copilot, SAM, llama.cpp, LM Studio) |
+| `lib/CLIO/Providers/` | Native API provider modules (Anthropic, Google, NVIDIA, Base — 4 files) |
 | `lib/CLIO/Coordination/` | Multi-agent coordination (Broker, Client, SubAgent) |
-| `lib/CLIO/MCP/` | Model Context Protocol (Manager, Client, Transport::HTTP, Transport::Stdio, Auth::OAuth) |
-| `lib/CLIO/Logging/` | Structured logging (Logger, ProcessStats, ToolLogger) |
+| `lib/CLIO/MCP/` | Model Context Protocol (Manager, Client, Transport::HTTP, Transport::Stdio, Auth/OAuth) |
+| `lib/CLIO/Logging/` | Structured logging (ToolLogger, ProcessStats) |
 | `lib/CLIO/Compat/` | Compatibility layers (Terminal, HTTP) |
 | `lib/CLIO/Util/` | Utilities (PathResolver, TextSanitizer, JSON, JSONRepair, YAML, ImageAttachment, ImageDisplay, ConfigPath, AtomicWrite, RateLimit, GitIgnore, AnthropicXMLParser, CABundle, Curl, InputHelpers, Proxy, UUID) |
 | `lib/CLIO/Spec/` | OpenSpec integration (Manager) |
 | `lib/CLIO/Core/model-data/` | Unified model capability JSON files (models.json, provider-defaults.json, heuristics.json, provider-mapping.json) |
 | `docs/` | User/dev documentation |
 | `docs/templates/` | Generic AGENTS.md / instructions.md templates used by `/init` |
-| `styles/` | Terminal color styles (26 themes: dark, light, retro, cyberpunk, monokai, etc.) |
-| `themes/` | UI themes (compact, console, default, verbose) |
+| `styles/` | Terminal color styles (25 styles: dark, light, retro, cyberpunk, monokai, etc.) |
+| `themes/` | UI output themes (compact, console, default, dense, spacious, verbose) |
 | `tools/` | Repo-local tooling (assess_codebase.pl, cache_health.pl, context_inspector.pl, prompt_diff.pl, session_stats.pl, trim_dryrun.pl, etc.) |
 | `tests/unit/` | Single module tests |
 | `tests/integration/` | Cross-module tests (e2e, subagent, broker) |
@@ -104,7 +104,7 @@ MCPBridge [dynamic], PluginBridge [dynamic]
 - `lib/CLIO/UI/Chat.pm` - Terminal interface
 - `lib/CLIO/UI/SessionReplay.pm` - Session history visual replay renderer
 - `lib/CLIO/Core/ToolExecutor.pm` - Tool invocation
-- `lib/CLIO/Tools/FileOperations.pm` - File system operations (17 ops)
+- `lib/CLIO/Tools/FileOperations.pm` - File system operations (16 canonical operations)
 - `lib/CLIO/Tools/Registry.pm` - Tool registration
 - `lib/CLIO/Core/PluginManager.pm` - Plugin lifecycle
 - `lib/CLIO/Core/PromptBuilder.pm` - Prompt construction (system prompt, the cache-stable [0])
@@ -203,17 +203,17 @@ If the system handles the condition (retry, reroute, fallback), use `log_debug`,
 | `CLIO::Core::` | System core | APIManager, WorkflowOrchestrator, ToolExecutor, Config, PromptManager, ContextBuilder, MessageHistory, ConversationManager |
 | `CLIO::Core::API::` | API sub-modules | ResponseHandler, MessageValidator, ErrorHandler, PayloadSanitizer |
 | `CLIO::Tools::` | AI-callable tools | FileOperations, VersionControl, TerminalOperations, MemoryOperations, Interact, ApplyPatch, CodeIntelligence, RemoteExecution, SubAgentOperations, TodoList, WebOperations, SkillOperations, MCPBridge, PluginBridge, Registry, Tool |
-| `CLIO::UI::` | Terminal interface | Chat, Markdown, Theme, ANSI, CommandHandler, DiffRenderer, Display, HostProtocol, Multiplexer, PaginationManager, ProgressSpinner, StreamingController, Terminal, ToolOutputFormatter |
+| `CLIO::UI::` | Terminal interface | Chat, Markdown, Theme, ANSI, CommandHandler, DiffRenderer, Display, HostProtocol, Multiplexer, PaginationManager, ProgressSpinner, SessionReplay, Spinners, StreamingController, Terminal, ToolOutputFormatter |
 | `CLIO::UI::Commands::` | Slash command handlers | AI, API, Billing, Config, Context, Device, File, Git, Log, Memory, Mux, Profile, Project, Prompt, Session, Skills, Spec, Stats, SubAgent, System, Todo, Update |
 | `CLIO::Session::` | Session management | Manager, State, FileVault, Lock, Export, TodoStore, ToolResultStore |
 | `CLIO::Memory::` | Context/memory | ShortTerm, LongTerm, YaRN, TokenEstimator |
-| `CLIO::Providers::` | Provider registry + native providers | Anthropic, Google, NVIDIA, Base, DeepSeek, MiniMax, Z.A.I, OpenRouter, OrcaRouter, KiloCode, Ollama Cloud, GitHub Copilot, SAM, llama.cpp, LM Studio (18 providers in Providers.pm) |
+| `CLIO::Providers::` | Provider registry + native providers | 20 providers in `Providers.pm`: SAM, GitHub Copilot, OpenAI, Anthropic, Google, DeepSeek, llama.cpp, LM Studio, Ollama Cloud, OpenRouter, Vercel AI Gateway, OrcaRouter, KiloCode, Opper, Charm Hyper, MiniMax, MiniMax Token Plan, Z.A.I (Chat), Z.A.I (Coding), NVIDIA NIM |
 | `CLIO::Coordination::` | Multi-agent | Broker, Client, SubAgent |
 | `CLIO::MCP::` | Model Context Protocol | Manager, Client, Transport::Stdio, Transport::HTTP, Auth::OAuth |
 | `CLIO::Profile::` | User profiling | Analyzer, Manager |
 | `CLIO::Protocols::` | Complex workflows | Puppeteer |
 | `CLIO::Security::` | Auth/authz | Auth, Authz, AuthorizationRelay, CommandAnalyzer, InvisibleCharFilter, PathAuthorizer, SecretRedactor |
-| `CLIO::Logging::` | Structured logging | Logger, ProcessStats, ToolLogger |
+| `CLIO::Logging::` | Structured logging | ToolLogger, ProcessStats |
 | `CLIO::Compat::` | Compatibility | Terminal (ReadKey, ReadMode), HTTP |
 | `CLIO::Util::` | Utilities | PathResolver, TextSanitizer, JSON, JSONRepair, YAML, ImageAttachment, ImageDisplay, ConfigPath, AtomicWrite, RateLimit, GitIgnore, AnthropicXMLParser, CABundle, Curl, InputHelpers, Proxy, UUID |
 | `CLIO::Code::` | Code intelligence | TreeSitter |

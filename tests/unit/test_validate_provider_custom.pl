@@ -138,7 +138,7 @@ subtest 'list_all_providers includes built-ins' => sub {
     my @all = list_all_providers();
     ok(grep(/^openai$/, @all), 'built-in openai appears in list_all_providers');
     ok(grep(/^anthropic$/, @all), 'built-in anthropic appears in list_all_providers');
-    ok(@all >= 18, 'at least 18 providers listed (built-ins)');
+    ok(@all >= 20, 'at least 20 providers listed (built-ins)');
 };
 
 done_testing();

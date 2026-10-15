@@ -183,7 +183,7 @@ All `/api set` commands save globally by default. To set a value for the current
 
 Use `/api show` to see your current configuration and whether any values are session overrides.
 
-See [PROVIDERS.md](PROVIDERS.md) for setup instructions for all 18 providers.
+See [PROVIDERS.md](PROVIDERS.md) for setup instructions for all 20 providers.
 
 **Optional Environment Variables**
 
@@ -340,7 +340,7 @@ CLIO: I can see you have several files and directories here:
 - lib/ (source code modules)
 - docs/ (documentation)
 - scripts/ (utility scripts)
-- sessions/ (saved conversations)
+- sessions/ (stored in `~/.clio/projects/<uuid>/sessions/`, not in the project tree)
 
 **Files:**
 - clio (main executable)
@@ -391,13 +391,11 @@ clio --resume
 
 **List available sessions:**
 
-```bash
-ls sessions/
-```
+Use the `/session list` command inside CLIO, or from the shell:
 
-Output:
-```text
-sess_20260118_143052.json
+```bash
+ls ~/.clio/projects/$(cat .clio/project_uuid)/sessions/
+```
 sess_20260118_150234.json
 sess_20260118_163421.json
 ```
@@ -708,16 +706,16 @@ When running inside tmux, GNU Screen, or Zellij, CLIO can manage panes for sub-a
 
 Every CLIO conversation is a **session**. Sessions are:
 
-- **Persistent**: Automatically saved to `sessions/` directory
+- **Persistent**: Automatically saved to `~/.clio/projects/<uuid>/sessions/`
 - **Resumable**: Pick up exactly where you left off
 - **Complete**: Include full conversation history and tool operations
-- **Timestamped**: Named with creation date/time (e.g., `sess_20260118_143052`)
+- **UUID-keyed**: Named with a unique session identifier
 
 **Session Storage:**
-Sessions are stored as JSON files in `sessions/` directory:
+Sessions are stored as JSON files in `~/.clio/projects/<uuid>/sessions/`:
 ```json
 {
-  "id": "sess_20260118_143052",
+  "session_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
   "created_at": "2026-01-18T14:30:52Z",
   "conversation": [...],
   "model": "claude-sonnet-4",
@@ -1474,8 +1472,8 @@ This is CLIO, a Perl-based AI code assistant. The structure is:
   - `Security/` - Authentication and authorization
   - `Memory/` - Context and memory systems
   
-- `styles/` - Color style files (25 themes)
-- `sessions/` - Saved conversation sessions
+- `styles/` - Terminal color styles (25 style files, not themes)
+- Sessions are stored in `~/.clio/projects/<uuid>/sessions/`, not in the project tree
 - `docs/` - User-facing documentation
 
 **Key Components:**
@@ -2168,7 +2166,7 @@ The scope flag controls which file the skill is written to. When you omit the fl
 |------|---------|--------------|------------|
 | `--global` | `--user`, `--scope=user` | `~/.clio/skills.json` | Every project on this machine |
 | `--project` (default) | `--scope=project` | `<project>/.clio/skills.json` | This project only |
-| `--session` | `--scope=session` | `sessions/<id>/skills.json` | This session only, gone when the session ends |
+| `--session` | `--scope=session` | `.clio/sessions/<id>/skills.json` | This session only, gone when the session ends |
 | (no flag, freeform) | edit the file directly | `<dir>/.clio/skills/<name>.md` | Wherever the file lives |
 
 The `freeform` scope is special: a `.clio/skills/<name>.md` file is automatically picked up, and editing the file in place is how you modify that skill. `/skills show <name>` on a freeform skill points at the .md path so you can open it in your editor.
@@ -2181,7 +2179,7 @@ Skills live in one of six scopes. The list and show commands surface the scope a
 |-------|--------|----------|---------|
 | `user` | `~/.clio/skills.json` | yes | Personal skills you want in every project |
 | `project` | `<cwd>/.clio/skills.json` | yes | Skills tied to a single codebase, commit to the repo |
-| `session` | `sessions/<id>/skills.json` | yes | Throwaway skills for the current session, cleared on exit |
+| `session` | `.clio/sessions/<id>/skills.json` | yes | Throwaway skills for the current session, cleared on exit |
 | `freeform` | `<dir>/.clio/skills/<name>.md` | yes (edit the .md) | Markdown-form skills for long-form content, version controlled alongside code |
 | `repository` | `~/.clio/skill-cache/<repo>/` | no (re-sync instead) | Skills pulled from a configured Git repository |
 | `builtin` | bundled with CLIO | no | Read-only skills shipped with CLIO (`explain`, `review`, `test`, `fix`, `doc`, `design`, `init`, `init-with-prd`, `design-review`) |
@@ -2433,9 +2431,11 @@ clio --resume sess_20260118_143052
 
 **Clean Up Old Sessions:**
 ```bash
-# Sessions are in sessions/ directory
-ls -lt sessions/ | head -20  # See recent sessions
-rm sessions/sess_2026011*.json  # Delete old sessions
+# Sessions are in ~/.clio/projects/<uuid>/sessions/
+# Get the UUID from .clio/project_uuid
+SESS_DIR=~/.clio/projects/$(cat .clio/project_uuid)/sessions
+ls -lt "$SESS_DIR" | head -20  # See recent sessions
+# Or use /session list inside CLIO
 ```
 
 ### Managing Complex Tasks
@@ -2656,25 +2656,26 @@ Session JSON file is malformed.
 
 **Solution:**
 ```bash
-# Check session file
-cat sessions/sess_20260118_143052.json | python -m json.tool
+# Sessions are in ~/.clio/projects/<uuid>/sessions/
+SESSION_DIR=~/.clio/projects/$(cat .clio/project_uuid)/sessions
+SESSION=$(ls -t $SESSION_DIR/*.json | head -1)
+cat "$SESSION" | python -m json.tool
 
 # If corrupt, delete and start new
-rm sessions/sess_20260118_143052.json
+rm "$SESSION"
 clio --new
 ```
 
 **Problem: "Cannot resume session"**
 
-Session ID doesn't exist.
+Session ID doesn't exist. Use `/session list` inside CLIO or:
 
 **Solution:**
 ```bash
-# List available sessions
-ls sessions/
-
-# Resume with correct ID
-clio --resume sess_YYYYMMDD_HHMMSS
+# Sessions are in ~/.clio/projects/<uuid>/sessions/
+SESSION_DIR=~/.clio/projects/$(cat .clio/project_uuid)/sessions
+ls -t $SESSION_DIR/*.json | head -20  # List recent sessions
+# Resume inside CLIO with /session switch <id>
 ```
 
 ### Output/Display Issues
@@ -2730,7 +2731,7 @@ Large session history or file operations.
 clio --new
 
 # Or clean up old sessions
-rm sessions/sess_2025*.json  # Delete old sessions
+# Or use /session delete <id> inside CLIO
 ```
 
 ### Tool Issues

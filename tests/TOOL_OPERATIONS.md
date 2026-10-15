@@ -2,7 +2,7 @@
 
 ## Complete list of all tool operations for testing
 
-### FileOperations (17 operations)
+### FileOperations (16 canonical operations)
 
 **READ (5):**
 - `read_file` - path, start_line (optional), end_line (optional)
@@ -17,64 +17,66 @@
 - `semantic_search` - query, scope (optional)
 - `read_tool_result` - toolCallId, offset (optional), length (optional)
 
-**WRITE (8):**
-- `create_file` - path, content
-- `write_file` - path, content
-- `append_file` - path, content
+**WRITE (7):**
+- `write_file` - path, content, append (optional) (create_file and append_file are aliases)
 - `replace_string` - path, old_string, new_string
 - `multi_replace_string` - replacements (array)
-- `insert_at_line` - path, line_number, content
+- `insert_at_line` - path, line, content
 - `delete_file` - path
-- `rename_file` - source, destination
+- `rename_file` - old_path, new_path
 - `create_directory` - path
 
-### TerminalOperations (3 operations)
+### TerminalOperations (2 operations)
 
-- `execute` or `exec` - command, cwd (optional), isInteractive (optional)
+- `exec` - command, timeout (optional), working_directory (optional), passthrough (optional)
 - `validate` - command
 
-### MemoryOperations (5 operations)
+### MemoryOperations (13 operations)
 
-- `store` - key, value, metadata (optional)
+- `store` - key, content
 - `retrieve` - key
 - `search` - query
 - `list` - (no params)
 - `delete` - key
+- `recall_sessions` - query
+- `add_discovery` - fact, confidence (optional)
+- `add_solution` - error, solution, examples (optional)
+- `add_pattern` - pattern, confidence (optional)
+- `add_corroboration` - search_text
+- `update_ltm` - search_text, replacement
+- `prune_ltm` - (all optional)
+- `ltm_stats` - (no params)
 
 ### TodoList (4 operations)
 
 - `read` - (no params)
 - `write` - todoList (array)
-- `update` - todo (single item)
-- `add` - todo (single item)
+- `update` - todoUpdates (array)
+- `add` - newTodos (array)
 
-### VersionControl (operations via git commands)
+### VersionControl (11 operations)
 
-- `status` - (no params)
-- `diff` - path (optional)
-- `log` - count (optional), path (optional)
-- `add` - files (array or string)
+- `status` - (no required params)
+- `log` - count, limit (optional)
+- `diff` - ref1, ref2, file (optional)
+- `branch` - action, name (optional)
 - `commit` - message
-- `branch` - action ('list'|'create'|'delete'), name (optional)
-- `checkout` - branch or commit
-- `show` - commit
-- `remote` - action, url (optional)
-- `worktree` - action ('list'|'add'|'remove'|'prune'|'merge'|'pr'), worktree_path (for add/remove/merge/pr), branch (optional), create_branch (optional), force (optional), remote (optional, for pr)
+- `push` - branch, remote (optional)
+- `pull` - branch, remote (optional)
+- `blame` - file
+- `stash` - action, index (optional)
+- `tag` - action, name (optional)
+- `worktree` - action, worktree_path (optional)
 
-### WebOperations
+### WebOperations (2 operations)
 
-- `fetch` - url, method (optional), headers (optional)
+- `fetch_url` - url
+- `search_web` - query
 
-### CodeIntelligence
+### CodeIntelligence (2 operations)
 
-- `analyze` - path or scope
-- `find_symbol` - name, type (optional)
-- `get_dependencies` - path
-
-### ResultStorage (internal - not direct operations)
-
-This is NOT a user-facing tool but internal infrastructure.
-Operations handled via FileOperations.read_tool_result
+- `list_usages` - symbol_name, file_paths (optional), context_lines (optional)
+- `search_history` - query
 
 ## Notes for Testing
 
@@ -88,15 +90,15 @@ Operations handled via FileOperations.read_tool_result
 ## Test Priority
 
 HIGH PRIORITY (test ALL encodings):
-- FileOperations: create_file, write_file, read_file, append_file
+- FileOperations: write_file, read_file
 - MemoryOperations: store, retrieve
 - TodoList: write
-- TerminalOperations: execute
+- TerminalOperations: exec
 
 MEDIUM PRIORITY:
 - FileOperations: replace_string, grep_search
-- VersionControl: commit, add
+- VersionControl: commit, branch
 
 LOW PRIORITY:
 - FileOperations: file_search, list_dir
-- WebOperations: fetch (encoding depends on remote server)
+- WebOperations: fetch_url (encoding depends on remote server)

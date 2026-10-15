@@ -26,7 +26,7 @@ Here's the concrete list - things that happen when you use CLIO:
 - **Remembers across sessions.** CLIO stores discoveries, solutions, and code patterns in long-term memory. The next session on the same project starts with what was learned last time.
 - **Coordinates parallel work.** Spawn sub-agents with file and git locks so multiple agents can work on the same repo without stepping on each other. They communicate over a Unix socket message bus.
 - **Runs across your fleet.** SSH into any machine, deploy CLIO, run a task, get results back in your local session. Or deploy across your entire fleet in parallel.
-- **Integrates with terminals.** Live agent output in tmux, GNU Screen, or Zelli panes. Auto-detected - works without them too.
+- **Integrates with terminals.** Live agent output in tmux, GNU Screen, or Zellij panes. Auto-detected - works without them too.
 - **Stays private by design.** Secret redaction strips API keys, tokens, and passwords from AI context before they reach the model. File access outside the project directory needs your approval. Invisible Unicode characters that could hide prompt injections are filtered automatically.
 - **Sandboxes when needed.** `--sandbox` blocks web, remote, and agent access and restricts file operations to the project directory. For true isolation, `clio-container` runs CLIO in Docker with `--cap-drop ALL`.
 - **Builds itself.** CLIO has been maintaining its own codebase, ALICE, and SAM through AI-assisted development since v20260119.1.
@@ -60,6 +60,8 @@ Conditional: `remote_execution`, `agent_operations`, `skill_operations`.
 | Anthropic | API Key | Claude via native Messages API |
 | Google Gemini | API Key | Gemini 2.5 Pro/Flash |
 | DeepSeek | API Key | DeepSeek V4 |
+| llama.cpp (Local) | No auth | Local models via llama.cpp server |
+| LM Studio | No auth | Local models via LM Studio server |
 | OpenRouter | API Key | 100+ models, automatic fallback |
 | Ollama Cloud | API Key | Cloud-hosted Ollama |
 | MiniMax | API Key | MiniMax-M3 |
@@ -73,8 +75,6 @@ Conditional: `remote_execution`, `agent_operations`, `skill_operations`.
 | Opper | API Key | Most recent addition |
 | Charm Hyper | API Key | HyperCharm gateway |
 | SAM | API Key | Use your local SAM instance |
-| llama.cpp | None | Local |
-| LM Studio | None | Local |
 
 Run `/api models` after setup to see current model availability. Full setup instructions in [docs/PROVIDERS.md](docs/PROVIDERS.md).
 

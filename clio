@@ -126,7 +126,7 @@ EXAMPLES:
     clio --list-spinners          # Browse spinner animations
 
 SESSIONS:
-    Sessions are stored in: .clio/sessions/
+    Sessions are stored in: ~/.clio/projects/<uuid>/sessions/
     Each session has a unique UUID identifier
     Sessions can have human-friendly names (auto-generated or set via /session name)
     Use /switch command to list and switch between sessions

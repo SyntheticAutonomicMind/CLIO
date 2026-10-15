@@ -9,10 +9,10 @@
 CLIO provides comprehensive tooling across multiple categories. Every tool operation displays an **action description** showing exactly what it's doing in real-time.
 
 **Tool Categories:**
-1. [file_operations](#file_operations) - 18 operations
+1. [file_operations](#file_operations) - 16 operations
 2. [version_control](#version_control) - 11 operations
 3. [terminal_operations](#terminal_operations) - 2 operations
-4. [memory_operations](#memory_operations) - 11 operations (session + LTM)
+4. [memory_operations](#memory_operations) - 13 operations (session + LTM)
 5. [todo_operations](#todo_operations) - 4 operations (CRUD)
 6. [web_operations](#web_operations) - 2 operations
 7. [code_intelligence](#code_intelligence) - 2 operations
@@ -117,21 +117,14 @@ Search a single file:
 
 ### Write Operations
 
-#### create_file / write_file
+#### write_file (create_file / append_file)
 
-**Description:** Create new file or overwrite existing file.
+**Description:** Write content to a file. `create_file` and `append_file` are aliases for `write_file`. `write_file` creates or overwrites; pass `append=true` (alias `append_file`) to append instead.
 
 **Parameters:**
 - `path` (string, **required**)
 - `content` (string, **required**) - File content
-
-#### append_file
-
-**Description:** Append content to file.
-
-**Parameters:**
-- `path` (string, **required**)
-- `content` (string, **required**)
+- `append` (boolean, optional) - If true, append to existing file instead of overwriting
 
 #### replace_string
 
@@ -259,8 +252,10 @@ Search a single file:
 | `add_discovery` | Store LTM discovery | `fact` (required), `confidence` (optional) |
 | `add_solution` | Store LTM solution | `error` (required), `solution` (required) |
 | `add_pattern` | Store LTM pattern | `pattern` (required), `confidence` (optional) |
+| `add_corroboration` | Add corroboration to LTM entry | `search_text` (required), `source_agent`/`source_session` (optional) |
 | `update_ltm` | Update existing LTM entry | `search_text` (required), `replacement` (required) |
 | `prune_ltm` | Clean old LTM entries | `max_age_days` (optional), `min_confidence` (optional) |
+| `ltm_stats` | Show LTM statistics | None |
 
 ---
 

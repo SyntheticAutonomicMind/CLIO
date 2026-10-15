@@ -259,9 +259,9 @@ Tools can be restricted via `--enable` (allowlist) or `--disable` (blocklist) CL
 | Session Lock | `Lock.pm` | Lock files to prevent concurrent access |
 
 **How it works:**
-1. New session: Create `sessions/UUID.json`
+1. New session: Create `~/.clio/projects/<uuid>/sessions/UUID.json`
 2. Each message appended to conversation history
-3. Sessions persist on disk (in `sessions/` directory)
+3. Sessions persist on disk (in `~/.clio/projects/<uuid>/sessions/`)
 4. Resume: Load session from disk, continue conversation
 
 ### 5. Memory System
@@ -406,7 +406,7 @@ CLIO has no other protocol modules. The earlier `Architect.pm`, `Editor.pm`, `Va
 
 | Component | File | Purpose |
 |-----------------------------------------------------------------------------------------------------------------------------------------------------------|------------------------------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------|
-| Provider Registry | `Providers.pm` | AI provider registration and lookup (18 providers) |
+| Provider Registry | `Providers.pm` | AI provider registration and lookup (20 providers) |
 | Base | `Base.pm` | Abstract base class for providers |
 | Anthropic | `Anthropic.pm` | Native Anthropic Messages API |
 | Google | `Google.pm` | Native Google Gemini API |
@@ -415,7 +415,7 @@ CLIO has no other protocol modules. The earlier `Architect.pm`, `Editor.pm`, `Va
 **How it works:**
 - Base.pm defines the provider interface
 - Each native provider implements its own API communication
-- 18 providers configured in Providers.pm: SAM, GitHub Copilot, OpenAI, DeepSeek, llama.cpp, LM Studio, Ollama Cloud, OpenRouter, OrcaRouter, KiloCode, MiniMax, MiniMax Token Plan, Z.AI Chat, Z.AI Coding, Anthropic, Google Gemini, NVIDIA NIM, Vercel AI Gateway
+- 20 providers configured in Providers.pm: SAM, GitHub Copilot, OpenAI, Anthropic, Google Gemini, DeepSeek, llama.cpp, LM Studio, Ollama Cloud, OpenRouter, Vercel AI Gateway, OrcaRouter, KiloCode, Opper, Charm Hyper, MiniMax, MiniMax Token Plan, Z.A.I (Chat), Z.A.I (Coding), NVIDIA NIM
 - OpenAI-compatible providers (OpenAI, DeepSeek, MiniMax, Z.AI, OpenRouter, etc.) and GitHub Copilot are handled directly by APIManager
 
 ### 13. OpenSpec Integration
@@ -466,9 +466,9 @@ graph TD
 ```mermaid
 graph TD
     A[User Action] --> B[Add to Session.State.conversation]
-    B --> C[Save sessions/UUID.json]
+    B --> C[Save ~/.clio/projects/<uuid>/sessions/UUID.json]
     C --> D[User resumes later]
-    D --> E[Load sessions/UUID.json]
+    D --> E[Load ~/.clio/projects/<uuid>/sessions/UUID.json]
     E --> F[Conversation history restored]
     F --> G[Continue from where left off]
     
@@ -495,7 +495,7 @@ graph TD
 
 ### `clio --new`
 - Start fresh session
-- Create new `sessions/UUID.json`
+- Create new `sessions/UUID.json` in `~/.clio/projects/<uuid>/sessions/`
 - Begin conversation
 
 ### `clio --resume`
@@ -513,10 +513,10 @@ graph TD
 ## Configuration
 
 ### Locations
-- **API Keys:** `~/.clio/config.json`
-- **Sessions:** `./sessions/` (project directory)
+- **API Keys:** `~/.clio/config.json` (or `~/.config/clio/config.json` on XDG systems)
+- **Sessions:** `~/.clio/projects/<uuid>/sessions/` (per-project data directory)
 - **Custom Instructions:** `./.clio/instructions.md` (project directory)
-- **System Prompts:** `~/.clio/system-prompts/` (user home)
+- **System Prompts:** `~/.clio/system-prompts/` (user home, or `~/.config/clio/` on XDG)
 
 ### Setup Process
 ```bash
@@ -592,7 +592,7 @@ perl -I./lib -c lib/CLIO/Core/Config.pm
 - Token counting for efficient context usage
 
 ### Memory
-- Session data in `sessions/` (JSON files)
+- Session data in `~/.clio/projects/<uuid>/sessions/` (JSON files)
 - In-memory conversation history
 - Token estimator helps avoid OOM
 
@@ -619,8 +619,8 @@ perl -I./lib -c lib/CLIO/Core/Config.pm
 4. **Graceful Degradation** - Optional features fail safely (e.g., Text::Diff)
 
 ### Extension Points
-- **Tools**: Create new tool in `lib/CLIO/Tools/`, register in Registry
-- **Protocols**: Create protocol handler in `lib/CLIO/Protocols/`, extend Handler.pm
+- **Tools**: Create new tool in `lib/CLIO/Tools/`, add to `@default_tools` in `WorkflowOrchestrator.pm`
+- **Protocols**: Add a workflow protocol in `lib/CLIO/Protocols/` — see `Puppeteer.pm`
 - **UI Themes**: Add theme file in `themes/`, define color scheme
 - **AI Providers**: Add provider logic in Core/APIManager.pm
 
@@ -708,15 +708,27 @@ lib/CLIO/
       PluginManager.pm     # Plugin system
       Defaults.pm          # Default configuration values
       Logger.pm            # Logging
+      ContextBuilder.pm    # Context projection and LTM relevance
+      MessageHistory.pm    # Message rendering
+      Diagnostics.pm       # Diagnostics and health checks
+      Interrupt.pm         # Interrupt handling
+      MessageFingerprinter.pm # Message fingerprinting for dedup
+      ModelCapabilitiesManager.pm # Model capability discovery + static maps
+      ModelDataLoader.pm   # Unified model data loader
+      RouteManager.pm      # Route management and strategy
+      TaskClassifier.pm    # Task classification
+      WorkflowCompletion.pm # Workflow completion
       API/                 # API sub-modules
           MessageValidator.pm # Message format validation and proactive trimming
           ResponseHandler.pm  # AI provider response parsing
+          ErrorHandler.pm    # API error handling
+          PayloadSanitizer.pm # Payload sanitization
       ErrorContext.pm      # Error taxonomy and structured context
   Tools/                   # Tool implementations
       Tool.pm              # Base class
       Registry.pm          # Tool registry
-      FileOperations.pm    # File I/O (17 operations)
-      VersionControl.pm    # Git (10 operations)
+      FileOperations.pm    # File I/O (16 canonical operations)
+      VersionControl.pm    # Git (11 operations)
       TerminalOperations.pm # Shell execution
       MemoryOperations.pm  # Memory operations
       TodoList.pm          # Todo tracking
@@ -742,22 +754,17 @@ lib/CLIO/
       TokenEstimator.pm    # Token counting
   Code/                    # Code analysis
       TreeSitter.pm        # AST parsing
-      Symbols.pm           # Symbol extraction
-      Relations.pm         # Symbol relationships
   Coordination/            # Multi-agent coordination
       Broker.pm            # Coordination server
       Client.pm            # Broker connection API
       SubAgent.pm          # Process spawning
   Protocols/               # Protocol handlers
-      Manager.pm           # Protocol registry
-      Handler.pm           # Base class
-      Architect.pm         # Design protocol
-      Editor.pm            # Code editing protocol
-      Recall.pm            # Memory recall
+      Puppeteer.pm         # Puppeteer multi-agent workflow protocol
   Providers/               # Native API provider modules
       Base.pm              # Provider base class
       Anthropic.pm         # Anthropic Messages API
       Google.pm            # Google Gemini native API
+      NVIDIA.pm            # NVIDIA NIM native API
   MCP/                     # Model Context Protocol
       Manager.pm           # MCP server management
       Client.pm            # MCP JSON-RPC client
@@ -767,9 +774,10 @@ lib/CLIO/
   Security/                # Security & auth
       Auth.pm              # OAuth
       Authz.pm             # Authorization
+      AuthorizationRelay.pm # Authorization relay
+      CommandAnalyzer.pm   # Command risk classification
       PathAuthorizer.pm    # File access control
       SecretRedactor.pm    # PII/secret redaction
-      Manager.pm           # Security manager
       InvisibleCharFilter.pm # Invisible Unicode character defense
   Logging/                 # Logging system
       ToolLogger.pm        # Tool operation logging
@@ -789,8 +797,12 @@ lib/CLIO/
       GitIgnore.pm         # Auto-manage .clio/ entries in .gitignore
       AtomicWrite.pm       # Atomic file writes
       RateLimit.pm         # Rate limiting
+      CABundle.pm          # CA bundle management
+      Curl.pm              # Curl wrapper
+      Proxy.pm             # Proxy configuration
       ImageAttachment.pm   # Image file handling
       ImageDisplay.pm      # Inline image display
+      UUID.pm              # UUID generation
   Spec/                    # OpenSpec integration
       Manager.pm           # Spec lifecycle management
   Test/                    # Testing utilities
@@ -798,14 +810,6 @@ lib/CLIO/
   Profile/                 # User personality profile
       Analyzer.pm          # Session history analysis
       Manager.pm           # Profile storage and injection
-  Util/                    # Utility modules
-      PathResolver.pm      # Path resolution
-      TextSanitizer.pm     # Text sanitization
-      ... (other utilities - see detailed listing above)
-  NaturalLanguage/         # NL processing
-      ... (NL modules)
-  Compat/                  # Compatibility layer
-      ... (compatibility modules)
 ```
 
 ---------------------------------------------------
