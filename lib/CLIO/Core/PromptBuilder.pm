@@ -326,18 +326,31 @@ sub generate_tools_section {
     $section .= "## **HOW TO CALL TOOLS**\n\n";
     $section .= "Most tools use an **operation parameter** to select the action. ";
     $section .= "Call the tool by name and pass `operation` as a parameter:\n\n";
-    $section .= "```\n";
+    $section .= "```json\n";
     $section .= "{\"name\": \"file_operations\", \"parameters\": {\"operation\": \"grep_search\", \"query\": \"...\"}}\n";
     $section .= "{\"name\": \"version_control\", \"parameters\": {\"operation\": \"status\"}}\n";
     $section .= "{\"name\": \"apply_patch\", \"parameters\": {\"patch\": \"...\"}}\n";
     $section .= "```\n\n";
-    $section .= "**Do NOT call operations as standalone tools** (e.g., `grep_search` is NOT a tool name - use `file_operations` with `operation: \"grep_search\"`).\n\n";
+    $section .= "Do NOT call operations as standalone tools (e.g., `grep_search` is NOT a tool name - use `file_operations` with `operation: \"grep_search\"`).\n\n";
 
-    # Add JSON formatting instruction - de-escalate MUST to must
+    # Prominent callout: operation is ALWAYS required
+    $section .= "## **[WARN] Operation is ALWAYS Required**\n\n";
+    $section .= "Every tool call to a multi-operation tool (file_operations, version_control, ";
+    $section .= "terminal_operations, memory_operations, web_operations, todo_operations, ";
+    $section .= "code_intelligence, agent_operations, etc.) MUST include `\"operation\": \"<value>\"`. ";
+    $section .= "You cannot omit this field. If you forget it, the tool call fails.\n\n";
+
+    # JSON formatting instruction
     $section .= "## **JSON FORMAT**\n\n";
     $section .= "Tool arguments must be valid JSON. Every parameter key should have a value.\n\n";
-    $section .= "**Note:** `operation` is required for multi-operation tools.\n\n";
     $section .= "**DECIMAL NUMBERS:** Always include leading zero: `0.1` not `.1`, `0.05` not `.05`\n\n";
+
+    # Query vs pattern disambiguation
+    $section .= "## **query vs pattern (search tools)**\n\n";
+    $section .= "For `grep_search` and `semantic_search`:\n";
+    $section .= "- `query` = the **search text** (REQUIRED) — the string or regex to find\n";
+    $section .= "- `pattern` = a **file glob filter** like `*.pm` (OPTIONAL) — limits which files are searched\n";
+    $section .= "These are DIFFERENT parameters. Do not put your search text in `pattern`.\n\n";
 
     # Add interact tool guidance
     $section .= "## interact - Communication Tool\n\n";

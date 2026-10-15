@@ -249,11 +249,11 @@ sub get_additional_parameters {
         # Search parameters
         query => {
             type => "string",
-            description => "[REQUIRED for grep_search, semantic_search] Search query or pattern. For semantic_search: use natural language keywords like 'authentication function'. For grep_search: literal text or regex.",
+            description => "[REQUIRED for grep_search, semantic_search] Search text — the string or regex to find in file contents. For semantic_search: use natural language keywords like 'authentication function'. For grep_search: literal text or regex. IMPORTANT: this is the search text, NOT a file filter. Do not confuse with 'pattern' (which limits which files are searched).",
         },
         pattern => {
             type => "string",
-            description => "[REQUIRED for file_search, OPTIONAL for grep_search] Glob pattern to filter which files to search (e.g., '**/*.pm', '*.pl').",
+            description => "[REQUIRED for file_search, OPTIONAL for grep_search] File glob filter to limit which files are searched (e.g., '**/*.pm', '*.pl'). This is NOT the search text — use 'query' for that.",
         },
         directory => {
             type => "string",
@@ -1372,6 +1372,27 @@ sub grep_search {
 
    my $query = $params->{query};
    my $pattern = $params->{pattern} || '**/*';
+
+    # Silent remediation: if 'query' is missing but 'pattern' was provided,
+    # the model likely confused 'pattern' (a file glob filter) with 'query'
+    # (the search text). Remap pattern -> query silently. Safe because query
+    # is required for grep_search — if it is absent and pattern is present, the
+    # model intended pattern as the search text.
+    # Heuristic: only remap when 'pattern' does NOT look like a pure file glob.
+    # File globs use * ? [ ] but never | (regex alternation). If pattern
+    # contains | or lacks all glob metacharacters, it is a search term.
+    if ((!defined $query || !length($query)) && exists $params->{pattern}
+        && defined $params->{pattern} && length($params->{pattern})) {
+        my $p = $params->{pattern};
+        my $looks_like_glob = ($p =~ /[*?\[\]]/ && $p !~ /[|]/);
+        if (!$looks_like_glob) {
+            $query = $p;
+            $pattern = '**/*';
+            delete $params->{pattern};
+            log_debug('FileOp', "grep_search: silently remapped pattern->query (model confusion): $p");
+        }
+    }
+
    my $is_regex = $params->{is_regex} || 0;
    my $max_results = $params->{max_results} || 50;  # Prevent runaway searches
     # Optional cap on how many files to search. Default 0 = no limit (search
@@ -1645,7 +1666,22 @@ sub semantic_search {
     my $query = $params->{query};
     my $scope = $params->{scope} || '.';
     my $top_k = $params->{max_results} || 20;
-    
+
+    # Silent remediation: if 'query' is missing but 'pattern' was provided,
+    # the model likely confused 'pattern' (file glob) with 'query' (search
+    # text). Remap pattern -> query silently. See grep_search for the full
+    # heuristic rationale.
+    if ((!defined $query || !length($query)) && exists $params->{pattern}
+        && defined $params->{pattern} && length($params->{pattern})) {
+        my $p = $params->{pattern};
+        my $looks_like_glob = ($p =~ /[*?\[\]]/ && $p !~ /[|]/);
+        if (!$looks_like_glob) {
+            $query = $p;
+            delete $params->{pattern};
+            log_debug('FileOp', "semantic_search: silently remapped pattern->query (model confusion): $p");
+        }
+    }
+
     return $self->error_result("Missing required parameter: query") unless $query;
     
     log_debug('FileOp', "Semantic search for: $query (scope: $scope)");

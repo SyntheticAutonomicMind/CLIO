@@ -118,9 +118,16 @@ sub enhance_tool_error {
     my $guidance = $self->_get_category_guidance($category, $tool_name, $error, $attempted, $tool_def);
     push @parts, $guidance;
     
-    # 3. Schema information (if available)
+    # 3. Schema information (if available). For missing_required errors,
+    # only show the specific missing field(s) instead of dumping all 20+
+    # parameters — the agent needs to focus on the one fix, not scroll
+    # through a wall of schema.
     if ($tool_def && ref($tool_def) eq 'HASH') {
-        push @parts, $self->_format_schema_help($tool_name, $tool_def);
+        my $focus = undef;
+        if ($category eq 'missing_required') {
+            $focus = $self->_extract_missing_fields($error);
+        }
+        push @parts, $self->_format_schema_help($tool_name, $tool_def, $focus);
     }
     
     # 4. Examples
@@ -341,6 +348,19 @@ sub _get_category_guidance {
 
             my $params_str = @missing ? join(', ', @missing) : 'see schema below';
 
+            # Param-swap detection: when 'query' is missing but 'pattern' was
+            # provided in the attempted params, the model almost certainly
+            # confused the two. 'query' is the search text; 'pattern' is a
+            # file glob filter. Give a targeted hint instead of generic guidance.
+            my $swap_hint = '';
+            my $missing_query = grep { $_ eq 'query' } @missing;
+            if ($missing_query && $attempted && exists $attempted->{pattern}) {
+                $swap_hint = "\n\nALERT: You provided 'pattern' but forgot 'query'!\n" .
+                             "  - 'query' = the TEXT to search for (REQUIRED for grep_search / semantic_search)\n" .
+                             "  - 'pattern' = a file glob filter like '*.pm' (OPTIONAL - limits which files are searched)\n" .
+                             "These are DIFFERENT parameters. Put your search text in 'query'.";
+            }
+
             return "WHAT WENT WRONG: You didn't include the required field(s): $params_str\n" .
                    "HOW TO FIX: Include ALL required fields in your tool call.\n" .
                    "REQUIRED: Every field marked 'required' in the schema MUST be included, including fields inside array items (like todoList items, newTodos items, etc.).\n" .
@@ -348,7 +368,8 @@ sub _get_category_guidance {
                    "  - Omitting 'description' in todo items - it is REQUIRED, not optional\n" .
                    "  - Sending todo update content in the 'todoList' field - the 'update' operation needs 'todoUpdates' (NOT 'todoList')\n" .
                    "  - Sending new todo content in 'newTodos' for a 'write' - the 'write' operation needs 'todoList'\n" .
-                   "  - Forgetting to specify an 'operation' at all (the most common mistake)";
+                   "  - Forgetting to specify an 'operation' at all (the most common mistake)" .
+                   $swap_hint;
         },
         
         invalid_operation => sub {
@@ -520,6 +541,44 @@ sub _get_category_guidance {
     return $guidance{generic_error}->();
 }
 
+=head2 _extract_missing_fields
+
+Extract the names of missing required fields from an error message.
+Used to focus the schema dump on only the relevant parameters.
+
+Arguments:
+- $error: The error message text
+
+Returns:
+- ArrayRef of missing field names (may be empty)
+
+=cut
+
+sub _extract_missing_fields {
+    my ($self, $error) = @_;
+
+    my @missing;
+
+    # "Missing required parameter(s): foo, bar" or "Missing required field(s): foo"
+    if ($error =~ /missing\s+required\s+(?:parameter|field|param|argument)s?(?:\(s\))?\s*[:\-]\s*([a-zA-Z0-9_, ]+?)(?:\s*\(|\s*\.\s|$)/i) {
+        @missing = split(/\s*,\s*/, $1);
+    }
+    # "Missing 'foo' or 'bar' parameter" — alternation form
+    elsif ($error =~ /missing\s+(?:or\s+empty\s+)?['"`]?(\w+)['"`]?\s+or\s+['"`]?(\w+)['"`]?\s+parameter/i) {
+        @missing = ($1, $2);
+    }
+    # "Missing 'foo' parameter" — simple form
+    elsif ($error =~ /missing\s+(?:or\s+empty\s+)?['"`]?(\w+)['"`]?\s+parameter/i) {
+        push @missing, $1;
+    }
+    # "'update' operation requires 'todoUpdates' parameter"
+    elsif ($error =~ /['"`]?(\w+)['"`]?\s+operation\s+requires\s+['"`]?(\w+)['"`]?\s+parameter/i) {
+        push @missing, $2;
+    }
+
+    return \@missing;
+}
+
 =head2 _format_schema_help
 
 Format the tool's schema as clear, readable guidance.
@@ -527,7 +586,7 @@ Format the tool's schema as clear, readable guidance.
 =cut
 
 sub _format_schema_help {
-    my ($self, $tool_name, $tool_def) = @_;
+    my ($self, $tool_name, $tool_def, $focus_fields) = @_;
     
     unless ($tool_def && ref($tool_def) eq 'HASH') {
         return '';
@@ -536,6 +595,18 @@ sub _format_schema_help {
     my @help;
     push @help, "";
     push @help, "--- SCHEMA REFERENCE ---";
+    
+    # When focus_fields is provided (from missing_required categorization),
+    # only show the specific missing fields instead of dumping all 20+
+    # parameters. The agent needs to see just what they omitted.
+    my %focus;
+    my $trimmed = 0;
+    if ($focus_fields && ref($focus_fields) eq 'ARRAY' && @$focus_fields) {
+        %focus = map { $_ => 1 } @$focus_fields;
+        $trimmed = 1;
+        push @help, "";
+        push @help, "(Showing only the field(s) that are missing — omit this note by providing all required fields.)";
+    }
     
     # Get parameters
     my $params = $tool_def->{parameters};
@@ -547,7 +618,9 @@ sub _format_schema_help {
         push @help, "";
         push @help, "Parameters:";
         
-        foreach my $param_name (sort keys %$props) {
+        my @param_names = $trimmed ? (sort keys %focus) : (sort keys %$props);
+        foreach my $param_name (@param_names) {
+            next unless exists $props->{$param_name};
             my $param = $props->{$param_name};
             my $req_marker = $required_map{$param_name} ? ' [REQUIRED]' : ' [optional]';
             
