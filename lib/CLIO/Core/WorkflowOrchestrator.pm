@@ -484,6 +484,18 @@ sub process_input {
     my ($messages_ref, $tools) = $self->_build_turn_context($user_input, $session, $image_attachments);
     my @messages = @$messages_ref;
     
+    # Role-aware routing: if the active route uses a role-aware or intelligent
+    # strategy, determine the work role for this turn and set up the runtime
+    # candidate list before entering the main loop. This populates
+    # model_candidates with the role's primary model + fallbacks so that
+    # cycle_model() (in the ErrorHandler retry path) cycles within the role.
+    if ($self->{api_manager} && $self->{api_manager}->can('prepare_routing_for_turn')) {
+        my $resolved_role = $self->{api_manager}->prepare_routing_for_turn($user_input);
+        if (defined $resolved_role) {
+            log_debug('WorkflowOrchestrator', "Prepared role-aware routing for turn: role='$resolved_role'");
+        }
+    }
+    
     # Main workflow loop
     my $iteration = 0;
     my @tool_calls_made = ();

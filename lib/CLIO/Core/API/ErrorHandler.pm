@@ -206,6 +206,75 @@ sub _routing_should_skip {
     return 0;
 }
 
+=head2 _record_routing_decision($session, $record)
+
+Record a routing decision in the session's decision log.
+
+The record is an arrayref of hashrefs, capped at 50 entries (oldest
+evicted first). Each record contains: timestamp, decision, error_type,
+error_label, error, role, from_model, to_model, attempts, max_attempts,
+candidates, and optionally phase/wait_seconds.
+
+This is used by C</api route explain> and C</api route history> to
+show the actual routing decisions that were made.
+
+=cut
+
+sub _record_routing_decision {
+    my ($session, $record) = @_;
+
+    return unless $session && ref($session);
+    return unless $record && ref($record) eq 'HASH';
+
+    # Session may be a CLIO::Session::Manager object or a plain hashref.
+    # Use blessed() to safely check for methods.
+    require Scalar::Util;
+    if (Scalar::Util::blessed($session) && $session->can('state')) {
+        my $state = $session->state();
+        if ($state) {
+            $state->{routing_decisions} //= [];
+            push @{$state->{routing_decisions}}, $record;
+            # Cap at 50 entries (oldest evicted)
+            if (scalar(@{$state->{routing_decisions}}) > 50) {
+                splice(@{$state->{routing_decisions}}, 0, 1);
+            }
+            $session->save() if $session->can('save');
+        }
+    } else {
+        # Plain hashref (e.g. in tests)
+        $session->{routing_decisions} //= [];
+        push @{$session->{routing_decisions}}, $record;
+        if (scalar(@{$session->{routing_decisions}}) > 50) {
+            splice(@{$session->{routing_decisions}}, 0, 1);
+        }
+    }
+}
+
+=head2 get_routing_history()
+
+Return the list of recorded routing decisions from the session.
+
+Returns: Arrayref of decision records (most recent last), or empty list.
+
+=cut
+
+sub get_routing_history {
+    my ($wo) = @_;
+
+    my $session = $wo->{session};
+    return () unless $session && ref($session);
+
+    require Scalar::Util;
+    if (Scalar::Util::blessed($session) && $session->can('state')) {
+        my $state = $session->state();
+        return () unless $state;
+        return @{ $state->{routing_decisions} || [] };
+    }
+
+    # Plain hashref
+    return @{ $session->{routing_decisions} || [] };
+}
+
 =head2 _interruptible_sleep($wo, $session, $seconds, $messages, $label)
 
 Sleep for up to C<$seconds>, checking for a user interrupt on every
@@ -302,17 +371,38 @@ sub handle_api_error {
     if ($wo->{api_manager} && $wo->{api_manager}->can('model_routing_active')) {
         my $num_candidates = $wo->{api_manager}->model_routing_active();
         if ($num_candidates > 1) {
+            # Determine the active work role (for role-aware routes).
+            # This is transient state set by APIManager->prepare_routing_for_turn().
+            my $active_role = undef;
+            if ($wo->{api_manager} && $wo->{api_manager}->can('get_current_role')) {
+                $active_role = $wo->{api_manager}->get_current_role();
+            }
+
+            my $error_label = _routing_error_label($api_response);
+
+            # Config is needed both for the skip record and the routing loop.
+            my $cfg = $wo->{api_manager}->{config};
+            my $max_total = $cfg && $cfg->can('get_route_max_attempts') ? $cfg->get_route_max_attempts() : 15;
+            my $delay     = $cfg && $cfg->can('get_route_retry_delay')  ? $cfg->get_route_retry_delay()  : 1.0;
+            my $verbose   = !$cfg || !$cfg->can('get_route_verbose')    ? 1                            : $cfg->get_route_verbose();
+
             # Pass through non-actionable error types without burning routing attempts.
             if (_routing_should_skip($api_response)) {
                 log_debug('ErrorHandler', "Model routing skipped: error_type=" . ($api_response->{error_type} || 'unknown') . " is not actionable across models");
+                _record_routing_decision($session, {
+                    timestamp     => time(),
+                    decision      => 'skipped',
+                    error_type    => $api_response->{error_type} || 'unknown',
+                    error_label   => $error_label,
+                    error         => $error,
+                    role          => $active_role,
+                    attempts      => ($session && $session->{routing_attempts} ? $session->{routing_attempts} : 0),
+                    max_attempts  => $max_total,
+                    candidates    => $num_candidates,
+                });
                 # Fall through to the normal error handling below.
             }
             else {
-                my $cfg = $wo->{api_manager}->{config};
-                my $max_total = $cfg && $cfg->can('get_route_max_attempts') ? $cfg->get_route_max_attempts() : 15;
-                my $delay     = $cfg && $cfg->can('get_route_retry_delay')  ? $cfg->get_route_retry_delay()  : 1.0;
-                my $verbose   = !$cfg || !$cfg->can('get_route_verbose')    ? 1                            : $cfg->get_route_verbose();
-
                 my $routing_attempts = $session && $session->{routing_attempts} ? $session->{routing_attempts} : 0;
                 $routing_attempts++;
                 $session->{routing_attempts} = $routing_attempts if $session;
@@ -326,11 +416,26 @@ sub handle_api_error {
                         delete $session->{routing_attempts};
                     }
                     my $active_model = $wo->{api_manager}->get_current_model() // 'unknown';
-                    log_debug('ErrorHandler', "Model routing exhausted: $num_candidates models, $routing_attempts total attempts, last model=$active_model, last error: $error");
+                    my $role_ctx = $active_role ? " (role: $active_role)" : '';
+                    log_debug('ErrorHandler', "Model routing exhausted: $num_candidates models, $routing_attempts total attempts, last model=$active_model$role_ctx, last error: $error");
+                    _record_routing_decision($session, {
+                        timestamp     => time(),
+                        decision      => 'exhausted',
+                        error_type    => $api_response->{error_type} || 'unknown',
+                        error_label   => $error_label,
+                        error         => $error,
+                        role          => $active_role,
+                        from_model    => undef,
+                        to_model      => $active_model,
+                        attempts      => $routing_attempts,
+                        max_attempts  => $max_total,
+                        candidates    => $num_candidates,
+                    });
                     return {
                         success         => 0,
                         error           => "Model routing exhausted: tried $num_candidates model" . ($num_candidates == 1 ? '' : 's')
-                                          . " over $routing_attempts attempts (last: $active_model). Last error: $error",
+                                          . " over $routing_attempts attempts (last: $active_model)" . ($active_role ? " (role: $active_role)" : '')
+                                          . ". Last error: $error",
                         iterations      => $iteration,
                         tool_calls_made => $tool_calls_made,
                     };
@@ -416,8 +521,9 @@ sub handle_api_error {
                             delete $session->{provider_rate_limits}{$soonest->{provider}};
                             if ($verbose && $on_system_message) {
                                 my $n = scalar(@$candidates_list);
+                                my $role_ctx = $active_role ? " (role: $active_role)" : '';
                                 my $summary = _format_provider_cooldowns($session->{provider_rate_limits});
-                                $on_system_message->("All $n routing targets are rate-limited. Waiting "
+                                $on_system_message->("All $n routing targets are rate-limited$role_ctx. Waiting "
                                     . int($rl_wait) . "s for $soonest->{provider} to recover...$summary");
                             }
                             _interruptible_sleep($wo, $session, $rl_wait, $messages, "all-providers rate limit");
@@ -429,6 +535,21 @@ sub handle_api_error {
                             $wo->{api_manager}->{model} = $target_model;
                             $wo->{api_manager}->{_model_capabilities_cache} = undef;
 
+                            _record_routing_decision($session, {
+                                timestamp     => time(),
+                                decision      => 'cycle',
+                                error_type    => $api_response->{error_type} || 'unknown',
+                                error_label   => $error_label,
+                                error         => $error,
+                                role          => $active_role,
+                                from_model    => $wo->{api_manager}->get_current_model(),
+                                to_model      => $target_model,
+                                attempts      => $routing_attempts,
+                                max_attempts  => $max_total,
+                                candidates    => $num_candidates,
+                                phase         => 2,
+                                wait_seconds  => int($rl_wait),
+                            });
                             $$retry_count_ref = 0;
                             $wo->{consecutive_errors} = 0 if $wo;
                             log_debug('ErrorHandler', "All providers rate-limited: jumped to $target_model ($soonest->{provider}), waited ${rl_wait}s");
@@ -442,11 +563,27 @@ sub handle_api_error {
                 my ($new_model, $old_model) = $wo->{api_manager}->cycle_model();
                 if ($new_model) {
                     if ($verbose && $on_system_message) {
-                        $on_system_message->("API " . _routing_error_label($api_response) . ", rerouting to $new_model");
+                        my $role_ctx = $active_role ? " (role: $active_role)" : '';
+                        $on_system_message->("API " . _routing_error_label($api_response) . "$role_ctx, rerouting to $new_model");
                     }
                     # Reset retry count so the new model gets a fresh retry budget
                     $$retry_count_ref = 0;
                     $wo->{consecutive_errors} = 0 if $wo;
+
+                    _record_routing_decision($session, {
+                        timestamp     => time(),
+                        decision      => 'cycle',
+                        error_type    => $api_response->{error_type} || 'unknown',
+                        error_label   => $error_label,
+                        error         => $error,
+                        role          => $active_role,
+                        from_model    => $old_model,
+                        to_model      => $new_model,
+                        attempts      => $routing_attempts,
+                        max_attempts  => $max_total,
+                        candidates    => $num_candidates,
+                        phase         => 1,
+                    });
                     log_debug('ErrorHandler', "Model routing: switched from '$old_model' to '$new_model' (attempt $routing_attempts/$max_total total)");
 
                     # Check if the target provider is still rate-limited from a

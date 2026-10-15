@@ -275,6 +275,16 @@ Commands:
   /api route set max_attempts <N>
   /api route set wait_for_rate_limits [on|off]
 
+Role-aware routing:
+  /api route strategy <name> <sequential|role-aware|intelligent>
+  /api route role <name> <role> <model>       # Assign a model to a role
+  /api route role list <name>                  # List role assignments
+  /api route role remove <name> <role>         # Remove a role assignment
+  /api route default-role <name> <role>       # Set the default role
+  /api route fallback <name> <role> <model>... # Set per-role fallback models
+  /api route explain                           # Explain current routing decision
+  /api route history [N]                       # Show recent routing decisions
+
 =cut
 
 sub handle_route {
@@ -284,7 +294,7 @@ sub handle_route {
     $action = lc($action // '');
 
     unless ($action) {
-        $self->display_error_message("Usage: /api route <add|list|use|replace|remove|verbose|set> [args...]");
+        $self->display_error_message("Usage: /api route <add|list|use|replace|remove|verbose|set|strategy|role|default-role|fallback|explain|history> [args...]");
         return;
     }
 
@@ -309,9 +319,27 @@ sub handle_route {
     elsif ($action eq 'set') {
         $self->_route_set(@args);
     }
+    elsif ($action eq 'strategy') {
+        $self->_route_strategy(@args);
+    }
+    elsif ($action eq 'role') {
+        $self->_route_role(@args);
+    }
+    elsif ($action eq 'default-role') {
+        $self->_route_default_role(@args);
+    }
+    elsif ($action eq 'fallback') {
+        $self->_route_fallback(@args);
+    }
+    elsif ($action eq 'explain') {
+        $self->_route_explain(@args);
+    }
+    elsif ($action eq 'history') {
+        $self->_route_history(@args);
+    }
     else {
         $self->display_error_message("Unknown route action: $action");
-        $self->writeline("Valid actions: add, list, use, replace, remove, verbose, set", markdown => 0);
+        $self->writeline("Valid actions: add, list, use, replace, remove, verbose, set, strategy, role, default-role, fallback, explain, history", markdown => 0);
     }
 }
 
@@ -385,9 +413,27 @@ sub _route_list {
 
     $self->display_command_header("ROUTING PROFILES");
     for my $name (sort keys %routes) {
-        my $models = $routes{$name};
-        my $display = join(", ", @$models);
-        $self->display_key_value($name, $display);
+        my $raw = $routes{$name};
+        if (ref($raw) eq 'ARRAY') {
+            # Legacy route
+            my $display = join(", ", @$raw);
+            $self->display_key_value($name, "$display  (sequential)");
+        }
+        elsif (ref($raw) eq 'HASH') {
+            # Extended route
+            my $strategy = $raw->{strategy} || 'sequential';
+            my $roles = $raw->{roles} || {};
+            my @role_info;
+            for my $role (sort keys %$roles) {
+                push @role_info, "$role=" . ($roles->{$role}{model} // '?');
+            }
+            my $role_str = @role_info ? join(", ", @role_info) : '(no roles)';
+            my $fallback = exists $raw->{default_role} ? "default: $raw->{default_role}" : '';
+            $self->display_key_value($name, "strategy: $strategy | roles: $role_str" . ($fallback ? " | $fallback" : ''));
+        }
+        else {
+            $self->display_key_value($name, '(invalid)');
+        }
     }
     $self->_route_show_settings();
 }
@@ -444,7 +490,58 @@ sub _route_use {
         return;
     }
 
+    # Get the normalized route config (handles both sequential and extended routes)
+    my $route_cfg = $self->{config}->get_model_route_config($name);
+    my $strategy = $route_cfg && $route_cfg->{strategy} || 'sequential';
+    my $is_role_aware = $strategy eq 'role-aware' || $strategy eq 'intelligent';
+
+    # Get the models list (handles both arrayref and hashref formats)
     my $models = $self->{config}->get_model_route($name);
+
+    if ($is_role_aware) {
+        # Role-aware route: set up with the default role's model.
+        # The actual role will be resolved per-turn by
+        # APIManager->prepare_routing_for_turn() based on the task.
+        my $default_role = $route_cfg->{default_role} || 'reasoning';
+        $self->{config}->set_route_active_role($default_role) if $self->{config}->can('set_route_active_role');
+
+        # Build initial candidates from the default role's primary + fallbacks
+        require CLIO::Core::RouteManager;
+        my $rm = CLIO::Core::RouteManager->new();
+        my $candidates = $rm->get_route_candidates($route_cfg, $default_role);
+
+        if ($candidates && @$candidates) {
+            $self->{config}->set_model_candidates($candidates);
+            $self->{config}->set_model_routing_index(0);
+            $self->{config}->set('route_name', $name, 0);
+
+            # Activate the first model's provider
+            my ($full_model, $display_model, $target_provider, $api_model) =
+                $self->_resolve_model_details($candidates->[0]);
+
+            my $ok = $self->_activate_model_with_provider($full_model, $target_provider, 0);
+            if (!$ok) {
+                return;
+            }
+            $self->{config}->save();
+
+            my $role_ctx = " (role: $default_role)";
+            $self->display_system_message("Route '$name' activated with strategy '$strategy'$role_ctx");
+            $self->display_system_message("Active model: $display_model");
+            $self->display_system_message("On API errors, CLIO will try the next $role_ctx candidate");
+            $self->_get_auth_helper()->reinit_api_manager();
+            $self->_update_billing_state($full_model, $target_provider);
+            $self->_post_set_model_validation($full_model, $api_model);
+            return;
+        }
+        # Role-aware route with no usable candidates — fall back to any models list
+        $self->display_error_message("Role-aware route '$name' has no models configured for role '$default_role'");
+        $self->writeline("Assign a model with: /api route role $name $default_role <model>", markdown => 0);
+        return;
+    }
+
+    # Legacy route: use the existing flat model list
+    return unless $models && @$models;
     $self->{config}->set_model_candidates($models);
     $self->{config}->set_model_routing_index(0);
     $self->{config}->set('route_name', $name, 0);
@@ -971,6 +1068,650 @@ sub _set_model_candidates {
 
     $self->_update_billing_state($validated[0], $first_provider);
     $self->_post_set_model_validation($validated[0], $first_api_model);
+}
+
+#==========================================================================
+# Role-aware routing subcommands
+#==========================================================================
+
+=head2 _route_strategy($name, $strategy)
+
+Set the routing strategy for a route.
+
+  /api route strategy <name> <sequential|role-aware|intelligent>
+
+Converts a sequential route to an extended route (or vice versa) without
+losing the model list. When converting to role-aware/intelligent, the
+existing models become the sequential fallback list.
+
+=cut
+
+sub _route_strategy {
+    my ($self, $name, $strategy) = @_;
+
+    unless ($name && length($name)) {
+        # Show current strategy of the active route or all routes
+        my $active = $self->{config}->get('route_name');
+        if ($active) {
+            my $s = $self->{config}->get_route_strategy($active);
+            $self->display_key_value('Active route', $active);
+            $self->display_key_value('Strategy', $s // 'sequential');
+        } else {
+            $self->display_system_message("No active route. Set one with /api route use <name>");
+        }
+        return;
+    }
+
+    unless ($strategy && length($strategy)) {
+        $self->display_error_message("Usage: /api route strategy <name> <sequential|role-aware|intelligent>");
+        $self->writeline("", markdown => 0);
+        $self->writeline("Strategies:", markdown => 0);
+        $self->writeline("  sequential       - Original sequential model fallback (original /api route behavior)", markdown => 0);
+        $self->writeline("  role-aware      - Assign models to work roles (reasoning, coding, documentation, design)", markdown => 0);
+        $self->writeline("  intelligent     - Role-aware + adaptive LLM classification of ambiguous tasks", markdown => 0);
+        return;
+    }
+
+    $strategy = lc($strategy);
+    my @valid = qw(sequential role-aware intelligent);
+    unless (grep { $_ eq $strategy } @valid) {
+        $self->display_error_message("Invalid strategy '$strategy'. Valid: " . join(', ', @valid));
+        return;
+    }
+
+    # Get current route config
+    my $routes = { $self->{config}->list_model_routes() };
+    unless (exists $routes->{lc($name)}) {
+        $self->display_error_message("Route '$name' not found. Create one with /api route add");
+        return;
+    }
+
+    my $route_cfg = $self->{config}->get_model_route_config($name);
+    unless ($route_cfg && ref($route_cfg) eq 'HASH') {
+        $self->display_error_message("Route '$name' has an invalid configuration");
+        return;
+    }
+
+    # Validate the strategy transition
+    require CLIO::Core::RouteManager;
+    my $rm = CLIO::Core::RouteManager->new();
+
+    if ($strategy eq 'sequential') {
+        # Convert to sequential: extract models list, store as plain arrayref
+        my $models = $route_cfg->{models} || [];
+        unless (@$models) {
+            # No models list — check if roles have models
+            my $roles = $route_cfg->{roles} || {};
+            my @role_models;
+            for my $r (sort keys %$roles) {
+                push @role_models, $roles->{$r}{model} if $roles->{$r}{model};
+            }
+            $models = \@role_models;
+        }
+        unless (@$models) {
+            $self->display_error_message("Cannot convert route '$name' to sequential: no models available (assign roles first)");
+            return;
+        }
+        $self->{config}->set_model_route($name, $models);  # Stores as arrayref (sequential)
+    } else {
+        # Convert to role-aware/intelligent: ensure we have a hashref
+        $route_cfg->{strategy} = $strategy;
+        $route_cfg->{models} //= [];
+        $route_cfg->{roles} //= {};
+        $route_cfg->{default_role} //= 'reasoning';
+        $route_cfg->{fallbacks} //= {};
+        $route_cfg->{intelligent} //= {};
+        $route_cfg->{intelligent}{classification} //= 'adaptive';
+
+        # Validate
+        my ($ok, $err) = $rm->validate_route_config($route_cfg);
+        unless ($ok) {
+            $self->display_error_message("Route config invalid: $err");
+            return;
+        }
+
+        $self->{config}->set_model_route_config($name, $route_cfg);
+    }
+
+    $self->{config}->save();
+    $self->_get_auth_helper()->reinit_api_manager();
+    $self->display_system_message("Route '$name' strategy set to '$strategy'");
+
+    if ($strategy eq 'role-aware' || $strategy eq 'intelligent') {
+        $self->writeline("Assign models to roles with: /api route role $name <role> <model>", markdown => 0);
+        $self->writeline("Available roles: reasoning, coding, documentation, design (custom roles supported)", markdown => 0);
+    }
+}
+
+=head2 _route_role($name, @rest)
+
+Manage role-to-model assignments for a route.
+
+  /api route role <name> <role> <model>     - Assign a model to a role
+  /api route role list <name>              - List all role assignments
+  /api route role remove <name> <role>     - Remove a role assignment
+
+=cut
+
+sub _route_role {
+    my ($self, $name, @rest) = @_;
+
+    unless ($name && length($name)) {
+        $self->display_error_message("Usage: /api route role <name> <role|list> <model|...>");
+        return;
+    }
+
+    my $sub = shift @rest;
+
+    if (!defined $sub || $sub eq '') {
+        $self->display_error_message("Usage: /api route role <name> <role> <model>");
+        $self->writeline("        /api route role <name> list", markdown => 0);
+        $self->writeline("        /api route role <name> remove <role>", markdown => 0);
+        return;
+    }
+
+    $sub = lc($sub);
+
+    if ($sub eq 'list') {
+        _route_role_list($self, $name);
+        return;
+    }
+    elsif ($sub eq 'remove' || $sub eq 'rm') {
+        my ($rm_role) = @rest;
+        _route_role_remove($self, $name, $rm_role);
+        return;
+    }
+
+    # Otherwise: /api route role <name> <role> <model>
+    my ($role, $model) = ($sub, $rest[0]);
+    _route_role_assign($self, $name, $role, $model);
+}
+
+sub _route_role_assign {
+    my ($self, $name, $role, $model) = @_;
+
+    unless ($role && length($role)) {
+        $self->display_error_message("Usage: /api route role <name> <role> <model>");
+        return;
+    }
+    unless ($model && length($model)) {
+        $self->display_error_message("Usage: /api route role <name> <role> <model>");
+        $self->writeline("Example: /api route role $name coding openrouter/deepseek-v4", markdown => 0);
+        return;
+    }
+
+    # Get and validate the route config
+    my $route_cfg = $self->{config}->get_model_route_config($name);
+    unless ($route_cfg) {
+        $self->display_error_message("Route '$name' not found. Create one with /api route add");
+        return;
+    }
+
+    # Validate model has a provider prefix
+    my ($full_model, $display_model, $target_provider, $api_model) =
+        $self->_resolve_model_details($model);
+
+    # Validate provider auth
+    my ($has_auth, $auth_error) = $self->_check_provider_auth($target_provider);
+    unless ($has_auth) {
+        $self->display_error_message($auth_error);
+        $self->display_system_message("Set it with: /api set provider $target_provider && /api set key <your-key>");
+        return;
+    }
+
+    # Validate model against provider capabilities
+    require CLIO::Core::ModelCapabilitiesManager;
+    my $mcm = CLIO::Core::ModelCapabilitiesManager->new();
+    my $caps = $mcm->get_capabilities($target_provider, $api_model);
+    if (!$caps && $target_provider ne 'github_copilot') {
+        # Model not found in capabilities database — warn but allow (model
+        # may be very new or custom). Don't silently reject.
+        $self->display_system_message("Warning: model '$display_model' not found in capabilities database (will still be saved)");
+    }
+
+    # Ensure route is role-aware or intelligent
+    my $strategy = $route_cfg->{strategy} || 'sequential';
+    if ($strategy eq 'sequential') {
+        $strategy = 'role-aware';
+        $route_cfg->{strategy} = $strategy;
+        $route_cfg->{models} //= [];
+        $route_cfg->{default_role} = $role;  # Set default to the role being assigned
+        $route_cfg->{fallbacks} //= {};
+        $route_cfg->{intelligent} //= {};
+        $route_cfg->{intelligent}{classification} //= 'adaptive';
+    }
+
+    # Assign the role
+    $route_cfg->{roles} //= {};
+    $route_cfg->{roles}{$role} = { model => $full_model };
+
+    # Validate
+    require CLIO::Core::RouteManager;
+    my $rm = CLIO::Core::RouteManager->new();
+    my ($ok, $err) = $rm->validate_route_config($route_cfg);
+    if (!$ok) {
+        $self->display_error_message("Route config invalid: $err");
+        return;
+    }
+
+    $self->{config}->set_model_route_config($name, $route_cfg);
+    $self->{config}->save();
+    $self->_get_auth_helper()->reinit_api_manager();
+    $self->display_system_message("Route '$name': role '$role' -> $display_model");
+
+    # If this is the active route, update the active model if we were
+    # using the default role or this role is now the default.
+    my $active = $self->{config}->get('route_name');
+    if ($active && lc($active) eq lc($name)) {
+        my $current_role = $self->{config}->get_route_active_role();
+        if ($current_role && lc($current_role) eq lc($route_cfg->{default_role})) {
+            # Re-set the active model to the default role's model
+            $self->{config}->set('model', $full_model, 0);
+            $self->display_system_message("Updated active model to $display_model ($role role)");
+        }
+    }
+}
+
+sub _route_role_list {
+    my ($self, $name) = @_;
+
+    my $route_cfg = $self->{config}->get_model_route_config($name);
+    unless ($route_cfg) {
+        $self->display_error_message("Route '$name' not found.");
+        return;
+    }
+
+    my $roles = $route_cfg->{roles} || {};
+    my $strategy = $route_cfg->{strategy} || 'sequential';
+    my $default = $route_cfg->{default_role} || 'reasoning';
+
+    $self->display_command_header("ROLES: $name ($strategy)");
+    $self->display_key_value('default_role', $default);
+
+    if (%$roles) {
+        for my $role (sort keys %$roles) {
+            my $model = $roles->{$role}{model} || '?';
+            my $marker = (lc($role) eq lc($default)) ? ' *' : '';
+            $self->display_key_value($role, "$model$marker");
+        }
+    } else {
+        $self->display_system_message("  No roles assigned. Use:");
+        $self->writeline("  /api route role $name <role> <model>", markdown => 0);
+    }
+
+    # Fallthrough keys
+    $self->writeline("", markdown => 0);
+    my $fallbacks = $route_cfg->{fallbacks} || {};
+    if (%$fallbacks) {
+        $self->display_command_header("FALLBACKS");
+        for my $role (sort keys %$fallbacks) {
+            $self->display_key_value($role, join(", ", @{$fallbacks->{$role}}));
+        }
+    }
+}
+
+sub _route_role_remove {
+    my ($self, $name, $role) = @_;
+
+    unless ($role && length($role)) {
+        $self->display_error_message("Usage: /api route role remove <name> <role>");
+        return;
+    }
+
+    my $route_cfg = $self->{config}->get_model_route_config($name);
+    unless ($route_cfg) {
+        $self->display_error_message("Route '$name' not found.");
+        return;
+    }
+
+    my $roles = $route_cfg->{roles} || {};
+    unless (exists $roles->{lc($role)} || exists $roles->{$role}) {
+        # Check case-insensitive
+        my @keys = keys %$roles;
+        unless (grep { lc($_) eq lc($role) } @keys) {
+            $self->display_error_message("Role '$role' is not assigned in route '$name'");
+            return;
+        }
+        # Remove case-insensitive
+        for my $k (@keys) {
+            if (lc($k) eq lc($role)) {
+                delete $roles->{$k};
+                last;
+            }
+        }
+    } else {
+        delete $roles->{$role};
+    }
+
+    $self->{config}->set_model_route_config($name, $route_cfg);
+    $self->{config}->save();
+    $self->_get_auth_helper()->reinit_api_manager();
+    $self->display_system_message("Role '$role' removed from route '$name'");
+}
+
+=head2 _route_default_role($name, $role)
+
+Set the default role for a route.
+
+  /api route default-role <name> <role>
+
+=cut
+
+sub _route_default_role {
+    my ($self, $name, $role) = @_;
+
+    unless ($name && length($name)) {
+        $self->display_error_message("Usage: /api route default-role <name> <role>");
+        return;
+    }
+    unless ($role && length($role)) {
+        $self->display_error_message("Usage: /api route default-role <name> <role>");
+        $self->writeline("Example: /api route default-role $name reasoning", markdown => 0);
+        return;
+    }
+
+    my $route_cfg = $self->{config}->get_model_route_config($name);
+    unless ($route_cfg) {
+        $self->display_error_message("Route '$name' not found.");
+        return;
+    }
+
+    # Ensure strategy is role-aware
+    if (($route_cfg->{strategy} // 'sequential') eq 'sequential') {
+        $route_cfg->{strategy} = 'role-aware';
+        $route_cfg->{fallbacks} //= {};
+        $route_cfg->{intelligent} //= {};
+    }
+
+    # Validate the role exists in the route's roles
+    my $roles = $route_cfg->{roles} || {};
+    my $found = 0;
+    for my $r (keys %$roles) {
+        if (lc($r) eq lc($role)) {
+            $route_cfg->{default_role} = $r;  # Preserve original case
+            $found = 1;
+            last;
+        }
+    }
+    unless ($found) {
+        $self->display_error_message("Role '$role' is not defined in route '$name'");
+        $self->writeline("Add it with: /api route role $name $role <model>", markdown => 0);
+        return;
+    }
+
+    require CLIO::Core::RouteManager;
+    my $rm = CLIO::Core::RouteManager->new();
+    my ($ok, $err) = $rm->validate_route_config($route_cfg);
+    if (!$ok) {
+        $self->display_error_message("Route config invalid: $err");
+        return;
+    }
+
+    $self->{config}->set_model_route_config($name, $route_cfg);
+    $self->{config}->save();
+    $self->_get_auth_helper()->reinit_api_manager();
+    $self->display_system_message("Route '$name' default role set to '$role'");
+}
+
+=head2 _route_fallback($name, $role, @models)
+
+Set per-role fallback models for a route.
+
+  /api route fallback <name> <role> <model1> [model2 ...]
+
+The fallback models are tried (in order) only when the role's primary
+model fails with a retryable error.
+
+=cut
+
+sub _route_fallback {
+    my ($self, $name, $role, @models) = @_;
+
+    unless ($name && length($name)) {
+        $self->display_error_message("Usage: /api route fallback <name> <role> <model1> [model2 ...]");
+        return;
+    }
+    unless ($role && length($role)) {
+        $self->display_error_message("Usage: /api route fallback <name> <role> <model1> [model2 ...]");
+        $self->writeline("Example: /api route fallback $name coding openrouter/fallback-model kilo/fallback-model2", markdown => 0);
+        return;
+    }
+
+    @models = grep { defined && length } @models;
+    unless (@models) {
+        $self->display_error_message("Must specify at least one fallback model");
+        return;
+    }
+
+    my $route_cfg = $self->{config}->get_model_route_config($name);
+    unless ($route_cfg) {
+        $self->display_error_message("Route '$name' not found.");
+        return;
+    }
+
+    # Validate each fallback model's provider auth
+    for my $m (@models) {
+        my ($full_model, $display_model, $target_provider, $api_model) =
+            $self->_resolve_model_details($m);
+        my ($has_auth, $auth_error) = $self->_check_provider_auth($target_provider);
+        unless ($has_auth) {
+            $self->display_error_message($auth_error);
+            $self->display_system_message("Set it with: /api set provider $target_provider && /api set key <your-key>");
+            return;
+        }
+    }
+
+    # Ensure role has a primary model assigned
+    my $roles = $route_cfg->{roles} || {};
+    my $role_exists = 0;
+    for my $r (keys %$roles) {
+        if (lc($r) eq lc($role)) { $role_exists = 1; last; }
+    }
+    unless ($role_exists) {
+        $self->display_error_message("Role '$role' is not assigned in route '$name'. Assign a primary model first with /api route role");
+        return;
+    }
+
+    # Ensure strategy is role-aware
+    if (($route_cfg->{strategy} // 'sequential') eq 'sequential') {
+        $route_cfg->{strategy} = 'role-aware';
+    }
+    $route_cfg->{fallbacks} //= {};
+
+    # Store with original case role key
+    my $actual_role = $role;
+    for my $r (keys %$roles) {
+        if (lc($r) eq lc($role)) { $actual_role = $r; last; }
+    }
+    $route_cfg->{fallbacks}{$actual_role} = \@models;
+
+    require CLIO::Core::RouteManager;
+    my $rm = CLIO::Core::RouteManager->new();
+    my ($ok, $err) = $rm->validate_route_config($route_cfg);
+    if (!$ok) {
+        $self->display_error_message("Route config invalid: $err");
+        return;
+    }
+
+    $self->{config}->set_model_route_config($name, $route_cfg);
+    $self->{config}->save();
+    $self->_get_auth_helper()->reinit_api_manager();
+    $self->display_system_message("Route '$name': fallback for role '$role' set to " .
+        join(", ", @models) . " (" . scalar(@models) . " model" . (scalar(@models) == 1 ? '' : 's') . ")");
+}
+
+=head2 _route_explain()
+
+Explain the current routing decision: active route, strategy, role,
+selected model, and candidates.
+
+=cut
+
+sub _route_explain {
+    my ($self) = @_;
+
+    my $cfg = $self->{config};
+    my $route_name = $cfg->get('route_name');
+    my $strategy = 'sequential';
+    my $active_role = undef;
+    my $candidates = $cfg->get_model_candidates() || [];
+    my $routing_index = $cfg->get_model_routing_index() // 0;
+
+    if ($route_name && $cfg->can('get_route_strategy')) {
+        $strategy = $cfg->get_route_strategy($route_name) || 'sequential';
+        $active_role = $cfg->get_route_active_role() if $cfg->can('get_route_active_role');
+    }
+
+    $self->display_command_header("ROUTING EXPLAIN");
+
+    $self->display_key_value('Active route', $route_name // '(none)');
+    $self->display_key_value('Strategy', $strategy);
+
+    if ($strategy ne 'sequential') {
+        my $route_cfg = $route_name && $cfg->can('get_model_route_config')
+            ? $cfg->get_model_route_config($route_name)
+            : undef;
+
+        if ($route_cfg && ref($route_cfg) eq 'HASH') {
+            $active_role = $active_role || ($route_cfg->{default_role} || 'reasoning');
+            $self->display_key_value('Work role', $active_role // '(none)');
+            $self->display_key_value('Default role', $route_cfg->{default_role} || 'reasoning');
+
+            # Show the current role's model and fallbacks
+            require CLIO::Core::RouteManager;
+            my $rm = CLIO::Core::RouteManager->new();
+            if ($active_role) {
+                my $role_model = $rm->get_role_models($route_cfg, $active_role);
+                my $role_fbs = $rm->get_role_fallbacks($route_cfg, $active_role);
+                $self->display_key_value("Role model", $role_model // '(unassigned)') if $role_model;
+                if (@$role_fbs) {
+                    $self->display_key_value("Role fallbacks", join(", ", @$role_fbs));
+                }
+            }
+
+            # Show all role assignments
+            my $roles = $route_cfg->{roles} || {};
+            if (%$roles) {
+                $self->writeline("", markdown => 0);
+                $self->display_command_header("ROLE ASSIGNMENTS");
+                for my $r (sort keys %$roles) {
+                    my $m = $roles->{$r}{model} || '?';
+                    my $marker = (lc($r) // '') eq (lc($active_role) // '') ? ' *' : '';
+                    $self->display_key_value($r, $m . $marker);
+                }
+            }
+
+            # Show intelligent classification settings
+            my $intel = $route_cfg->{intelligent} || {};
+            if (%$intel) {
+                $self->writeline("", markdown => 0);
+                $self->display_command_header("CLASSIFICATION");
+                $self->display_key_value('mode', $intel->{classification} || 'adaptive');
+                $self->display_key_value('planner_model', $intel->{planner_model} || '(not set)') if $intel->{planner_model};
+            }
+        }
+    }
+
+    # Show runtime state
+    $self->writeline("", markdown => 0);
+    $self->display_command_header("RUNTIME STATE");
+    if (ref($candidates) eq 'ARRAY' && @$candidates) {
+        for my $i (0 .. $#$candidates) {
+            my $marker = ($i == $routing_index) ? ' (active)' : '';
+            $self->display_system_message("  [$i] $candidates->[$i]$marker");
+        }
+        $self->display_key_value('candidates', scalar(@$candidates) . " models");
+    } else {
+        $self->display_system_message("  (no routing candidates)");
+    }
+
+    # Show routing decision history (last 5)
+    if ($self->{session}) {
+        require Scalar::Util;
+        if (Scalar::Util::blessed($self->{session}) && $self->{session}->can('state')) {
+            my $state = $self->{session}->state();
+            if ($state && $state->{routing_decisions}) {
+                my @decisions = @{ $state->{routing_decisions} };
+                my $count = scalar @decisions;
+                if ($count) {
+                    $self->writeline("", markdown => 0);
+                    $self->display_command_header("RECENT DECISIONS ($count total)");
+                    for my $i (reverse 0..$#decisions) {
+                        last if $count - $i > 5;
+                        my $d = $decisions[$i];
+                        my $ts = scalar localtime($d->{timestamp});
+                        my $role_str = $d->{role} ? " role=$d->{role}" : '';
+                        my $to_str = $d->{to_model} ? " -> $d->{to_model}" : '';
+                        $self->display_system_message(sprintf(
+                            "  %s [%s] %s%s%s (attempt %d/%d)",
+                        $ts, $d->{decision}, $d->{error_label}, $role_str, $to_str,
+                        $d->{attempts} // 0, $d->{max_attempts} // 0
+                    ));
+                }
+            }
+        }
+    }
+    }
+}
+
+=head2 _route_history($count)
+
+Show recent routing decisions and recovery outcomes.
+
+  /api route history [N]  - Show last N decisions (default 20, max 50)
+
+=cut
+
+sub _route_history {
+    my ($self, $count) = @_;
+
+    $count = 20 unless defined $count && $count =~ /^\d+$/;
+    $count = 50 if $count > 50;
+
+    $self->display_command_header("ROUTING HISTORY (last $count)");
+
+    my @history = ();
+    if ($self->{session}) {
+        require Scalar::Util;
+        if (Scalar::Util::blessed($self->{session}) && $self->{session}->can('state')) {
+            my $state = $self->{session}->state();
+            if ($state && $state->{routing_decisions}) {
+                @history = @{ $state->{routing_decisions} };
+            }
+        }
+    }
+
+    unless (@history) {
+        $self->display_system_message("No routing decisions recorded for this session.");
+        $self->display_system_message("Decisions are recorded when model routing is active (route with >1 candidates).");
+        return;
+    }
+
+    # Show most recent first
+    my $start = @history > $count ? $#history - $count + 1 : 0;
+    for my $i (reverse $start .. $#history) {
+        my $d = $history[$i];
+        my $ts = localtime($d->{timestamp});
+        my $role_str = $d->{role} ? " (role: $d->{role})" : '';
+
+        $self->writeline("", markdown => 0);
+        $self->display_system_message("$ts" . ($role_str));
+        $self->display_key_value('decision', $d->{decision});
+        $self->display_key_value('error', $d->{error_label} // $d->{error_type});
+        $self->display_key_value('attempts', ($d->{attempts} // '?') . '/' . ($d->{max_attempts} // '?'));
+        if ($d->{from_model} && $d->{to_model}) {
+            $self->display_key_value('from', $d->{from_model});
+            $self->display_key_value('to', $d->{to_model});
+        } elsif ($d->{to_model}) {
+            $self->display_key_value('model', $d->{to_model});
+        }
+        if (exists $d->{phase}) {
+            $self->display_key_value('phase', $d->{phase} == 2 ? 'all-providers-rate-limited' : 'normal-cycling');
+        }
+        if (exists $d->{wait_seconds}) {
+            $self->display_key_value('wait', $d->{wait_seconds} . 's');
+        }
+    }
 }
 
 sub _set_model {

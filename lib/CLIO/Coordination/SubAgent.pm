@@ -142,6 +142,7 @@ sub spawn_agent {
         ($working_dir ? (working_dir => $working_dir) : ()),
         ($options{model_candidates} ? (model_candidates => $options{model_candidates}) : ()),
         (defined $options{route_name} ? (route_name => $options{route_name}) : ()),
+        (defined $options{route_active_role} ? (route_active_role => $options{route_active_role}) : ()),
     };
     
     return $agent_id;
@@ -283,6 +284,12 @@ sub _run_agent_loop {
     }
     if (defined $options{route_name}) {
         $config->set('route_name', $options{route_name}, 0);
+    }
+    # Propagate the active role so the sub-agent inherits the parent's
+    # role-aware routing context. This is transient (not persisted).
+    if (defined $options{route_active_role}) {
+        $config->set('route_active_role', $options{route_active_role}, 0)
+            if $config->can('set_route_active_role');
     }
     
     # Create a session for this agent (required for API tracking, history, etc.)

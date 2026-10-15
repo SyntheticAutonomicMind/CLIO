@@ -469,9 +469,15 @@ CLIO provides 35+ slash commands. Type `/help` in any session to see the full li
 | `/api route use <name>` | Activate a named routing profile |
 | `/api route replace <name> <model>...` | Replace a routing profile's models |
 | `/api route remove <name>` | Delete a routing profile |
-| `/api route verbose [on\|off]` | Show or hide rerouting system messages (default: on) |
-| `/api route set delay <seconds>` | Wait between model switches (default: 1.0) |
-| `/api route set max_attempts <N>` | Max routing attempts before giving up (default: 15) |
+| `/api route set wait_for_rate_limits on\|off` | Wait for per-provider rate-limit cooldowns (default: on) |
+| `/api route strategy <name> <strategy>` | Set routing strategy: sequential, role-aware, or intelligent |
+| `/api route role <name> <role> <model>` | Assign a model to a work role (coding, reasoning, etc.) |
+| `/api route role list <name>` | List role-to-model assignments for a route |
+| `/api route role remove <name> <role>` | Remove a role assignment |
+| `/api route default-role <name> <role>` | Set the default work role |
+| `/api route fallback <name> <role> <model>...` | Set per-role fallback models |
+| `/api route explain` | Explain current routing decision |
+| `/api route history [N]` | Show recent routing decisions |
 | `/model <name>` | Quick model switch (saved globally) |
 | `/model` | Show current model and aliases |
 | `/api login` | Authenticate with GitHub Copilot |

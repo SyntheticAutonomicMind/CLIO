@@ -358,6 +358,7 @@ sub spawn {
     my @route_candidates;
     my $route_index;
     my $route_name;
+    my $route_active_role;
     if ($context && $context->{api_manager} && $context->{api_manager}{config}) {
         my $parent_config = $context->{api_manager}{config};
         my $candidates = $parent_config->get_model_candidates();
@@ -370,6 +371,13 @@ sub spawn {
         $route_name = $parent_config->get('route_name');
         if (defined $route_name && length($route_name)) {
             $routing_args .= " --route-name " . quotemeta($route_name);
+        }
+        # Also propagate the active role so the sub-agent inherits it
+        if ($parent_config->can('get_route_active_role')) {
+            $route_active_role = $parent_config->get_route_active_role();
+            if (defined $route_active_role && length($route_active_role)) {
+                $routing_args .= " --route-role " . quotemeta($route_active_role);
+            }
         }
     }
     
@@ -439,6 +447,7 @@ sub spawn {
             (@route_candidates ? (model_candidates => \@route_candidates) : ()),
             (defined $route_index ? (model_routing_index => $route_index) : ()),
             (defined $route_name ? (route_name => $route_name) : ()),
+            (defined $route_active_role ? (route_active_role => $route_active_role) : ()),
         );
     }
 

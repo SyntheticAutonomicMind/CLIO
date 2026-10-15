@@ -943,6 +943,140 @@ sub model_routing_active {
     return 0 unless $candidates && ref($candidates) eq 'ARRAY' && @$candidates > 1;
     return scalar(@$candidates);
 }
+
+#---------------------------------------------------------------------------
+# Role-aware routing support
+#----------------------------------------------------------------------------
+
+=head2 get_active_route_config()
+
+Return the normalized route config hash for the currently active route.
+
+Returns undef if no named route is active or the route doesn't exist.
+The returned hashref has: strategy, models, roles, default_role, fallbacks.
+
+=cut
+
+sub get_active_route_config {
+    my ($self) = @_;
+    return undef unless $self->{config};
+    my $route_name = $self->{config}->get('route_name');
+    return undef unless $route_name && length($route_name);
+    return undef unless $self->{config}->can('get_model_route_config');
+    return $self->{config}->get_model_route_config($route_name);
+}
+
+=head2 get_current_strategy()
+
+Return the routing strategy of the active route, or 'sequential' if no
+role-aware route is active.
+
+=cut
+
+sub get_current_strategy {
+    my ($self) = @_;
+    if ($self->{config} && $self->{config}->can('get_route_strategy')) {
+        my $route_name = $self->{config}->get('route_name');
+        if ($route_name && length($route_name)) {
+            my $s = $self->{config}->get_route_strategy($route_name);
+            return $s if defined $s;
+        }
+    }
+    return 'sequential';
+}
+
+=head2 get_current_role()
+
+Return the currently active work role (set by prepare_routing_for_turn),
+or the route's default_role, or undef for sequential routes.
+
+=cut
+
+sub get_current_role {
+    my ($self) = @_;
+    if ($self->{config} && $self->{config}->can('get_route_active_role')) {
+        my $role = $self->{config}->get_route_active_role();
+        return $role if $role && length($role);
+    }
+    # Fall back to route default
+    if ($self->{config}) {
+        my $route_cfg = $self->get_active_route_config();
+        if ($route_cfg && ref($route_cfg) eq 'HASH') {
+            return $route_cfg->{default_role} || 'reasoning';
+        }
+    }
+    return undef;
+}
+
+=head2 prepare_routing_for_turn($user_input)
+
+Determine the work role for the current turn and set up the runtime
+candidate list. Called at the start of each turn by the WorkflowOrchestrator.
+
+For sequential routes: no-op (candidates are already set).
+For role-aware/intelligent routes: uses RouteManager to resolve the role,
+builds the candidate list (primary + fallbacks), and updates
+model_candidates and model_routing_index.
+
+Arguments:
+  $user_input - The user's input message (string)
+
+Returns: The resolved role name, or undef for sequential routes.
+
+=cut
+
+sub prepare_routing_for_turn {
+    my ($self, $user_input) = @_;
+
+    return undef unless $self->{config} && $self->{config}->can('get_route_active_role');
+
+    my $route_cfg = $self->get_active_route_config();
+    return undef unless $route_cfg && ref($route_cfg) eq 'HASH';
+
+    my $strategy = $route_cfg->{strategy} || 'sequential';
+    return undef if $strategy eq 'sequential';
+
+    require CLIO::Core::RouteManager;
+    my $rm = CLIO::Core::RouteManager->new();
+
+    # Determine the role for this turn
+    my $task_hint = $user_input // '';
+    my $role = $rm->resolve_role($route_cfg, $task_hint, $self);
+
+    # Set the active role (transient, not persisted)
+    $self->{config}->set_route_active_role($role) if $self->{config}->can('set_route_active_role');
+
+    # Build the candidate list for this role (primary + fallbacks, deduplicated)
+    my $candidates = $rm->get_route_candidates($route_cfg, $role);
+    if ($candidates && @$candidates) {
+        $self->{config}->set_model_candidates($candidates) if $self->{config}->can('set_model_candidates');
+        $self->{config}->set_model_routing_index(0) if $self->{config}->can('set_model_routing_index');
+        $self->{config}->set('model', $candidates->[0], 0) if $self->{config}->can('set');
+        log_debug('APIManager', "Role-aware routing: role='$role', candidates=" .
+            scalar(@$candidates) . ", primary=" . $candidates->[0]);
+    }
+
+    return $role;
+}
+
+=head2 get_role_candidates($role)
+
+Get the candidate model list for a specific role from the active route.
+
+Returns: Arrayref of model strings, or undef if no role-aware route is active.
+
+=cut
+
+sub get_role_candidates {
+    my ($self, $role) = @_;
+
+    my $route_cfg = $self->get_active_route_config();
+    return undef unless $route_cfg;
+
+    require CLIO::Core::RouteManager;
+    my $rm = CLIO::Core::RouteManager->new();
+    return $rm->get_route_candidates($route_cfg, $role);
+}
     
     require CLIO::Providers;
     return $placeholder unless CLIO::Providers::provider_exists($placeholder);

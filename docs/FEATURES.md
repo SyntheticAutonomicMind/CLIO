@@ -483,6 +483,84 @@ clio --route laguna --new
 
 When a profile is activated (via `/api route use` or `--route`), the first model's provider is used for provider selection and the full candidate list is stored for automatic fallback on API errors. Profile names are matched case-insensitively.
 
+### Role-Aware Routing
+
+Role-aware routing assigns different models to different kinds of work within a single route. Instead of a flat fallback list, each role (e.g. `coding`, `reasoning`, `documentation`, `design`) gets its own specialist model, with optional per-role fallbacks.
+
+**Strategies:**
+
+| Strategy | Behavior |
+|---|---|
+| `sequential` | Original sequential fallback: models tried in order on any API error (rate limit, timeout, etc.). |
+| `role-aware` | Each role maps to a specialist model. Role is determined by keyword rules on the task text. No LLM classification calls. |
+| `intelligent` | Role-aware plus adaptive LLM classification: when keyword rules are ambiguous, an LLM planner classifies the task. Rules-first means confident matches never trigger an LLM call. |
+
+**Role assignments:**
+
+```text
+/api route strategy <name> <sequential|role-aware|intelligent>
+/api route role <name> <role> <model>          # Assign a model to a role
+/api route role list <name>                     # List role assignments
+/api route role remove <name> <role>            # Remove a role assignment
+/api route default-role <name> <role>           # Set the default role
+/api route fallback <name> <role> <model>...   # Set per-role fallback models
+```
+
+**Example: configure a development route**
+
+```text
+# Create a route with role-aware strategy
+/api route add dev openrouter/deepseek-v3
+/api route strategy dev role-aware
+
+# Assign specialists
+/api route role dev coding openrouter/deepseek-v3
+/api route role dev reasoning kilo/deepseek-v3
+/api route role dev documentation vercel/gemini-2-0-flash-lite
+/api route role dev design openai/o1-preview
+
+# Set a default role (used when classification is ambiguous)
+/api route default-role dev reasoning
+
+# Per-role fallbacks
+/api route fallback dev coding kilo/deepseek-v3 openrouter/deepseek-v3
+
+# Activate
+/api route use dev
+
+# Inspect
+/api route explain        # Show active route, strategy, role, selected model
+/api route history        # Show recent routing decisions and recovery outcomes
+```
+
+**Role resolution:**
+
+When CLIO processes a request with an active role-aware route:
+
+1. If there is only one role defined, that role is selected immediately (no classification needed).
+2. If multiple roles are defined, keyword rules classify the task text. If a rule matches a role confidently, that role is selected.
+3. If rules are ambiguous and the strategy is `intelligent`, an LLM planner classifies the task. The classifier receives only a compact task description (never the full conversation).
+4. If no rule matches and no LLM planner is configured (or classification fails), the `default_role` is used.
+
+**Fallback behavior:**
+
+- A fallback is another model **capable of the same role**, not just the next model in a global list.
+- On a provider error (rate limit, timeout, etc.), CLIO tries the next eligible model within the active role's candidate list.
+- Authentication errors, billing errors, and model-not-found errors are not retryable — they surface immediately.
+- Context overflow triggers CLIO's existing context-recovery mechanism (not a model switch).
+- When all candidates within a role are exhausted, CLIO reports the failure and asks how to proceed.
+
+**Backward compatibility:**
+
+Existing `/api route` profiles (flat model lists) continue to work unchanged with the `sequential` strategy. They do not acquire role-aware semantics unless explicitly converted via `/api route strategy`.
+
+**Inspect and explain:**
+
+```text
+/api route explain        # Show active route, strategy, role, model, candidates, and recent decisions
+/api route history [N]    # Show last N routing decisions (default 20, max 50)
+```
+
 ### Model Aliases and Quick Switch
 
 Create short aliases for frequently-used models:

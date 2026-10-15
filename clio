@@ -281,6 +281,7 @@ my $enable_tools = undef;   # --enable: allowlist of tools (comma-separated)
 my $disable_tools = undef;  # --disable: blocklist of tools (comma-separated)
 my $prompt_override = undef;  # --prompt: system prompt name override
 my $route_name;                # --route: named routing profile to activate
+my $route_role;               # --route-role: active role for role-aware routes (sub-agent propagation)
 my $style_override = undef;  # --style: one-shot terminal style override
 my $theme_override = undef;  # --theme: one-shot output theme override
 for (my $i = 0; $i < @ARGV; $i++) {
@@ -353,6 +354,9 @@ for (my $i = 0; $i < @ARGV; $i++) {
     if ($ARGV[$i] eq '--route' && defined $ARGV[$i+1]) {
         $route_name = $ARGV[$i+1];
     }
+    if ($ARGV[$i] eq '--route-role' && defined $ARGV[$i+1]) {
+        $route_role = $ARGV[$i+1];
+    }
     if ($ARGV[$i] eq '--style' && defined $ARGV[$i+1]) {
         $style_override = $ARGV[$i+1];
     }
@@ -377,8 +381,10 @@ if ($cli_model_candidates && @$cli_model_candidates > 1) {
 if ($route_name && length($route_name)) {
     my $routes = { $config->list_model_routes() };
     if (exists $routes->{$route_name}) {
-        my $models = $routes->{$route_name};
-        if (@$models >= 1) {
+        # Use get_model_route() which handles both sequential (arrayref) and
+        # extended (hashref) route formats, always returning the models list.
+        my $models = $config->get_model_route($route_name);
+        if ($models && ref($models) eq 'ARRAY' && @$models) {
             $config->set('route_name', $route_name, 0);
             $config->set('model_candidates', $models, 0);
             $config->set('model_routing_index', 0, 0);
@@ -398,12 +404,30 @@ if ($route_name && length($route_name)) {
             # doesn't clobber the route's first model
             $config->set('model', $models->[0], 0);
             log_debug('Main', "Route '$route_name' loaded with " . scalar(@$models) . " models");
+            # Clear any stale active role from a previous session
+            $config->set('route_active_role', undef, 0) if $config->can('set_route_active_role');
+        } else {
+            # Route has no models — could be a role-aware route where
+            # models are defined via roles but the top-level models list
+            # is empty. That's OK — candidates will be built from roles
+            # at turn start by APIManager->prepare_routing_for_turn().
+            $config->set('route_name', $route_name, 0);
+            $config->set('model_candidates', [], 0);
+            $config->set('model_routing_index', 0, 0);
+            $config->set('route_active_role', undef, 0) if $config->can('set_route_active_role');
+            log_debug('Main', "Route '$route_name' loaded (role-aware, no flat models list)");
         }
     } else {
         print STDERR "Unknown route: $route_name\n";
         print STDERR "Available routes: " . join(", ", sort keys %{$routes}) . "\n" if %$routes;
         exit 1;
     }
+}
+
+# Apply inherited --route-role (propagated from parent session for sub-agents)
+if ($route_role && length($route_role) && $config->can('set_route_active_role')) {
+    $config->set('route_active_role', $route_role, 0);
+    log_debug('Main', "Inherited route role: $route_role");
 }
 
 # Validate --enable and --disable are mutually exclusive

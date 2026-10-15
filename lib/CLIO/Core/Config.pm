@@ -75,8 +75,12 @@ use constant DEFAULT_CONFIG => {
                                   # (skipped on restore).
     model_candidates => [],  # List of models for routing (e.g. ["openrouter/foo", "kilo/bar"])
     model_routing_index => 0,  # Current index into model_candidates
-    model_routes => {},  # Named routing profiles: { "route-name" => ["model1", "model2"] }
-    route_verbose => 1,  # Show rerouting system messages (1=on, 0=quiet)
+   model_routes => {},  # Named routing profiles: { "route-name" => ["model1", "model2"] }
+                           #   Legacy routes are ARRAY refs: ["openrouter/foo", "kilo/bar"]
+                           #   Extended routes are HASH refs: { strategy => 'role-aware',
+                           #     models => [...], roles => {...}, default_role => 'reasoning',
+                           #     fallbacks => {...}, intelligent => {...} }
+   route_verbose => 1,  # Show rerouting system messages (1=on, 0=quiet)
     route_retry_delay => 1.0,  # Seconds to wait between model switches when routing
     route_max_attempts => 15,  # Max total routing attempts before giving up
     route_wait_for_rate_limits => 1,  # Honor per-provider rate limits during routing: wait for cooldowns to expire before routing to a rate-limited provider (1=on, 0=off)
@@ -85,8 +89,9 @@ use constant DEFAULT_CONFIG => {
     api_bases => {},  # Per-provider API base URLs: { 'llama.cpp' => 'http://localhost:9090/...' }
     custom_providers => {},  # Named provider aliases: { 'anthropic_test' => { base_provider => 'anthropic' }, ... }
     provider => undef,  # No default - must be configured by user
-    route_name => undef,  # Active named routing profile (from --route or /api route use)
-    editor => $ENV{EDITOR} || $ENV{VISUAL} || 'vim',  # Default editor
+   route_name => undef,  # Active named routing profile (from --route or /api route use)
+    route_active_role => undef,  # Currently active work role for role-aware routes (transient: per-turn, not persisted)
+   editor => $ENV{EDITOR} || $ENV{VISUAL} || 'vim',  # Default editor
     log_level => 'ERROR',  # Default log level: ERROR, WARNING, INFO, DEBUG
     # Web search configuration (SerpAPI)
     serpapi_key => '',  # SerpAPI key for reliable web search
@@ -1645,34 +1650,17 @@ sub list_model_aliases {
     return %{$self->{config}->{model_aliases} || {}};
 }
 
-=head2 get_model_route($name)
-
-Get a named model routing profile (list of models).
-
-Arguments:
-  $name - Route name
-
-Returns: Arrayref of model strings, or undef if not found.
-
-=cut
-
-sub get_model_route {
-    my ($self, $name) = @_;
-    return unless $name;
-    my $routes = $self->{config}->{model_routes} || {};
-    my $route = $routes->{lc($name)};
-    return ref($route) eq 'ARRAY' ? $route : undef;
-}
-
 =head2 set_model_route($name, $models)
 
-Save a named model routing profile.
+Save a named sequential model routing profile as a plain arrayref.
 
 Arguments:
   $name    - Route name
   $models  - Arrayref of model strings
 
-Returns: 1 on success
+Returns: 1 on success.
+
+For extended route-aware configs, use C<set_model_route_config> instead.
 
 =cut
 
@@ -1703,7 +1691,8 @@ sub delete_model_route {
 
 =head2 list_model_routes
 
-Return hash of all routing profiles (name => [models]).
+Return hash of all routing profiles. Values may be ARRAY refs sequential
+or HASH refs (extended route-aware configs).
 
 =cut
 
@@ -1711,6 +1700,142 @@ sub list_model_routes {
     my ($self) = @_;
     my $routes = $self->{config}->{model_routes} || {};
     return %$routes;
+}
+
+=head2 get_model_route
+
+Get a named model routing profile. Handles both sequential (ARRAY ref) and
+extended (HASH ref) route formats.
+
+For sequential routes, returns the arrayref of model strings.
+For extended routes, returns the C<models> array from the route config
+hashref. Returns undef if the route does not exist or has no models.
+
+=cut
+
+sub get_model_route {
+    my ($self, $name) = @_;
+    return unless $name;
+    my $routes = $self->{config}->{model_routes} || {};
+    my $route = $routes->{lc($name)};
+    return undef unless defined $route;
+
+    # Legacy format: plain arrayref of model strings.
+    return $route if ref($route) eq 'ARRAY';
+
+    # Extended format: hashref with a 'models' key.
+    if (ref($route) eq 'HASH') {
+        my $models = $route->{models};
+        return $models if ref($models) eq 'ARRAY' && @$models;
+    }
+
+    return undef;
+}
+
+=head2 get_model_route_config($name)
+
+Get the full configuration of a named route, normalized to a hashref.
+
+For sequential arrayref routes, returns:
+  { strategy => 'sequential', models => [original model list] }
+
+For extended hashref routes, returns a dclone of the stored config so
+callers can mutate it without leaking state into the Config singleton.
+
+Returns undef if the route does not exist.
+
+=cut
+
+sub get_model_route_config {
+    my ($self, $name) = @_;
+    return unless $name;
+    my $routes = $self->{config}->{model_routes} || {};
+    my $route = $routes->{lc($name)};
+    return undef unless defined $route;
+
+    if (ref($route) eq 'ARRAY') {
+        # Legacy route: normalize to the extended structure.
+        return {
+            strategy => 'sequential',
+            models   => [ @$route ],
+        };
+    }
+
+    if (ref($route) eq 'HASH') {
+        require Storable;
+        return Storable::dclone($route);
+    }
+
+    return undef;
+}
+
+=head2 set_model_route_config($name, $config)
+
+Save an extended route configuration as a hashref.
+
+Arguments:
+  $name   - Route name
+  $config - Hashref with keys like strategy, models, roles, default_role,
+            fallbacks, intelligent, constraints
+
+Returns: 1 on success.
+
+=cut
+
+sub set_model_route_config {
+    my ($self, $name, $config) = @_;
+    return 0 unless $name && $config && ref($config) eq 'HASH';
+    my $routes = $self->{config}->{model_routes} ||= {};
+    $routes->{lc($name)} = $config;
+    $self->{user_set}->{model_routes} = 1;
+    return 1;
+}
+
+=head2 get_route_strategy($name)
+
+Get the routing strategy for a named route.
+
+Returns: 'sequential' for plain arrayref routes, or the configured strategy
+('role-aware', 'intelligent', etc.) for extended routes. Returns undef
+if the route does not exist.
+
+=cut
+
+sub get_route_strategy {
+    my ($self, $name) = @_;
+    return unless $name;
+    my $routes = $self->{config}->{model_routes} || {};
+    my $route = $routes->{lc($name)};
+    return undef unless defined $route;
+
+    if (ref($route) eq 'ARRAY') {
+        return 'sequential';
+    }
+    if (ref($route) eq 'HASH') {
+        return $route->{strategy} || 'sequential';
+    }
+    return 'sequential';
+}
+
+=head2 get_route_active_role / set_route_active_role
+
+Track the currently active work role for an active role-aware route.
+This is transient runtime state (per-turn) and is NOT persisted across
+sessions. The WorkflowOrchestrator sets it at the start of each turn
+after role resolution.
+
+=cut
+
+sub get_route_active_role {
+    my ($self) = @_;
+    return $self->{config}->{route_active_role};
+}
+
+sub set_route_active_role {
+    my ($self, $role) = @_;
+    # Deliberately do NOT mark as user_set — this is runtime state.
+    $self->{config}->{route_active_role} = $role;
+    return 1;
 }
 
 =head2 get_all
