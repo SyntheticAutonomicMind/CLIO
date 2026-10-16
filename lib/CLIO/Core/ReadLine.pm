@@ -294,6 +294,13 @@ sub new {
        # (0 = first row). Written by redraw_line, reposition_cursor,
        # _redraw_line_external, and the fast-path insert/backspace.
        last_cursor_input_row => 0,
+       # Whether the cursor is at a pending-wrap position: the last
+       # emitted character filled the last column of a row, so the
+       # terminal has NOT yet advanced the cursor to the next row.
+       # Set by the insert-at-end fast path when total_disp is an
+       # exact multiple of term_width. Read by redraw_line to adjust
+       # rows_to_top (pending cursors are physically one row lower).
+       last_cursor_pending => 0,
        # Kill ring for line-editing commands (Ctrl-K, Ctrl-U, Ctrl-W, etc.)
         # Mirrors GNU readline: text killed by these commands is saved so
         # the user can yank it back with Ctrl-Y. Consecutive kills (without
@@ -986,6 +993,18 @@ sub redraw_line {
     print "\r";
     $self->{last_cursor_col} = 1;
     my $rows_to_top = $old_cursor_input_row;
+
+    # PENDING WRAP ADJUSTMENT: When the cursor was at a pending wrap
+    # position (last char filled the last column, terminal hasn't advanced
+    # the cursor to the next row yet), the physical cursor is one row
+    # lower than old_cursor_input_row says. The \r above resolves the
+    # pending state, so moving up old_cursor_input_row rows would
+    # overshoot past the top of the input area. Subtract 1 to account
+    # for the pending row.
+    if ($rows_to_top > 0 && ($self->{last_cursor_pending} || 0)) {
+        $rows_to_top -= 1;
+    }
+
     # Clamp to old_display_lines - 1 as a safety net for stale state.
     if ($rows_to_top > $old_display_lines - 1) {
         $rows_to_top = $old_display_lines - 1;
@@ -1036,6 +1055,7 @@ sub redraw_line {
     $self->{last_cursor_row} = $desired_row;
     $self->{last_cursor_col} = $desired_col;
     $self->{last_cursor_input_row} = $desired_input_row;
+    $self->{last_cursor_pending} = 0;
 }
 
 =head2 _redraw_line_external
@@ -1073,6 +1093,15 @@ sub _redraw_line_external {
     # scroll support).
     my $old_display_lines = $self->{display_lines} || 1;
     my $rows_to_top = $old_cursor_input_row;
+
+    # PENDING WRAP ADJUSTMENT: same as in redraw_line. When the cursor
+    # is at a pending wrap position (end of input at exact wrap boundary),
+    # the physical cursor is one row lower than last_cursor_input_row
+    # says. Subtract 1 to avoid moving above the input area.
+    if ($rows_to_top > 0 && ($self->{last_cursor_pending} || 0)) {
+        $rows_to_top -= 1;
+    }
+
     if ($rows_to_top > $old_display_lines - 1) {
         $rows_to_top = $old_display_lines - 1;
     }
@@ -1113,6 +1142,7 @@ sub _redraw_line_external {
     $self->{last_cursor_row} = $cursor_row;
     $self->{last_cursor_col} = $cursor_col;
     $self->{last_cursor_input_row} = $cursor_input_row;
+    $self->{last_cursor_pending} = 0;
 }
 
 sub readline {
@@ -1128,6 +1158,7 @@ sub readline {
     $self->{display_lines} = 1;
     $self->{scroll_offset} = 0;
     $self->{last_cursor_input_row} = 0;
+    $self->{last_cursor_pending} = 0;
 
     # Reset kill-ring accumulation state. The kill_ring itself persists
     # across readline calls (so Ctrl-Y can yank text killed on a previous
@@ -1296,6 +1327,7 @@ sub readline {
                 $self->{last_cursor_input_row} = $end_row;
                 $self->{last_cursor_row} = $end_sr;
                 $self->{last_cursor_col} = $end_col;
+                $self->{last_cursor_pending} = 0;
             }
             # Clear from cursor to end of line before newline
             print "\e[K";
@@ -1390,7 +1422,13 @@ sub readline {
                         $self->{display_lines} = $self->_compute_display_lines($total_disp);
                         $self->{scroll_offset} = $self->_compute_scroll_offset($self->{display_lines});
                         $self->{last_cursor_input_row} = $self->{display_lines} - 1;
+                        # The \b \b sequence moves the cursor left, which
+                        # resolves any pending wrap state. The cursor is now
+                        # at col 1 (1-indexed) of the current input row,
+                        # which is NOT a pending position.
+                        $self->{last_cursor_pending} = 0;
                     } else {
+                        # Mid-input insert or non-fast-path backspace: full redraw.
                         $self->redraw_line(\$input, \$cursor_pos, $prompt);
                     }
                 } else {
@@ -1482,6 +1520,7 @@ sub readline {
             $self->{last_cursor_col} = 1;
             $self->{display_lines} = 1;
             $self->{last_cursor_input_row} = 0;
+            $self->{last_cursor_pending} = 0;
             $self->_invalidate_yank();
             $self->redraw_line(\$input, \$cursor_pos, $prompt);
             next;
@@ -1602,6 +1641,11 @@ sub readline {
                 $self->{scroll_offset} = $self->_compute_scroll_offset($self->{display_lines});
                 # Cursor is at the end of the input, so it's on the last row.
                 $self->{last_cursor_input_row} = $self->{display_lines} - 1;
+                # Track pending wrap state: the terminal hasn't advanced the
+                # cursor to the next row if the total display width is an exact
+                # multiple of term_width (the last character filled the last column).
+                my $term_width = $self->_get_term_width();
+                $self->{last_cursor_pending} = ($total_disp > 0 && $total_disp % $term_width == 0) ? 1 : 0;
             } else {
                 # Mid-input insert: full redraw. redraw_line recomputes
                 # all positions from input state via _cursor_at_codepoint,
@@ -1942,6 +1986,7 @@ sub reposition_cursor {
     $self->{last_cursor_row} = $new_row;
     $self->{last_cursor_col} = $new_col;
     $self->{last_cursor_input_row} = $new_input_row;
+    $self->{last_cursor_pending} = 0;
 
     if (should_log('DEBUG')) {
         log_debug('ReadLine', "reposition_cursor: tracking set to ($new_row,$new_col)");
