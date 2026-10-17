@@ -93,6 +93,7 @@ sub _get_skill_manager {
         session_skills_file => $self->{session} ?
             File::Spec->catfile('.clio', 'sessions', $self->{session}{session_id}, 'skills.json') :
             undef,
+        skip_system_skills => $ENV{CLIO_SKIP_SYSTEM_SKILLS} ? 1 : 0,
     );
 }
 
@@ -264,6 +265,7 @@ sub _scope_label {
     my %labels = (
         user => 'user', project => 'project', session => 'session',
         repository => 'repository', builtin => 'builtin', freeform => 'freeform',
+        system => 'system',
     );
     return $labels{$scope} // $scope // 'unknown';
 }
@@ -281,7 +283,7 @@ sub _show_help {
 
     $self->display_section_header("COMMANDS");
     $self->{chat}->display_command_row("/skills", "List all skills grouped by scope", 35);
-    $self->{chat}->display_command_row("/skills --scope=<scope>", "Filter list (user|project|session|freeform|repository|builtin)", 35);
+    $self->{chat}->display_command_row("/skills --scope=<scope>", "Filter list (user|project|system|session|freeform|repository|builtin)", 35);
     $self->{chat}->display_command_row("/skills use <name> [file]", "Execute skill as user input", 35);
     $self->{chat}->display_command_row("/skills load <name>", "Load skill into system prompt", 35);
     $self->{chat}->display_command_row("/skills unload <name>", "Remove skill from system prompt", 35);
@@ -297,7 +299,8 @@ sub _show_help {
     $self->writeline("  project    - .clio/skills/*.md in the current project", markdown => 0);
     $self->writeline("  session    - .clio/sessions/<id>/skills.json (cleared on session end)", markdown => 0);
     $self->writeline("  repository - skills pulled from a configured git repository", markdown => 0);
-    $self->writeline("  builtin    - read-only skills shipped with CLIO", markdown => 0);
+    $self->writeline("  system     - read-only skills shipped with CLIO (override via freeform)", markdown => 0);
+    $self->writeline("  builtin    - read-only skills built into CLIO", markdown => 0);
     $self->writeline("", markdown => 0);
 
     $self->display_section_header("CATALOG");
@@ -425,7 +428,7 @@ sub _handle_autocreate {
 
 List all available skills with scope labels. Each skill is shown with
 its source (file path for custom/freeform, repo name for repository).
-A C<--scope=<user|project|session|repository|builtin|freeform>> filter
+A C<--scope=<user|project|system|session|repository|builtin|freeform>> filter
 narrows the list to a single scope; C<--scope=custom> matches the
 union of user, project, and session.
 
@@ -441,7 +444,7 @@ sub _list_skills {
         if ($arg =~ /^--scope=(\w+)$/i) {
             $filter{scope} = lc($1);
         }
-        elsif ($arg =~ /^--(user|project|session|repository|builtin|freeform)$/i) {
+        elsif ($arg =~ /^--(user|project|session|repository|builtin|freeform|system)$/i) {
             $filter{scope} = lc($1);
         }
         else {
@@ -478,6 +481,7 @@ sub _list_skills {
             ['project',    $by_scope{project}    // []],
             ['session',    $by_scope{session}    // []],
             ['repository', $by_scope{repository} // []],
+            ['system',     $by_scope{system}     // []],
             ['builtin',    $by_scope{builtin}    // []],
         );
     }
@@ -512,6 +516,7 @@ sub _list_skills {
         project    => 'Freeform .clio/skills/*.md files in this project (edit the .md to modify).',
         session    => 'Stored in this session\'s skills.json. Cleared when the session ends.',
         repository => 'Loaded from a configured skill repository.',
+        system     => 'Shipped with CLIO. Override by creating a freeform .md with the same name.',
         builtin    => 'Built into CLIO. Read-only.',
     );
 
@@ -562,6 +567,7 @@ sub _list_skills {
                        scalar(@{$by_scope{session}// []});
     my $builtin_count = scalar(@{$by_scope{builtin} // []});
     my $repo_count    = scalar(@{$by_scope{repository} // []});
+    my $system_count  = scalar(@{$by_scope{system} // []});
     my $loaded_count  = scalar(@$loaded);
 
     my $summary;
@@ -578,6 +584,7 @@ sub _list_skills {
         my $total = $custom_count + $builtin_count + $repo_count;
         $summary = $self->colorize("Total: ", 'LABEL') .
                    $self->colorize("$custom_count", 'DATA') . " custom, " .
+                   $self->colorize("$system_count", 'DATA') . " system, " .
                    $self->colorize("$repo_count", 'DATA') . " repo, " .
                    $self->colorize("$builtin_count", 'DATA') . " built-in" .
                    " (" . $self->colorize("$total", 'SUCCESS') . " total)";

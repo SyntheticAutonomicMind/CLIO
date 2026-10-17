@@ -6,11 +6,31 @@ package CLIO::Core::SkillManager;
 use strict;
 use warnings;
 use utf8;
-use CLIO::Core::Logger qw(log_debug);
+use CLIO::Core::Logger qw(log_debug log_warning);
 use CLIO::Util::ConfigPath qw(get_config_file);
 use CLIO::Util::JSON qw(encode_json decode_json safe_decode_json);
 use File::Spec;
 use File::Path qw(make_path);
+
+# Readonly path to the system-install skills directory (ships with CLIO).
+# Resolved lazily via PathResolver::get_base_dir() so it works in both
+# development (git checkout: script dir has lib/ + .clio/) and installed
+# mode (system: /opt/clio, user: ~/clio). Override with CLIO_SYSTEM_SKILLS_DIR.
+sub _resolve_system_skills_dir {
+    # CLIO_SKIP_SYSTEM_SKILLS is set by the CLI (--no-system-skills flag)
+    # and respected by all SkillManager instances, including those created
+    # independently by PromptBuilder and SkillOperations. Check it first,
+    # before any directory resolution.
+    return undef if $ENV{CLIO_SKIP_SYSTEM_SKILLS};
+    return $ENV{CLIO_SYSTEM_SKILLS_DIR} if $ENV{CLIO_SYSTEM_SKILLS_DIR} && -d $ENV{CLIO_SYSTEM_SKILLS_DIR};
+    eval { require CLIO::Util::PathResolver; CLIO::Util::PathResolver::init() };
+    if (!$@) {
+        my $base = CLIO::Util::PathResolver::get_base_dir();
+        my $dir = File::Spec->catdir($base, 'skills');
+        return $dir if -d $dir;
+    }
+    return undef;
+}
 
 =head1 NAME
 
@@ -426,21 +446,27 @@ INIT_PRD_PROMPT
 
 Create a new SkillManager instance.
 
-Skill storage is organized in three writable scopes plus read-only sources:
+Skill storage is organized into read-only tiers (builtin, system-install,
+repository) and writable tiers (user, project, session), plus freeform .md
+files at user/project scope. Load priority (lowest to highest):
 
 =over 4
 
-=item B<user>     - C<~/.clio/skills.json> and C<~/.clio/skills/*.md>
+=item B<builtin>      - Hardcoded prompts shipped with CLIO (lowest tier)
 
-=item B<project>  - C<.clio/skills.json> and C<.clio/skills/*.md>
+=item B<repository>   - Git-cached SKILL.md files in C<~/.clio/skill-cache/>
 
-=item B<session>  - C<.clio/sessions/<id>/skills.json>
+=item B<system>       - Shipped markdown skills at C<< get_base_dir()/skills/ >>
 
-=item B<repository> - Git-cached SKILL.md files in C<~/.clio/skill-cache/>
-
-=item B<builtin>  - Hardcoded prompts shipped with CLIO
+=item B<session>      - C<.clio/sessions/<id>/skills.json> (highest JSON tier)
 
 =back
+
+Freeform .md skills at user (C<~/.clio/skills/*.md>) and project
+(C<.clio/skills/*.md>) scope are loaded after system-install skills, so they
+shadow shipped and builtin skills. A user can override any system-install
+skill by dropping a C<< <name>.md >> file in their C<~/.clio/skills/> or
+C<.clio/skills/> directory.
 
 Paths can be overridden with environment variables for testing and isolation:
 C<CLIO_USER_SKILLS>, C<CLIO_PROJECT_DIR> (skills.json lives at C<CLIO_PROJECT_DIR/.clio/skills.json>).
@@ -450,6 +476,9 @@ Arguments:
 - user_skills_file: Path to user-level skills.json (optional)
 - project_skills_file: Path to project-level skills.json (optional)
 - session_skills_file: Path to session-level skills.json (optional)
+- skip_system_skills: Skip loading system-install skills (optional; set by --no-system-skills CLI flag)
+- freeform_user_dir: Override user freeform .md directory (optional, for testing)
+- freeform_project_dir: Override project freeform .md directory (optional, for testing)
 
 Returns: SkillManager instance
 
@@ -493,6 +522,7 @@ sub new {
         freeform_user_dir => $user_dir_resolved,
         freeform_project_dir => $project_dir_resolved,
         session_skills_file => $opts{session_skills_file},
+        skip_system_skills => $opts{skip_system_skills} || 0,
         skills => {},
         active_prompt => undef,
         repo_mgr => undef,
@@ -506,8 +536,8 @@ sub new {
 
 =head2 _load_skills
 
-Load skills from built-in definitions and JSON files.
-Priority: Session > Project > User > Built-in
+Load skills from built-in definitions, system-install directory, repositories,
+and JSON/freeform files. Priority: Session > Project > User > System > Repository > Built-in.
 
 =cut
 
@@ -525,8 +555,16 @@ sub _load_skills {
         $self->{skills}{$name} = $skill;
     }
 
-    # Load repository skills (low-medium priority)
+    # Load repository skills (low priority — can be overridden by everything
+    # except builtins).
     $self->_load_repository_skills();
+
+    # Load system-install skills (ships with CLIO; overrides builtins and
+    # repository skills, but is overridden by user/project/session freeform
+    # skills and JSON-backed custom skills). Load BEFORE freeform so that
+    # users can shadow shipped skills by dropping a .md file in their
+    # ~/.clio/skills/ or .clio/skills/ directory.
+    $self->_load_system_skills();
 
     # Load freeform .md skills (user then project, both editable in-place).
     # Always scan both directories — the old _has_project_scope() gate was
@@ -659,9 +697,17 @@ sub _load_freeform_skills {
             readonly => 1,  # user edits the file directly
         };
 
-        # Freeform skills lose to anything more specific with the same name.
-        $self->{skills}{$name} = $skill
-            unless $self->{skills}{$name};
+        # Freeform skills shadow system-install, repository, and builtin
+        # skills (loaded earlier) but do NOT override another freeform
+        # skill in a higher-priority scope (user shadows project, but not
+        # vice-versa). They also don't override JSON-backed custom skills
+        # in the same scope (those are loaded later with explicit priority).
+        # The 'unless' check preserves an existing entry only if it is
+        # already a more-specific freeform or higher-tier type.
+        my $existing = $self->{skills}{$name};
+        if (!$existing || $existing->{type} eq 'system' || $existing->{type} eq 'builtin' || $existing->{type} eq 'repository') {
+            $self->{skills}{$name} = $skill;
+        }
     }
 }
 
@@ -782,6 +828,103 @@ sub reload_repository_skills {
     
     log_debug('SkillManager', "Reloaded repository skills, total: " . 
         scalar(keys %{$self->{skills}}));
+}
+
+=head2 reload_system_skills
+
+Reload skills from the system-install skills directory.
+Useful after updating the CLIO installation.
+
+=cut
+
+sub reload_system_skills {
+    my ($self) = @_;
+
+    # Remove existing system-install skills
+    for my $name (keys %{$self->{skills}}) {
+        delete $self->{skills}{$name} if $self->{skills}{$name}{type} eq 'system';
+    }
+
+    $self->_load_system_skills();
+
+    log_debug('SkillManager', "Reloaded system skills, total: " .
+        scalar(keys %{$self->{skills}}));
+}
+
+=head2 _load_system_skills
+
+Load skills from the CLIO installation directory's C<skills/> folder.
+These are readonly skills that ship with CLIO and override the Perl-baked
+builtins but are overridden by repository, user, project, and session skills.
+
+The directory is resolved via C<_resolve_system_skills_dir()>, which uses
+C<PathResolver::get_base_dir()> (works in both dev and installed mode) or
+falls back to C<CLIO_SYSTEM_SKILLS_DIR> env var.
+
+=cut
+
+sub _load_system_skills {
+    my ($self) = @_;
+
+    # Respect the --no-system-skills CLI flag (passed through PromptBuilder
+    # -> WorkflowOrchestrator -> SimpleAIAgent) and the CLIO_SKIP_SYSTEM_SKILLS
+    # env var (set by the CLI, read by independently-constructed SkillManagers
+    # in SkillOperations and Skills.pm command handler).
+    return if $self->{skip_system_skills};
+    return if $ENV{CLIO_SKIP_SYSTEM_SKILLS};
+
+    my $skills_dir = _resolve_system_skills_dir();
+    return unless $skills_dir && -d $skills_dir;
+
+    opendir my $dh, $skills_dir or do {
+        log_warning('SkillManager', "Cannot read system skills dir $skills_dir: $!");
+        return;
+    };
+
+    my @entries = sort grep { $_ ne '.' && $_ ne '..' } readdir($dh);
+    closedir $dh;
+
+    my $count = 0;
+    for my $entry (@entries) {
+        next unless $entry =~ /\.(md|skill)\z/i;
+
+        my $path = File::Spec->catfile($skills_dir, $entry);
+        next unless -f $path;
+
+        my $content = $self->_slurp($path);
+        next unless defined $content && length $content;
+
+        my ($name, $description) = $self->_parse_freeform_meta($content, $entry);
+        my $body = _strip_frontmatter($content);
+        # _parse_freeform_meta returns a freeform-specific default description;
+        # override it with a system-specific default so the catalog is clear
+        # that this skill ships with CLIO.
+        $description = "(system skill, shipped with CLIO)"
+            if !$description || $description eq '(freeform skill, edit the .md file directly)';
+        my $skill = {
+            name => $name,
+            description => $description,
+            prompt => $content,
+            variables => [$self->_extract_variables($body)],
+            type => 'system',
+            scope => 'system',
+            source => $path,
+            _source_file => $path,
+            readonly => 1,  # Shipped with the install - edits require a user/project override
+        };
+
+        # System-install skills override builtins (they are the markdown
+        # upgrade of the Perl heredocs) but are overridden by repository,
+        # user, project, and session skills (loaded after this method).
+        # We use 'unless' so a more-specific entry (repo/user/etc.) already
+        # in the hash is preserved, and we explicitly replace builtins.
+        if (!$self->{skills}{$name} || $self->{skills}{$name}{type} eq 'builtin') {
+            $self->{skills}{$name} = $skill;
+        }
+        $count++;
+    }
+
+    log_debug('SkillManager', "Loaded $count system-install skills from $skills_dir");
 }
 
 =head2 _read_skills_file
@@ -1120,6 +1263,13 @@ sub delete_skill {
         };
     }
     
+    if ($scope eq 'system') {
+        return { 
+            success => 0, 
+            error => "Cannot delete system-install skill. Remove or upgrade the CLIO installation to change it, or create a freeform override in ~/.clio/skills/ to shadow it." 
+        };
+    }
+    
     # Freeform .md skills (user/project scope) can be deleted from disk.
     # This covers skills created via add_skill (now .md), add_freeform_skill,
     # or skill_operations(create).
@@ -1188,7 +1338,7 @@ sub list_skills {
 
     my %by_scope = (
         builtin => [], user => [], project => [], session => [],
-        repository => [], freeform => [],
+        repository => [], freeform => [], system => [],
     );
     for my $name (keys %{$self->{skills}}) {
         my $scope = $self->{skills}{$name}{scope} // 'user';

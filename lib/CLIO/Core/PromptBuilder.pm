@@ -54,6 +54,7 @@ sub new {
         enable_subagents => $opts{enable_subagents} // 1,  # Sub-agent spawning feature flag
         auto_discover_skills => $opts{auto_discover_skills} // 1,  # Skill auto-discovery
         auto_create_skills => $opts{auto_create_skills} // 1,  # Auto-skill creation prompt section
+        skip_system_skills => $opts{skip_system_skills} // 0,    # Skip shipped system-install skills (--no-system-skills)
         show_thinking   => $opts{show_thinking} // 1,  # Surface thinking stream and append steering paragraph
         needs_thinking_steering => $opts{needs_thinking_steering} // 0,  # Inject "Reasoning Visibility" paragraph
         # (Anthropic adaptive summarizer only - see generate_thinking_steering_section)
@@ -416,7 +417,10 @@ sub generate_skills_section {
     }
 
     require CLIO::Core::SkillManager;
-    my $sm = CLIO::Core::SkillManager->new(debug => $self->{debug});
+    my $sm = CLIO::Core::SkillManager->new(
+        debug => $self->{debug},
+        skip_system_skills => $self->{skip_system_skills},
+    );
     my $catalog = $sm->list_skill_catalog();
     my $count = scalar @$catalog;
 

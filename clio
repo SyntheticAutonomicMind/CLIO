@@ -96,6 +96,7 @@ OPTIONS:
     --no-session-replay  Disable history replay on session switch/resume
     --reduced-motion   Use static indicators instead of animated spinners
     --no-custom-instructions  Skip .clio/instructions.md
+    --no-system-skills       Skip system-install skills shipped with CLIO
     --no-ltm           Skip long-term memory pattern injection
     --incognito        Skip both custom instructions AND LTM (fresh audit mode)
     --help, -h         Display this help message
@@ -275,6 +276,7 @@ unless ($ENV{CLIO_LOG_LEVEL}) {
 my $should_exit = 0;
 my $skip_custom = 0;
 my $skip_ltm = 0;
+my $skip_system_skills = 0;
 my $sandbox_mode = 0;  # Sandbox mode - restrict file access to project directory
 my $model_override = undef;  # Temporary model override from --model flag
 my $enable_tools = undef;   # --enable: allowlist of tools (comma-separated)
@@ -306,6 +308,10 @@ for (my $i = 0; $i < @ARGV; $i++) {
     }
     if ($ARGV[$i] eq '--no-custom-instructions') {
         $skip_custom = 1;
+    }
+    if ($ARGV[$i] eq '--no-system-skills') {
+        $skip_system_skills = 1;
+        $ENV{CLIO_SKIP_SYSTEM_SKILLS} = 1;
     }
     if ($ARGV[$i] eq '--no-ltm') {
         $skip_ltm = 1;
@@ -1250,6 +1256,7 @@ unless ($no_provider) {
         api => $api,
         skip_custom => $skip_custom,
         skip_ltm => $skip_ltm,
+        skip_system_skills => $skip_system_skills,
         broker_client => $broker_client,  # Pass broker client for coordination
         non_interactive => $input ? 1 : 0,  # Non-interactive mode when --input is used
         enable_tools => $enable_tools,      # --enable: allowlist of tools

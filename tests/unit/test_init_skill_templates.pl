@@ -33,6 +33,11 @@ sub ok_test {
 my $tmpdir = tempdir(CLEANUP => 1);
 $ENV{CLIO_USER_SKILLS} = File::Spec->catfile($tmpdir, 'skills.json');
 
+# Point system skills at the repo's skills/ directory so tests can verify
+# the bundled system-install skills load correctly.
+my $repo_root = File::Spec->catfile($RealBin, '..', '..');
+$ENV{CLIO_SYSTEM_SKILLS_DIR} = File::Spec->catfile($repo_root, 'skills');
+
 my $sm = CLIO::Core::SkillManager->new(debug => 0);
 
 # --- Skill existence ---
@@ -92,12 +97,39 @@ ok_test('init prompt mentions [PLACEHOLDER] tokens',
     $init_prompt =~ /\[PLACEHOLDER\]/ ? 1 : 0);
 
 # --- Template files exist on disk ---
-my $repo_root = File::Spec->catfile($RealBin, '..', '..');
 my $agents_tmpl = File::Spec->catfile($repo_root, 'docs', 'templates', 'AGENTS.md.template');
 my $instr_tmpl = File::Spec->catfile($repo_root, 'docs', 'templates', 'instructions.md.template');
 
 ok_test('AGENTS.md.template file exists', -f $agents_tmpl);
 ok_test('instructions.md.template file exists', -f $instr_tmpl);
+
+# --- Bundled system-install templates exist ---
+my $sys_agents_tmpl = File::Spec->catfile($repo_root, 'skills', 'templates', 'AGENTS.md.template');
+my $sys_instr_tmpl = File::Spec->catfile($repo_root, 'skills', 'templates', 'instructions.md.template');
+
+ok_test('bundled AGENTS template exists', -f $sys_agents_tmpl);
+ok_test('bundled instructions template exists', -f $sys_instr_tmpl);
+
+# Verify bundled templates match the docs/templates versions
+if (-f $agents_tmpl && -f $sys_agents_tmpl) {
+    ok_test('bundled AGENTS template matches docs version',
+        _file_eq($agents_tmpl, $sys_agents_tmpl) ? 1 : 0);
+}
+if (-f $instr_tmpl && -f $sys_instr_tmpl) {
+    ok_test('bundled instructions template matches docs version',
+        _file_eq($instr_tmpl, $sys_instr_tmpl) ? 1 : 0);
+}
+
+# --- Init skill references local bundled template paths ---
+ok_test('init prompt mentions local instructions template path',
+    $init_prompt =~ /skills\/templates\/instructions\.md\.template/ ? 1 : 0);
+ok_test('init prompt mentions local AGENTS template path',
+    $init_prompt =~ /skills\/templates\/AGENTS\.md\.template/ ? 1 : 0);
+
+ok_test('init-with-prd prompt mentions local instructions template path',
+    $prd_prompt =~ /skills\/templates\/instructions\.md\.template/ ? 1 : 0);
+ok_test('init-with-prd prompt mentions local AGENTS template path',
+    $prd_prompt =~ /skills\/templates\/AGENTS\.md\.template/ ? 1 : 0);
 
 # --- AGENTS template has placeholder structure ---
 if (-f $agents_tmpl) {
@@ -144,3 +176,14 @@ if (-f $instr_tmpl) {
 print "\n$passed/$tests tests passed\n";
 
 exit($passed == $tests ? 0 : 1);
+
+sub _file_eq {
+    my ($a, $b) = @_;
+    open my $fh1, '<:raw', $a or return 0;
+    open my $fh2, '<:raw', $b or return 0;
+    my $c1 = do { local $/; <$fh1> };
+    my $c2 = do { local $/; <$fh2> };
+    close $fh1;
+    close $fh2;
+    return $c1 eq $c2;
+}

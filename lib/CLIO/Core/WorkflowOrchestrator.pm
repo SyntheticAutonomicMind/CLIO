@@ -103,6 +103,7 @@ sub new {
         spinner => $args{spinner},  # Store spinner for interactive tools (interact)
         skip_custom => $args{skip_custom} || 0,  # Skip custom instructions (--no-custom-instructions)
         skip_ltm => $args{skip_ltm} || 0,        # Skip LTM injection (--no-ltm)
+        skip_system_skills => $args{skip_system_skills} || 0,  # Skip system-install skills (--no-system-skills)
         non_interactive => $args{non_interactive} || 0,  # Non-interactive mode (--input flag)
         broker_client => $args{broker_client},   # Broker client for multi-agent coordination
         enable_tools => $args{enable_tools},     # Tool allowlist (comma-separated string or undef)
@@ -229,6 +230,7 @@ sub new {
         debug           => $args{debug},
         skip_custom     => $self->{skip_custom},
         skip_ltm        => $self->{skip_ltm},
+        skip_system_skills => $self->{skip_system_skills},
         non_interactive => $self->{non_interactive},
         tool_registry   => $self->{tool_registry},
         mcp_manager     => $self->{mcp_manager},

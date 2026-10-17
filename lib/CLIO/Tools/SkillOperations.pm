@@ -283,6 +283,7 @@ sub _get_skill_manager {
         debug => $self->{debug},
         project_skills_file => $project_skills_file,
         session_skills_file => $session_file,
+        skip_system_skills => $ENV{CLIO_SKIP_SYSTEM_SKILLS} ? 1 : 0,
     );
 }
 

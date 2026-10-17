@@ -2182,6 +2182,7 @@ Skills live in one of six scopes. The list and show commands surface the scope a
 | `session` | `.clio/sessions/<id>/skills.json` | yes | Throwaway skills for the current session, cleared on exit |
 | `freeform` | `<dir>/.clio/skills/<name>.md` | yes (edit the .md) | Markdown-form skills for long-form content, version controlled alongside code |
 | `repository` | `~/.clio/skill-cache/<repo>/` | no (re-sync instead) | Skills pulled from a configured Git repository |
+| `system` | `<clio-install>/skills/*.md` | no (upgrade CLIO instead) | Shipped markdown skills bundled with the CLIO installation; override by creating a freeform `.md` with the same name |
 | `builtin` | bundled with CLIO | no | Read-only skills shipped with CLIO (`explain`, `review`, `test`, `fix`, `doc`, `design`, `init`, `init-with-prd`, `design-review`) |
 
 ### Skill Priority
@@ -2192,8 +2193,9 @@ When skills have the same name across sources, the priority order is:
 2. **Project** skills (`.clio/skills.json`)
 3. **User** skills (`~/.clio/skills.json`)
 4. **Freeform** skills (`.clio/skills/<name>.md`)
-5. **Repository** skills (from configured Git repos)
-6. **Built-in** skills (lowest - shipped with CLIO)
+5. **System** skills (`<clio-install>/skills/*.md`)
+6. **Repository** skills (from configured Git repos)
+7. **Built-in** skills (lowest - bundled in CLIO Perl source)
 
 ### Automatic Skill Creation
 
