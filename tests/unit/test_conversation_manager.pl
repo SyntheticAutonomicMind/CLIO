@@ -128,17 +128,50 @@ subtest 'load_conversation_history - orphaned tool_results removed' => sub {
 # enforce_message_alternation tests
 # =============================================================================
 
-subtest 'enforce_message_alternation - merges consecutive same-role' => sub {
+subtest 'enforce_message_alternation - does NOT merge consecutive user messages' => sub {
     my @messages = (
-        { role => 'user', content => 'First' },
-        { role => 'user', content => 'Second' },
+        { role => 'user', content => 'First question' },
+        { role => 'user', content => 'Second question' },
         { role => 'assistant', content => 'Response' },
     );
 
+    # github_copilot accepts consecutive user messages natively - no merging
     my $result = enforce_message_alternation(\@messages, 'github_copilot');
-    is(scalar(@$result), 2, 'Two consecutive user messages merged into one');
-    like($result->[0]{content}, qr/First/, 'Merged message contains first');
-    like($result->[0]{content}, qr/Second/, 'Merged message contains second');
+    is(scalar(@$result), 3, 'Two consecutive user messages NOT merged (github_copilot)');
+    is($result->[0]{content}, 'First question', 'First user message preserved intact');
+    is($result->[1]{content}, 'Second question', 'Second user message preserved intact');
+    is($result->[2]{content}, 'Response', 'Assistant message preserved');
+};
+
+subtest 'enforce_message_alternation - merges consecutive assistant messages' => sub {
+    my @messages = (
+        { role => 'user', content => 'Question' },
+        { role => 'assistant', content => 'First part' },
+        { role => 'assistant', content => 'Second part' },
+    );
+
+    my $result = enforce_message_alternation(\@messages, 'github_copilot');
+    is(scalar(@$result), 2, 'Two consecutive assistants merged into one');
+    like($result->[1]{content}, qr/First part/, 'Merged assistant contains first part');
+    like($result->[1]{content}, qr/Second part/, 'Merged assistant contains second part');
+};
+
+subtest 'enforce_message_alternation - inserts placeholder for local inference' => sub {
+    # SAM (local inference) uses Jinja chat templates that may require
+    # strict alternation - consecutive user messages need a placeholder
+    my @messages = (
+        { role => 'user', content => 'First question' },
+        { role => 'user', content => 'Second question' },
+        { role => 'assistant', content => 'Response' },
+    );
+
+    my $result = enforce_message_alternation(\@messages, 'sam');
+    is(scalar(@$result), 4, 'Placeholder assistant inserted between consecutive user messages');
+    is($result->[0]{content}, 'First question', 'First user message preserved');
+    is($result->[1]{role}, 'assistant', 'Placeholder assistant inserted');
+    is($result->[1]{content}, '', 'Placeholder has empty content');
+    is($result->[2]{content}, 'Second question', 'Second user message preserved');
+    is($result->[3]{content}, 'Response', 'Real assistant message preserved');
 };
 
 subtest 'enforce_message_alternation - preserves tool messages for github' => sub {

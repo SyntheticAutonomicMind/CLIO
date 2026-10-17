@@ -761,16 +761,25 @@ sub filter_continuation_prompts {
 
 =head2 enforce_message_alternation
 
-Enforce strict user/assistant alternation.
+Enforce role alternation for providers that require it.
 
-Some providers require alternating roles.
-This function:
-1. Merges consecutive same-role messages into one
-2. Preserves tool messages with their tool_call_ids
+Behavior:
+1. Preserves tool messages with their tool_call_ids (never merged)
+2. Preserves system messages as separate messages (never merged)
+3. Preserves arrayref content (multimodal) as separate messages (never merged)
+4. Does NOT merge consecutive user messages — all CLIO providers accept
+   consecutive user messages natively (OpenAI, Anthropic, Google, Copilot,
+   etc.). Merging user messages causes data loss: the model sees the old
+   user input and the new input concatenated as one message, losing
+   context boundaries. For local-inference providers that use Jinja chat
+   templates which may require strict alternation, a minimal placeholder
+   assistant message (content='') is inserted between consecutive user
+   messages instead of merging.
+5. Merges consecutive assistant messages (harmless and useful for dedup)
 
 Arguments:
 - $messages: Arrayref of messages
-- $provider: Provider name string (e.g., 'github_copilot', 'google')
+- $provider: Provider name string (e.g., 'github_copilot', 'google', 'sam')
 - %opts: Options hash
   - debug => 0|1
 
@@ -785,7 +794,8 @@ sub enforce_message_alternation {
 
     return $messages unless $messages && @$messages;
 
-    log_debug('ConversationManager', "Enforcing message alternation");
+    log_debug('ConversationManager', "Enforcing message alternation"
+        . (defined $provider ? " (provider=$provider)" : ''));
 
     my @alternating = ();
     my $last_role = undef;
@@ -800,7 +810,15 @@ sub enforce_message_alternation {
         my $role = $msg->{role};
         my $is_arrayref = ref($msg->{content}) eq 'ARRAY';
 
-        # Check if same role as previous (needs merging)
+        # Don't merge consecutive USER messages — they are distinct turns
+        # that must remain separate to prevent data loss (merging
+        # combines old+new user input into one message, losing the
+        # model's view of the actual current input). All CLIO cloud
+        # providers accept consecutive user messages natively. For
+        # local-inference providers that use Jinja chat templates which
+        # may require strict alternation, a minimal placeholder
+        # assistant message is inserted in the else branch below.
+        #
         # Do NOT merge tool messages - each has unique tool_call_id
         # Do NOT merge arrayref content into string - preserve it as a separate message
         # Do NOT merge system messages - each represents a distinct pipeline
@@ -810,7 +828,12 @@ sub enforce_message_alternation {
         # whole merged prompt for LCP cache purposes. Anthropic's
         # _separate_system_prompt and OpenAI's per-message cache_control both
         # rely on the sections being separate messages.
-        if (defined $last_role && $role eq $last_role && $role ne 'tool' && $role ne 'system' && !$is_arrayref) {
+        my $is_consecutive_user = ($role eq 'user' && defined $last_role
+                                    && $last_role eq 'user' && !$is_arrayref);
+
+        # Merge: same role, not tool/system, not arrayref, and not
+        # consecutive user messages (those are preserved separately).
+        if (defined $last_role && $role eq $last_role && $role ne 'tool' && $role ne 'system' && !$is_arrayref && !$is_consecutive_user) {
             my $has_content = 0;
             if (defined $msg->{content}) {
                 if (!ref($msg->{content})) {
@@ -870,6 +893,32 @@ sub enforce_message_alternation {
                 }
 
                 push @alternating, $flushed;
+            }
+
+            # For local-inference providers that may require strict
+            # alternation (Jinja chat templates like Qwen3 which reject
+            # consecutive user messages with "System message must be at
+            # the beginning" or similar errors), insert a minimal
+            # placeholder assistant message between consecutive user
+            # messages instead of merging them. Cloud providers
+            # (OpenAI, Anthropic, Google, Copilot, etc.) accept
+            # consecutive user messages natively, so no placeholder
+            # is needed.
+            if ($is_consecutive_user) {
+                my $is_local = 0;
+                if (defined $provider && length($provider)) {
+                    require CLIO::Providers;
+                    $is_local = CLIO::Providers::is_local_inference($provider);
+                }
+                if ($is_local) {
+                    push @alternating, {
+                        role    => 'assistant',
+                        content => '',
+                    };
+                    log_debug('ConversationManager',
+                        "Inserted placeholder assistant message between "
+                        . "consecutive user messages (provider=$provider requires strict alternation)");
+                }
             }
 
             # Start new accumulation

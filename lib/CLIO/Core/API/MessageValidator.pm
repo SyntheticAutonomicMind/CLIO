@@ -560,7 +560,16 @@ sub _role_based_tail_walk {
     # already carries their state via previous_summary extraction). This
     # prevents the accumulation of summary A -> B -> C across
     # proactive -> reactive -> proactive retry cycles.
-    if (@dropped && length($active_task // '')) {
+    # Gate YaRNA compression on @dropped (non-empty) only — NOT on the
+    # presence of an active_task. YaRNA's find_substantive_task scans
+    # the dropped messages for a substantive user request (>= 50 chars)
+    # and falls back gracefully (empty effective_task) when none is
+    # found. The old length($active_task) guard suppressed compression
+    # entirely when active_task was empty — e.g. during speculative API
+    # calls or sessions without explicit task goals — causing dropped
+    # messages to be silently lost instead of compressed into the
+    # thread_summary.
+    if (@dropped) {
         my $summary = eval {
             require CLIO::Memory::YaRN;
             my $yarn = CLIO::Memory::YaRN->new();

@@ -207,6 +207,69 @@ sub make_state {
     ok(!$has_assistant, "Adversarial: assistant removed (tc_missing genuinely orphaned)");
 }
 
+# Test 9: Bug #4 - Preceding user message is PRESERVED (not removed)
+# when orphaned tool_calls are found. Previously, the repair logic
+# removed the preceding user message (treating user+assistant as a
+# unit to delete). With the fix, only the assistant with orphaned
+# tool_calls is removed — the user's input is kept.
+{
+    my $state = make_state();
+    $state->{history} = [
+        { role => 'user', content => 'Please read the config file' },
+        { role => 'assistant', content => 'I will do that',
+          tool_calls => [
+              { id => 'tc_to_remove', type => 'function', function => { name => 'file_operations', arguments => '{}' } },
+          ],
+        },
+        { role => 'tool', tool_call_id => 'tc_to_remove', content => 'file read result' },
+        { role => 'user', content => 'Now tell me about the results' },
+    ];
+    $state->_validate_and_repair_history();
+    my $history = $state->{history};
+
+    # The user message "Please read the config file" should be KEPT
+    # (previously it was removed alongside the assistant).
+    my $has_original_user = grep { $_->{role} eq 'user' && $_->{content} eq 'Please read the config file' } @$history;
+    ok($has_original_user, "Bug #4: Preceding user message PRESERVED (not removed)");
+
+    # The assistant with orphaned tool_calls should be removed
+    # (tc_to_remove HAS a result, so this test was re-scoped — see
+    # Test 9b below for the actual orphan scenario.)
+}
+
+# Test 9b: Bug #4 - Real orphan scenario: assistant with a tool_call
+# that has NO matching result. The preceding user message is kept.
+{
+    my $state = make_state();
+    $state->{history} = [
+        { role => 'user', content => 'Please read the config file' },
+        { role => 'assistant', content => 'I will do that',
+          tool_calls => [
+              { id => 'tc_gone', type => 'function', function => { name => 'file_operations', arguments => '{}' } },
+          ],
+        },
+        { role => 'user', content => 'Now tell me about the results' },
+    ];
+    $state->_validate_and_repair_history();
+    my $history = $state->{history};
+
+    # The user message "Please read the config file" should be KEPT
+    ok(grep({ $_->{role} eq 'user' && $_->{content} eq 'Please read the config file' } @$history),
+        "Bug #4: Preceding user message PRESERVED when tool_call has no result");
+
+    # The assistant with orphaned tool_call should be removed
+    ok(!grep({ $_->{role} eq 'assistant' } @$history),
+        "Bug #4: Assistant with orphaned tool_call REMOVED");
+
+    # The following user message should also be preserved
+    ok(grep({ $_->{role} eq 'user' && $_->{content} eq 'Now tell me about the results' } @$history),
+        "Bug #4: Following user message PRESERVED");
+
+    # History should have exactly 2 user messages (both preserved)
+    my $user_count = grep { $_->{role} eq 'user' } @$history;
+    is($user_count, 2, "Bug #4: Exactly 2 user messages remain");
+}
+
 done_testing();
 
 print "\n";

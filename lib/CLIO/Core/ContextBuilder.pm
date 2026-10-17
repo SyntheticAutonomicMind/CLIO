@@ -481,11 +481,12 @@ checks the strict condition that makes cross-turn collapse safe:
      prompt (a single non-question sentence under 80 chars, or a
      common continuation phrase like "continue", "ok", "go on").
 
-When all three hold, the second turn&apos;s tool call is dropped (it is
-already represented by the first turn&apos;s tool call with a bumped
-repeats=N) and the user message of the second turn is marked with
-a C<_continuation_user_msg> flag so the prose renderer can render it
-as a short "(user: continue)" prefix instead of a full turn block.
+When all three hold, the second turn's tool call is dropped (it is
+already represented by the first turn's tool call with a bumped
+repeats=N) and the user message of the second turn is preserved by
+appending it to the first turn's message array. This ensures the
+user's input is not silently lost — it remains visible in the
+projection as a separate message after the tool result.
 
 If any condition fails for a turn pair, the second turn is left
 untouched (safe default: prefer over-rendering to losing information).
@@ -610,12 +611,16 @@ sub collapse_repeated_tool_calls_across_turns {
             # duplicate.
             my ($prev_assistant, $prev_tool) = _turn_tool_pair($out[-1]);
             $prev_tool->{_repeats} = ($prev_tool->{_repeats} // 1) + 1;
-            # Mark the dropped turn's user message so the prose
-            # renderer can show "(user: continue)" inline rather than
-            # as a full turn block.
+            # Preserve the continuation user message by appending it to
+            # the previous turn. Dropping the entire turn — including
+            # the user's message — silently lost the user's input.
+            # Appending it to the previous turn is safe: the turn is
+            # later flattened into individual messages and
+            # enforce_message_alternation preserves consecutive user
+            # messages as-is (no merging).
             for my $msg (@$turn) {
                 if (ref($msg) eq 'HASH' && ($msg->{role} // '') eq 'user') {
-                    $msg->{_continuation_user_msg} = 1;
+                    push @{$out[-1]}, { %$msg };
                     last;
                 }
             }
@@ -680,15 +685,16 @@ Map a session's total turn count to a target recent-window size.
 
 Returns the number of recent turns to keep in the projection for a
 session with $total_turns turns. The bands are configurable via
-$RECENT_SCALING_BANDS; default bands (1/2/4/8) match what
+$RECENT_SCALING_BANDS; default bands (3/5/8/10) match what
 scratch/optimize.md identified as the right tradeoff between
 cache stability (smaller window) and trajectory recall (bigger
 window).
 
-A session with 5 turns gets 1 recent; 50 turns gets 2; 200 turns
-gets 4; 1000 turns gets 8. The hard cap of 8 matches the anchor
-cap of 8 - both are cache-stable prefix bounds, and keeping them
-the same width means the cache invalidation surface is predictable.
+A session with 5 turns gets 3 recent; 50 turns gets 5; 200 turns
+gets 8; 1000 turns gets 10. _select_turns applies a min_recent=3
+floor on top of this so single-turn sessions still get 3 recent
+turns in the projection (though the proactive trim is the final
+word on what actually fits the context window).
 
 =cut
 
@@ -725,26 +731,17 @@ sub _select_turns {
     my $total_turns = scalar(@$turns);
     return (undef, [], []) if $total_turns == 0;
 
-    my $recent_target = _recent_count_for_turns($total_turns);
-    my $recent_count = $recent_target;
-
-    # Keep at most $recent_target recent turns (min 3 to preserve some history).
-    # The proactive trim (_role_based_tail_walk) is the final word on what
-    # fits the model's context window.
-    my $min_recent = 3;
-    $recent_count = $min_recent if $recent_count < $min_recent;
-    $recent_count = $total_turns if $recent_count > $total_turns;
-
-    # Exclude the current (incomplete) turn — the last turn that contains
-    # only the user message with no assistant/tool responses. That user
-    # message is delivered separately as the final user message (with
-    # dynamic UC prepended) in _build_turn_context. Including it here
-    # would duplicate the user input in the @messages array, and after
-    # enforce_message_alternation merges them, the compressed_tail ends
-    # up sandwiched between two copies of the same user input — which
-    # dilutes focus and wastes tokens.
-    my $last_turn = $turns->[-1];
-    if (ref($last_turn) eq 'ARRAY') {
+    # Exclude ALL trailing incomplete turns, not just the last one.
+    # Session resumes can leave multiple orphaned user messages at the
+    # end of history (from interrupted turns). The last one is the
+    # current turn (delivered separately); the rest are orphan user
+    # messages from prior interrupted sessions that must be excluded
+    # from the recent window to avoid consecutive-user-message
+    # duplication in the @messages array (see enforce_message_alternation).
+    my @trailing_incomplete;
+    while ($total_turns > 0) {
+        my $last_turn = $turns->[-1];
+        last unless ref($last_turn) eq 'ARRAY';
         my $has_assistant_or_tool = 0;
         for my $msg (@$last_turn) {
             if (ref($msg) eq 'HASH'
@@ -754,12 +751,40 @@ sub _select_turns {
             }
         }
         if (!$has_assistant_or_tool) {
-            # Last turn is just the current user input - remove it
-            # so the rest of _select_turns operates on completed turns only.
-            pop @$turns;
+            # Last turn is just a user message with no assistant/tool
+            # response (current turn or prior interrupted session).
+            push @trailing_incomplete, pop @$turns;
             $total_turns--;
+        } else {
+            last;
         }
     }
+
+    # Discard the current turn (the last popped incomplete turn).
+    # Its user input is delivered separately as the final user message
+    # in _build_turn_context. Prior incomplete turns (if any) are kept
+    # in @trailing_incomplete for compression into the dropped set.
+    shift @trailing_incomplete if @trailing_incomplete;
+
+    # After popping trailing incomplete turns, recompute $total_turns
+    # from the remaining array to ensure consistency (pop already
+    # decremented it, but this is a defensive double-check).
+    $total_turns = scalar(@$turns);
+    return (undef, [], \@trailing_incomplete) if $total_turns == 0;
+
+    # Now compute the recent window based on the number of COMPLETE turns.
+    # (Computing before the while loop used the original count which
+    # could differ after popping — e.g., 1 turn with 1 incomplete ->
+    # recent_count=1 but total_turns=0 after pop -> start_idx=-1.)
+    my $recent_target = _recent_count_for_turns($total_turns);
+    my $recent_count = $recent_target;
+
+    # Keep at most $recent_target recent turns (min 3 to preserve some history).
+    # The proactive trim (_role_based_tail_walk) is the final word on what
+    # fits the model's context window.
+    my $min_recent = 3;
+    $recent_count = $min_recent if $recent_count < $min_recent;
+    $recent_count = $total_turns if $recent_count > $total_turns;
 
     # Tool-turn preservation: if the most recent turn (or the 2nd-most
     # recent) contains assistant messages with tool_calls, always
@@ -804,6 +829,46 @@ sub _select_turns {
     my @dropped;
     if ($start_idx > 0) {
         @dropped = @{$turns}[0 .. ($start_idx - 1)];
+    }
+
+    # Add prior incomplete turns (from session resumes) to the dropped
+    # set so YaARN compresses their user message content rather than
+    # silently losing it. @trailing_incomplete is ordered newest-first
+    # (from pop); reverse for oldest-first to match @dropped ordering.
+    if (@trailing_incomplete) {
+        push @dropped, reverse @trailing_incomplete;
+    }
+
+    # Scan the recent window for mid-window incomplete turns (orphan
+    # user messages from corrupted history that aren't at the trailing
+    # edge). Move them to the dropped set for compression rather than
+    # letting them create consecutive user messages in @messages.
+    if (@recent) {
+        my @filtered_recent;
+        my @mid_incomplete;
+        for my $turn (@recent) {
+            my $has_assistant_or_tool = 0;
+            if (ref($turn) eq 'ARRAY') {
+                for my $msg (@$turn) {
+                    if (ref($msg) eq 'HASH'
+                        && ($msg->{role} // '') =~ /^(assistant|tool)$/) {
+                        $has_assistant_or_tool = 1;
+                        last;
+                    }
+                }
+            }
+            if ($has_assistant_or_tool) {
+                push @filtered_recent, $turn;
+            } else {
+                push @mid_incomplete, $turn;
+            }
+        }
+        if (@mid_incomplete) {
+            @recent = @filtered_recent;
+            push @dropped, @mid_incomplete;
+            log_debug('ContextBuilder',
+                "Moved " . scalar(@mid_incomplete) . " mid-window incomplete turn(s) to dropped set");
+        }
     }
 
     return (undef, \@recent, \@dropped);

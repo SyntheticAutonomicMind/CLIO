@@ -338,8 +338,9 @@ sub make_history {
 # ---------------------------------------------------------------------------
 # Test 10: digest() - used internally by cross-turn dedup for
 # result-content fingerprints. The within-turn collapse tests were
-# removed when collapse_repeated_tool_calls was deleted (no-op for
-# role-based turns).
+# removed when the old collapse_repeated_tool_calls (within-turn) was
+# deleted (no-op for role-based turns). Cross-turn deduplication is
+# tested separately in test_collapse_repeated_tool_calls.pl.
 {
     # digest() is stable and short
     is(length(digest('hello')), 16, "digest returns 16 hex chars");

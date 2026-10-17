@@ -116,4 +116,142 @@ subtest 'short session unchanged from baseline' => sub {
     ok(scalar(@$dropped) == 0 || scalar(@$dropped) >= 0, 'dropped turns tracked separately');
 };
 
+# ===========================================================================
+# Tests for _select_turns: trailing + mid-window incomplete turn handling
+# (Bug #2 regression: single 'if' only popped the last incomplete turn;
+#      prior orphaned user messages were lost and mid-window incomplete
+#      turns could create consecutive user messages in the projection.)
+# ===========================================================================
+
+# Helper: make a complete (user + assistant + tool) turn.
+sub make_turn {
+    my ($i) = @_;
+    return [
+        { role => 'user',    content => "turn $i question" },
+        { role => 'assistant', content => "turn $i answer" },
+        { role => 'tool', content => "turn $i result", tool_call_id => "call_$i" },
+    ];
+}
+
+# Helper: make an incomplete turn (user message only, no assistant/tool).
+sub make_incomplete_turn {
+    my ($label) = @_;
+    return [
+        { role => 'user', content => $label // 'orphan user message' },
+    ];
+}
+
+subtest 'multiple trailing incomplete turns all popped' => sub {
+    # Scenario: session resume left two orphan user messages at the end
+    # (user_90 and user_91) plus the current turn (user_92).
+    # The old code only popped user_92 (the last). With the fix, all
+    # three are popped, user_92 (current) is discarded, and user_90
+    # + user_91 are moved to the dropped set for compression.
+    my @turns = (
+        make_turn(1),
+        make_turn(2),
+        make_turn(3),
+        make_incomplete_turn('user_90 orphan'),
+        make_incomplete_turn('user_91 orphan'),
+        make_incomplete_turn('current user input'),
+    );
+
+    my ($anchor, $recent, $dropped) = CLIO::Core::ContextBuilder::_select_turns(
+        \@turns, undef, [], '',
+    );
+
+    # Recent should be the last complete turns (not the incomplete ones)
+    my $recent_count = scalar(@$recent);
+    ok($recent_count >= 3, "Recent window has >= 3 complete turns (got $recent_count)")
+        or diag("Got $recent_count recent turns");
+
+    # No incomplete turn in the recent window
+    for my $turn (@$recent) {
+        for my $msg (@$turn) {
+            ok(($msg->{content} // '') ne 'user_90 orphan', "user_90 not in recent");
+            ok(($msg->{content} // '') ne 'user_91 orphan', "user_91 not in recent");
+            ok(($msg->{content} // '') ne 'current user input', "current input not in recent");
+        }
+    }
+
+    # Dropped should contain the prior incomplete turns
+    my $dropped_labels = join('|',
+        map { $_->[0]{content} // '' } @$dropped
+    );
+    like($dropped_labels, qr/user_90 orphan/, "user_90 moved to dropped set");
+    like($dropped_labels, qr/user_91 orphan/, "user_91 moved to dropped set");
+    unlike($dropped_labels, qr/current user input/, "current turn NOT in dropped (discarded)");
+};
+
+subtest 'single trailing incomplete turn still works' => sub {
+    # Backwards-compatibility: the old single-pop behavior must still work.
+    my @turns = (
+        make_turn(1),
+        make_turn(2),
+        make_incomplete_turn('current input'),
+    );
+
+    my ($anchor, $recent, $dropped) = CLIO::Core::ContextBuilder::_select_turns(
+        \@turns, undef, [], '',
+    );
+
+    ok(scalar(@$recent) >= 2, "Recent window has >= 2 turns for 3-turn session with 1 incomplete");
+    unlike((join '|', map { $_->[0]{content} // '' } @$dropped), qr/current input/, "current turn discarded, not in dropped");
+};
+
+subtest 'current turn alone (no complete turns) returns empty recent' => sub {
+    my @turns = (
+        make_incomplete_turn('just the current input'),
+    );
+
+    my ($anchor, $recent, $dropped) = CLIO::Core::ContextBuilder::_select_turns(
+        \@turns, undef, [], '',
+    );
+
+    is(scalar(@$recent), 0, "No recent turns when only current turn exists");
+    is(scalar(@$dropped), 0, "No dropped turns when only current turn exists");
+};
+
+subtest 'mid-window incomplete turn moved to dropped' => sub {
+    # An incomplete turn in the MIDDLE (from a prior interrupted session
+    # that was resumed with new work). It must be moved to the dropped
+    # set rather than appearing in the recent window and creating
+    # consecutive user messages.
+    my @turns = (
+        make_turn(1),
+        make_turn(2),
+        make_incomplete_turn('orphan mid-window'),
+        make_turn(3),
+        make_turn(4),
+    );
+
+    # Use a large recent_count so all complete turns would fit in recent
+    my $large_recent = 1000;
+    # _recent_count_for_turns(5) returns 3 (min_recent floor)
+    # so with 5 turns, recent_target=3. Let's build a longer session
+    # so the orphaned turn falls in the recent window.
+    @turns = (
+        make_turn(1), make_turn(2), make_turn(3),
+        make_turn(4), make_turn(5), make_turn(6),
+        make_incomplete_turn('orphan mid-window'),
+        make_turn(7), make_turn(8), make_turn(9),
+    );
+
+    my ($anchor, $recent, $dropped) = CLIO::Core::ContextBuilder::_select_turns(
+        \@turns, undef, [], '',
+    );
+
+    # Check that the orphan is not in the recent window
+    my $recent_contents = join('|',
+        map { $_->[0]{content} // '...' } @$recent
+    );
+    unlike($recent_contents, qr/orphan mid-window/, "Mid-window incomplete turn moved out of recent");
+
+    # Check that the orphan IS in the dropped set
+    my $dropped_contents = join('|',
+        map { $_->[0]{content} // '...' } @$dropped
+    );
+    like($dropped_contents, qr/orphan mid-window/, "Mid-window incomplete turn moved to dropped set");
+};
+
 done_testing();

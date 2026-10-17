@@ -559,9 +559,15 @@ This method:
 1. Scans for all tool_call_ids from assistant messages with tool_calls
 2. Collects all tool_call_ids from tool result messages
 3. Identifies orphaned tool_calls (those without matching results)
-4. Removes the incomplete conversation exchange (user + assistant with orphans)
+4. Removes the assistant message with orphaned tool_calls (KEEPS the
+   preceding user message — the user's input is their own; deleting it
+   creates a history gap where the user's request is silently lost.
+   The user message is preserved because the consecutive-user-message
+   fix in enforce_message_alternation ensures it is not merged away.)
 
 Returns: 1 if repairs were made, 0 if history was clean
+The repair_notification accessor can be used to retrieve a summary
+of what was repaired.
 
 =cut
 
@@ -620,11 +626,15 @@ sub _validate_and_repair_history {
                 # Log to debug only (not to user - suppressing raw [WARNING] messages)
                 log_debug('SessionState', "Found orphaned tool_calls at index $i: " . join(', ', @missing_ids));
                 
-                # Also mark the preceding user message (if any) since they form a unit
-                if ($i > 0 && $history[$i-1]{role} && $history[$i-1]{role} eq 'user') {
-                    $orphan_indices{$i-1} = 1;
-                    log_debug('SessionState', "Removing associated user message at index " . ($i-1));
-                }
+                # Do NOT remove the preceding user message — the user's
+                # input is their own and deleting it creates a history
+                # gap. With the consecutive-user-message fix in
+                # enforce_message_alternation, the surviving user message
+                # is preserved as-is (not merged) and delivered
+                # separately as the model's current input if applicable.
+                log_debug('SessionState',
+                    "Keeping preceding user message at index " . ($i-1) .
+                    " (only the orphaned assistant message is removed)");
                 
                 # Also remove any partial tool results for THIS assistant's tool_calls
                 # (in case some completed but not all)

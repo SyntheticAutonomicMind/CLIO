@@ -70,7 +70,8 @@ subtest 'enforce_message_alternation with image content' => sub {
 };
 
 subtest 'enforce_message_alternation with string content (regression)' => sub {
-    # Regular string content should still merge normally
+    # Regular string content: consecutive user messages NOT merged
+    # (all cloud providers accept consecutive user messages natively)
     my $messages = [
         make_msg('user', 'First part'),
         make_msg('user', 'Second part'),
@@ -79,10 +80,11 @@ subtest 'enforce_message_alternation with string content (regression)' => sub {
 
     my $result = enforce_message_alternation($messages, 'test_provider');
 
-    # Should have 2 messages (consecutive users merged)
-    is(scalar(@$result), 2, 'string messages merged');
-    is($result->[0]{content}, "First part\n\nSecond part", 'merged content correct');
-    is($result->[0]{role}, 'user', 'merged role correct');
+    # Should have 3 messages (consecutive users NOT merged)
+    is(scalar(@$result), 3, 'string user messages NOT merged');
+    is($result->[0]{content}, 'First part', 'first user message preserved');
+    is($result->[1]{content}, 'Second part', 'second user message preserved');
+    is($result->[2]{role}, 'assistant', 'assistant message preserved');
 };
 
 subtest 'enforce_message_alternation with empty arrayref' => sub {
@@ -119,6 +121,7 @@ subtest 'enforce_message_alternation tool messages not merged' => sub {
 
 subtest 'enforce_message_alternation mixed roles' => sub {
     # Mixed arrayref and string content in consecutive messages
+    # User messages are NOT merged (preserved separately)
     my $messages = [
         make_msg('user', 'Initial'),
         make_msg('user', 'Continued text'),
@@ -130,10 +133,12 @@ subtest 'enforce_message_alternation mixed roles' => sub {
 
     my $result = enforce_message_alternation($messages, 'test_provider');
 
-    # user messages 1+2 should merge, assistant stays separate
-    is(scalar(@$result), 3, 'mixed content handled correctly');
-    is($result->[0]{content}, "Initial\n\nContinued text", 'string merge correct');
-    is(ref($result->[1]{content}), 'ARRAY', 'arrayref not merged');
+    # 4 messages: user, user, assistant(arrayref), user
+    is(scalar(@$result), 4, 'mixed content handled correctly');
+    is($result->[0]{content}, 'Initial', 'first user message preserved');
+    is($result->[1]{content}, 'Continued text', 'second user message preserved');
+    is(ref($result->[2]{content}), 'ARRAY', 'arrayref not merged');
+    is($result->[3]{content}, 'More text', 'third user message preserved');
 };
 
 subtest 'enforce_message_alternation consecutive arrayref messages' => sub {
@@ -360,7 +365,7 @@ subtest 'enforce_message_alternation does NOT merge consecutive system messages'
     is($result->[6]{role}, 'user', 'position 6 is user (current user_input)');
 };
 
-subtest 'user messages DO still merge (regression guard)' => sub {
+subtest 'user messages NOT merged (regression guard)' => sub {
     my $messages = [
         make_msg('system', 'sys'),
         make_msg('user', 'first'),
@@ -370,11 +375,14 @@ subtest 'user messages DO still merge (regression guard)' => sub {
 
     my $result = enforce_message_alternation($messages, 'test');
 
-    is(scalar(@$result), 3, 'system separate, users merged into one');
+    # System separate, users NOT merged (cloud provider accepts consecutive users)
+    is(scalar(@$result), 4, 'system separate, users preserved as separate');
     is($result->[0]{role}, 'system', 'position 0 is system');
-    is($result->[1]{role}, 'user', 'position 1 is user (merged)');
-    like($result->[1]{content}, qr/first.*second/s, 'user messages merged');
-    is($result->[2]{role}, 'assistant', 'position 2 is assistant');
+    is($result->[1]{role}, 'user', 'position 1 is user (first)');
+    is($result->[1]{content}, 'first', 'first user message preserved');
+    is($result->[2]{role}, 'user', 'position 2 is user (second)');
+    is($result->[2]{content}, 'second', 'second user message preserved');
+    is($result->[3]{role}, 'assistant', 'position 3 is assistant');
 };
 
 subtest 'assistant messages DO still merge (regression guard)' => sub {

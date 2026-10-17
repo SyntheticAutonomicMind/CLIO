@@ -17,7 +17,7 @@ use utf8;
 use FindBin qw($Bin);
 use lib "$Bin/../../lib";
 
-use Test::More tests => 9;
+use Test::More tests => 10;
 use CLIO::Core::API::MessageValidator qw(validate_and_truncate);
 
 # ---------------------------------------------------------------------------
@@ -51,20 +51,26 @@ my @trimmed = ref($trimmed_ref) eq 'ARRAY' ? @$trimmed_ref : ($trimmed_ref);
 ok(scalar(@trimmed) < scalar(@messages),
     'Tail walk dropped messages (was ' . scalar(@messages) . ', now ' . scalar(@trimmed) . ')');
 
-# NO thread_summary system message should be injected — the compressed
-# summary lives in the dynamic UC (projection's compressed_tail), not
-# as a separate injected system message. Injecting one here would
-# break KV cache stability of the prefix.
-my $has_summary = 0;
-for my $msg (@trimmed) {
-    if (ref($msg) eq 'HASH'
-        && ($msg->{role} // '') eq 'system'
-        && ($msg->{content} // '') =~ /<thread_summary>/) {
-        $has_summary = 1;
-        last;
+    # With the Bug #3 fix, a thread_summary IS injected even when no
+    # active_task is provided. YaRNA's find_substantive_task scans the
+    # dropped messages for a substantive user request (>= 50 chars) and
+    # uses it as the effective task. The dropped messages include
+    # "Original task: write tests for the new compression pipeline."
+    # (>= 50 chars), so the summary should surface that task.
+    my $has_summary = 0;
+    my $summary_content;
+    for my $msg (@trimmed) {
+        if (ref($msg) eq 'HASH'
+            && ($msg->{role} // '') eq 'system'
+            && ($msg->{content} // '') =~ /<thread_summary>/) {
+            $has_summary = 1;
+            $summary_content = $msg->{content};
+            last;
+        }
     }
-}
-ok(!$has_summary, 'No thread_summary system message injected (no active_task provided)');
+    ok($has_summary, 'thread_summary injected even without active_task (Bug #3: compression no longer gated on active_task)');
+    like($summary_content // '', qr/Recent user requests:/,
+        'thread_summary contains compressed content from dropped messages');
 
 # The first user message should be preserved (pinned)
 my $has_first_user = 0;
