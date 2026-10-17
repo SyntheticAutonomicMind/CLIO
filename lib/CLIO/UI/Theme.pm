@@ -876,13 +876,17 @@ Returns: ($prompt_line, $input_line) - two rendered strings
 sub get_security_prompt {
     my ($self, $target, $flags, $options) = @_;
 
-    # Build flag descriptions with severity colors, joined with pipe separator
+    # Build flag descriptions with severity colors, joined with pipe separator.
+    # Each flag may optionally carry a 'category' field (from CommandAnalyzer
+    # or FileOperations) that labels the type of risk, e.g. [file_overwrite],
+    # [system_destructive], [network_outbound].
     my @flag_parts;
     for my $flag (@$flags) {
         my $is_high = ($flag->{severity} eq 'high' || $flag->{severity} eq 'critical');
         my $sev_color = $is_high ? $self->get_color('error_message') : $self->get_color('warning_message');
         my $dim = $self->get_color('dim');
-        push @flag_parts, "${sev_color}[$flag->{severity}]${dim} $flag->{description}\@RESET\@";
+        my $cat = $flag->{category} ? "[$flag->{category}] " : '';
+        push @flag_parts, "${sev_color}[$flag->{severity}]${dim} $cat$flag->{description}\@RESET\@";
     }
     my $pipe = '@DIM@' . $self->_resolve_char('pipe') . '@RESET@';
     my $flags_str = join(" $pipe ", @flag_parts);
