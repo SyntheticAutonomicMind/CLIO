@@ -16,6 +16,21 @@ use File::Path qw(make_path);
 use File::Basename qw(dirname);
 use Cwd qw(getcwd);
 
+# Resolve the system-install prompts directory (ships with CLIO binary).
+# This is <install_dir>/prompts/ — where shipped default.md and chat.md
+# live. Override with CLIO_SYSTEM_PROMPTS_DIR env var (for testing).
+sub _resolve_system_prompts_dir {
+    return $ENV{CLIO_SYSTEM_PROMPTS_DIR} if $ENV{CLIO_SYSTEM_PROMPTS_DIR} && -d $ENV{CLIO_SYSTEM_PROMPTS_DIR};
+    return undef if $ENV{CLIO_SKIP_SYSTEM_PROMPTS};
+    eval { require CLIO::Util::PathResolver; CLIO::Util::PathResolver::init() };
+    if (!$@) {
+        my $base = CLIO::Util::PathResolver::get_base_dir();
+        my $dir = File::Spec->catdir($base, 'prompts');
+        return $dir if -d $dir;
+    }
+    return undef;
+}
+
 =head1 NAME
 
 CLIO::Core::PromptManager - Manage AI system prompts
@@ -76,6 +91,11 @@ sub new {
         metadata_file => File::Spec->catfile($prompts_dir, 'metadata.json'),
         metadata => {},
         custom_instructions_cache => undef,
+        # System-install prompts directory (ships with CLIO binary).
+        # Resolved from PathResolver::get_base_dir() or CLIO_HOME.
+        # Used as a fallback source for default.md before the embedded
+        # heredoc in _get_default_prompt_content().
+        system_prompts_dir => $opts{system_prompts_dir} || _resolve_system_prompts_dir(),
     };
     
     bless $self, $class;
@@ -113,9 +133,26 @@ sub get_system_prompt {
     
     # Handle special embedded prompts first (before checking for files)
     if ($active eq 'chat') {
-        # Chat mode uses embedded conversational prompt
-        log_debug('PromptManager', "Using embedded chat prompt (conversational mode)");
-        $prompt = $self->_get_chat_prompt_content();
+        # Chat mode uses embedded conversational prompt, or a shipped
+        # system-install chat.md if one exists.
+        my $sys_chat;
+        if ($self->{system_prompts_dir}) {
+            $sys_chat = File::Spec->catfile($self->{system_prompts_dir}, 'chat.md');
+        }
+        if ($sys_chat && -f $sys_chat) {
+            log_debug('PromptManager', "Using system-install chat prompt from $sys_chat");
+            open(my $fh, '<:encoding(UTF-8)', $sys_chat) or do {
+                log_error('PromptManager', "Cannot read $sys_chat: $!");
+            };
+            if ($fh) {
+                $prompt = do { local $/; <$fh> };
+                close($fh);
+            }
+        }
+        unless ($prompt) {
+            log_debug('PromptManager', "Using embedded chat prompt (conversational mode)");
+            $prompt = $self->_get_chat_prompt_content();
+        }
     }
     # If active prompt is 'default' and no file exists, use embedded default
     elsif ($active eq 'default') {
@@ -124,9 +161,25 @@ sub get_system_prompt {
             # User has customized the default prompt - use file
             $prompt = $self->_read_prompt_file($active);
         } else {
-            # No customization - use embedded default
-            log_debug('PromptManager', "Using embedded default prompt (no file created)");
-            $prompt = $self->_get_default_prompt_content();
+            # No user customization - check for shipped system-install default.md
+            my $sys_default;
+            if ($self->{system_prompts_dir}) {
+                $sys_default = File::Spec->catfile($self->{system_prompts_dir}, 'default.md');
+            }
+            if ($sys_default && -f $sys_default) {
+                log_debug('PromptManager', "Using system-install default prompt from $sys_default");
+                open(my $fh, '<:encoding(UTF-8)', $sys_default) or do {
+                    log_error('PromptManager', "Cannot read $sys_default: $!");
+                };
+                if ($fh) {
+                    $prompt = do { local $/; <$fh> };
+                    close($fh);
+                }
+            } else {
+                # No shipped default either - use embedded default
+                log_debug('PromptManager', "Using embedded default prompt (no file created)");
+                $prompt = $self->_get_default_prompt_content();
+            }
         }
     } else {
         # Non-default prompt - must read from file
