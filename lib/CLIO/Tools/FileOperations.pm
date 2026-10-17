@@ -2988,12 +2988,12 @@ sub _prompt_overwrite_confirmation {
     if ($theme_mgr && $theme_mgr->can('get_security_prompt')) {
         my ($prompt_line, $input_line) = $theme_mgr->get_security_prompt(
             $path,
-            [{ severity => 'medium', description => "File exists ($existing_size bytes) and will be overwritten" }],
+            [{ category => 'file_overwrite', severity => 'medium', description => "File exists ($existing_size bytes) and will be overwritten" }],
             '(y)es overwrite | (n)o, cancel',
         );
         print "\n$prompt_line\n$input_line";
     } else {
-        print "\n* Overwrite Warning | $path\n  Existing file ($existing_size bytes) will be replaced.\n  (y)es overwrite | (n)o, cancel: ";
+        print "\n* Security | $path\n  [file_overwrite] File exists ($existing_size bytes) and will be overwritten\n  (y)es overwrite | (n)o, cancel: ";
     }
 
     my $old_fh = select(STDOUT);
