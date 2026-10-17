@@ -13,8 +13,10 @@
 5. [Adding New Tools](#adding-new-tools)
 6. [Adding New AI Providers](#adding-new-ai-providers)
 7. [Testing](#testing)
-9. [Code Standards](#code-standards)
-10. [Contribution Workflow](#contribution-workflow)
+8. [Code Standards](#code-standards)
+9. [Contribution Workflow](#contribution-workflow)
+10. [Resources](#resources)
+11. [Next Steps](#next-steps)
 
 ---------------------------------------------------
 
@@ -353,17 +355,26 @@ clio --debug
 
 ```bash
 # Check specific module
-perl -I lib -c lib/CLIO/Tools/MyNewTool.pm
+perl -I./lib -c lib/CLIO/Core/MyModule.pm
 
 # Check all modules
-find lib -name "*.pm" -exec perl -I lib -c {} \;
+find lib -name "*.pm" -exec perl -I./lib -c {} \;
 ```
 
 **Testing:**
 
 ```bash
-# Run test suite (when implemented)
-prove -I lib t/
+# Run all unit tests
+perl tests/run_all_tests.pl
+
+# Run a specific unit test
+perl -I lib tests/unit/test_myfeature.pl
+
+# Run all tests for a component
+cd tests/unit && for t in test_<component>*.pl; do perl -I../../lib $t; done
+
+# Strict mode (catch uninitialized-value warnings)
+perl tests/run_strict_tests.pl
 
 # Manual testing
 ./clio --new
@@ -660,54 +671,41 @@ echo "read a file that doesn't exist" | ./clio --new --exit
 echo "search for TODO in all Perl files, create a summary" | ./clio --new --exit
 ```
 
-### Automated Testing (Future)
+### Automated Testing
 
-**Unit tests** (`t/unit/`):
+**Unit tests** are in `tests/unit/` (300+ single-module test scripts). They use a lightweight `ok()`/`is()` harness with `use strict; use warnings;` — see any file in `tests/unit/` for the pattern.
 
-```perl
-# t/unit/tools/file_operations.t
-use Test::More tests => 5;
-use CLIO::Tools::FileOperations;
+```bash
+# Run a specific unit test
+perl -I lib tests/unit/test_memory_operations.pl
 
-my $tool = CLIO::Tools::FileOperations->new();
+# Run all unit tests
+perl tests/run_all_tests.pl
 
-# Test read_file operation
-my $result = $tool->route_operation('read_file', {
-    path => 'test_file.txt',
-    start_line => 1,
-    end_line => 10,
-}, {});
-
-ok($result->{success}, 'read_file succeeds');
-like($result->{data}, qr/content/, 'read_file returns content');
-
-done_testing();
+# Strict mode: catch uninitialized-value warnings across all tests
+perl tests/run_strict_tests.pl
 ```
 
-**Integration tests** (`t/integration/`):
+**Integration tests** are in `tests/integration/` and exercise cross-module behavior (API error handling, session persistence, multi-agent flow).
 
-```perl
-# t/integration/session_persistence.t
-use Test::More;
-use CLIO::Session::Manager;
+```bash
+# Run an integration test
+perl -I lib tests/integration/demo_multi_agent_system.pl
 
-# Create session
-my $mgr = CLIO::Session::Manager->new();
-my $session = $mgr->create();
-
-# Add conversation
-$session->add_message({ role => 'user', content => 'test' });
-
-# Save
-$mgr->save($session);
-
-# Load
-my $loaded = $mgr->load($session->id());
-
-is($loaded->id(), $session->id(), 'Session ID preserved');
-
-done_testing();
+# Or run all integration tests
+./clio --debug --input "run all integration tests" --exit
 ```
+
+**E2E tests** are in `tests/e2e/` for full end-to-end workflows.
+
+**Testing conventions:**
+
+- Use `perl tests/run_all_tests.pl` as the primary entry point
+- Use `$SIG{__WARN__}` capture pattern for suspected warning paths (see `tests/unit/test_command_handler.pl`)
+- Syntax must pass: `perl -I lib -c lib/CLIO/Core/MyModule.pm`
+- Tests must exit 0 on success
+
+**See Also:** `AGENTS.md` -> Testing section for the complete reference.
 
 ---------------------------------------------------
 
@@ -720,11 +718,16 @@ done_testing();
 **Module Structure:**
 
 ```perl
+# SPDX-License-Identifier: GPL-3.0-only
+# SPDX-FileCopyrightText: Copyright (c) 2026 Andrew Wyatt (Fewtarius)
+
 package CLIO::Module::Name;
 
 use strict;
 use warnings;
+use utf8;
 use feature 'say';
+use Carp qw(croak);
 
 # POD documentation
 =head1 NAME
@@ -741,6 +744,8 @@ Detailed description.
 
 1;  # Module MUST return true
 ```
+
+> **Note:** Match the AGENTS.md module template exactly. See AGENTS.md -> Code Style for the canonical template.
 
 **Naming:**
 
@@ -763,32 +768,34 @@ use constant MAX_RETRIES => 3;
 **Error Handling:**
 
 ```perl
-# Use eval for exception handling
+# Use croak from Carp for exceptions (not bare die)
+use Carp qw(croak);
 eval {
     # Code that might die
 };
 if ($@) {
     my $error = $@;
     log_error('MyModule', "Operation failed: $error");
-    # handle error
+    croak("Operation failed: $error");
 }
 ```
 
 **Logging:**
 
 ```perl
-use CLIO::Core::Logger qw(log_debug log_info log_warning log_error should_log);
+use CLIO::Core::Logger qw(log_debug log_warning log_error should_log);
 
 # Debug logging (only emitted when --debug flag is set)
 log_debug('MyModule', 'Processing request');
 
-# Info, warning, error logging
-log_info('MyModule', 'Starting operation');
+# Warning and error logging
 log_warning('MyModule', 'Retrying after failure');
 log_error('MyModule', "Fatal: $@");
 
 # Conditional guard (use when constructing an expensive message)
 log_debug('MyModule', 'Details: ' . $detail) if should_log('DEBUG');
+
+# Note: log_info exists but is reserved — no current use in the codebase.
 ```
 
 **No CPAN Dependencies:**

@@ -1,7 +1,7 @@
 # AGENTS.md
 
 **Version:** 3.3
-**Date:** 2026-09-10
+**Date:** 2026-10-15
 **Purpose:** Technical reference for CLIO development (methodology in .clio/instructions.md)
 
 ---
@@ -59,7 +59,7 @@ MCPBridge [dynamic], PluginBridge [dynamic]
 | `lib/CLIO/Core/RepositoryLoader.pm` | Load skills from cached Git repositories |
 | `lib/CLIO/Code/` | Code intelligence primitives (TreeSitter) |
 | `lib/CLIO/Test/` | Test infrastructure (MockAPI) |
-| `lib/CLIO/Tools/` | AI-callable tools (16 modules) |
+| `lib/CLIO/Tools/` | AI-callable tools (14 modules) + 2 infrastructure files (Registry.pm, Tool.pm) |
 | `lib/CLIO/UI/` | Terminal UI (Chat, Markdown, Theme, Commands, SessionReplay, Multiplexer) |
 | `lib/CLIO/UI/Commands/` | Slash command handlers (22 command modules + Base.pm + 3 API sub-command modules) |
 | `lib/CLIO/UI/Multiplexer/` | Terminal multiplexer support |
@@ -83,17 +83,15 @@ MCPBridge [dynamic], PluginBridge [dynamic]
 | `tests/unit/` | Single module tests |
 | `tests/integration/` | Cross-module tests (e2e, subagent, broker) |
 | `tests/manual/` | Manual test scripts |
-| `tests/performance/` | Long-running performance tests |
 | `tests/benchmark.pl` | Performance benchmark suite |
 | `tests/run_all_tests.pl` | Test runner |
-| `reference/` | Vendored reference projects (aider, opencode, MiniMax-CLI, etc.) |
+| `reference/` | Reference projects directory (currently empty/unused) |
 | `terminal-bench/` | Terminal-Bench evaluation harness (clio_tb_agent.py) |
 | `tb-results/` | Terminal-Bench run results (CSV summaries) |
 | `runs/` | Per-run artifacts |
 | `sessions/` | Long-lived session storage |
 | `ai-assisted/` | Session handoff notes (YYYYMMDD/HHMM/ folders) |
 | `scripts/` | Release scripts |
-| `examples/` | Example projects (currently empty placeholder) |
 | `scratch/` | Gitignored working docs (analysis, plans, audits) |
 
 **Key Files:**
@@ -143,22 +141,31 @@ Terminal.pm detects terminal image support.
 
 **Perl Conventions:**
 
-- Perl 5.32+ with `use strict; use warnings; use utf8;`
+- Perl 5.32+ with `use strict; use warnings; use utf8; use feature 'say';`
 - **UTF-8 encoding** for all files
 - **4 spaces** indentation (never tabs)
 - **POD documentation** for all modules
+- **SPDX license headers** on every `.pm` file
 - **Minimal CPAN deps** (prefer core Perl)
 
 **Module Template:**
 
 ```perl
+# SPDX-License-Identifier: GPL-3.0-only
+# SPDX-FileCopyrightText: Copyright (c) 2026 Andrew Wyatt (Fewtarius)
+
 package CLIO::Module::Name;
 
 use strict;
 use warnings;
 use utf8;
-binmode(STDOUT, ':encoding(UTF-8)');
-binmode(STDERR, ':encoding(UTF-8)');
+use feature 'say';
+# STDOUT/STDERR binmode only needed for modules that print directly
+# (interactive commands, test scripts). Library modules typically do not.
+binmode(STDOUT, ':encoding(UTF-8)') if -t STDIN;
+binmode(STDERR, ':encoding(UTF-8)') if -t STDIN;
+
+use Carp qw(croak);
 
 =head1 NAME
 
@@ -169,6 +176,10 @@ CLIO::Module::Name - Brief description
     use CLIO::Module::Name;
     my $obj = CLIO::Module::Name->new();
     $obj->method();
+
+=head1 DESCRIPTION
+
+Detailed description of module purpose and behavior.
 
 =cut
 
@@ -202,7 +213,8 @@ If the system handles the condition (retry, reroute, fallback), use `log_debug`,
 |--------|---------|----------|
 | `CLIO::Core::` | System core | APIManager, WorkflowOrchestrator, ToolExecutor, Config, PromptManager, ContextBuilder, MessageHistory, ConversationManager |
 | `CLIO::Core::API::` | API sub-modules | ResponseHandler, MessageValidator, ErrorHandler, PayloadSanitizer |
-| `CLIO::Tools::` | AI-callable tools | FileOperations, VersionControl, TerminalOperations, MemoryOperations, Interact, ApplyPatch, CodeIntelligence, RemoteExecution, SubAgentOperations, TodoList, WebOperations, SkillOperations, MCPBridge, PluginBridge, Registry, Tool |
+| `CLIO::Tools::` | AI-callable tools (14) | FileOperations, VersionControl, TerminalOperations, MemoryOperations, Interact, ApplyPatch, CodeIntelligence, RemoteExecution, SubAgentOperations, TodoList, WebOperations, SkillOperations, MCPBridge, PluginBridge |
+| `CLIO::Tools::` | Tool infrastructure | Registry (tool registration/lookup), Tool (base class for operation-based tools) |
 | `CLIO::UI::` | Terminal interface | Chat, Markdown, Theme, ANSI, CommandHandler, DiffRenderer, Display, HostProtocol, Multiplexer, PaginationManager, ProgressSpinner, SessionReplay, Spinners, StreamingController, Terminal, ToolOutputFormatter |
 | `CLIO::UI::Commands::` | Slash command handlers | AI, API, Billing, Config, Context, Device, File, Git, Log, Memory, Mux, Profile, Project, Prompt, Session, Skills, Spec, Stats, SubAgent, System, Todo, Update |
 | `CLIO::Session::` | Session management | Manager, State, FileVault, Lock, Export, TodoStore, ToolResultStore |
@@ -395,13 +407,33 @@ command_label (cyan), command_value (white).
 | File | Purpose |
 |------|---------|
 | `README.md` | Project overview |
+| `AGENTS.md` | Technical reference (this file) |
+| `.clio/instructions.md` | Project methodology (Unbroken Method) |
 | `docs/USER_GUIDE.md` | How to use CLIO |
 | `docs/FEATURES.md` | Complete feature reference |
 | `docs/ARCHITECTURE.md` | System design |
+| `docs/DEVELOPER_GUIDE.md` | Extension and contribution guide |
+| `docs/DEVELOPER_DOCUMENTATION_GUIDE.md` | POD, commenting, and technical writing standards |
+| `docs/DEPENDENCIES.md` | System and Perl dependency requirements |
+| `docs/INSTALLATION.md` | Installation instructions |
 | `docs/STYLE_QUICKREF.md` | UI styling quick reference |
+| `docs/STYLE_GUIDE.md` | Full UI style guide |
+| `docs/SECURITY.md` | Security model and six-layer protection |
+| `docs/PROVIDERS.md` | Provider setup and configuration |
+| `docs/MEMORY.md` | Memory architecture and LTM design |
+| `docs/MCP.md` | Model Context Protocol integration |
+| `docs/SANDBOX.md` | Sandbox mode |
+| `docs/REMOTE_EXECUTION.md` | Remote execution via SSH |
+| `docs/MULTI_AGENT_COORDINATION.md` | Multi-agent coordination |
+| `docs/PUPPETEER_MODE.md` | Puppeteer workflow protocol |
+| `docs/AUTOMATION.md` | Automation and scripting |
+| `docs/PERFORMANCE.md` | Performance optimization guide |
+| `docs/COMMAND_OUTPUT_STANDARDS.md` | Tool output formatting standards |
+| `docs/SPECS/` | OpenSpec protocol specifications |
 | `docs/templates/` | AGENTS.md / instructions.md templates |
-| `.clio/instructions.md` | Project methodology (Unbroken Method) |
-| `AGENTS.md` | Technical reference (this file) |
+| `INSTALL.md` | Quick local install |
+| `CONTRIBUTING.md` | Contribution workflow |
+| `SECURITY.md` | GitHub security policy |
 
 **Rule:** Full rewrite, never changelog patches. Test docs: `clio --input "read docs/YOUR_FILE.md" --exit`.
 
@@ -455,10 +487,10 @@ Static maps in `ModelCapabilitiesManager.pm` drift as providers add/remove model
 
 | Provider | Method | Last Updated |
 |----------|--------|-------------|
-| NVIDIA NIM | `_fetch_nvidia_capabilities` | 2026-06-11 |
-| Z.A.I | `_fetch_zai_capabilities` | Check date |
-| MiniMax | `_fetch_minimax_capabilities` | Check date |
-| DeepSeek | `_fetch_deepseek_capabilities` | 2026-06-30 |
+| NVIDIA NIM | `_fetch_nvidia_capabilities` | 2026-09-09 |
+| Z.A.I | `_fetch_zai_capabilities` | 2026-09-09 |
+| MiniMax | `_fetch_minimax_capabilities` | 2026-09-09 |
+| DeepSeek | `_fetch_deepseek_capabilities` | 2026-09-09 |
 
 **Update procedure:** Check provider model listing. Cross-reference with OpenRouter's `/api/v1/models`. Add new models with accurate `context_window` + `max_output_tokens`. Remove removed models. Update heuristic patterns. Verify all entries resolve:
 ```bash

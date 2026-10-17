@@ -14,13 +14,19 @@ This guide defines documentation standards for CLIO developers. Well-documented 
 
 ### Module Header Template
 
-Every Perl module must start with POD documentation:
+Every Perl module must start with SPDX headers and POD documentation:
 
 ```perl
+# SPDX-License-Identifier: GPL-3.0-only
+# SPDX-FileCopyrightText: Copyright (c) 2026 Andrew Wyatt (Fewtarius)
+
 package CLIO::Core::APIManager;
 
 use strict;
 use warnings;
+use utf8;
+use feature 'say';
+use Carp qw(croak);
 
 =head1 NAME
 
@@ -569,14 +575,15 @@ use CLIO::Core::Logger qw(should_log);
 
 print STDERR "[DEBUG][ModuleName] Message\n" if should_log('DEBUG');
 print STDERR "[ERROR][ModuleName] Error: $error\n";
-print STDERR "[TRACE][ModuleName] Detail: $detail\n" if should_log('DEBUG');
+print STDERR "[DEBUG][ModuleName] Detail: $detail\n" if should_log('DEBUG');
 ```
 
 **Guidelines:**
 - Always write debug to STDERR (not STDOUT)
 - Use format: `[LEVEL][Module] Message`
-- Levels: DEBUG, TRACE, INFO, WARNING, ERROR
-- Guard with `if $self->{debug}` or env var check
+- Levels: ERROR (0), WARNING (1), INFO (reserved — no current use), DEBUG (3)
+- Prefer `log_debug()` / `log_warning()` / `log_error()` from CLIO::Core::Logger over manual STDERR formatting
+- Guard expensive messages with `if should_log('DEBUG')`
 - Include context: what operation, what data
 
 ### Helpful Debug Messages

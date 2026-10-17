@@ -1,6 +1,6 @@
 # CLIO Architecture
 
-**Last Updated:** July 2026
+**Last Updated:** October 2026
 
 ---------------------------------------------------
 
