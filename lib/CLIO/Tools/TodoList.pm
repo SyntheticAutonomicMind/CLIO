@@ -47,6 +47,11 @@ STEP 5 - REPEAT:
 - update: Partial updates (requires todoUpdates array)
 - add: Append new todos to existing list (requires newTodos array, IDs auto-assigned)
 
+**SILENT ALIASES:**
+- list: Accepted as a silent alias for 'read' (the universal verb for
+  "enumerate a collection" — models reach for it instinctively, so it
+  is accepted at dispatch without appearing in the schema enum).
+
 **STATUS VALUES:**
 - not-started: Todo not yet begun (alias: pending)
 - in-progress: Currently working (max 1 at a time)
@@ -90,8 +95,21 @@ RULES:
 QUICK EXAMPLE:
 {"operation": "write", "todoList": [{"title": "Fix bug", "description": "...", "status": "not-started"}]}
 {"operation": "update", "todoUpdates": [{"id": 1, "status": "in-progress"}]}
+
+Note: 'list' is accepted as a silent alias for 'read' (the natural verb for
+enumerate-a-collection). Aliases are not listed in the operation enum so the
+model should prefer the canonical names above; aliases exist only to absorb
+common naming instincts without an error round-trip.
 EOF
         supported_operations => [qw(read write update add)],
+        # Silent aliases — NOT in the schema enum, so the model sees the
+        # canonical names (read, write, update, add) but natural-language
+        # aliases are silently accepted at dispatch (same pattern as
+        # FileOperations/TerminalOperations). 'list' is the universal verb
+        # for "enumerate a collection" and models reach for it
+        # instinctively; routing it to handle_read avoids a wasted
+        # round-trip on every error-then-guidance cycle.
+        operation_aliases => [qw(list)],
         debug => $opts{debug} || 0,
     );
 }
@@ -99,6 +117,7 @@ EOF
 sub dispatch_table {
     return {
         read   => '_dispatch_read',
+        list   => '_dispatch_read',
         write  => '_dispatch_write',
         update => '_dispatch_update',
         add    => '_dispatch_add',
