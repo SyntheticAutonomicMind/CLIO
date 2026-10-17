@@ -119,6 +119,9 @@ cp VERSION "$INSTALL_DIR/" || exit 1
 cp -r lib "$INSTALL_DIR/" || exit 1
 cp -r styles "$INSTALL_DIR/" || exit 1
 cp -r themes "$INSTALL_DIR/" || exit 1
+ # System-install skills and prompt overrides (ships with CLIO)
+ [ -d skills ] && cp -r skills "$INSTALL_DIR/" || echo "  (skills/ not found, skipping)"
+ [ -d prompts ] && cp -r prompts "$INSTALL_DIR/" || echo "  (prompts/ not found, skipping)"
 cp README.md "$INSTALL_DIR/" 2>/dev/null || echo "  (README.md not found, skipping)"
 [ -d docs ] && cp -r docs "$INSTALL_DIR/" || echo "  (docs/ not found, skipping)"
 
@@ -131,6 +134,10 @@ find "$INSTALL_DIR/styles" -type f -name "*.style" -exec chmod 644 {} \;
 find "$INSTALL_DIR/styles" -type d -exec chmod 755 {} \;
 find "$INSTALL_DIR/themes" -type f -name "*.theme" -exec chmod 644 {} \;
 find "$INSTALL_DIR/themes" -type d -exec chmod 755 {} \;
+ [ -d "$INSTALL_DIR/skills" ] && find "$INSTALL_DIR/skills" -type f -name "*.md" -exec chmod 644 {} \;
+ [ -d "$INSTALL_DIR/skills" ] && find "$INSTALL_DIR/skills" -type d -exec chmod 755 {} \;
+ [ -d "$INSTALL_DIR/prompts" ] && find "$INSTALL_DIR/prompts" -type f -name "*.md" -exec chmod 644 {} \;
+ [ -d "$INSTALL_DIR/prompts" ] && find "$INSTALL_DIR/prompts" -type d -exec chmod 755 {} \;
 [ -f "$INSTALL_DIR/README.md" ] && chmod 644 "$INSTALL_DIR/README.md"
 
 # Create symlink

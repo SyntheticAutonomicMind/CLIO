@@ -53,6 +53,8 @@ sub create_fake_clio_source {
     make_path("$dir/lib/CLIO");
     make_path("$dir/styles");
     make_path("$dir/themes");
+    make_path("$dir/skills");
+    make_path("$dir/skills/templates");
 
     # Minimal clio executable
     open my $fh, '>', "$dir/clio" or die "Cannot create: $!";
@@ -63,6 +65,15 @@ sub create_fake_clio_source {
     # VERSION file
     open $fh, '>', "$dir/VERSION" or die;
     print $fh "99.0.0\n";
+    close $fh;
+
+    # Test skill files (system-install skills shipped with CLIO)
+    open $fh, '>', "$dir/skills/test-skill.md" or die;
+    print $fh "# Test Skill\n\nname: test-skill\ndescription: A test skill for install verification\n---\n\nTest body.\n";
+    close $fh;
+
+    open $fh, '>', "$dir/skills/templates/test.template" or die;
+    print $fh "# Test Template\n";
     close $fh;
 
     # Minimal install.sh (we test our own version, not the real one,
@@ -107,6 +118,8 @@ cp -r lib/* "$INSTALL_DIR/lib/" 2>/dev/null || true
 cp clio "$INSTALL_DIR/clio"
 chmod 755 "$INSTALL_DIR/clio"
 cp VERSION "$INSTALL_DIR/VERSION" 2>/dev/null || true
+[ -d skills ] && cp -r skills "$INSTALL_DIR/" || echo "  (skills/ not found, skipping)"
+[ -d prompts ] && cp -r prompts "$INSTALL_DIR/" || echo "  (prompts/ not found, skipping)"
 
 if [[ $CREATE_SYMLINK -eq 1 ]]; then
     SYMLINK_DIR=$(dirname "$SYMLINK_PATH")
@@ -149,6 +162,12 @@ print "\n--- install.sh --user flag ---\n";
     ok(-f "$expected_install/clio",   "--user: clio executable installed");
     ok(-f "$expected_install/VERSION","--user: VERSION file installed");
 
+    # Verify system-install skills directory was copied
+    ok(-d "$expected_install/skills",         "--user: skills/ directory installed");
+    ok(-f "$expected_install/skills/test-skill.md", "--user: skill markdown files installed");
+    ok(-d "$expected_install/skills/templates", "--user: skills/templates/ subdirectory installed");
+    ok(-f "$expected_install/skills/templates/test.template", "--user: skill template files installed");
+
     my $expected_symlink = "$home/.local/bin/clio";
     ok(-l $expected_symlink, "--user: symlink created at ~/.local/bin/clio");
     if (-l $expected_symlink) {
@@ -184,6 +203,11 @@ print "\n--- install.sh with explicit path ---\n";
     ok(-f "$target/clio",       "explicit path: clio installed");
     ok(-f "$target/VERSION",    "explicit path: VERSION installed");
     ok(-d "$target/lib/CLIO",   "explicit path: lib/CLIO directory present");
+
+    # Verify system-install skills directory was copied
+    ok(-d "$target/skills",                  "explicit path: skills/ directory installed");
+    ok(-f "$target/skills/test-skill.md",    "explicit path: skill markdown files installed");
+    ok(-d "$target/skills/templates",        "explicit path: skills/templates/ subdirectory installed");
 
     # With --no-symlink, no symlink should be created
     ok(!-l '/usr/local/bin/clio' || 
@@ -320,6 +344,11 @@ print "\n--- install_from_directory() end-to-end ---\n";
     my $fake_symlink = File::Spec->catfile($fake_home, '.local', 'bin', 'clio');
     ok(-l $fake_symlink, "Symlink created in fake HOME, not real HOME");
 
+    # Verify system-install skills were copied by install_from_directory()
+    ok(-d "$target/skills", "install_from_directory(): skills/ directory installed");
+    ok(-f "$target/skills/test-skill.md", "install_from_directory(): skill markdown files installed");
+    ok(-d "$target/skills/templates", "install_from_directory(): skills/templates/ subdirectory installed");
+
     remove_tree($src, $target, $fake_home);
 }
 
@@ -347,6 +376,118 @@ print "\n--- install_from_directory() error handling ---\n";
     ok(!$result2, "install_from_directory() returns false when install.sh missing");
 
     remove_tree($no_script_dir);
+}
+
+# ---------------------------------------------------------------------------
+# Test 7: REAL install.sh copies skills/ and prompts/ directories
+#          This directly tests the fix in install.sh that adds skills/
+#          to the copy block and permission-setting block.
+# ---------------------------------------------------------------------------
+print "\n--- real install.sh copies skills/ ---\n";
+
+{
+    my $src    = File::Spec->catdir($RealBin, 'tmp_real_src');
+    my $target = File::Spec->catdir($RealBin, 'tmp_real_install');
+    my $repo_root = File::Spec->catdir($RealBin, '..', '..');
+    my $real_install_sh = File::Spec->catfile($repo_root, 'install.sh');
+    remove_tree($src, $target);
+
+    # Skip if we can't find the real install.sh (e.g. running from an
+    # unexpected location)
+    if (!-f $real_install_sh) {
+        skip("Real install.sh not found at $real_install_sh - skipping real install test");
+        ok(1, "Real install.sh test skipped safely");
+    } else {
+        # Create a fake source that has skills/ but reuses the real install.sh
+        create_fake_clio_source($src);
+        # Overwrite the fake install.sh with the real one
+        require File::Copy;
+        File::Copy::copy($real_install_sh, "$src/install.sh");
+        chmod 0755, "$src/install.sh";
+
+        # Run the REAL install.sh with --no-symlink and explicit target
+        my $old_cwd = getcwd();
+        chdir($src);
+        my $output = `bash install.sh --no-symlink '$target' 2>&1`;
+        my $exit   = $?;
+        chdir($old_cwd);
+
+        ok($exit == 0, "real install.sh exits 0");
+        ok(-d "$target", "real install: target dir created");
+        ok(-f "$target/clio", "real install: clio installed");
+        ok(-d "$target/lib/CLIO", "real install: lib/CLIO installed");
+
+        # The critical assertion: skills/ must be installed
+        ok(-d "$target/skills",
+           "real install.sh: skills/ directory copied to install dir");
+        ok(-f "$target/skills/test-skill.md",
+           "real install.sh: skill markdown file installed");
+        ok(-d "$target/skills/templates",
+           "real install.sh: skills/templates/ subdirectory installed");
+        ok(-f "$target/skills/templates/test.template",
+           "real install.sh: skill template file installed");
+
+        # Verify the real CLIO skills/ directory is also installed correctly
+        # by using the actual repo skills directory
+        my $real_skills_dir = File::Spec->catfile($repo_root, 'skills');
+        if (-d $real_skills_dir) {
+            # Overwrite fake skills with real ones in a second source dir
+            my $real_src = File::Spec->catdir($RealBin, 'tmp_real_src_cloned');
+            my $real_target = File::Spec->catdir($RealBin, 'tmp_real_install_cloned');
+            remove_tree($real_src, $real_target);
+
+            # Copy specific top-level items needed for install (avoid glob
+            # self-copy issues when the source tree contains the test dir)
+            make_path($real_src);
+            system("cp -r '$repo_root/clio' '$repo_root/lib' '$repo_root/styles' '$repo_root/themes' '$repo_root/VERSION' '$repo_root/install.sh' '$real_src/'");
+            if (-d "$repo_root/skills") {
+                system("cp -r '$repo_root/skills' '$real_src/'");
+            }
+
+            if (-d "$real_src" && -f "$real_src/clio") {
+                chdir($real_src);
+                my $output2 = `bash install.sh --no-symlink '$real_target' 2>&1`;
+                my $exit2   = $?;
+                chdir($old_cwd);
+
+                ok($exit2 == 0, "real install.sh with repo source exits 0");
+
+                if (-d "$real_src/skills") {
+                    ok(-d "$real_target/skills",
+                       "real install.sh: repo skills/ installed to target");
+
+                    # Verify actual shipped skill files are present
+                    my @expected_skills = qw(init.md design.md review.md test.md fix.md doc.md explain.md design-review.md init-with-prd.md session-handoff.md anti-patterns.md);
+                    my $found = 0;
+                    for my $skill (@expected_skills) {
+                        if (-f "$real_target/skills/$skill") {
+                            $found++;
+                        }
+                    }
+                    ok($found >= 8,
+                       "real install.sh: $found/11 expected system skill files installed (need >=8)");
+                    # Verify templates subdirectory
+                    ok(-d "$real_target/skills/templates",
+                       "real install.sh: skills/templates/ installed");
+                    if (-d "$real_target/skills/templates") {
+                        ok(-f "$real_target/skills/templates/AGENTS.md.template",
+                           "real install.sh: AGENTS.md.template installed");
+                    }
+                } else {
+                    ok(0, "Real repo should have skills/ directory");
+                }
+
+                remove_tree($real_src, $real_target);
+            } else {
+                skip("Could not copy full repo source for real install test");
+                ok(1, "Full repo copy test skipped safely");
+            }
+        } else {
+            ok(0, "Real CLIO repo should have skills/ directory");
+        }
+
+        remove_tree($src, $target);
+    }
 }
 
 # ---------------------------------------------------------------------------
