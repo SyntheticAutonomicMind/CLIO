@@ -476,8 +476,13 @@ sub _refresh_geometry {
 }
 
 sub _max {
+   my ($a, $b) = @_;
+   return $a > $b ? $a : $b;
+}
+
+sub _min {
     my ($a, $b) = @_;
-    return $a > $b ? $a : $b;
+    return $a < $b ? $a : $b;
 }
 
 =head2 _query_cursor_pos
@@ -531,12 +536,12 @@ sub _query_cursor_pos {
     # be used on :utf8 handles.
     #
     # The select() timeout is 10ms per attempt; we retry with `next`
-    # (NOT `last`) until the 200ms deadline.  The original bug used
+    # (NOT `last`) until the 500ms deadline.  The original bug used
     # `last`, exiting on the first 10ms timeout before slow terminals
     # (notably Linux xterm) could respond, leaving the DSR response
     # stranded in the kernel TTY buffer.
     my $resp = '';
-    my $deadline = time() + 0.2;  # 200ms
+    my $deadline = time() + 0.5;  # 500ms - handles high-latency SSH (200ms RTT + jitter)
 
     while (time() < $deadline) {
         my $rin = '';
@@ -557,11 +562,25 @@ sub _query_cursor_pos {
     }
 
     # Fallback: couldn't determine, assume top of screen.
-    # Note: if the DSR response arrived late (after our 200ms select), the
-    # bytes are still in the stdin buffer.  The escape-sequence handler in
-    # the main readline loop (handle_escape_sequence) detects and silently
-    # consumes any DSR response pattern (ESC[\d+;\d+R) that leaks through,
-    # so this is safe.
+    #
+    # After DSR timeout, drain any remaining DSR response bytes from the
+    # stdin buffer. If the terminal is slow (high-latency SSH), the DSR
+    # response may still be arriving when we enter raw mode. Without
+    # draining, these bytes can be misinterpreted: the ESC is read as
+    # the start of an escape sequence, and the remaining [row;colR bytes
+    # may be inserted as literal text into the user's input. We drain
+    # non-blocking reads to clear any partial DSR response so it cannot
+    # leak into readline.
+    if ($resp eq '' || ($resp =~ /^\e\[/ && $resp !~ /R$/)) {
+        my $drained = '';
+        while (defined(my $byte = ReadKey(-1))) {
+            $drained .= $byte;
+            last if $drained =~ /R$/;  # DSR response fully consumed
+        }
+        if (length($drained)) {
+            log_debug('ReadLine', "DSR late-drain: '$drained'");
+        }
+    }
     log_debug('ReadLine', "DSR cursor query failed, assuming row=0");
     return (0, 1);
 }
@@ -963,11 +982,12 @@ sub redraw_line {
     # How many terminal lines the new content occupies
     my $new_lines_needed = $self->_compute_display_lines($total_disp);
 
-    # Save old cursor_input_row before _refresh_geometry overwrites it.
-    # redraw_line needs to know where the cursor WAS (to move up the
-    # right number of rows), not where it is now.
+    # Save old cursor state before _refresh_geometry overwrites it.
+    # redraw_line needs to know where the cursor WAS (in screen-row terms)
+    # to move up the right number of rows.
     my $old_cursor_input_row = $self->{last_cursor_input_row} || 0;
-    my $old_display_lines = $self->{display_lines} || 1;
+    my $old_scroll_offset    = $self->{scroll_offset} || 0;
+    my $old_display_lines    = $self->{display_lines} || 1;
 
     # Derive scroll_offset and last_cursor_input_row from total content.
     $self->_refresh_geometry($$input_ref, $$cursor_pos_ref, $prompt);
@@ -975,45 +995,60 @@ sub redraw_line {
     if (should_log('DEBUG')) {
         log_debug('ReadLine', "redraw_line: input_len=$input_len, prompt_disp=$prompt_disp, input_disp=$input_disp, total_disp=$total_disp");
         log_debug('ReadLine', "redraw_line: term_width=$term_width, new_lines_needed=$new_lines_needed");
-        log_debug('ReadLine', "redraw_line: old_display_lines=$old_display_lines, old_cursor_input_row=$old_cursor_input_row");
+        log_debug('ReadLine', "redraw_line: old_display_lines=$old_display_lines, old_cursor_input_row=$old_cursor_input_row, old_scroll=$old_scroll_offset");
         log_debug('ReadLine', "redraw_line: last cursor was at row=$self->{last_cursor_row}, col=$self->{last_cursor_col}");
     }
 
     # Move to (row 0, col 1) of the input area.
-    # Move up by the cursor's actual distance from the top of the input
-    # area in SCREEN rows, NOT input rows. When the terminal has scrolled
-    # (scroll_offset > 0) or the input starts at a non-zero row
-    # (base_cursor_row > 0), the input row and screen row diverge.
-    # We use old_cursor_input_row as the row count (not the clamped
-    # screen row) because: in a real terminal, scrolling keeps the cursor
-    # at the bottom row (max_row), and moving up old_cursor_input_row
-    # rows clamps to the top (correct); in a VT/mock that doesn't scroll,
-    # the cursor sits at row old_cursor_input_row in overflow territory,
-    # and moving up that many rows reaches row 0 (correct).
+    # Compute the cursor's OLD screen row using the OLD scroll_offset
+    # (before _refresh_geometry changed it). Then compute the top of the
+    # NEW input area using the NEW scroll_offset (after _refresh_geometry).
+    # The distance between them is the correct number of rows to move up.
+    #
+    # When the input content changes size (e.g. a character is deleted
+    # or inserted near a line-wrap boundary), display_lines changes,
+    # which changes scroll_offset. Using old_cursor_input_row alone
+    # (without accounting for scroll_offset changes) causes the cursor
+    # to overshoot past the top of the input area (moving into scrollback)
+    # or undershoot (staying below the top). The screen-row arithmetic
+    # below correctly handles both cases.
     print "\r";
     $self->{last_cursor_col} = 1;
-    my $rows_to_top = $old_cursor_input_row;
+
+    my $base_row = $self->{base_cursor_row} || 0;
+    my $max_row  = $self->_get_term_height() - 1;
+
+    # Old screen row: where the cursor was (before content change).
+    # Uses OLD scroll_offset.
+    my $old_screen_row = _max(0, _min($max_row,
+        $old_cursor_input_row - $old_scroll_offset + $base_row));
+
+    # New top of input: where the first input row is (after content change).
+    # Uses NEW scroll_offset.
+    my $top_screen_row = _max(0, $base_row - $self->{scroll_offset});
+
+    # Distance to move up.
+    my $rows_to_top = _max(0, $old_screen_row - $top_screen_row);
 
     # PENDING WRAP ADJUSTMENT: When the cursor was at a pending wrap
     # position (last char filled the last column, terminal hasn't advanced
     # the cursor to the next row yet), the physical cursor is one row
-    # lower than old_cursor_input_row says. The \r above resolves the
-    # pending state, so moving up old_cursor_input_row rows would
-    # overshoot past the top of the input area. Subtract 1 to account
-    # for the pending row.
+    # lower than the computed old_screen_row says. The \r above resolves
+    # the pending state, so subtract 1 to avoid moving above the input.
     if ($rows_to_top > 0 && ($self->{last_cursor_pending} || 0)) {
         $rows_to_top -= 1;
     }
 
-    # Clamp to old_display_lines - 1 as a safety net for stale state.
-    if ($rows_to_top > $old_display_lines - 1) {
-        $rows_to_top = $old_display_lines - 1;
+    # Safety clamp: never move up more than the display area.
+    if ($rows_to_top > $max_row) {
+        $rows_to_top = $max_row;
     }
     if ($rows_to_top < 0) { $rows_to_top = 0; }
     if ($rows_to_top > 0) {
         print "\e[${rows_to_top}A";
     }
-    $self->{last_cursor_row} = $self->{base_cursor_row} || 0;
+    $self->{last_cursor_row} = $top_screen_row;
+    $self->{last_cursor_col} = 1;
 
     # Clear from here to end of screen, then redraw prompt + input
     print "\e[J";
@@ -1081,41 +1116,48 @@ sub _redraw_line_external {
         $$cursor_pos_ref = $input_len;
     }
 
-    # Save old cursor_input_row before _refresh_geometry overwrites it.
+    # External output (broker events) has been printed above the input line,
+    # shifting the cursor down by an unknown number of rows. We must move
+    # the cursor from its current position (end of external output) back to
+    # the top of the input area. Since we don't know how many rows the
+    # external output occupied, we query the terminal for the actual cursor
+    # position via DSR before computing the upward movement.
+    print "\r";
+
+    # Query current cursor position to determine how far up to go.
+    my ($cur_row, $cur_col) = $self->_query_cursor_pos();
+
+    my $base_row = $self->{base_cursor_row} || 0;
+    my $max_row  = $self->_get_term_height() - 1;
+    my $old_scroll_offset = $self->{scroll_offset} || 0;
     my $old_cursor_input_row = $self->{last_cursor_input_row} || 0;
 
-    # Move to column 0 of current row, clear to end of screen,
-    # then redraw prompt + input.
-    print "\r";
-    # Move up to the top of the input area.
-    # Use old_cursor_input_row as the row distance (same rationale as
-    # redraw_line — works for both real terminals and VTs without
-    # scroll support).
-    my $old_display_lines = $self->{display_lines} || 1;
-    my $rows_to_top = $old_cursor_input_row;
+    # Top of the input area (before external output was printed).
+    # Uses the pre-external-output scroll_offset (unchanged by external output).
+    my $top_screen_row = _max(0, $base_row - $old_scroll_offset);
 
-    # PENDING WRAP ADJUSTMENT: same as in redraw_line. When the cursor
-    # is at a pending wrap position (end of input at exact wrap boundary),
-    # the physical cursor is one row lower than last_cursor_input_row
-    # says. Subtract 1 to avoid moving above the input area.
-    if ($rows_to_top > 0 && ($self->{last_cursor_pending} || 0)) {
-        $rows_to_top -= 1;
-    }
+    # Move up from current cursor position to the top of the input.
+    my $rows_to_top = _max(0, $cur_row - $top_screen_row);
 
-    if ($rows_to_top > $old_display_lines - 1) {
-        $rows_to_top = $old_display_lines - 1;
+    # NOTE: pending-wrap adjustment is NOT needed here because the DSR
+    # query in _query_cursor_pos already resolves any pending wrap state
+    # (ReadMode(1) sends a \r-equivalent resolution).
+
+    # Safety clamp.
+    if ($rows_to_top > $max_row) {
+        $rows_to_top = $max_row;
     }
     if ($rows_to_top < 0) { $rows_to_top = 0; }
     if ($rows_to_top > 0) {
         print "\e[${rows_to_top}A";
     }
     $self->{last_cursor_col} = 1;
-    $self->{last_cursor_row} = $self->{base_cursor_row} || 0;
+    $self->{last_cursor_row} = $top_screen_row;
     print "\e[J";
     $self->_emit_text($prompt);
     $self->_emit_text($$input_ref);
 
-    # Derive scroll_offset from total content.
+    # Refresh geometry with current input state.
     $self->_refresh_geometry($$input_ref, $$cursor_pos_ref, $prompt);
 
     # Compute cursor position from input state.
@@ -1202,6 +1244,15 @@ sub readline {
     # Set terminal to raw mode
     ReadMode('raw');
 
+    # Enable bracketed paste mode. This wraps pasted text in
+    # ESC[200~ ... ESC[201~ so we can insert pasted content as literal
+    # characters without interpreting escape sequences (e.g. ANSI colors
+    # copied from another terminal). Supported by xterm, Alacritty,
+    # Kitty, WezTerm, iTerm2, Linux console, tmux, and Windows Terminal.
+    # If the terminal doesn't support it, the sequence is ignored.
+    print "\e[?2004h";
+    STDOUT->flush() if STDOUT->can('flush');
+
     my $input = $prefill;
     my $cursor_pos = length($prefill);
     my $completion_state = {
@@ -1245,6 +1296,7 @@ sub readline {
                     if (length $input) {
                         $self->_redraw_line_external($prompt, \$input, \$cursor_pos);
                     } else {
+                        print "\e[?2004l";  # Disable bracketed paste
                         $self->_emit_newline();
                         ReadMode('restore');
                         return { type => '__AGENT_EVENT__', partial_input => '' };
@@ -1338,12 +1390,14 @@ sub readline {
                 $self->add_to_history($input);
             }
 
+            print "\e[?2004l";  # Disable bracketed paste
             return $input;
         }
 
         # Ctrl-D (EOF)
         if ($ord == 4) {
             if (length($input) == 0) {
+                print "\e[?2004l";  # Disable bracketed paste
                 $self->_emit_newline();
                 ReadMode('restore');
                 return undef;
@@ -1360,6 +1414,7 @@ sub readline {
 
         # Ctrl-C
         if ($ord == 3) {
+            print "\e[?2004l";  # Disable bracketed paste
             $self->_emit_ctrl_c();
             ReadMode('restore');
             kill 'INT', $$;
@@ -1446,17 +1501,56 @@ sub readline {
             # Read up to 7 bytes after ESC - DSR responses (ESC[row;colR)
             # can be up to 7 bytes (e.g. ESC[999;99R), and we need to
             # capture the full response to detect and silently consume it.
+            # Use 0.2s per-byte timeout (was 0.1s): on high-latency SSH
+            # connections, bytes of a multi-byte escape sequence may arrive
+            # with >100ms gaps between them. A 100ms timeout causes the
+            # sequence to be split — the first part (ESC [) is interpreted
+            # as an incomplete escape sequence and the remaining bytes
+            # (e.g. "A" for arrow key) are read as literal keystrokes.
+            # 200ms matches the DSR query timeout for consistency.
             for my $i (1..7) {
-                my $next = ReadKey(0.1);
+                my $next = ReadKey(0.2);
                 last unless defined $next;
                 $seq .= $next;
 
                 if ($next =~ /[A-Za-z~]/ || ord($next) == 0x7F) {
+                    # SS3 sequences (ESC O X) used by VT100/VT220 in
+                    # application cursor key mode: the 'O' after ESC is
+                    # the SS3 introducer, not a final byte. We need one
+                    # more byte (the actual key: A/B/C/D/H/F).
+                    # Also handle SS3 modifiers: ESC O {letter} where the
+                    # following byte determines the key.
+                    if ($next eq 'O' && $i < 7) {
+                        my $extra = ReadKey(0.2);
+                        if (defined $extra) {
+                            $seq .= $extra;
+                            $i++;
+                            last;
+                        }
+                    }
                     last;
                 }
             }
 
             log_debug('ReadLine', "Raw escape sequence bytes: " . join(' ', map { sprintf('0x%02X', ord($_)) } split //, $seq));
+
+            # Bracketed paste start: ESC[200~
+            # The escape reader above already captures this as ESC, [, 2, 0, 0, ~
+            # (the ~ matches the /[~]/ terminator). If the terminal sent
+            # the full sequence, $seq is "\e[200~".
+            if ($seq =~ /^\e\[200~$/) {
+                my $paste = $self->_read_bracketed_paste();
+                if (length($paste)) {
+                    substr($input, $cursor_pos, 0, $paste);
+                    $cursor_pos += length($paste);
+                    $self->redraw_line(\$input, \$cursor_pos, $prompt);
+                }
+                next;
+            }
+
+            # If $seq is just ESC (no following bytes read), it's
+            # a standalone ESC press — ignore it (no interrupt in
+            # readline mode; interrupts happen during streaming).
 
             $self->handle_escape_sequence($seq, \$input, \$cursor_pos, $prompt);
             next;
@@ -1722,6 +1816,57 @@ sub handle_tab {
     }
 }
 
+=head2 _read_bracketed_paste
+
+Read a bracketed paste sequence. The terminal sends pasted text wrapped
+in ESC[200~ (start) and ESC[201~ (end). This method reads bytes until the
+end marker is found, returning the pasted text (without the wrapping
+escape sequences).
+
+Returns: string of pasted text (may be empty)
+
+=cut
+
+sub _read_bracketed_paste {
+    my ($self) = @_;
+
+    my $text = '';
+    # We've already consumed ESC[200~. Now read until ESC[201~ or timeout.
+    # Use select() with a timeout to avoid blocking forever if the terminal
+    # doesn't send the end marker.
+    my $deadline = time() + 2;  # 2s safety timeout
+    my $buf = '';
+
+    while (time() < $deadline) {
+        my $rin = '';
+        vec($rin, fileno(STDIN), 1) = 1;
+        my $nfound = select(my $rout = $rin, undef, undef, 0.05);
+        next unless $nfound && $nfound > 0;
+
+        my $byte = ReadKey(-1);
+        next unless defined $byte;
+
+        $buf .= $byte;
+
+        # Check if the buffer ends with ESC[201~ (paste end marker)
+        if ($buf =~ /\e\[201~/ || $buf =~ /\x1b\[201~/) {
+            # Strip the end marker
+            $buf =~ s/\e\[201~$//;
+            $buf =~ s/\x1b\[201~$//;
+            $text .= $buf;
+            last;
+        }
+
+        # Check for a complete end marker in the middle of the buffer
+        if ($buf =~ s/\e\[201~.*//) {
+            $text .= $buf;
+            last;
+        }
+    }
+
+    return $text;
+}
+
 =head2 handle_escape_sequence
 
 Handle escape sequences (arrow keys, function keys, etc.)
@@ -1756,6 +1901,37 @@ sub handle_escape_sequence {
     # and be echoed after the prompt.
     if ($seq =~ /^\e\[\d+;\d+R$/) {
         log_debug('ReadLine', "DSR response consumed: '$seq'");
+        return;
+    }
+
+    # SS3 arrow keys: ESC O A/B/C/D (VT100/VT220 application cursor key mode).
+    # When terminals are in application cursor key mode (SM \\x332 or DEC private
+    # mode), arrow keys send ESC O A/B/C/D instead of ESC [ A/B/C/D.
+    # This is used by VT100, VT220, and their emulations on serial terminals.
+    if ($seq =~ /^\eO([ABCD])$/) {
+        my $dir = $1;
+
+        if ($dir eq 'A') {
+            $self->history_prev($input_ref, $cursor_pos_ref, $prompt);
+        } elsif ($dir eq 'B') {
+            $self->history_next($input_ref, $cursor_pos_ref, $prompt);
+        } elsif ($dir eq 'C') {
+            if ($$cursor_pos_ref < length($$input_ref)) {
+                my $old_pos = $$cursor_pos_ref;
+                $$cursor_pos_ref = _grapheme_boundary_after($$input_ref, $$cursor_pos_ref);
+                if ($$cursor_pos_ref != $old_pos) {
+                    $self->reposition_cursor(\$old_pos, $cursor_pos_ref, $input_ref, $prompt);
+                }
+            }
+        } elsif ($dir eq 'D') {
+            if ($$cursor_pos_ref > 0) {
+                my $old_pos = $$cursor_pos_ref;
+                $$cursor_pos_ref = _grapheme_boundary_before($$input_ref, $$cursor_pos_ref);
+                if ($$cursor_pos_ref != $old_pos) {
+                    $self->reposition_cursor(\$old_pos, $cursor_pos_ref, $input_ref, $prompt);
+                }
+            }
+        }
         return;
     }
 

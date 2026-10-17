@@ -336,18 +336,51 @@ sub install_alrm_handler {
         if (defined $key && !$@) {
             my $ord = ord($key);
             if ($ord == 27) {
-                # Bare byte detection: the disambiguation between ESC
-                # (interrupt) and ESC [ (arrow key / escape sequence)
-                # happens later, in check(), which is not in signal
-                # context. This avoids the historical "blocking ReadKey
-                # in signal handler" footgun.
-                log_debug('Interrupt', "ALRM scan: ESC byte detected");
-                # Drain any extra bytes that arrived with this keypress
-                # - mouse/focus events and modifier sequences typically
-                # send 3-5 bytes starting with ESC. We drain here so
-                # the next check() call sees a clean buffer and can run
-                # the 50ms disambiguation on a fresh key.
-                while (defined(eval { ReadKey(-1) })) { }
+                # ESC byte detected. We need to disambiguate between:
+                #   - Standalone ESC (user wants to interrupt) -> set flag
+                #   - Start of escape sequence (arrow keys, DSR response, etc.) -> NOT an interrupt
+                #
+                # A DSR response (ESC[row;colR) from a timed-out cursor query
+                # can still be in the buffer during streaming. If we treat
+                # it as an interrupt, we get false-positive aborts.
+                #
+                # We do a non-blocking peek at the next byte to check if
+                # it's '[' (escape sequence) or something else. If it's '[',
+                # this is not a standalone ESC — drain the rest and ignore.
+                # If no next byte is available (no DSR leak, just a real
+                # ESC press), we treat it as an interrupt.
+                #
+                # This non-blocking ReadKey(-1) is safe in a signal
+                # context: it returns immediately if no byte is available.
+                my $peek = eval { ReadKey(-1) };
+                if (defined $peek && !$@ && $peek eq '[') {
+                    # ESC [ — this is the start of an escape sequence (could
+                    # be arrow keys, DSR response, etc.), not a standalone
+                    # ESC interrupt. Drain the rest of the sequence.
+                    log_debug('Interrupt', "ALRM scan: ESC [ detected (escape sequence, not interrupt)");
+                    while (defined(eval { ReadKey(-1) })) { }
+                    # Re-arm best-effort.
+                    eval { alarm($ALRM_INTERVAL); };
+                    return;
+                }
+                # If we peeked a non-'[' byte, it doesn't match any known
+                # escape sequence starting with ESC [, so put it back
+                # (we can't, but we note it). For standalone ESC, there was
+                # no next byte, so $peek is undef and we proceed to set
+                # the interrupt flag.
+                # Also handle ESC followed by non-'[' (e.g. ESC O for SS3
+                # sequences) - these are also not standalone ESC.
+                if (defined $peek && !$@) {
+                    # ESC followed by a non-'[' byte: could be ESC O (SS3)
+                    # sequence or other. Drain and treat as non-interrupt.
+                    log_debug('Interrupt', "ALRM scan: ESC byte followed by non-[ char (not interrupt)");
+                    while (defined(eval { ReadKey(-1) })) { }
+                    eval { alarm($ALRM_INTERVAL); };
+                    return;
+                }
+                # Standalone ESC: no bytes following the ESC byte.
+                # This is the user pressing ESC to interrupt.
+                log_debug('Interrupt', "ALRM scan: ESC byte (standalone interrupt)");
                 # Set both the session-state flag and the global flag
                 # so streaming loops (HTTP.pm) can detect it without
                 # a session reference.

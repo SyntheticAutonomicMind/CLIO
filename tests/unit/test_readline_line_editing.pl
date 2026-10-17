@@ -295,7 +295,9 @@ use Test::More tests => 22;
 # ============================================================
 
 # Test: scroll during insert, then Ctrl-K triggers redraw_line
-# The cursor-up count distinguishes bug (4) from fix (5).
+# With scroll_offset tracking, redraw_line computes rows_to_top from
+# actual screen coordinates: cursor was at screen row 4 (clamped from
+# input row 5), top of input is at row 0, so rows_to_top = 4.
 {
     @KEY_QUEUE = ();
     push_input(input_chars_for('a' x 100));  # 100 chars -> 6 rows, triggers scroll
@@ -304,12 +306,12 @@ use Test::More tests => 22;
 
     my ($vt, $bytes) = run_scenario(cols => 20, rows => 5);
 
-    # With the fix, display_lines = 6, last_cursor_input_row = 5.
-    # redraw_line moves up 5 rows: \e[5A\e[J
-    # With the bug, it would move up only 4: \e[4A\e[J
+    # Correct: cursor at screen row 4 (clamped), top of input at row 0.
+    # rows_to_up = 4 - 0 = 4. redraw_line moves up 4 rows: \e[4A\e[J
+    # Old buggy code used old_cursor_input_row = 5 (input row, not screen row).
     my $up_count = count_redraw_cursor_up($bytes);
-    is($up_count, 5,
-       "scroll-bug: redraw_line moves up 5 rows after scroll+Ctrl-K (got $up_count)");
+    is($up_count, 4,
+       "scroll-fix: redraw_line moves up 4 rows (screen-row distance) after scroll+Ctrl-K (got $up_count)");
 }
 
 # Test: scroll during insert, then fast-path backspace (no corruption)
