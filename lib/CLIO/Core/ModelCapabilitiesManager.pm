@@ -148,6 +148,12 @@ sub get_capabilities {
 
     return undef unless $provider && $model;
 
+    # Load CLIO::Providers before any CLIO::Providers:: call below.
+    # Previously this was only required inside _fetch_provider_capabilities
+    # (line ~595), causing "Undefined subroutine &CLIO::Providers::is_local_inference"
+    # when this code path ran before APIManager's `use CLIO::Providers`.
+    require CLIO::Providers;
+
     $self->_ensure_cache_loaded();
 
     # Cache key includes the model's normalized form AND the current

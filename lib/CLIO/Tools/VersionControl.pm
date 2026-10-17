@@ -142,7 +142,7 @@ sub new {
 ━━━━━━━━━━━━━━━━━━━━━ BRANCH (2 operations) ━━━━━━━━━━━━━━━━━━━━━
 -  branch - Branch operations (list, create, switch, delete)
    Returns: list [{name, current}] or operation confirmation
--  commit - Create commits (auto-stages all changes including untracked files; pass auto_stage=0 to commit only pre-staged files)
+-  commit - Create commits. Pass auto_stage => 1 to auto-stage all changes (tracked + untracked) before committing; default is 0 (only pre-staged files are committed).
    Returns: {success, hash, message, staged_files} on success
 
 ━━━━━━━━━━━━━━━━━━━━━ REMOTE (2 operations) ━━━━━━━━━━━━━━━━━━━━━
@@ -163,14 +163,15 @@ sub new {
 -  worktree - Worktree operations (list, add, remove, prune, merge, pr)
    Returns: list [{path, branch}] or operation confirmation
 
-[COMMIT BEHAVIOR] The commit operation runs `git add -A` before committing by default,
-picking up ALL working-tree changes including untracked files. This means a stray
-untracked file will land in your commit even if you didn't intend to add it.
+[COMMIT BEHAVIOR] The commit operation does NOT auto-stage by default.
+Only pre-staged files are committed unless you explicitly pass auto_stage => 1,
+which runs `git add -A` and picks up ALL working-tree changes including untracked
+files. This prevents accidental credential commits from stray untracked files.
 
 To commit only specific files: (1) explicitly `git add <exact paths>` via
-terminal_operations before commit, OR (2) pass auto_stage=0 to commit only what's
-already staged. The commit result includes a `staged_files` list so you can see
-exactly what got committed before moving on.
+terminal_operations before commit, OR (2) pass auto_stage=0 (the default) to
+commit only what is already staged. The commit result includes a `staged_files`
+list so you can see exactly what got committed before moving on.
 
 [CRITICAL WARNING] ⚠️  NEVER USE INTERACTIVE OPERATIONS:
 -  git rebase -i / --interactive (BREAKS TERMINAL UI - FORBIDDEN)
@@ -1045,7 +1046,7 @@ sub get_additional_parameters {
         },
         auto_stage => {
             type => "boolean",
-            description => "[OPTIONAL for commit] When true (default), runs 'git add -A' before committing, picking up all tracked AND untracked files in the working tree. Set to 0 to commit only what is already staged. To commit specific files, run `git add <paths>` via terminal_operations first, then pass auto_stage=0.",
+            description => "[OPTIONAL for commit, default: 0] When true, runs 'git add -A' before committing, picking up all tracked AND untracked files in the working tree. Set to 0 (the default) to commit only what is already staged. This prevents accidental credential commits from stray untracked files. To commit specific files, run `git add <paths>` via terminal_operations first, then pass auto_stage=0.",
         },
         ref1 => {
             type => "string",

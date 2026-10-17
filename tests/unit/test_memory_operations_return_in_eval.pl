@@ -26,11 +26,9 @@ use CLIO::Tools::MemoryOperations;
 use CLIO::Session::State;
 use CLIO::Session::Manager;
 use CLIO::Util::JSON qw(encode_json);
+use CLIO::Util::PathResolver;
 
 my $tool = CLIO::Tools::MemoryOperations->new();
-
-# Plan: 3 + 2 + 3 + 2 + 3 + 3 + 7*3 = 42 assertions, but done_testing handles it
-# Use done_testing() at the end instead of plan.
 
 # ─── Helper: create mock session with empty goals ─────────────────────
 sub make_mock_session {
@@ -40,13 +38,24 @@ sub make_mock_session {
     return bless { state => $state, session_id => $id }, "CLIO::Session::Manager";
 }
 
+# ─── Helper: return a memory_dir path within the current config dir.
+# The validator only allows paths inside the config dir, so we construct
+# a nonexistent subdirectory there and use it as memory_dir.
+# ───
+sub valid_test_memory_dir {
+    my ($suffix) = @_;
+    $suffix //= "test_$$";
+    my $config_dir = CLIO::Util::PathResolver::get_config_dir();
+    return File::Spec->catdir($config_dir, "nonexistent_mem_$suffix");
+}
+
 # ─── 1. retrieve: empty state goals + nonexistent file ────────────────
 {
     my $session = make_mock_session("retrieve-empty");
     my $params = {
         operation => "retrieve",
         key       => "session_goals",
-        memory_dir => "/tmp/clio_test_nonexistent_mem_dir_xyz_1",
+        memory_dir => valid_test_memory_dir("1"),
     };
     my $context = { session => $session };
 
@@ -61,7 +70,7 @@ sub make_mock_session {
     my $params = {
         operation => "retrieve",
         key       => "nonexistent_key",
-        memory_dir => "/tmp/clio_test_nonexistent_mem_dir_xyz_2",
+        memory_dir => valid_test_memory_dir("2"),
     };
     my $context = {};
 
@@ -72,9 +81,9 @@ sub make_mock_session {
 
 # ─── 3. retrieve: success path still works ────────────────────────────
 {
-    my $tmpdir = File::Temp->newdir();
-    my $mem_dir = File::Spec->catdir($tmpdir->dirname, 'mem');
-    mkdir $mem_dir;
+    my $mem_dir = valid_test_memory_dir("success");
+    require File::Path;
+    File::Path::make_path($mem_dir) unless -d $mem_dir;
     my $file = File::Spec->catfile($mem_dir, 'mykey.json');
     open my $fh, '>:utf8', $file or die "Cannot write $file: $!";
     print $fh encode_json({ key => 'mykey', content => 'hello world', timestamp => time() });
@@ -97,7 +106,7 @@ sub make_mock_session {
 {
     my $params = {
         operation => "list",
-        memory_dir => "/tmp/clio_test_nonexistent_mem_dir_xyz_4",
+        memory_dir => valid_test_memory_dir("4"),
     };
     my $context = {};
 
@@ -112,7 +121,7 @@ sub make_mock_session {
     my $params = {
         operation => "delete",
         key       => "nonexistent_to_delete",
-        memory_dir => "/tmp/clio_test_nonexistent_mem_dir_xyz_5",
+        memory_dir => valid_test_memory_dir("5"),
     };
     my $context = {};
 

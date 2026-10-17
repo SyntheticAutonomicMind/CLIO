@@ -171,12 +171,14 @@ subtest 'metadata-leak regression: compressed tail preserved' => sub {
 
     my $prose = messages_to_prose_dynamic($proj);
 
-    # The YaRN thread_summary is still present (work product, not narration).
-    like($prose, qr/<thread_summary>/, 'YaRN thread_summary preserved');
-    like($prose, qr/Current task: investigate the context dump bug/, 'YaRN task line preserved');
-    like($prose, qr/fix\(context\): remove metadata labels/, 'YaRN commits line preserved');
-
-    # But no "this is a compressed summary" framing narration.
+    # compressed_tail is NOT rendered in the dynamic userContext prose.
+    # It is emitted as a canonical <thread_summary> system message by
+    # WorkflowOrchestrator::_build_turn_context. The prose should be empty
+    # (no active_todos, no context_files_block) and must NOT contain
+    # the compressed tail content or any summary framing narration.
+    is($prose, '', 'Prose is empty (compressed_tail moved to separate system message)');
+    unlike($prose, qr/<thread_summary>/, 'No thread_summary XML in prose');
+    unlike($prose, qr/Current task: investigate/, 'No task line in prose');
     unlike($prose, qr/this is a compressed summary/, 'No summary framing narration');
     unlike($prose, qr/you were trimmed/, 'No trim narration');
 };

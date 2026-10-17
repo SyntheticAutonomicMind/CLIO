@@ -24,6 +24,7 @@ use Test::More;
 use lib '../../lib';
 
 use CLIO::UI::StreamingController;
+use CLIO::UI::ANSI;
 
 # Fence characters, built without literal backticks so the test source is
 # unambiguous.
@@ -47,6 +48,7 @@ my $mock_ui = bless {
     _need_agent_prefix          => 0,
     pager                       => $pager,
     first_line_printed          => 0,
+    ansi                        => CLIO::UI::ANSI->new(enabled => 0),
 }, 'MockUI';
 
 sub MockUI::render_markdown {

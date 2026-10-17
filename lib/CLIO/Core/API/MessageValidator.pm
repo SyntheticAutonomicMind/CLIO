@@ -116,6 +116,13 @@ sub validate_and_truncate {
     # The ratio may differ from the global if a test injects a custom
     # value, and threading it ensures consistent token budget decisions.
 
+    # Load CLIO::Providers before any CLIO::Providers:: calls below.
+    # Previously this was deferred until the token-limit block, causing
+    # "Undefined subroutine &CLIO::Providers::provider_from_url" when
+    # this code path ran before APIManager's `use CLIO::Providers` (e.g.
+    # in tests or alternative entry points).
+    require CLIO::Providers;
+
     # Determine if the current provider is a local-inference server
     # (llama.cpp, SAM, LM Studio). Local inference providers use Jinja
     # chat templates that may reject mid-conversation role=system messages
@@ -137,7 +144,6 @@ sub validate_and_truncate {
     }
 
     # Determine max prompt tokens
-    require CLIO::Providers;
     my $max_prompt;
     if ($caps && $caps->{max_prompt_tokens}) {
         $max_prompt = $caps->{max_prompt_tokens};

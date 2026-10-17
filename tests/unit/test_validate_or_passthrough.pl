@@ -76,10 +76,11 @@ subtest 'duplicate tool_call_ids trigger re-serialization' => sub {
     my $result = _validate_or_passthrough($original_ref);
     ok($result != $original_ref, 'duplicate IDs cause re-serialization');
     # The second assistant has a duplicate call_1 id. validate_tool_message_pairs
-    # keeps the first occurrence of each id and strips the duplicate.
-    # Result: user, assistant(call_1), tool(call_1), assistant(stripped to plain), tool(result2)
-    # The second assistant's tool_call is stripped (duplicate id), its content stays.
-    is(scalar(@$result), 5, '5 messages after dedup (second assistant stripped, not removed)');
+    # strips the duplicate tool_call from the second assistant and removes the
+    # now-orphaned tool result (result2 had no matching tool_call after the
+    # dup was stripped). Result: user, assistant(call_1), tool(result1),
+    # assistant(stripped to plain).
+    is(scalar(@$result), 4, '4 messages after dedup (dup tool_call stripped, orphaned tool result removed)');
     is($result->[1]{role}, 'assistant', 'first assistant preserved');
     is($result->[3]{role}, 'assistant', 'second assistant preserved as plain (dup tool_call stripped)');
 };

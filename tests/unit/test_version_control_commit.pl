@@ -65,8 +65,8 @@ sub write_file {
     write_file("stray.txt", "shouldn't be here\n");
     write_file("intended.txt", "should be here\n");
 
-    my $r = $vc->commit({ message => 'auto stage test' });
-    ok($r->{success}, 'commit succeeds with auto_stage default')
+    my $r = $vc->commit({ message => 'auto stage test', auto_stage => 1 });
+    ok($r->{success}, 'commit succeeds with auto_stage=1')
         or diag("error: $r->{error}");
     is_deeply([sort @{$r->{staged_files} // []}],
         ['intended.txt', 'stray.txt'],
@@ -74,6 +74,26 @@ sub write_file {
     is_deeply([sort @{$r->{auto_staged_untracked} // []}],
         ['intended.txt', 'stray.txt'],
         'auto_staged_untracked lists previously-untracked files');
+}
+
+# ─── Test 1b: auto_stage defaults to 0 (security hardening) ─────────────────
+# Without auto_stage=1, only pre-staged files are committed. An untracked
+# file is NOT picked up, preventing accidental credential commits.
+{
+    my $dir = tempdir(CLEANUP => 1) . "/test1b";
+    init_repo($dir);
+
+    write_file("tracked.txt", "initial\n");
+    system("git add tracked.txt 2>&1");
+    system("git commit -q -m 'initial' 2>&1");
+
+    write_file("stray.txt", "should not be committed\n");
+
+    my $r = $vc->commit({ message => 'no auto stage' });
+    ok(!$r->{success}, 'commit fails when only untracked files exist (auto_stage defaults to 0)');
+    like($r->{error}, qr/Nothing to commit/, 'error explains clean staged tree');
+    ok(!exists $r->{auto_staged_untracked},
+        'no auto_staged_untracked when auto_stage not explicitly set');
 }
 
 # ─── Test 2: auto_stage=0 commits only what is already staged ─────────────

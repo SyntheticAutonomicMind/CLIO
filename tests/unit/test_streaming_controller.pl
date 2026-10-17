@@ -8,6 +8,7 @@ use lib '../../lib';
 
 # Test 1: Module loads
 use_ok('CLIO::UI::StreamingController');
+use_ok('CLIO::UI::ANSI');
 
 # Create a minimal mock pager
 my $mock_pager = bless {
@@ -40,6 +41,7 @@ my $mock_chat = bless {
     _last_was_system_message => 0,
     _prepare_for_next_iteration => 0,
     pager => $mock_pager,
+    ansi => CLIO::UI::ANSI->new(enabled => 0),
 }, 'MockChat';
 
 # Test 2: Constructor

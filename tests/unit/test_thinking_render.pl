@@ -25,6 +25,7 @@ use lib "$FindBin::Bin/../../lib";
 use Test::More;
 use CLIO::UI::Chat;
 use CLIO::UI::StreamingController;
+use CLIO::UI::ANSI;
 use CLIO::Compat::Terminal;
 
 # ---- Lightweight stubs ----
@@ -61,6 +62,7 @@ sub new {
     # Markdown rendering and word-wrap. Build a real one against the
     # mock so flush()/render_markdown() succeed.
     $self->{streaming}                    = CLIO::UI::StreamingController->new(ui => $self);
+    $self->{ansi}                         = CLIO::UI::ANSI->new(enabled => 0);
     $self->{first_chunk_received}         = 0;
     $self->{stop_streaming}              = 0;
     $self->{_last_was_system_message}     = 0;

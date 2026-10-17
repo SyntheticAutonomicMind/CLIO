@@ -13,7 +13,8 @@ use File::Spec;
 use File::Path qw(make_path);
 use File::Basename qw(dirname);
 use CLIO::Util::JSON qw(encode_json);
-use CLIO::Util::PathResolver qw(strip_path_quotes);
+use CLIO::Util::PathResolver qw(strip_path_quotes expand_tilde);
+use Cwd qw(abs_path getcwd);
 use CLIO::Core::Logger qw(log_debug log_warning);
 use parent 'CLIO::Tools::Tool';
 
@@ -60,8 +61,139 @@ sub new {
     );
     
     $self->{base_dir} = $opts{base_dir} || '.';
-    
+
     return $self;
+}
+
+=head2 before_route
+
+Security gate: block all apply_patch operations in sandbox mode.
+
+Since apply_patch can create, modify, and delete files at arbitrary
+paths, it must be blocked in sandboxed contexts there is no safe
+subset of file operations to allow. Per-path containment checks
+also run inside _do_apply.
+
+=cut
+
+sub before_route {
+    my ($self, $operation, $params, $context) = @_;
+
+    if ($context && $context->{config} && $context->{config}->get('sandbox')) {
+        log_debug('ApplyPatch', "Sandbox: BLOCKED apply_patch.$operation");
+        return $self->error_result(
+            "Sandbox mode: apply_patch is disabled.\n\n" .
+            "The --sandbox flag blocks all filesystem write operations to prevent " .
+            "the agent from modifying files outside the protected project directory. " .
+            "This is a security feature — run CLIO without --sandbox to enable " .
+            "file modifications."
+        );
+    }
+
+    return undef;
+}
+
+=head2 _get_path_authorizer
+
+Lazy-load the PathAuthorizer for per-path authorization checks.
+Mirrors the pattern in FileOperations.
+
+=cut
+
+sub _get_path_authorizer {
+    my ($self) = @_;
+
+    unless ($self->{path_authorizer}) {
+        require CLIO::Security::PathAuthorizer;
+        $self->{path_authorizer} = CLIO::Security::PathAuthorizer->new(
+            debug => $self->{debug},
+        );
+    }
+
+    return $self->{path_authorizer};
+}
+
+=head2 _check_sandbox_path
+
+Verify a resolved file path is contained within the project directory,
+preventing path-traversal attacks via '../../etc/cron.d/evil' style
+paths that would escape the base_dir boundary.
+
+Returns: (is_allowed, error_message)
+  is_allowed    - 1 if allowed, 0 if blocked
+  error_message - undef if allowed, descriptive string if blocked
+
+=cut
+
+sub _check_sandbox_path {
+    my ($self, $path, $context) = @_;
+
+    my $config = $context->{config} // {};
+    my $sandbox_enabled = $config->can('get') ? $config->get('sandbox') : 0;
+    return (1, undef) unless $sandbox_enabled;
+
+    # Determine the project directory boundary.
+    my $project_dir;
+    if ($context->{session} && $context->{session}->{state}) {
+        $project_dir = $context->{session}->{state}->{working_directory};
+    }
+    $project_dir //= $context->{session}->{working_directory} // getcwd();
+    $project_dir //= $self->{base_dir};
+
+    $project_dir = abs_path($project_dir) || File::Spec->rel2abs($project_dir);
+
+    $path = expand_tilde($path);
+    my $resolved_path;
+    if ($path =~ m{^/}) {
+        $resolved_path = abs_path($path) || $path;
+    } else {
+        $resolved_path = abs_path(File::Spec->rel2abs($path, $project_dir))
+            || File::Spec->rel2abs($path, $project_dir);
+    }
+
+    $project_dir =~ s{/+$}{};
+    $resolved_path =~ s{/+$}{};
+
+    my $is_inside = ($resolved_path eq $project_dir) ||
+                    ($resolved_path =~ /^\Q$project_dir\E\//);
+
+    if ($is_inside) {
+        return (1, undef);
+    }
+
+    return (0, "Sandbox mode: Access denied to '$path' - path resolves outside project directory '$project_dir'");
+}
+
+=head2 _check_write_authorization
+
+Check write authorization for a path via the PathAuthorizer.
+
+=cut
+
+sub _check_write_authorization {
+    my ($self, $path, $context) = @_;
+
+    # Mirrors FileOperations: use session_dir (set by WorkflowOrchestrator)
+    # as the working directory. If not configured, skip authorization
+    # (backwards-compatible behavior, matches FileOperations).
+    my $working_dir = $self->{session_dir} || '';
+
+    return { status => 'allowed', reason => 'No authorization configured' }
+        unless $working_dir;
+
+    my $session = $context->{session} || {};
+
+    my $authorizer = $self->_get_path_authorizer();
+
+    my $result = $authorizer->checkPathAuthorization(
+        path => $path,
+        working_directory => $working_dir,
+        conversation_id => $session->{session_id} || $session->{id} || '',
+        operation => 'apply_patch.apply',
+        is_user_initiated => 0,
+    );
+
+    return $result;
 }
 
 =head2 get_tool_definition
@@ -226,6 +358,32 @@ sub _do_apply {
                 }),
                 action_description => "apply_patch: aborted by user after " . scalar(@results) . " of " . scalar(@$hunks) . " hunk(s)",
             );
+        }
+
+        # Security: validate path containment and write authorization
+        # before touching the filesystem. Mirrors the checks FileOperations
+        # performs for every read/write/delete operation. Without this,
+        # the patch format's relative paths could escape base_dir via
+        # '../../etc/cron.d/evil' and the tool would happily write there.
+        my $hunk_path = File::Spec->rel2abs($hunk->{path}, $self->{base_dir});
+
+        if ($context && $context->{config} && $context->{config}->get('sandbox')) {
+            my ($allowed, $err) = $self->_check_sandbox_path($hunk->{path}, $context);
+            unless ($allowed) {
+                return $self->error_result($err);
+            }
+        }
+
+        if ($context && $context->{session}) {
+            my $auth = $self->_check_write_authorization($hunk_path, $context);
+            if ($auth->{status} && $auth->{status} ne 'allowed') {
+                my $reason = $auth->{reason} || 'authorization required';
+                return $self->error_result(
+                    "Permission denied: $reason\n\n" .
+                    "Use interact tool to request authorization.",
+                    action_description => "apply_patch denied by authorization: $hunk->{path}",
+                );
+            }
         }
 
         my $result = $self->_apply_hunk($hunk);

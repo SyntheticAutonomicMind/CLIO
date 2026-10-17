@@ -456,8 +456,20 @@ sub _indent_and_wrap {
             next;
         }
         
-        # Compute visible text (without ANSI escapes)
-        my $visible = $ui->{ansi}->strip_ansi($line);
+        # Compute visible text (without ANSI escapes).
+        # Guard against $ui->{ansi} being undefined — some test/mock UI
+        # objects don't install the ANSI helper, and we'd crash with
+        # "Can't call method strip_ansi on undefined". In production,
+        # Chat.pm always sets this, but defensive code here avoids a
+        # hard crash if a non-Chat UI is ever wired in.
+        my $visible;
+        if ($ui->{ansi} && $ui->{ansi}->can('strip_ansi')) {
+            $visible = $ui->{ansi}->strip_ansi($line);
+        } else {
+            # Fallback: strip ANSI escapes manually
+            $visible = $line;
+            $visible =~ s/\e\[[0-9;]*[A-Za-z]//g;
+        }
         
         # Skip word-wrapping for code block lines (2-space prefix from markdown renderer)
         # and table rows (start with |)

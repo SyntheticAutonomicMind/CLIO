@@ -17,6 +17,7 @@ use FindBin;
 use lib "$FindBin::Bin/../../lib";
 use Test::More;
 use CLIO::UI::Chat;
+use CLIO::UI::ANSI;
 
 # ---------------------------------------------------------------------------
 # Lightweight mocks. We avoid instantiating a full Chat (which pulls in a
@@ -64,6 +65,7 @@ sub new {
     # mock so flush()/render_markdown() succeed.
     require CLIO::UI::StreamingController;
     $self->{streaming}                = CLIO::UI::StreamingController->new(ui => $self);
+    $self->{ansi}                     = CLIO::UI::ANSI->new(enabled => 0);
     $self->{first_chunk_received}     = 0;
     $self->{stop_streaming}          = 0;
     $self->{_last_was_system_message} = 0;

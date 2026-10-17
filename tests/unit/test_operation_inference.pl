@@ -38,7 +38,7 @@ require CLIO::Tools::TerminalOperations;
 require CLIO::Tools::VersionControl;
 require CLIO::Tools::MemoryOperations;
 
-plan(tests => 24);
+plan(tests => 26);
 
 my $tmp = tempdir(CLEANUP => 1);
 my $ctx = { session => { id => 'op-inference-test' } };
@@ -56,14 +56,15 @@ my $fo = CLIO::Tools::FileOperations->new(debug => 0, session_dir => $tmp);
     is($inferred, 'read_file', "inferred operation is 'read_file'");
 }
 
-# No matching keys: returns undef
+# Parameter-combination inference: {path, content} without old_string/line
+# is inferred as 'write_file' (the FileOperations override's heuristic).
 {
     my $params = { path => 'foo', content => 'bar' };
     my $inferred = $fo->_infer_operation_from_params($params);
-    ok(!defined $inferred, "no matching key returns undef");
+    is($inferred, 'write_file', "parameter-combination {path,content} infers 'write_file'");
 }
 
-# Multiple matching keys: returns undef (ambiguous)
+# No matching keys and no parameter-combination match: returns undef
 {
     my $params = { read_file => 1, list_dir => 1 };
     my $inferred = $fo->_infer_operation_from_params($params);
@@ -129,23 +130,27 @@ my $fo = CLIO::Tools::FileOperations->new(debug => 0, session_dir => $tmp);
 }
 
 # ================================================================
-# No match: falls through to existing error
+# No match: falls through to default_operation (read_file for FO)
+# then handler-level error
 # ================================================================
 
 {
     my $r = $fo->execute({ path => '/some/file.txt' }, $ctx);
     ok(!$r->{success}, "execute: no matching key returns failure");
-    like($r->{error}, qr/Missing 'operation' parameter/, "execute: no-match error mentions missing operation");
+    like($r->{error}, qr/File not found/, "execute: no-match falls through to default_operation, error is handler-level (file not found), not missing-operation");
 }
 
 {
     my $r = $fo->execute({ foo => 1, bar => 2 }, $ctx);
     ok(!$r->{success}, "execute: unrelated params return failure");
-    like($r->{error}, qr/Missing 'operation' parameter/, "execute: unrelated params error mentions missing operation");
+    unlike($r->{error}, qr/Missing 'operation' parameter/,
+        "execute: unrelated params falls through to default_operation");
+    like($r->{error}, qr/Missing required parameter: path/,
+        "execute: default_operation read_file reports its own required-param error");
 }
 
 # ================================================================
-# Multiple matches: falls through to error (ambiguous)
+# Multiple matches (ambiguous): falls through to default_operation
 # ================================================================
 
 {
@@ -155,7 +160,10 @@ my $fo = CLIO::Tools::FileOperations->new(debug => 0, session_dir => $tmp);
         path => $tmp,
     }, $ctx);
     ok(!$r->{success}, "execute: multiple matching keys returns failure");
-    like($r->{error}, qr/Missing 'operation' parameter/, "execute: ambiguous match error mentions missing operation");
+    unlike($r->{error}, qr/Missing 'operation' parameter/,
+        "execute: ambiguous match falls through to default_operation");
+    like($r->{error}, qr/File not found/,
+        "execute: default_operation read_file reports file-not-found (path is a dir)");
 }
 
 # ================================================================
