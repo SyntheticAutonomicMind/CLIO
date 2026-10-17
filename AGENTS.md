@@ -77,7 +77,8 @@ MCPBridge [dynamic], PluginBridge [dynamic]
 | `lib/CLIO/Core/model-data/` | Unified model capability JSON files (models.json, provider-defaults.json, heuristics.json, provider-mapping.json) |
 | `docs/` | User/dev documentation |
 | `docs/templates/` | Generic AGENTS.md / instructions.md templates used by `/init` |
-| `skills/` | Shipped system-install skill templates (init, design, explain, etc.) loaded at runtime |
+| `skills/` | Shipped system-install skills (init, design, explain, etc.) loaded at runtime |
+| `prompts/` | System-install prompt files (default.md, chat.md) with fallback to embedded heredocs |
 | `styles/` | Terminal color styles (25 styles: dark, light, retro, cyberpunk, monokai, etc.) |
 | `themes/` | UI output themes (compact, console, default, dense, spacious, verbose) |
 | `tools/` | Repo-local tooling (assess_codebase.pl, cache_health.pl, context_inspector.pl, prompt_diff.pl, session_stats.pl, trim_dryrun.pl, etc.) |
@@ -212,7 +213,7 @@ If the system handles the condition (retry, reroute, fallback), use `log_debug`,
 
 | Prefix | Purpose | Examples |
 |--------|---------|----------|
-| `CLIO::Core::` | System core | APIManager, WorkflowOrchestrator, ToolExecutor, Config, PromptManager, ContextBuilder, MessageHistory, ConversationManager |
+| `CLIO::Core::` | System core | APIManager, WorkflowOrchestrator, ToolExecutor, Config, PromptManager, PromptBuilder, ContextBuilder, MessageHistory, ConversationManager, SkillManager, SkillRepository, RepositoryLoader |
 | `CLIO::Core::API::` | API sub-modules | ResponseHandler, MessageValidator, ErrorHandler, PayloadSanitizer |
 | `CLIO::Tools::` | AI-callable tools (14) | FileOperations, VersionControl, TerminalOperations, MemoryOperations, Interact, ApplyPatch, CodeIntelligence, RemoteExecution, SubAgentOperations, TodoList, WebOperations, SkillOperations, MCPBridge, PluginBridge |
 | `CLIO::Tools::` | Tool infrastructure | Registry (tool registration/lookup), Tool (base class for operation-based tools) |
