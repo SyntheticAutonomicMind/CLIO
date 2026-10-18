@@ -261,7 +261,7 @@ subtest 'recover_substantive_task finds task even after active history dropped' 
 # ===========================================================================
 # 5. Backward compatibility with legacy summary formats
 # ===========================================================================
-subtest 'Legacy summary format (Original task, Git commits, Files created/modified, Tool usage) is parsed' => sub {
+subtest 'Legacy summary format (Original task, Git commits, Files created/modified) is parsed' => sub {
     my $yarn = CLIO::Memory::YaRN->new();
 
     # Legacy format (used in older serialized YaRN state)
@@ -300,8 +300,9 @@ END
     like($result->{content}, qr/abc1234/, 'legacy commits parsed');
     like($result->{content}, qr/def5678/, 'legacy commits parsed (multiple)');
     like($result->{content}, qr/lib\/Widget\.pm/, 'legacy files parsed');
-    # Tool usage: 25 calls -> "file_operations: 25"
-    like($result->{content}, qr/file_operations: 2[5-9]/, 'legacy tool counts parsed and carried');
+    # Tool operation counts are no longer included — they are
+    # non-deterministic and break prefix cache stability.
+    unlike($result->{content}, qr/file_operations: \d+/, 'tool counts NOT parsed (removed)');
 };
 
 subtest 'Empty and undef previous_summary handled gracefully' => sub {
@@ -442,12 +443,13 @@ subtest 'Commits are deduplicated and bounded' => sub {
 };
 
 # ===========================================================================
-# 9. Tool operation counts (cumulative across carryover)
+# 9. Tool operation counts are NOT included (removed for cache stability)
 # ===========================================================================
-subtest 'Tool operations are counted and shown' => sub {
+subtest 'Tool operations section is NOT present in compressed summary' => sub {
     my $yarn = CLIO::Memory::YaRN->new();
 
     my @messages = (
+        { role => 'user', content => 'First task to do something meaningful here' },
         { role => 'assistant', content => 'Reading', tool_calls => [
             { id => 't1', function => { name => 'file_operations', arguments => '{}' } },
             { id => 't2', function => { name => 'file_operations', arguments => '{}' } },
@@ -466,12 +468,15 @@ subtest 'Tool operations are counted and shown' => sub {
 
     my $r = $yarn->compress_messages(\@messages, context_window => 128000);
 
-    like($r->{content}, qr/Tool operations:/, 'Tool operations section present');
-    like($r->{content}, qr/file_operations: 2/, 'file_operations counted correctly');
-    like($r->{content}, qr/terminal_operations: 3/, 'terminal_operations counted correctly');
+    # Tool operation counts are non-deterministic (they change every turn
+    # as the agent makes more tool calls) and serve no semantic purpose
+    # for the model. They have been removed entirely.
+    unlike($r->{content}, qr/Tool operations:/, 'Tool operations section NOT present');
+    unlike($r->{content}, qr/file_operations: \d+/, 'file_operations count NOT present');
+    unlike($r->{content}, qr/terminal_operations: \d+/, 'terminal_operations count NOT present');
 };
 
-subtest 'Tool counts accumulate across carryover cycles' => sub {
+subtest 'Tool counts do NOT accumulate across carryover cycles (removed)' => sub {
     my $yarn = CLIO::Memory::YaRN->new();
 
     # Cycle A: 3 file_operations calls
@@ -487,7 +492,7 @@ subtest 'Tool counts accumulate across carryover cycles' => sub {
         { role => 'tool', content => 'z', tool_call_id => 'a3' },
     );
     my $r_a = $yarn->compress_for_context_recovery(\@msgs_a, original_task => 'First task');
-    like($r_a->{content}, qr/file_operations: 3/, 'Cycle A: file_operations = 3');
+    unlike($r_a->{content}, qr/file_operations: \d+/, 'Cycle A: no tool count in summary');
 
     # Cycle B: 2 more file_operations + 1 terminal_operations
     my @msgs_b = (
@@ -505,9 +510,8 @@ subtest 'Tool counts accumulate across carryover cycles' => sub {
         original_task    => 'Second task',
         previous_summary => $r_a->{content},
     );
-    # Counts should be cumulative: file_operations = 3 + 2 = 5
-    like($r_b->{content}, qr/file_operations: 5/, 'Cycle B: file_operations accumulated to 5');
-    like($r_b->{content}, qr/terminal_operations: 1/, 'Cycle B: terminal_operations = 1');
+    unlike($r_b->{content}, qr/file_operations: \d+/, 'Cycle B: no tool count (no accumulation)');
+    unlike($r_b->{content}, qr/terminal_operations: \d+/, 'Cycle B: no tool count');
 };
 
 # ===========================================================================

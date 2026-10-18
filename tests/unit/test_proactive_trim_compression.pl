@@ -61,7 +61,6 @@ ok(scalar(@trimmed) < scalar(@messages),
     my $summary_content;
     for my $msg (@trimmed) {
         if (ref($msg) eq 'HASH'
-            && ($msg->{role} // '') eq 'system'
             && ($msg->{content} // '') =~ /<thread_summary>/) {
             $has_summary = 1;
             $summary_content = $msg->{content};
@@ -157,7 +156,6 @@ my $summary_count = 0;
 my $new_summary;
 for my $msg (@$trimmed_with_task) {
     if (ref($msg) eq 'HASH'
-        && ($msg->{role} // '') eq 'system'
         && ($msg->{content} // '') =~ /<thread_summary>/) {
         $summary_count++;
         $new_summary = $msg->{content} unless $new_summary;

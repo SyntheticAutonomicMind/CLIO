@@ -69,7 +69,9 @@ END
     like($content, qr/def5678/, "Multiple commit entries carried over");
     like($content, qr/lib\/Widget\.pm/, "File paths carried over across trim cycles");
     like($content, qr/Use composition over inheritance/, "Key decisions carried over");
-    like($content, qr/file_operations: \d+/, "Tool operation counts carried over (accumulated)");
+    # Tool operation counts are no longer included — they are
+    # non-deterministic and break prefix cache stability.
+    unlike($content, qr/file_operations: \d+/, "Tool operation counts NOT carried over");
 }
 
 # Test 2: YaRN without previous_summary still works

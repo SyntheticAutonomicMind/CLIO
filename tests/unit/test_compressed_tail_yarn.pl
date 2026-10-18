@@ -66,9 +66,9 @@ like($tail, qr/Current task:.*Investigate the role-based history/s,
 # 4. Files were extracted from tool calls and included in the summary.
 like($tail, qr/lib\/CLIO\/Core\/ContextBuilder\.pm/, 'file path extracted from tool calls');
 
-# 5. Tool operations are counted and included.
-like($tail, qr/Tool operations:/, 'Tool operations section present');
-like($tail, qr/file_operations: \d+/, 'tool operation count present');
+# 5. Tool operations are no longer included (they are non-deterministic
+#    and break prefix cache stability for cloud providers).
+unlike($tail, qr/Tool operations:/, 'Tool operations section removed (non-deterministic)');
 
 # 6. No framework narration or raw variable names in output.
 unlike($tail, qr/files_touched|Tool calls:|_metadata|compressed_count/,

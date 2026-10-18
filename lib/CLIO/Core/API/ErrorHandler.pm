@@ -1206,7 +1206,7 @@ Returns:
 
 =cut
 
-=head2 _inject_summary_before_last_user($non_system, $summary, $is_local_inference)
+=head2 _inject_summary_before_last_user($non_system, $summary)
 
 Inject a summary into the non-system message array. For cloud providers,
 injects a system message BEFORE the last user message. For local-inference
@@ -1234,7 +1234,7 @@ Returns: nothing
 =cut
 
 sub _inject_summary_before_last_user {
-    my ($non_system, $summary, $is_local_inference) = @_;
+    my ($non_system, $summary) = @_;
     return unless $non_system && @$non_system && $summary;
 
     # Find the last USER message for placement.
@@ -1247,36 +1247,35 @@ sub _inject_summary_before_last_user {
         }
     }
 
-    if ($is_local_inference) {
-        # For local-inference providers, fold the summary content into
-        # the last user message instead of creating a system message.
-        # Jinja chat templates (e.g. Qwen3) require system messages
-        # only at position 0; a mid-conversation system message triggers
-        # "System message must be at the beginning" errors.
-        if ($inject_idx < scalar(@$non_system)
-            && ref($non_system->[$inject_idx]) eq 'HASH'
-            && ($non_system->[$inject_idx]{role} // '') eq 'user') {
-            my $content = $non_system->[$inject_idx]{content} // '';
-            if (ref($content) eq 'ARRAY') {
-                unshift @$content, {
-                    type => 'text',
-                    text => $summary->{content} . "\n\n",
-                };
-            } else {
-                $non_system->[$inject_idx]{content} =
-                    $summary->{content} . "\n\n" . $content;
-            }
+    # Fold the thread_summary into the last user message for ALL
+    # providers. Previously, cloud providers received this as a
+    # separate system message inserted between the recent turn messages
+    # and the user message, which broke OpenRouter's prefix cache
+    # (the summary content changes on every compression cycle).
+    # Folding into the user message places it at the END of the
+    # message array, preserving the cache-stable prefix.
+    #
+    # Local-inference providers also use this path: Jinja chat
+    # templates (e.g. Qwen3) require system messages only at position 0;
+    # a mid-conversation role=system triggers "System message must be
+    # at the beginning" errors.
+    if ($inject_idx < scalar(@$non_system)
+        && ref($non_system->[$inject_idx]) eq 'HASH'
+        && ($non_system->[$inject_idx]{role} // '') eq 'user') {
+        my $content = $non_system->[$inject_idx]{content} // '';
+        if (ref($content) eq 'ARRAY') {
+            unshift @$content, {
+                type => 'text',
+                text => $summary->{content} . "\n\n",
+            };
         } else {
-            # No user message found; fall back to system message
-            splice(@$non_system, $inject_idx, 0, $summary);
+            $non_system->[$inject_idx]{content} =
+                $summary->{content} . "\n\n" . $content;
         }
-        return;
+    } else {
+        # No user message found; fall back to system message
+        splice(@$non_system, $inject_idx, 0, $summary);
     }
-
-    # Cloud providers: inject as a system message before the last user
-    # message. These APIs handle mid-conversation system messages
-    # correctly and it is the canonical placement.
-    splice(@$non_system, $inject_idx, 0, $summary);
 }
 
 =head2 _push_recovery_message($messages, $content, $is_local_inference)
@@ -1548,8 +1547,8 @@ sub trim_for_token_limit {
             if ($compressed) {
                 # Canonical single-artifact invariant: remove old
                 # thread_summaries before injecting the new one.
-                @non_system = @{ remove_existing_thread_summaries(\@non_system, $is_local_inference) };
-                _inject_summary_before_last_user(\@non_system, $compressed, $is_local_inference);
+                @non_system = @{ remove_existing_thread_summaries(\@non_system) };
+                _inject_summary_before_last_user(\@non_system, $compressed);
                 log_debug('ErrorHandler', "Injected compression summary before last user for " . scalar(@dropped_messages) . " dropped messages");
             }
         }
@@ -1579,8 +1578,8 @@ sub trim_for_token_limit {
                 ($wo->{_current_projection} ? $wo->{_current_projection}{relevant_memory} : undef) || [],
             );
             if ($compressed) {
-                @non_system = @{ remove_existing_thread_summaries(\@non_system, $is_local_inference) };
-                _inject_summary_before_last_user(\@non_system, $compressed, $is_local_inference);
+                @non_system = @{ remove_existing_thread_summaries(\@non_system) };
+                _inject_summary_before_last_user(\@non_system, $compressed);
                 log_debug('ErrorHandler', "Injected compression summary before last user for " . scalar(@dropped_messages) . " dropped messages (retry 2)");
             }
         }
@@ -1607,8 +1606,8 @@ sub trim_for_token_limit {
                 ($wo->{_current_projection} ? $wo->{_current_projection}{relevant_memory} : undef) || [],
             );
             if ($compressed) {
-                @non_system = @{ remove_existing_thread_summaries(\@non_system, $is_local_inference) };
-                _inject_summary_before_last_user(\@non_system, $compressed, $is_local_inference);
+                @non_system = @{ remove_existing_thread_summaries(\@non_system) };
+                _inject_summary_before_last_user(\@non_system, $compressed);
                 log_debug('ErrorHandler', "Injected compression summary before last user for " . scalar(@dropped_messages) . " dropped messages (retry 3 - minimal)");
             }
         }

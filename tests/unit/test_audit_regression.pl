@@ -276,9 +276,9 @@ subtest 'Multi-cycle A->B->C->D carryover preserves all sections' => sub {
 };
 
 # ===========================================================================
-# 6. Tool counts accumulate across carryover cycles
+# 6. Tool counts are NOT accumulated across carryover cycles (removed for cache stability)
 # ===========================================================================
-subtest 'Tool counts accumulate correctly across 4 cycles' => sub {
+subtest 'Tool counts do NOT accumulate across carryover cycles (removed)' => sub {
     my $yarn = CLIO::Memory::YaRN->new();
 
     my $prev = undef;
@@ -297,11 +297,13 @@ subtest 'Tool counts accumulate correctly across 4 cycles' => sub {
             context_window => 131072,
         );
         $prev = $r;
-        # After $cycle cycles: file_operations = 2*cycle, terminal_operations = cycle
-        like($r->{content}, qr/file_operations: @{[2*$cycle]}/,
-            "Cycle $cycle: file_operations accumulated to " . (2*$cycle));
-        like($r->{content}, qr/terminal_operations: $cycle/,
-            "Cycle $cycle: terminal_operations accumulated to $cycle");
+        # Tool operation counts are no longer included in the summary —
+        # they are non-deterministic (change every turn as the agent
+        # makes more tool calls) and break OpenRouter's prefix cache.
+        unlike($r->{content}, qr/file_operations: \d+/,
+            "Cycle $cycle: no file_operations count in summary");
+        unlike($r->{content}, qr/terminal_operations: \d+/,
+            "Cycle $cycle: no terminal_operations count in summary");
     }
 };
 

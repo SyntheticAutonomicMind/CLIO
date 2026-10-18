@@ -164,6 +164,8 @@ use_ok('CLIO::Core::API::MessageValidator');
 
     is(scalar(@$result), scalar(@messages), "Within budget: messages returned unchanged in count");
     is($result->[0]{role}, 'system', 'system prompt preserved');
+    # With within-budget messages, no thread_summary is injected, so
+    # the user message content should be exactly 'Continue'.
     is($result->[-1]{content}, 'Continue', 'current user input preserved');
 }
 
@@ -190,7 +192,12 @@ use_ok('CLIO::Core::API::MessageValidator');
 
     # Result should be smaller than input - oldest turns got dropped
     ok(scalar(@$result) < scalar(@messages), "Over budget: messages dropped (was " . scalar(@messages) . ", now " . scalar(@$result) . ")");
-    is($result->[-1]{content}, 'current', 'current user input always preserved');
+    # Thread_summary is now folded into the user message (not a separate
+    # system message), so the user message content is prefixed with
+    # <thread_summary>...</thread_summary>. The original user content
+    # ('current') should be preserved at the end.
+    like($result->[-1]{content}, qr/current\s*$/,
+        'current user input always preserved (thread_summary folded into user msg)');
     # First user message in remaining array should be Question N (some N > 1) - oldest got dropped
     my $first_user = (grep { $_->{role} eq 'user' } @$result)[0];
     ok(defined $first_user, 'at least one user message preserved');
