@@ -120,10 +120,26 @@ cp -r lib "$INSTALL_DIR/" || exit 1
 cp -r styles "$INSTALL_DIR/" || exit 1
 cp -r themes "$INSTALL_DIR/" || exit 1
  # System-install skills and prompt overrides (ships with CLIO)
- [ -d skills ] && cp -r skills "$INSTALL_DIR/" || echo "  (skills/ not found, skipping)"
- [ -d prompts ] && cp -r prompts "$INSTALL_DIR/" || echo "  (prompts/ not found, skipping)"
-cp README.md "$INSTALL_DIR/" 2>/dev/null || echo "  (README.md not found, skipping)"
-[ -d docs ] && cp -r docs "$INSTALL_DIR/" || echo "  (docs/ not found, skipping)"
+ if [ -d skills ]; then
+     cp -r skills "$INSTALL_DIR/"
+ else
+     echo "  (skills/ not found, skipping)"
+ fi
+ if [ -d prompts ]; then
+     cp -r prompts "$INSTALL_DIR/"
+ else
+     echo "  (prompts/ not found, skipping)"
+ fi
+ if [ -f README.md ]; then
+     cp README.md "$INSTALL_DIR/"
+ else
+     echo "  (README.md not found, skipping)"
+ fi
+if [ -d docs ]; then
+    cp -r docs "$INSTALL_DIR/"
+else
+    echo "  (docs/ not found, skipping)"
+fi
 
 # Set permissions
 echo "Setting permissions..."
@@ -134,11 +150,17 @@ find "$INSTALL_DIR/styles" -type f -name "*.style" -exec chmod 644 {} \;
 find "$INSTALL_DIR/styles" -type d -exec chmod 755 {} \;
 find "$INSTALL_DIR/themes" -type f -name "*.theme" -exec chmod 644 {} \;
 find "$INSTALL_DIR/themes" -type d -exec chmod 755 {} \;
- [ -d "$INSTALL_DIR/skills" ] && find "$INSTALL_DIR/skills" -type f -name "*.md" -exec chmod 644 {} \;
- [ -d "$INSTALL_DIR/skills" ] && find "$INSTALL_DIR/skills" -type d -exec chmod 755 {} \;
- [ -d "$INSTALL_DIR/prompts" ] && find "$INSTALL_DIR/prompts" -type f -name "*.md" -exec chmod 644 {} \;
- [ -d "$INSTALL_DIR/prompts" ] && find "$INSTALL_DIR/prompts" -type d -exec chmod 755 {} \;
-[ -f "$INSTALL_DIR/README.md" ] && chmod 644 "$INSTALL_DIR/README.md"
+ if [ -d "$INSTALL_DIR/skills" ]; then
+     find "$INSTALL_DIR/skills" -type f -name "*.md" -exec chmod 644 {} \;
+     find "$INSTALL_DIR/skills" -type d -exec chmod 755 {} \;
+ fi
+ if [ -d "$INSTALL_DIR/prompts" ]; then
+     find "$INSTALL_DIR/prompts" -type f -name "*.md" -exec chmod 644 {} \;
+     find "$INSTALL_DIR/prompts" -type d -exec chmod 755 {} \;
+ fi
+if [ -f "$INSTALL_DIR/README.md" ]; then
+    chmod 644 "$INSTALL_DIR/README.md"
+fi
 
 # Create symlink
 if [ $CREATE_SYMLINK -eq 1 ]; then

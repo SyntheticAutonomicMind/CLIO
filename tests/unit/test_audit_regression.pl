@@ -8,7 +8,7 @@
 #   3. Collaboration parser round-trip: Q/A captured correctly (no swap, no double-prefix)
 #   4. [original] carryover preserves full max_ur_len (not truncated to 300)
 #   5. Multi-cycle carryover (A->B->C->D) with collaboration exchanges
-#   6. Cross-cycle carryover of decisions/files/commits/tool_counts
+#   6. Cross-cycle carryover of decisions/files/commits
 #   7. Decision_len scales at 256K/512K/1M
 #   8. Proactive trim passes previous_summary for within-turn carryover
 
@@ -119,7 +119,7 @@ subtest 'Collaboration parser round-trip preserves Q and A correctly' => sub {
     my @exchanges;
     CLIO::Memory::YaRN::_parse_previous_summary($summary->{content}, {
         commits => [], files_touched => [], decisions => [],
-        user_requests => [], collaboration_exchanges => \@exchanges, tool_counts => {},
+        user_requests => [], collaboration_exchanges => \@exchanges,
     });
 
     is(scalar(@exchanges), 1, 'one exchange parsed back');
@@ -185,7 +185,7 @@ subtest '[original] carryover preserves full user_request_len' => sub {
     my @user_reqs;
     CLIO::Memory::YaRN::_parse_previous_summary($summary->{content}, {
         commits => [], files_touched => [], decisions => [],
-        user_requests => \@user_reqs, collaboration_exchanges => [], tool_counts => {},
+        user_requests => \@user_reqs, collaboration_exchanges => [],
     });
 
     # The carried original should be preserved at up to max_ur_len

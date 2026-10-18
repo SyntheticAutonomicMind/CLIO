@@ -79,14 +79,13 @@ When the context window needs trimming, `compress_messages()` takes the messages
 | **Git commits** | Commit hashes and messages from tool output | 30 | Yes (down to 5 at 32K, up to 120 at 1M) |
 | **Files touched** | File paths from tool call arguments (path, new_path, old_path), deduplicated | 50 | Yes (down to 10 at 32K, up to 200 at 1M) |
 | **Key decisions** | Collaboration exchanges with metadata or [COLLABORATION] prefix | 8 | Yes (down to 2 at 32K, up to 32 at 1M) |
-| **Tool operations** | Cumulative counts per tool type (accumulates across trim cycles) | top 8 | Yes |
 | **Discussion** | Collaboration Q/A pairs from interact tool calls | 10 | Yes |
 
 **Context-aware budgeting:** The summary cap scales with the model's context window at ~2.5% of the context window in tokens (converted to characters via the TokenEstimator ratio). For 128K contexts this produces ~12,800 chars (up from the previous hardcoded 4,000). For 256K it is ~25,600 chars; for 1M it is capped at 60,000 chars. The per-turn compressed tail (in the dynamic userContext) uses ~0.5% of the context window, scaling from ~1,200 chars at 32K to ~20,000 chars at 1M.
 
 **Token estimation** uses `CLIO::Memory::TokenEstimator` (learned ratio from API feedback, default 4.0 chars/token) rather than a hardcoded 2.5 ratio.
 
-The result is a single system message wrapped in `<thread_summary>` tags that gets injected into the trimmed context. Critically, the `<thread_summary>` is **preserved across multiple trim cycles** - each new compression merges with the previous summary, building an accumulating record of the entire session. Cross-cycle carryover preserves ALL sections (user requests, decisions, files, commits, tool operations, discussion), not just user requests.
+The result is a `<thread_summary>` block folded into the last user message (for all providers) at the end of the message array. Critically, the `<thread_summary>` is **preserved across multiple trim cycles** - each new compression merges with the previous summary, building an accumulating record of the entire session. Cross-cycle carryover preserves ALL sections (user requests, decisions, files, commits, discussion), not just user requests.
 
 ### Lossless Durable History
 

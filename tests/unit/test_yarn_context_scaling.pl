@@ -11,7 +11,7 @@
 #   - Bounded output
 #   - Correct task anchoring (short acks don't replace meaningful task)
 #   - Files and commits bounded + deduplicated
-#   - Tool operation counts
+#   - Tool operation counts removed (non-deterministic, breaks cache stability)
 
 use strict;
 use warnings;
