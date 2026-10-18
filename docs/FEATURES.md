@@ -374,8 +374,8 @@ CLIO supports 20 AI providers out of the box. Switch between them at any time - 
 | **Ollama Cloud** | Cloud | API key |
 | **MiniMax** | Cloud | API key |
 | **MiniMax Token Plan** | Cloud | API key (usage-based) |
-| **Z.AI** | Cloud | API key |
-| **Z.AI Coding Plan** | Cloud | API key |
+| **Z.A.I (Chat)** | Cloud | API key |
+| **Z.A.I (Coding)** | Cloud | API key |
 | **NVIDIA NIM** | Cloud | API key |
 | **Vercel AI Gateway** | Cloud | API key |
 | **llama.cpp** | Local | None |
@@ -1125,7 +1125,7 @@ Skills are reusable prompt templates. Instead of typing the same complex instruc
 
 ```text
 /skills list                          # Show all skills grouped by scope
-/skills list --scope=<scope>          # Filter list (user|project|session|freeform|repository|builtin)
+/skills list --scope=<scope>          # Filter list (user|project|system|session|freeform|repository|builtin)
 /skills add <name> "text" [--scope=]  # Create a new skill (scope: user|project|session)
 /skills delete <name>                 # Remove a skill
 /skills use <name> [file]             # Execute a skill as a user message (with optional file context)
@@ -1158,7 +1158,7 @@ The setting persists in config as `auto_create_skills` (0/1). Disable it if you 
 
 ### Skill Scopes
 
-Skills live in one of six scopes. The list and show commands surface the scope and the backing file so it is always clear where a skill is stored and what to edit.
+Skills live in one of **seven** scopes. The list and show commands surface the scope and the backing file so it is always clear where a skill is stored and what to edit.
 
 | Scope | Source | Editable | Use for |
 |-------|--------|----------|---------|
@@ -1166,6 +1166,7 @@ Skills live in one of six scopes. The list and show commands surface the scope a
 | `project` | `<cwd>/.clio/skills.json` | yes | Skills tied to a single codebase, commit to the repo |
 | `session` | `.clio/sessions/<id>/skills.json` | yes | Throwaway skills for the current session, cleared on exit |
 | `freeform` | `<dir>/.clio/skills/<name>.md` | yes (edit the .md) | Long-form skills version controlled alongside code |
+| `system` | `<clio-install>/skills/*.md` | no (upgrade CLIO instead) | Shipped markdown skills bundled with the CLIO installation; override by creating a freeform `.md` with the same name |
 | `repository` | `~/.clio/skill-cache/<repo>/` | no (re-sync instead) | Skills pulled from a configured Git repository |
 | `builtin` | bundled with CLIO | no | Read-only skills shipped with CLIO |
 
@@ -1238,8 +1239,9 @@ When skills have the same name across sources, the priority order is:
 2. **Project** skills (`.clio/skills.json`)
 3. **User** skills (`~/.clio/skills.json`)
 4. **Freeform** skills (`.clio/skills/<name>.md`)
-5. **Repository** skills (from configured Git repos)
-6. **Built-in** skills (lowest - shipped with CLIO)
+5. **System** skills (`<clio-install>/skills/*.md`)
+6. **Repository** skills (from configured Git repos)
+7. **Built-in** skills (lowest - shipped with CLIO)
 
 ### Built-in vs Custom
 
@@ -1618,7 +1620,7 @@ For GitHub Copilot, CLIO tracks AI Credit usage and warns when approaching limit
 - AI Credit usage (total_nano_aiu, token_details)
 - Model-specific categories (powerful, versatile, lightweight)
 
-### Z.AI Coding Plan
+### Z.AI (Coding)
 
 The Z.AI Coding Plan provides quota-based access (not API billing) with specific limits:
 

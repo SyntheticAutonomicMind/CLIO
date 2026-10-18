@@ -76,9 +76,9 @@ MCPBridge [dynamic], PluginBridge [dynamic]
 | `lib/CLIO/Spec/` | OpenSpec integration (Manager) |
 | `lib/CLIO/Core/model-data/` | Unified model capability JSON files (models.json, provider-defaults.json, heuristics.json, provider-mapping.json) |
 | `docs/` | User/dev documentation |
-| `docs/templates/` | Generic AGENTS.md / instructions.md templates used by `/init` |
+| `skills/templates/` | AGENTS.md / instructions.md templates used by `/init` (also mirrored in `docs/templates/`) |
 | `skills/` | Shipped system-install skills (init, design, explain, etc.) loaded at runtime |
-| `prompts/` | System-install prompt files (default.md, chat.md) with fallback to embedded heredocs |
+| `prompts/` | System-install prompt files (default.md, chat.md), **not shipped** - falls back to embedded heredocs when absent |
 | `styles/` | Terminal color styles (25 styles: dark, light, retro, cyberpunk, monokai, etc.) |
 | `themes/` | UI output themes (compact, console, default, dense, spacious, verbose) |
 | `tools/` | Repo-local tooling (assess_codebase.pl, cache_health.pl, context_inspector.pl, prompt_diff.pl, session_stats.pl, trim_dryrun.pl, etc.) |
@@ -432,8 +432,8 @@ command_label (cyan), command_value (white).
 | `docs/PERFORMANCE.md` | Performance optimization guide |
 | `docs/COMMAND_OUTPUT_STANDARDS.md` | Tool output formatting standards |
 | `docs/SPECS/` | OpenSpec protocol specifications |
-| `docs/templates/` | AGENTS.md / instructions.md templates |
-| `skills/` | Shipped system-install skills (init, design, explain, etc.) |
+| `docs/templates/` | AGENTS.md / instructions.md templates (legacy mirror; `skills/templates/` is canonical) |
+| `skills/` | Shipped system-install skills (init, design, explain, etc.) loaded at runtime |
 | `INSTALL.md` | Quick local install |
 | `CONTRIBUTING.md` | Contribution workflow |
 | `SECURITY.md` | GitHub security policy |

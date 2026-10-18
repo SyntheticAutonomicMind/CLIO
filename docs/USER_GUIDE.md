@@ -643,7 +643,7 @@ MCP servers extend CLIO's capabilities with external tools. Tools from MCP serve
 |---------|---------|
 | `/skill` | Show skill system help |
 | `/skills list` | List all available skills grouped by scope |
-| `/skills list --scope=<scope>` | Show skills for a single scope (user, project, session, freeform, repository, builtin) |
+| `/skills list --scope=<scope>` | Show skills for a single scope (user, project, system, session, freeform, repository, builtin) |
 | `/skills add <name> "<text>" [--global\|--project\|--session]` | Create a new skill in the named scope |
 | `/skills delete <name>` | Delete a skill |
 | `/skills show <name>` | Display skill contents |
@@ -2076,7 +2076,7 @@ Skills are specialized prompt templates that give CLIO expertise in specific tas
 : /skills show <name>                    # Display skill details (includes scope and source file)
 ```
 
-`/skills` groups the output by scope and shows a short description of each scope so you know where a skill is stored. The `--scope=` filter narrows the list to one scope. Use it with any of: `user`, `project`, `session`, `freeform`, `repository`, `builtin`.
+`/skills` groups the output by scope and shows a short description of each scope so you know where a skill is stored. The `--scope=` filter narrows the list to one scope. Use it with any of: `user`, `project`, `system`, `session`, `freeform`, `repository`, `builtin`.
 
 **Built-in Skills:**
 | Skill | Description |
@@ -2173,7 +2173,7 @@ The `freeform` scope is special: a `.clio/skills/<name>.md` file is automaticall
 
 ### Scope
 
-Skills live in one of six scopes. The list and show commands surface the scope and the backing file so it is always clear where a skill is stored and what to edit.
+Skills live in one of seven scopes. The list and show commands surface the scope and the backing file so it is always clear where a skill is stored and what to edit.
 
 | Scope | Source | Editable | Use for |
 |-------|--------|----------|---------|
