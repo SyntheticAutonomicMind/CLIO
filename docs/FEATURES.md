@@ -1247,6 +1247,16 @@ When skills have the same name across sources, the priority order is:
 
 Built-in skills are read-only and shipped with CLIO. Custom skills are JSON entries in either `~/.clio/skills.json` (user) or `<project>/.clio/skills.json` (project), with a third option of a `<dir>/.clio/skills/<name>.md` file for long-form content. Commit the project-level skills file to share skills with the rest of the team.
 
+### Skipping System-Install Skills
+
+CLIO ships markdown skill files in its `skills/` directory (the system-install skills). These override the older Perl-baked builtin skills but can themselves be shadowed by user, project, session, and freeform `.md` skills. To audit which shipped skills are influencing behavior, or to run in a mode where only explicitly-authored skills apply, use the `--no-system-skills` CLI flag:
+
+```bash
+clio --no-system-skills --new        # Skip shipped skills/*.md (builtins still load)
+```
+
+This flag sets `CLIO_SKIP_SYSTEM_SKILLS=1` and is respected by every `SkillManager` instance — including those created independently by `PromptBuilder` and `SkillOperations` — so system skills are skipped consistently across the session. Without the flag, system-install skills are loaded from `<install_dir>/skills/` and participate in the priority chain at tier 4 (between freeform and repository).
+
 ---
 
 ## 12. Multi-Agent Coordination

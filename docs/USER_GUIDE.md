@@ -2240,6 +2240,32 @@ Create `.clio/instructions.md` in your project root. This content is automatical
 
 Variables in `${brackets}` are replaced when the skill is executed.
 
+### CLI Flags Reference
+
+CLI flags provide one-shot session overrides for security, privacy, and audit scenarios. They're most useful for running CLIO in a clean mode without touching persistent configuration.
+
+| Flag | What It Does |
+|------|-------------|
+| `--no-custom-instructions` | Skip loading `.clio/instructions.md` and `AGENTS.md` project instructions |
+| `--no-system-skills` | Skip shipped system-install skills (the `*.md` files in `skills/` that override builtins). Builtin fallbacks still load. |
+| `--no-ltm` | Skip long-term memory pattern injection (LTM is not loaded, no new entries recorded) |
+| `--incognito` | Shorthand for `--no-custom-instructions --no-ltm` (fresh audit mode) |
+| `--sandbox` | Restrict file access to the project directory |
+| `--enable <tools>` | Allowlist specific tools (comma-separated) |
+| `--disable <tools>` | Blocklist specific tools (comma-separated) |
+| `--debug` | Enable debug output to STDERR |
+| `--no-color` | Disable ANSI color output |
+| `--style <name>` | One-shot style override |
+| `--theme <name>` | One-shot theme override |
+| `--prompt <name>` | Override the active system prompt for this session |
+
+**`--no-system-skills` and `CLIO_SKIP_SYSTEM_SKILLS`** — When set, the `SkillManager` skips the `skills/` directory scan entirely. This is useful for:
+- Auditing which shipped instructions are influencing behavior
+- Running without any system-provided skill templates (the builtin Perl heredocs still provide fallbacks)
+- Compliance/regulatory reviews where only explicit project or user skills should apply
+
+Note that `--no-system-skills` does **not** disable builtin skills (the hardcoded `explain`, `review`, `test`, `fix`, `doc`, `design`, `init`, etc.) — those remain available as the floor tier.
+
 ---------------------------------------------------
 
 ## Security & Sandbox Mode
