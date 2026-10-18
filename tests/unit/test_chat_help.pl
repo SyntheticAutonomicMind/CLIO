@@ -2,11 +2,15 @@
 # SPDX-License-Identifier: GPL-3.0-only
 # SPDX-FileCopyrightText: Copyright (c) 2026 Andrew Wyatt (Fewtarius)
 #
-# Test: Help.pm display_help() does not crash and renders every
-# section + command. Catches the @sections data-structure regression
-# (issue #28) where '/cmd' => 'desc' pairs were flattened into a
-# flat list, causing "Can't use string ("/api") as an ARRAY ref
-# while "strict refs" in use at Help.pm line 199".
+# Test: /help is a faithful, drift-free rendering of the live command
+# registry.  Every registered command and every category must appear in the
+# listing, and /help <command> must route to the per-command renderer (or a
+# synthesized summary) without dying.
+#
+# This replaces the old test that hardcoded the @sections data structure
+# (issue #28 regression guard).  That fixture was itself the source of the
+# help/registry drift, so this version derives expectations from the registry
+# directly: if a command is registered but not listed, the test fails.
 
 use strict;
 use warnings;
@@ -27,109 +31,77 @@ BEGIN {
     *CLIO::Compat::Terminal::ReadMode     = sub { };
     *CLIO::Compat::Terminal::ReadKey      = sub { undef };
 }
-
-BEGIN {
-    $ENV{CLIO_NO_CONFIG_LOAD} = 1;
-}
+BEGIN { $ENV{CLIO_NO_CONFIG_LOAD} = 1; }
 
 use CLIO::UI::Chat;
+use CLIO::UI::Chat::Help;
 
 my ($pass, $fail) = (0, 0);
 sub ok {
     my ($cond, $label) = @_;
+    $label //= '(no label)';
     if ($cond) { $pass++; print "OK: $label\n"; }
     else       { $fail++; print "FAIL: $label\n"; }
 }
 
-# Build a minimal Chat instance and override writeline so display_help
-# captures every line it tries to render instead of paginating.
 my $chat = eval {
-    CLIO::UI::Chat->new(
-        debug    => 0,
-        config   => undef,
-        session  => undef,
-        no_color => 1,
-    );
+    CLIO::UI::Chat->new(debug => 0, config => undef, session => undef, no_color => 1);
 };
-ok(defined $chat && !$@, "Chat->new succeeds");
+ok(defined $chat && !$@, 'Chat->new succeeds');
 
-# Capture all writeline calls.
+# Capture every writeline; return 1 so the full output renders (no paging).
 my @rendered;
 no warnings 'redefine';
 my $orig_writeline = \&CLIO::UI::Chat::writeline;
 *CLIO::UI::Chat::writeline = sub {
     my ($self, $text, %opts) = @_;
     push @rendered, $text // '';
-    return 1;  # never paginate
+    return 1;
 };
 
-# Drive display_help through the Help sub-module directly.
 my $help = $chat->{help};
-ok(defined $help && ref($help) eq 'CLIO::UI::Chat::Help',
-    'Chat->{help} is Chat::Help');
+ok(defined $help && ref($help) eq 'CLIO::UI::Chat::Help', 'Chat->{help} is Chat::Help');
 
 my $err = eval { $help->display_help(); 1 };
 ok(defined $err && !$@, 'display_help() runs without dying');
 
-# Restore writeline so the test harness output isn't broken.
+# --- Drift guard: every registered command is listed ---
+my $ch = $chat->get_command_handler();
+ok(defined $ch, 'command handler available');
+
+my @defs = @{$ch->command_defs()};
+ok(scalar(@defs) >= 50, "registry declares a full command set (" . scalar(@defs) . " defs)");
+
+my $cmd_present = 0;
+my @missing;
+for my $def (@defs) {
+    my @names = $def->{names} ? @{$def->{names}} : ($def->{name});
+    my $cmd   = join(', ', map { "/$_" } @names);
+    my $found = scalar(grep { $_ =~ /\Q$cmd\E/ } @rendered);
+    $cmd_present++ if $found;
+    push @missing, $cmd unless $found;
+}
+ok($cmd_present == scalar(@defs),
+    "Every registered command is listed (missing: " . scalar(@missing) . ")");
+ok(scalar @rendered > 0, 'Rendering produced output');
+
+# --- Drift guard: every category is listed as a section header ---
+my %cats;
+$cats{$_->{category} // 'OTHER'} = 1 for @defs;
+my $cat_missing = 0;
+for my $cat (sort keys %cats) {
+    $cat_missing++ unless scalar(grep { $_ eq $cat } @rendered);
+}
+ok($cat_missing == 0, 'Every registered category appears as a section header');
+
+# --- Static help-only content still renders ---
+ok(scalar(grep { $_ eq 'KEYBOARD SHORTCUTS' } @rendered), 'Keyboard shortcuts section present');
+ok(scalar(grep { $_ =~ /COMMANDS/ } @rendered), 'Listing header present');
+
 *CLIO::UI::Chat::writeline = $orig_writeline;
 
-if ($@) {
-    print "  Exception: $@\n";
-}
-
-# Verify all 14 section titles rendered (API & CONFIG, SESSION, FILE & GIT,
-# PLUGINS, TODO, SPECS (OpenSpec), MEMORY, PROFILE, UPDATES, DEVELOPER,
-# SKILLS & PROMPTS, DEVICES & REMOTE, MULTI-AGENT, OTHER).
-my @expected_titles = (
-    'API & CONFIG', 'SESSION', 'FILE & GIT', 'PLUGINS', 'TODO',
-    'SPECS (OpenSpec)', 'MEMORY', 'PROFILE', 'UPDATES', 'DEVELOPER',
-    'SKILLS & PROMPTS', 'DEVICES & REMOTE', 'MULTI-AGENT', 'OTHER',
-);
-for my $title (@expected_titles) {
-    my $found = grep { $_ eq $title } @rendered;
-    ok($found, "Section title rendered: $title");
-}
-
-# Verify representative commands appear (sample across sections).
-my @expected_commands = (
-    '/api', '/api set model <name>', '/api models', '/api remove <provider>',
-    '/session', '/session list',
-    '/file', '/git', '/undo', '/mcp', '/mcp add <name> <cmd>',
-    '/plugin', '/plugin enable <name>',
-    '/todo', '/todo done <id>',
-    '/spec', '/spec archive <name>',
-    '/memory', '/memory clear',
-    '/profile', '/profile clear',
-    '/update', '/update switch <ver>',
-    '/explain [file]', '/doc <file>',
-    '/skills', '/prompt',
-    '/device add <name> <host>', '/group add <name> <devs...>',
-    '/agent spawn <task>', '/mux agent <id>',
-    '/billing', '/debug',
-);
-for my $cmd (@expected_commands) {
-    my $found = grep { $_ =~ /\Q$cmd\E\s/ || $_ =~ /\Q$cmd\E$/ } @rendered;
-    ok($found, "Command rendered: $cmd");
-}
-
-# Verify descriptions also rendered (proves cmd/desc pairing survived).
-my @expected_descriptions = (
-    'API settings (model, provider, login)',
-    'Quick model switch (alias-aware)',
-    'Initialize openspec/ directory',
-    'Build profile from session history',
-    'Toggle debug mode',
-);
-for my $desc (@expected_descriptions) {
-    ok(grep { $_ =~ /\Q$desc\E/ } @rendered,
-        "Description rendered: $desc");
-}
-
-# Re-run through the Chat delegation chain to make sure the path the user
-# actually hits (/help) works too.
+# --- Delegation chain: the user-visible entry point works too ---
 @rendered = ();
-no warnings 'redefine';
 *CLIO::UI::Chat::writeline = sub {
     my ($self, $text, %opts) = @_;
     push @rendered, $text // '';
@@ -138,9 +110,45 @@ no warnings 'redefine';
 my $delegated = eval { $chat->display_help(); 1 };
 *CLIO::UI::Chat::writeline = $orig_writeline;
 ok(defined $delegated && !$@, 'Chat->display_help() delegation works');
-ok(scalar @rendered > 50,
-    'Delegated display_help rendered substantial output ('
-        . scalar(@rendered) . " lines)");
+ok(scalar(@rendered) > 50, "Delegated output is substantial (" . scalar(@rendered) . " lines)");
+
+# --- Routing: /help <command> dispatches to the dedicated renderer ---
+@rendered = ();
+*CLIO::UI::Chat::writeline = sub {
+    my ($self, $text, %opts) = @_;
+    push @rendered, $text // '';
+    return 1;
+};
+my $routed = eval { $ch->display_help_for('git'); 1 };
+*CLIO::UI::Chat::writeline = $orig_writeline;
+ok(defined $routed && !$@, '/help git does not die');
+ok(scalar(grep { $_ =~ /\bGIT\b/ } @rendered), '/help git dispatches to the git renderer');
+
+# --- Unknown command: clean error, not a crash ---
+@rendered = ();
+*CLIO::UI::Chat::writeline = sub {
+    my ($self, $text, %opts) = @_;
+    push @rendered, $text // '';
+    return 1;
+};
+my $rc = eval { $ch->display_help_for('no_such_command'); 1 };
+*CLIO::UI::Chat::writeline = $orig_writeline;
+ok($rc && !$@, 'Unknown command help does not die');
+ok(scalar(grep { $_ =~ /Unknown command: \/no_such_command/ } @rendered),
+    'Unknown command yields a clear error message');
+
+# --- Synthesized fallback for a command without a dedicated renderer ---
+@rendered = ();
+*CLIO::UI::Chat::writeline = sub {
+    my ($self, $text, %opts) = @_;
+    push @rendered, $text // '';
+    return 1;
+};
+my $fb = eval { $ch->display_help_for('color'); 1 };
+*CLIO::UI::Chat::writeline = $orig_writeline;
+ok($fb && !$@, '/help color (synthesized) does not die');
+ok(scalar(grep { $_ eq 'COMMAND: /color' } @rendered), 'Synthesized help uses the command-header frame');
+ok(scalar(grep { $_ =~ /Toggle color output/ } @rendered), 'Synthesized help shows the registry summary');
 
 print "\n$pass passed, $fail failed\n";
 exit($fail > 0 ? 1 : 0);

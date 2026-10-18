@@ -76,6 +76,8 @@ sub _find_windows_bash {
 sub handle_shell_command {
     my ($self) = @_;
     
+    return 1 if $self->_require_interactive('interactive shell');
+    
     $self->display_system_message("Launching interactive shell...");
     $self->display_system_message("Type 'exit' to return to CLIO");
     $self->writeline("", markdown => 0);
@@ -187,7 +189,9 @@ Open external editor for multi-line input
 
 sub handle_multiline_command {
     my ($self) = @_;
-    
+
+    return 1 if $self->_require_interactive('multi-line editor');
+
     require CLIO::Core::Editor;
     my $editor = CLIO::Core::Editor->new(
         config => $self->{config},

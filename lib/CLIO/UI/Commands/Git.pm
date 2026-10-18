@@ -354,7 +354,9 @@ Stage and commit changes
 
 sub handle_commit_command {
     my ($self, @args) = @_;
-    
+
+    return 1 if $self->_require_interactive('interactive git commit');
+
     # Check if there are changes to commit
     my $status = `git status --porcelain 2>&1`;
     my $exit_code = $? >> 8;

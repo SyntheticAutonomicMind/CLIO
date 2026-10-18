@@ -2642,8 +2642,8 @@ Display help message with available commands
 =cut
 
 sub display_help {
-    my ($self) = @_;
-    return $self->{help}->display_help();
+    my ($self, $target) = @_;
+    return $self->{help}->display_help($target);
 }
 
 

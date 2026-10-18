@@ -306,85 +306,89 @@ sub _build_command_registry {
     # Define all commands as data - easier to maintain and extend
     my @command_defs = (
         # Exit commands
-        { names => [qw(exit quit q)], handler => sub { return 0 }, returns => 'exit' },
+        { summary => 'Exit the chat', category => 'BASICS', names => [qw(exit quit q)], handler => sub { return 0 }, returns => 'exit' },
         
         # Core UI
-        { names => [qw(help h)], handler => sub { $chat->display_help() } },
-        { names => [qw(clear cls)], handler => sub { $chat->repaint_screen() } },
-        { name => 'reset', handler => sub { $self->_handle_reset_command() } },
-        { name => 'debug', handler => sub {
+        { summary => 'Display this help', category => 'BASICS', names => [qw(help h)], handler => sub { $chat->display_help(@_) }, help => sub { $self->{chat}->display_help() } },
+        { summary => 'Clear the screen', category => 'BASICS', names => [qw(clear cls)], handler => sub { $chat->repaint_screen() } },
+        { summary => 'Reset terminal and kill stale processes', category => 'BASICS', name => 'reset', handler => sub { $self->_handle_reset_command() } },
+        { summary => 'Toggle debug mode', category => 'BASICS', name => 'debug', handler => sub {
             $chat->{debug} = !$chat->{debug};
             $chat->display_system_message("Debug mode: " . ($chat->{debug} ? "ON" : "OFF"));
         }},
-        { name => 'color', handler => sub {
+        { summary => 'Toggle color output', category => 'BASICS', name => 'color', handler => sub {
             $chat->{use_color} = !$chat->{use_color};
             $chat->display_system_message("Color mode: " . ($chat->{use_color} ? "ON" : "OFF"));
         }},
         
         # Primary commands (routed to extracted modules)
-        { name => 'session', handler => sub { $self->{session_cmd}->handle_session_command(@_) } },
-        { name => 'config', handler => sub { $self->{config_cmd}->handle_config_command(@_) } },
-        { name => 'api', handler => sub { $self->{api_cmd}->handle_api_command(@_) } },
-        { name => 'loglevel', handler => sub { $self->{config_cmd}->handle_loglevel_command(@_) } },
-        { name => 'style', handler => sub { $self->{config_cmd}->handle_style_command(@_) } },
-        { name => 'theme', handler => sub { $self->{config_cmd}->handle_theme_command(@_) } },
-        { name => 'preview', handler => sub { $self->{config_cmd}->handle_preview_command(@_) } },
-        { name => 'file', handler => sub { $self->{file_cmd}->handle_file_command(@_) } },
-        { name => 'todo', handler => sub { $self->{todo_cmd}->handle_todo_command(@_) } },
-        { name => 'model', handler => sub { $self->{api_cmd}->handle_model_command(@_) } },
-        { name => 'prompt', handler => sub { $self->{prompt_cmd}->handle_prompt_command(@_) } },
-        { name => 'git', handler => sub { $self->{git_cmd}->handle_git_command(@_) } },
-        { name => 'log', handler => sub { $self->{log_cmd}->handle_log_command(@_) } },
-        { name => 'update', handler => sub { $self->{update_cmd}->handle_update_command(@_) } },
-        { name => 'undo', handler => sub { $self->handle_undo_command(@_) } },
-        { name => 'mcp', handler => sub { $self->handle_mcp_command(@_) } },
-        { name => 'plugin', handler => sub { $self->handle_plugin_command(@_) } },
-        { name => 'stats', handler => sub { $self->{stats_cmd}->handle_stats_command(@_) } },
-        { names => [qw(context ctx)], handler => sub { $self->{context_cmd}->handle_context_command(@_) } },
-        { names => [qw(billing bill usage)], handler => sub { $self->{billing_cmd}->handle_billing_command(@_) } },
-        { names => [qw(performance perf)], handler => sub { $self->{system_cmd}->handle_performance_command(@_) } },
-        { names => [qw(shell sh)], handler => sub { $self->{system_cmd}->handle_shell_command() } },
-        { names => [qw(device dev)], handler => sub { CLIO::UI::Commands::Device::handle_device_command(join(' ', @_), { chat => $chat }) } },
-        { name => 'group', handler => sub { CLIO::UI::Commands::Device::handle_group_command(join(' ', @_), { chat => $chat }) } },
+        { summary => 'List, switch, export, and manage sessions', category => 'SESSION', name => 'session', handler => sub { $self->{session_cmd}->handle_session_command(@_) }, help => sub { $self->{session_cmd}->_display_session_help() } },
+        { summary => 'Manage configuration settings', category => 'API & CONFIG', name => 'config', handler => sub { $self->{config_cmd}->handle_config_command(@_) }, help => sub { $self->{config_cmd}->_display_config_help() } },
+        { summary => 'Configure AI provider, model, and login', category => 'API & CONFIG', name => 'api', handler => sub { $self->{api_cmd}->handle_api_command(@_) }, help => sub { $self->{api_cmd}->_display_api_help() } },
+        { summary => 'Get or set the log level', category => 'API & CONFIG', name => 'loglevel', handler => sub { $self->{config_cmd}->handle_loglevel_command(@_) } },
+        { summary => 'Manage color schemes', category => 'API & CONFIG', name => 'style', handler => sub { $self->{config_cmd}->handle_style_command(@_) } },
+        { summary => 'Manage output themes', category => 'API & CONFIG', name => 'theme', handler => sub { $self->{config_cmd}->handle_theme_command(@_) } },
+        { summary => 'Preview a style or theme before applying', category => 'API & CONFIG', name => 'preview', handler => sub { $self->{config_cmd}->handle_preview_command(@_) } },
+        { summary => 'File operations: read, edit, write, list', category => 'FILE & GIT', name => 'file', handler => sub { $self->{file_cmd}->handle_file_command(@_) }, help => sub { $self->{file_cmd}->_display_file_help() } },
+        { summary => 'View and manage the todo list', category => 'TODO', name => 'todo', handler => sub { $self->{todo_cmd}->handle_todo_command(@_) } },
+        { summary => 'Quick-switch the active AI model', category => 'API & CONFIG', name => 'model', handler => sub { $self->{api_cmd}->handle_model_command(@_) } },
+        { summary => 'Manage system prompts', category => 'SKILLS & PROMPTS', name => 'prompt', handler => sub { $self->{prompt_cmd}->handle_prompt_command(@_) }, help => sub { $self->{prompt_cmd}->_show_help() } },
+        { summary => 'Git operations', category => 'FILE & GIT', name => 'git', handler => sub { $self->{git_cmd}->handle_git_command(@_) }, help => sub { $self->{git_cmd}->_display_git_help() } },
+        { summary => 'Show recent tool-operation logs', category => 'OTHER', name => 'log', handler => sub { $self->{log_cmd}->handle_log_command(@_) } },
+        { summary => 'Check for and install updates', category => 'UPDATES', name => 'update', handler => sub { $self->{update_cmd}->handle_update_command(@_) }, help => sub { $self->{update_cmd}->_show_help() } },
+        { summary => 'Revert AI changes from the last turn', category => 'FILE & GIT', name => 'undo', handler => sub { $self->handle_undo_command(@_) } },
+        { summary => 'List, add, and manage MCP servers', category => 'MCP', name => 'mcp', handler => sub { $self->handle_mcp_command(@_) } },
+        { summary => 'List and manage plugins', category => 'PLUGINS', name => 'plugin', handler => sub { $self->handle_plugin_command(@_) } },
+        { summary => 'Show memory and performance stats', category => 'OTHER', name => 'stats', handler => sub { $self->{stats_cmd}->handle_stats_command(@_) }, help => sub { $self->{stats_cmd}->_show_help() } },
+        { summary => 'Manage context files', category => 'SESSION', names => [qw(context ctx)], handler => sub { $self->{context_cmd}->handle_context_command(@_) } },
+        { summary => 'Show API usage statistics', category => 'OTHER', names => [qw(billing bill usage)], handler => sub { $self->{billing_cmd}->handle_billing_command(@_) } },
+        { summary => 'Show system performance stats', category => 'OTHER', names => [qw(performance perf)], handler => sub { $self->{system_cmd}->handle_performance_command(@_) } },
+        { summary => 'Open an interactive shell', category => 'OTHER', names => [qw(shell sh)], handler => sub { $self->{system_cmd}->handle_shell_command() } },
+        { summary => 'List and manage registered devices', category => 'DEVICES & REMOTE', names => [qw(device dev)], handler => sub { CLIO::UI::Commands::Device::handle_device_command(join(' ', @_), { chat => $chat }) } },
+        { summary => 'List and manage device groups', category => 'DEVICES & REMOTE', name => 'group', handler => sub { CLIO::UI::Commands::Device::handle_group_command(join(' ', @_), { chat => $chat }) } },
         
         # Commands that return prompts
-        { names => [qw(multi-line multiline multi ml)], handler => sub { my $c = $self->{system_cmd}->handle_multiline_command(); return (1, $c) if $c; return () }, returns => 'prompt' },
-        { names => [qw(skills skill)], handler => sub { $self->{skills_cmd}->handle_skills_command(@_) }, returns => 'prompt' },
-        { names => [qw(memory mem ltm)], handler => sub { $self->{memory_cmd}->handle_memory_command(@_) }, returns => 'prompt' },
-        { names => [qw(profile)], handler => sub { $self->{profile_cmd}->handle_profile_command(@_) }, returns => 'prompt' },
-        { names => [qw(spec specs)], handler => sub { $self->{spec_cmd}->handle_spec_command(@_) }, returns => 'prompt' },
-        { name => 'explain', handler => sub { my $p = $self->{ai_cmd}->handle_explain_command(@_); return (1, $p) if $p; return () }, returns => 'prompt' },
-        { name => 'review', handler => sub { my $p = $self->{ai_cmd}->handle_review_command(@_); return (1, $p) if $p; return () }, returns => 'prompt' },
-        { name => 'test', handler => sub { my $p = $self->{ai_cmd}->handle_test_command(@_); return (1, $p) if $p; return () }, returns => 'prompt' },
-        { name => 'fix', handler => sub { my $p = $self->{ai_cmd}->handle_fix_command(@_); return (1, $p) if $p; return () }, returns => 'prompt' },
-        { name => 'doc', handler => sub { my $p = $self->{ai_cmd}->handle_doc_command(@_); return (1, $p) if $p; return () }, returns => 'prompt' },
-        { name => 'init', handler => sub { my $p = $self->{project_cmd}->handle_init_command(@_); return (1, $p) if $p; return () }, returns => 'prompt' },
-        { name => 'design', handler => sub { my $p = $self->{project_cmd}->handle_design_command(@_); return (1, $p) if $p; return () }, returns => 'prompt' },
+        { summary => 'Open an editor for multi-line input', category => 'OTHER', names => [qw(multi-line multiline multi ml)], handler => sub { my $c = $self->{system_cmd}->handle_multiline_command(); return (1, $c) if $c; return () }, returns => 'prompt' },
+        { summary => 'Manage custom skills', category => 'SKILLS & PROMPTS', names => [qw(skills skill)], handler => sub { $self->{skills_cmd}->handle_skills_command(@_) }, returns => 'prompt', help => sub { $self->{skills_cmd}->_show_help() } },
+        { summary => 'View and manage long-term memory patterns', category => 'MEMORY', names => [qw(memory mem ltm)], handler => sub { $self->{memory_cmd}->handle_memory_command(@_) }, returns => 'prompt' },
+        { summary => 'Build and manage your user profile', category => 'PROFILE', names => [qw(profile)], handler => sub { $self->{profile_cmd}->handle_profile_command(@_) }, returns => 'prompt', help => sub { $self->{profile_cmd}->_display_profile_help() } },
+        { summary => 'OpenSpec change management', category => 'SPECS', names => [qw(spec specs)], handler => sub { $self->{spec_cmd}->handle_spec_command(@_) }, returns => 'prompt' },
+        { summary => 'Explain code', category => 'DEVELOPER', name => 'explain', handler => sub { my $p = $self->{ai_cmd}->handle_explain_command(@_); return (1, $p) if $p; return () }, returns => 'prompt' },
+        { summary => 'Review code for issues', category => 'DEVELOPER', name => 'review', handler => sub { my $p = $self->{ai_cmd}->handle_review_command(@_); return (1, $p) if $p; return () }, returns => 'prompt' },
+        { summary => 'Generate tests', category => 'DEVELOPER', name => 'test', handler => sub { my $p = $self->{ai_cmd}->handle_test_command(@_); return (1, $p) if $p; return () }, returns => 'prompt' },
+        { summary => 'Propose fixes for problems', category => 'DEVELOPER', name => 'fix', handler => sub { my $p = $self->{ai_cmd}->handle_fix_command(@_); return (1, $p) if $p; return () }, returns => 'prompt' },
+        { summary => 'Generate documentation', category => 'DEVELOPER', name => 'doc', handler => sub { my $p = $self->{ai_cmd}->handle_doc_command(@_); return (1, $p) if $p; return () }, returns => 'prompt' },
+        { summary => 'Initialize CLIO for this project (AI-assisted)', category => 'BASICS', name => 'init', handler => sub { my $p = $self->{project_cmd}->handle_init_command(@_); return (1, $p) if $p; return () }, returns => 'prompt' },
+        { summary => 'Create or update a project PRD', category => 'DEVELOPER', name => 'design', handler => sub { my $p = $self->{project_cmd}->handle_design_command(@_); return (1, $p) if $p; return () }, returns => 'prompt' },
         
-        # Commands with subcommand dispatch
-        { names => [qw(subagent agent)], handler => sub {
+        # Commands that return prompts
+        { summary => 'Spawn and manage sub-agents', category => 'MULTI-AGENT', names => [qw(subagent agent)], handler => sub {
             my $sub = shift(@_) || 'help';
             my $r = $self->{subagent_cmd}->handle($sub, join(' ', @_));
-            print "$r\n" if $r;
+            # cmd_* already display their own success output; only non-empty
+            # return values are error/usage text, route those through the
+            # Chat display buffer (not a raw print) so they paginate and appear
+            # in the transcript consistently.
+            $chat->display_system_message($r) if $r;
         }},
-        { names => [qw(mux multiplexer)], handler => sub {
+        { summary => 'Control terminal multiplexer panes', category => 'MULTI-AGENT', names => [qw(mux multiplexer)], handler => sub {
             my $sub = shift(@_) || 'help';
             my $r = $self->{mux_cmd}->handle($sub, join(' ', @_));
-            print "$r\n" if $r;
-        }},
+            $chat->display_system_message($r) if $r;
+        }},,
         
         # Backward compatibility aliases
-        { name => 'login', handler => sub { $self->{api_cmd}->handle_login_command(@_) }, hint => '/api login' },
-        { name => 'logout', handler => sub { $self->{api_cmd}->handle_logout_command(@_) }, hint => '/api logout' },
-        { name => 'models', handler => sub { $self->{api_cmd}->handle_models_command(@_) }, hint => '/api models' },
-        { name => 'edit', handler => sub { $self->{file_cmd}->handle_edit_command(join(' ', @_)) }, hint => '/file edit <path>' },
-        { name => 'commit', handler => sub { $self->{git_cmd}->handle_commit_command(@_) }, hint => '/git commit' },
-        { name => 'diff', handler => sub { $self->{git_cmd}->handle_diff_command(@_) }, hint => '/git diff' },
-        { names => [qw(status st)], handler => sub { $self->{git_cmd}->handle_status_command(@_) }, hint => '/git status' },
-        { names => [qw(gitlog gl)], handler => sub { $self->{git_cmd}->handle_gitlog_command(@_) }, hint => '/git log' },
-        { name => 'switch', handler => sub { $self->{session_cmd}->handle_switch_command(@_) }, hint => '/session switch' },
-        { names => [qw(read view cat)], handler => sub { $self->{file_cmd}->handle_read_command(@_) }, hint => '/file read <path>' },
-        { name => 'exec', handler => sub { $self->{system_cmd}->handle_exec_command(@_) } },
+        { summary => 'Alias for /api login', category => 'API & CONFIG', name => 'login', handler => sub { $self->{api_cmd}->handle_login_command(@_) }, hint => '/api login' },
+        { summary => 'Alias for /api logout', category => 'API & CONFIG', name => 'logout', handler => sub { $self->{api_cmd}->handle_logout_command(@_) }, hint => '/api logout' },
+        { summary => 'Alias for /api models', category => 'API & CONFIG', name => 'models', handler => sub { $self->{api_cmd}->handle_models_command(@_) }, hint => '/api models' },
+        { summary => 'Alias for /file edit <path>', category => 'FILE & GIT', name => 'edit', handler => sub { $self->{file_cmd}->handle_edit_command(join(' ', @_)) }, hint => '/file edit <path>' },
+        { summary => 'Alias for /git commit', category => 'FILE & GIT', name => 'commit', handler => sub { $self->{git_cmd}->handle_commit_command(@_) }, hint => '/git commit' },
+        { summary => 'Alias for /git diff', category => 'FILE & GIT', name => 'diff', handler => sub { $self->{git_cmd}->handle_diff_command(@_) }, hint => '/git diff' },
+        { summary => 'Alias for /git status', category => 'FILE & GIT', names => [qw(status st)], handler => sub { $self->{git_cmd}->handle_status_command(@_) }, hint => '/git status' },
+        { summary => 'Alias for /git log', category => 'FILE & GIT', names => [qw(gitlog gl)], handler => sub { $self->{git_cmd}->handle_gitlog_command(@_) }, hint => '/git log' },
+        { summary => 'Alias for /session switch', category => 'SESSION', name => 'switch', handler => sub { $self->{session_cmd}->handle_switch_command(@_) }, hint => '/session switch' },
+        { summary => 'Alias for /file read <path>', category => 'FILE & GIT', names => [qw(read view cat)], handler => sub { $self->{file_cmd}->handle_read_command(@_) }, hint => '/file read <path>' },
+        { summary => 'Run a shell command', category => 'FILE & GIT', name => 'exec', handler => sub { $self->{system_cmd}->handle_exec_command(@_) } },
     );
     
     # Build registry from data
@@ -400,7 +404,114 @@ sub _build_command_registry {
         }
     }
     
+    # Expose the canonical command list (single source of truth for /help).
+    $self->{_command_defs} = \@command_defs;
+    
     return \%reg;
+}
+
+=head2 command_defs
+
+Return the arrayref of command definition hashes. Each hash has at least:
+
+- names: arrayref of aliases (preferred) or name: a single canonical name
+- handler: dispatch coderef
+- summary: one-line human description
+- category: grouping for /help (e.g. BASICS, FILE & GIT)
+- returns: 'exit', 'prompt', or undef
+- hint: optional deprecation note
+- help: optional coderef that renders detailed help for the command
+
+=cut
+
+sub command_defs {
+    my ($self) = @_;
+    return $self->{_command_defs} // [];
+}
+
+=head2 help_entry_for($name)
+
+Resolve a typed command name (with or without leading slash, and case-
+insensitive) to its definition hash.
+
+=cut
+
+sub help_entry_for {
+    my ($self, $name) = @_;
+    return unless defined $name && length $name;
+    $name = lc($name);
+    $name =~ s{^-+}{};                 # strip leading slashes
+    for my $def (@{$self->command_defs}) {
+        my @names = $def->{names} ? @{$def->{names}} : ($def->{name});
+        for my $n (@names) {
+            return $def if lc($n) eq $name;
+        }
+    }
+    return;
+}
+
+=head2 help_callbacks
+
+Return a hashref mapping canonical command name to its dedicated help coderef,
+as declared in the registry.
+
+=cut
+
+sub help_callbacks {
+    my ($self) = @_;
+    my %h;
+    for my $def (@{$self->command_defs}) {
+        next unless $def->{help};
+        my $key = $def->{name} // $def->{names}[0];
+        $h{$key} = $def->{help};
+    }
+    return \%h;
+}
+
+=head2 display_help_for($name)
+
+Render help for a single command. Routes to the command's dedicated renderer
+when one is registered; otherwise synthesizes a compact summary from the
+registry metadata (name, aliases, summary, category).
+
+=cut
+
+sub display_help_for {
+    my ($self, $name) = @_;
+    my $chat = $self->{chat};
+    my $def = $self->help_entry_for($name);
+    unless ($def) {
+        $chat->display_error_message("Unknown command: /$name");
+        $chat->display_system_message("See /help for the list of all commands.");
+        return 0;
+    }
+    my @names = $def->{names} ? @{$def->{names}} : ($def->{name});
+    my $canonical = $def->{name} // $def->{names}[0];
+    if (my $cb = $def->{help}) {
+        $cb->();
+        return 1;
+    }
+    $chat->display_command_header("COMMAND: /$canonical")
+        or return 0;
+    $chat->display_section_header("Description")
+        or return 0;
+    $chat->display_key_value("/$canonical", $def->{summary} // '(no description available)')
+        or return 0;
+    $chat->display_section_header("Category")
+        or return 0;
+    $chat->display_key_value("category", $def->{category} // 'OTHER')
+        or return 0;
+    $chat->display_section_header("Aliases")
+        or return 0;
+    $chat->writeline("  " . join(', ', map { "/$_" } @names), markdown => 0)
+        or return 0;
+    $chat->display_section_header("Usage")
+        or return 0;
+    $chat->display_key_value("Try", "/$canonical  (run with no arguments to see its view)")
+        or return 0;
+    $chat->display_key_value("Tip", "/help for the full command list, /help <command> for this page")
+        or return 0;
+    return 1;
 }
 
 =head2 _handle_reset_command
@@ -621,7 +732,7 @@ sub handle_mcp_command {
         }
         
         $chat->display_system_message("MCP Server Status:");
-        $chat->display_system_message("");
+        $chat->writeline("", markdown => 0);
         
         for my $name (sort keys %$status) {
             my $info = $status->{$name};
@@ -649,7 +760,7 @@ sub handle_mcp_command {
         }
         
         $chat->display_system_message("MCP Tools (" . scalar(@$all_tools) . " total):");
-        $chat->display_system_message("");
+        $chat->writeline("", markdown => 0);
         
         my $current_server = '';
         for my $entry (@$all_tools) {
@@ -861,7 +972,7 @@ sub handle_plugin_command {
 
         unless ($plugins && @$plugins) {
             $chat->display_system_message("No plugins installed.");
-            $chat->display_system_message("");
+            $chat->writeline("", markdown => 0);
             $chat->display_system_message("Install plugins by creating directories in:");
             $chat->display_system_message("  ~/.clio/plugins/<name>/plugin.json   (global)");
             $chat->display_system_message("  .clio/plugins/<name>/plugin.json     (project)");
@@ -869,7 +980,7 @@ sub handle_plugin_command {
         }
 
         $chat->display_system_message("Installed Plugins:");
-        $chat->display_system_message("");
+        $chat->writeline("", markdown => 0);
 
         for my $p (@$plugins) {
             my $status = $p->{enabled} ? "\x{2713}" : "\x{2212}";
@@ -938,7 +1049,7 @@ sub handle_plugin_command {
             # Validate
             my ($valid, $missing) = $plugin_manager->validate_plugin_config($name);
             unless ($valid) {
-                $chat->display_system_message("");
+                $chat->writeline("", markdown => 0);
                 $chat->display_error_message("Missing required config: " . join(', ', @$missing));
                 $chat->display_system_message("Set with: /plugin config $name <key> <value>");
             }

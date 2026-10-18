@@ -63,6 +63,30 @@ sub display_paginated_content { shift->{chat}->display_paginated_content(@_) }
 sub render_markdown          { shift->{chat}->render_markdown(@_) }
 sub refresh_terminal_size    { shift->{chat}->refresh_terminal_size(@_) }
 
+=head2 _require_interactive($reason)
+
+Guard helper for handlers that need a TTY (interactive editor, shell, etc.).
+In --input / --non-interactive mode these commands cannot run, so this emits a
+clear, consistently-formatted message and returns a true value to signal the
+caller should bail.
+
+Returns: 0 (falsy) when interactive mode is available and the caller may
+proceed; 1 (truthy) when the call was rejected for non-interactive mode.
+
+  return 1 if $self->_require_interactive('editor launch');
+
+=cut
+
+sub _require_interactive {
+    my ($self, $reason) = @_;
+    if ($self->{chat}->{non_interactive}) {
+        $self->display_error_message("Not available in non-interactive mode ($reason)");
+        $self->display_system_message("Run CLIO interactively for commands that require a terminal.");
+        return 1;
+    }
+    return 0;
+}
+
 1;
 
 __END__

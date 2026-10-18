@@ -287,7 +287,9 @@ Open file in external editor
 
 sub handle_edit_command {
     my ($self, $filepath) = @_;
-    
+
+    return 1 if $self->_require_interactive('file editor');
+
     unless ($filepath) {
         $self->display_error_message("Usage: /edit <filepath>");
         return;

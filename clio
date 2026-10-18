@@ -1300,83 +1300,20 @@ if ($input) {
         $cli_ui->{host_proto}->set_broker_relay($broker_client);
     }
 
-    # Handle slash commands locally (don't send to AI)
+    # Handle slash commands locally (don't send to AI). Route every command
+    # through the single dispatch path in CommandHandler so the --input mode
+    # never diverges from interactive mode. CommandHandler dispatches to the
+    # same handlers used on TTY, and writes through the Chat display buffer.
+    # TTY-reliant handlers (shell, multi-line, file edit, git commit) guard
+    # themselves with non_interactive and degrade gracefully. handle_command
+    # returns 0 only for /exit (which ends the --input process) and 1
+    # otherwise.
     if ($input =~ /^\/(\S+)/) {
-        my $cmd_name = lc($1);
-        if ($cmd_name eq 'help' || $cmd_name eq 'h' || $cmd_name eq '?') {
-            my $_agent_name = $ENV{CLIO_AGENT_NAME} || 'CLIO';
-            print "[SYSTEM] $_agent_name Slash Commands (full list):\n\n";
-
-            print "  [CORE]\n";
-            print "    /help, /h, /?            Display this help\n";
-            print "    /exit, /quit, /q         Exit $_agent_name\n";
-            print "    /reset                   Reset the current session\n";
-            print "    /debug                   Toggle debug mode\n";
-            print "    /color                   Toggle ANSI color output\n";
-            print "    /clear, /cls             Clear screen\n\n";
-
-            print "  [CONFIG]\n";
-            print "    /config                  Show / set configuration\n";
-            print "    /api                     Provider / API status\n";
-            print "    /model <name>            Switch model\n";
-            print "    /models                  List available models\n";
-            print "    /prompt <name>           Switch system prompt\n";
-            print "    /style [set|list|preview]    Style management\n";
-            print "    /theme [set|list|preview]    Theme management\n";
-            print "    /loglevel <level>        Set log level\n";
-            print "    /log [N]                 Show recent log lines\n\n";
-
-            print "  [SESSIONS]\n";
-            print "    /session                 Show session ID / manage\n";
-            print "    /switch                  List and switch sessions\n";
-            print "    /undo                    Undo last edit\n\n";
-
-            print "  [SKILLS / EXTENSIONS]\n";
-            print "    /skills                  Manage installed skills\n";
-            print "    /mcp                     MCP server management\n";
-            print "    /plugin                  Plugin management\n\n";
-
-            print "  [PROJECT]\n";
-            print "    /file                    File operations\n";
-            print "    /git                     Git operations\n";
-            print "    /todo                    Todo list management\n";
-            print "    /diff                    Show pending diffs\n";
-            print "    /commit                  Commit pending changes\n";
-            print "    /exec                    Execute a command\n";
-            print "    /edit                    Edit a file\n\n";
-
-            print "  [SKILLS - callable in interactive mode]\n";
-            print "    /design, /doc, /explain, /fix, /init, /review, /test\n\n";
-
-            print "  [META]\n";
-            print "    /update                  Check for updates\n";
-            print "    /stats                   Usage statistics\n";
-            print "    /login, /logout          Provider authentication\n";
-            print "    /group                   Sub-agent management\n\n";
-
-            print "Most commands accept sub-arguments. Run any command in\n";
-            print "interactive mode (./clio) for full options and examples.\n";
-        }
-        elsif ($cmd_name eq 'session') {
-            print "[SYSTEM] Current session: " . ($session->{session_id} || 'unknown') . "\n";
-        }
-        elsif ($cmd_name eq 'skills' || $cmd_name eq 'skill') {
-            # Skill commands work in --input mode (no interactive required).
-            require CLIO::UI::Commands::Skills;
-            my $cmd = CLIO::UI::Commands::Skills->new(
-                chat => $cli_ui,
-                session => $session,
-                debug => $debug,
-            );
-            my $rest = $input;
-            $rest =~ s{^/\S+\s*}{};
-            my @args = split /\s+/, $rest;
-            $cmd->handle_skills_command(@args);
-        }
-        else {
-            print "[SYSTEM] Unknown slash command: /$cmd_name\n";
-            print "[SYSTEM] Note: Most commands only work in interactive mode\n";
-        }
+        my $continue = $cli_ui->get_command_handler->handle_command($input);
+        # In --input mode there is no prompt loop to continue, so a truthy
+        # return simply means "done" — the process exits below. A 0 return
+        # (e.g. /exit) is treated the same way.
+        $continue = 1 if !defined $continue;
     }
     else {
         if (!$ai_agent) {
