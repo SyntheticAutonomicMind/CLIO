@@ -3,7 +3,8 @@
 #
 # Test: Collaboration Q/A extraction and Discussion section.
 # Updated for the new YaRN format ("Discussion:" header, 10-exchange
-# default at 128K context, "Tool operations:" section).
+# default at 128K context). Note: "Tool operations:" section was removed
+# in commit cd0de94d for cache stability — tool counts are non-deterministic.
 
 use strict;
 use warnings;
@@ -12,21 +13,13 @@ use lib './lib';
 
 use CLIO::Memory::YaRN;
 
-my $yarn = CLIO::Memory::YaRN->new();
-my $pass = 0;
-my $fail = 0;
+# Use Test::More to avoid the list-context regex gotcha where
+# ok($content =~ /pat/, $desc) silently passes when the regex fails
+# (because a failed =~ returns () in list context, making ok() treat
+# the description string as the condition — which is truthy).
+use Test::More;
 
-sub ok {
-    my ($cond, $desc) = @_;
-    $desc //= '';
-    if ($cond) {
-        print "ok - $desc\n";
-        $pass++;
-    } else {
-        print "NOT ok - $desc\n";
-        $fail++;
-    }
-}
+my $yarn = CLIO::Memory::YaRN->new();
 
 # Test 1: Basic collaboration exchange extraction
 {
@@ -47,10 +40,11 @@ sub ok {
     ok($result->{content}, 'Result has content');
 
     my $content = $result->{content};
-    ok($content =~ /Discussion:/, 'Contains Discussion section');
-    ok($content =~ /abbreviate/i, 'Contains user response about abbreviation');
-    ok($content =~ /24 ch/i || $content =~ /24 col/i, 'Contains details about 24 chars/columns');
-    ok($content =~ /separator/i, 'Contains user response about separator');
+    like($content, qr/Discussion:/, 'Contains Discussion section');
+    like($content, qr/abbreviate/i, 'Contains user response about abbreviation');
+    like($content, qr/24 ch/i, 'Contains details about 24 chars');
+    like($content, qr/24 col/i, 'Contains details about 24 columns');
+    like($content, qr/separator/i, 'Contains user response about separator');
 }
 
 # Test 2: Non-collaboration messages don't create fake Discussion
@@ -66,9 +60,9 @@ sub ok {
     my $result = $yarn->compress_messages(\@messages, original_task => 'Read config');
     ok($result, 'Non-collab compress returns result');
     my $content = $result->{content};
-    ok($content !~ /Discussion:/, 'No Discussion section for non-collaboration messages');
-    ok($content =~ /Tool operations:/, 'Tool operations section present');
-    ok($content =~ /file_operations: \d+/, 'Tool operation counted');
+    unlike($content, qr/Discussion:/, 'No Discussion section for non-collaboration messages');
+    unlike($content, qr/Tool operations:/, 'Tool operations section NOT present (removed)');
+    unlike($content, qr/file_operations: \d+/, 'file_operations count NOT present');
 }
 
 # Test 3: Multiple exchanges - only last N kept.
@@ -89,14 +83,13 @@ sub ok {
         context_window => 65536,  # collaboration limit = 5
     );
     my $content = $result->{content};
-    ok($content =~ /Discussion:/, 'Multi-exchange has Discussion section');
-    # First 3 should be dropped (8-5=3)
-    ok($content !~ /Question 1 about/, 'Oldest exchanges trimmed');
-    ok($content !~ /Question 2 about/, 'Second oldest trimmed');
-    ok($content !~ /Question 3 about/, 'Third oldest trimmed');
-    ok($content =~ /Question 4 about/, 'Fourth exchange kept');
-    ok($content =~ /Question 8 about/, 'Latest exchange kept');
+    like($content, qr/Discussion:/, 'Multi-exchange has Discussion section');
+    unlike($content, qr/Question 1 about/, 'Oldest exchanges trimmed');
+    unlike($content, qr/Question 2 about/, 'Second oldest trimmed');
+    unlike($content, qr/Question 3 about/, 'Third oldest trimmed');
+    like($content, qr/Question 4 about/, 'Fourth exchange kept');
+    like($content, qr/Question 8 about/, 'Latest exchange kept');
 }
 
-print "\n$pass passed, $fail failed\n";
-exit($fail ? 1 : 0);
+done_testing();
+exit(0);

@@ -1451,19 +1451,10 @@ sub _build_turn_context {
   # message or the user message, so the proactive trim can still find,
   # extract, and replace the compressed_tail to avoid duplicate
   # accumulation.
-  my $is_local_inference = 0;
-  if ($self->{api_manager}) {
-      my $cur_provider = $self->{api_manager}->get_current_provider() || '';
-      if ($cur_provider) {
-          require CLIO::Providers;
-          $is_local_inference = CLIO::Providers::is_local_inference($cur_provider);
-      }
-  }
   if ($projection && (my $tail = $projection->{compressed_tail})) {
       if (length $tail) {
           $user_message = $tail . "\n\n" . $user_message;
           log_debug('WorkflowOrchestrator', "Folded thread_summary into user message" .
-              ($is_local_inference ? " (local inference)" : "") .
               " (compressed_tail: " . length($tail) . " chars)");
       }
   }
