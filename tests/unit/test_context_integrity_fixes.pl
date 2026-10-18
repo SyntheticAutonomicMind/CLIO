@@ -17,39 +17,36 @@ use CLIO::Providers;
 # ---- Test 1: remove_existing_thread_summaries handles all roles correctly ----
 
 subtest 'remove_existing_thread_summaries scans all roles' => sub {
-    # System message with thread_summary (cloud provider layout)
-    # Cloud: entire message removed (including system thread_summary)
+    # System message with thread_summary (legacy/carryover) — removed
+    # entirely for all providers.
     my $msgs_cloud = [
         { role => 'system', content => 'system prompt' },
         { role => 'system', content => '<thread_summary>old summary</thread_summary>' },
         { role => 'user',    content => 'hello' },
     ];
     my $result = remove_existing_thread_summaries($msgs_cloud);
-    is(scalar(@$result), 2, 'Cloud: removes system thread_summary');
-    ok($result->[0]{content} eq 'system prompt', 'Cloud: system prompt preserved');
-    ok($result->[1]{content} eq 'hello', 'Cloud: user message preserved');
+    is(scalar(@$result), 2, 'Removes system thread_summary');
+    ok($result->[0]{content} eq 'system prompt', 'System prompt preserved');
+    ok($result->[1]{content} eq 'hello', 'User message preserved');
 
-    # User message with embedded thread_summary (local inference provider layout)
-    # Cloud: entire user message removed (old behavior, backward-compatible)
-    my $msgs_local = [
+    # User message with embedded thread_summary — strip the <thread_summary>
+    # block from the user message, preserving the user's actual input.
+    # This is the unified behavior for ALL providers (cloud and local)
+    # after the cache-fix refactor: thread_summary is folded into the
+    # user message, and remove_existing_thread_summaries strips it
+    # (instead of removing the entire user message).
+    my $msgs_embedded = [
         { role => 'system', content => 'system prompt' },
-        { role => 'user',    content => '<thread_summary>old summary</thread_summary>CWD: /tmp\n---\n\nactual user input' },
+        { role => 'user',    content => '<thread_summary>old summary</thread_summary>CWD: /tmp' . "\n---\n\nactual user input" },
         { role => 'assistant', content => 'response' },
     ];
-    my $result_cloud = remove_existing_thread_summaries($msgs_local);
-    is(scalar(@$result_cloud), 2, 'Cloud: removes user-embedded thread_summary entirely');
-    ok($result_cloud->[0]{content} eq 'system prompt', 'Cloud: system prompt preserved after user-embedded removal');
-    ok($result_cloud->[1]{content} eq 'response', 'Cloud: assistant message preserved after user-embedded removal');
-
-    # Local inference: strip thread_summary from user message, preserve user input
-    my $result_local = remove_existing_thread_summaries($msgs_local, 1);
-    is(scalar(@$result_local), 3, 'Local: preserves user message (strips thread_summary, keeps content)');
-    ok($result_local->[0]{content} eq 'system prompt', 'Local: system prompt preserved');
-    ok(index($result_local->[1]{content}, 'CWD: /tmp') == 0, 'Local: user message content starts with user content after stripping');
-    ok($result_local->[1]{content} !~ /old summary/, 'Local: old summary text stripped from user message');
-    ok($result_local->[2]{content} eq 'response', 'Local: assistant message preserved');
-    ok($result_local->[1]{content} !~ /<thread_summary>/, 'Local: thread_summary stripped from user message');
-    ok($result_local->[1]{content} =~ /actual user input/, 'Local: actual user input preserved');
+    my $result_embedded = remove_existing_thread_summaries($msgs_embedded);
+    is(scalar(@$result_embedded), 3, 'User message preserved (only strip thread_summary)');
+    ok($result_embedded->[0]{content} eq 'system prompt', 'System prompt preserved after strip');
+    like($result_embedded->[1]{content}, qr/actual user input/, 'User message content preserved');
+    ok($result_embedded->[1]{content} !~ /<thread_summary>/, 'Thread_summary removed from user message');
+    ok($result_embedded->[1]{content} !~ /old summary/, 'Old summary text stripped from user message');
+    ok($result_embedded->[2]{content} eq 'response', 'Assistant message preserved');
     done_testing();
 };
 
@@ -58,7 +55,6 @@ subtest 'remove_existing_thread_summaries scans all roles' => sub {
 subtest 'remove_existing_thread_summaries edge cases' => sub {
     is(scalar(@{ remove_existing_thread_summaries([]) }), 0, 'Empty array returns empty');
     is(scalar(@{ remove_existing_thread_summaries(undef) }), 0, 'Undef returns empty');
-    is(scalar(@{ remove_existing_thread_summaries(undef, 1) }), 0, 'Undef with local_inference returns empty');
     done_testing();
 };
 
@@ -183,8 +179,11 @@ subtest 'validate_and_truncate: local inference thread_summary folding' => sub {
         max_prompt_tokens         => 1792,
     };
 
-    # Cloud provider: thread_summary injected as a system message
-    # (positioned after history, before last user)
+    # CLOUD provider: thread_summary is now folded INTO the user message
+    # (not a separate mid-conversation system message) — this is the fix
+    # for the cache regression. Cloud providers previously received a
+    # system message between history and the user message, which broke
+    # OpenRouter's prefix cache.
     my $result_cloud = validate_and_truncate(
         messages           => \@messages,
         model_capabilities => $caps,
@@ -202,7 +201,7 @@ subtest 'validate_and_truncate: local inference thread_summary folding' => sub {
             last;
         }
     }
-    ok($cloud_has_mid_system, 'Cloud provider: thread_summary injected as mid-conversation system message');
+    ok(!$cloud_has_mid_system, 'Cloud provider: NO mid-conversation system message (thread_summary folded into user message for cache stability)');
 
     # Local inference: thread_summary folded into user message, no
     # mid-conversation system message
@@ -229,24 +228,20 @@ subtest 'validate_and_truncate: local inference thread_summary folding' => sub {
     ok(!$local_has_mid_system, 'Local inference: NO mid-conversation system message (thread_summary folded into user message)');
 
     # Verify the last user message contains the thread_summary
+    # (for BOTH cloud and local providers now — unified behavior)
     my $last_user = undef;
-    for my $i (reverse 0 .. $#{$result_local}) {
-        if (ref($result_local->[$i]) eq 'HASH'
-            && ($result_local->[$i]{role} // '') eq 'user') {
-            $last_user = $result_local->[$i];
+    for my $i (reverse 0 .. $#{$result_cloud}) {
+        if (ref($result_cloud->[$i]) eq 'HASH'
+            && ($result_cloud->[$i]{role} // '') eq 'user') {
+            $last_user = $result_cloud->[$i];
             last;
         }
     }
-    ok($last_user, 'Local inference: last user message exists');
+    ok($last_user, 'Cloud provider: last user message exists');
     if ($last_user) {
         my $content = $last_user->{content} // '';
-        ok($content =~ /<thread_summary>/, 'Local inference: thread_summary folded into last user message');
-    }
-
-    # Verify the user input is preserved (not stripped with the summary)
-    if ($last_user) {
-        my $content = $last_user->{content} // '';
-        ok($content =~ /Build a widget system/, 'Local inference: user task text preserved in user message');
+        ok($content =~ /<thread_summary>/, 'Cloud provider: thread_summary folded into last user message');
+        ok($content =~ /Build a widget system/, 'Cloud provider: user task text preserved in user message');
     }
 
     done_testing();
@@ -274,24 +269,16 @@ subtest '_inject_summary_before_last_user: local inference folding' => sub {
     my $summary = { role => 'system', content => '<thread_summary>compressed</thread_summary>' };
 
     # Use full path since _inject_summary_before_last_user is a private function
-    # Cloud: creates system message before last user
-    my @cloud_msgs = (
+    # ALL providers (cloud + local): folds into user message
+    my @msgs = (
         { role => 'assistant', content => 'assistant msg' },
         { role => 'user',      content => 'actual user input' },
     );
-    CLIO::Core::API::ErrorHandler::_inject_summary_before_last_user(\@cloud_msgs, $summary, 0);
-    is(scalar(@cloud_msgs), 3, 'Cloud: system message injected before user');
-    is($cloud_msgs[1]{role}, 'system', 'Cloud: injected message is system role');
-    is($cloud_msgs[2]{role}, 'user', 'Cloud: user message preserved');
-
-    # Local inference: folds into user message
-    my @local_msgs = (
-        { role => 'assistant', content => 'assistant msg' },
-        { role => 'user',      content => 'actual user input' },
-    );
-    CLIO::Core::API::ErrorHandler::_inject_summary_before_last_user(\@local_msgs, $summary, 1);
-    is(scalar(@local_msgs), 2, 'Local: no new message added (folded into user)');
-    ok($local_msgs[1]{content} =~ /^<thread_summary>compressed<\/thread_summary>\n\nactual user input/, 'Local: summary folded at start of user message, input preserved');
+    CLIO::Core::API::ErrorHandler::_inject_summary_before_last_user(\@msgs, $summary);
+    is(scalar(@msgs), 2, 'All providers: no new message added (folded into user)');
+    is($msgs[1]{role}, 'user', 'All providers: user message preserved');
+    ok($msgs[1]{content} =~ /^<thread_summary>compressed<\/thread_summary>\n\nactual user input/,
+        'All providers: summary folded at start of user message, input preserved');
 
     done_testing();
 };

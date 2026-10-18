@@ -72,6 +72,12 @@ sub _last_user_present {
     return 1 if defined $last && $last->{role} eq 'user'
         && ($expected_content // '') ne ''
         && ($last->{content} // '') eq $expected_content;
+    # With the cache-fix (thread_summary folded into user message),
+    # the content may be prefixed with <thread_summary>...</thread_summary>.
+    # Check if the expected content appears as a suffix.
+    return 1 if defined $last && $last->{role} eq 'user'
+        && ($expected_content // '') ne ''
+        && ($last->{content} // '') =~ /\Q$expected_content\E\s*\z/;
     # Also check if the user message is present anywhere (for non-last positions)
     for my $msg (@$msgs) {
         return 1 if ref($msg) eq 'HASH'
@@ -85,7 +91,6 @@ sub _has_thread_summary {
     my ($msgs) = @_;
     for my $msg (@$msgs) {
         return 1 if ref($msg) eq 'HASH'
-            && ($msg->{role} // '') eq 'system'
             && ($msg->{content} // '') =~ /<thread_summary>/;
     }
     return 0;
@@ -256,8 +261,9 @@ subtest 'short current user input (e.g. "continue") still preserved as last mess
 
     is(_last_role(\@messages), 'user',
         'last message is USER even with short input');
-    is($messages[-1]{content}, 'continue',
-        'short user input preserved as-is');
+    # Thread_summary is now folded into the user message content
+    like($messages[-1]{content}, qr/continue\s*\z/,
+        'short user input preserved at end of user message');
     ok(!_system_after_last_user(\@messages),
         'no SYSTEM after last USER for short input');
 };
@@ -410,7 +416,11 @@ subtest 'tiny task with large history: user message survives as last message' =>
     CLIO::Core::API::ErrorHandler::trim_for_token_limit($wo, %$ctx);
 
     is(_last_role(\@messages), 'user', 'last message is USER for tiny task');
-    is($messages[-1]{content}, 'list', 'tiny task content preserved exactly');
+    # Thread_summary is now folded INTO the user message (not a separate
+    # system message), so the user message content is:
+    #   <thread_summary>...</thread_summary>\n\nlist
+    # The original user content ('list') must still be present at the end.
+    like($messages[-1]{content}, qr/list$/, 'tiny task content preserved at end of user message');
     ok(!_system_after_last_user(\@messages),
         'no SYSTEM after USER for tiny task');
 };

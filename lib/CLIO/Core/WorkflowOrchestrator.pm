@@ -1420,46 +1420,53 @@ sub _build_turn_context {
     }
     $user_message .= $user_input;
 
-   # Inject the canonical compaction artifact (compressed_tail) as a
-   # <thread_summary> system message before the user message. This is
-   # the single canonical compaction state for the request — the
-   # proactive trim (validate_and_truncate) and reactive trim
-   # (trim_for_token_limit) find, extract, and REPLACE this system
-   # message rather than accumulating duplicates. The compressed_tail
-   # (YaRN summary of projection-dropped turns) carries <thread_summary>
-   # wrapper tags so the trim paths can detect it via the same regex
-   # used for proactively/reactively-injected summaries.
-   #
-   # For local-inference providers (SAM, llama.cpp, LM Studio), the
-   # thread_summary is folded INTO the user message instead of emitted
-   # as a separate system message. llama.cpp's chat templates handle
-   # mid-conversation role=system messages inconsistently across
-   # versions (some fold into the system prompt slot at the top, some
-   # append inline, some may drop them). Folding the <thread_summary>
-   # into the user message preserves its position and makes it
-   # self-identifying (the tags are detected by the same regexes the
-   # trim paths already use). Cloud providers (OpenAI, Anthropic,
-   # Copilot, etc.) keep the system-message approach, which is correct
-   # for their APIs.
-   my $is_local_inference = 0;
-   if ($self->{api_manager}) {
-       my $cur_provider = $self->{api_manager}->get_current_provider() || '';
-       if ($cur_provider) {
-           require CLIO::Providers;
-           $is_local_inference = CLIO::Providers::is_local_inference($cur_provider);
-       }
-   }
-   if ($projection && (my $tail = $projection->{compressed_tail})) {
-        if (length $tail) {
-            if ($is_local_inference) {
-                # Fold into user message — prepend before the separator
-                $user_message = $tail . "\n\n" . $user_message;
-                log_debug('WorkflowOrchestrator', "Folded thread_summary into user message for local-inference provider (compressed_tail: " . length($tail) . " chars)");
-            } else {
-                push @messages, { role => 'system', content => $tail };
-            }
-        }
-    }
+  # Fold the canonical compaction artifact (compressed_tail) INTO the
+  # user message for ALL providers (not as a separate system message).
+  #
+  # The compressed_tail is a YaRNA summary of projection-dropped turns.
+  # It changes on every iteration of the tool-calling loop: new tool
+  # results are appended to the current turn, which shifts the
+  # projection window boundary, changing which turns are dropped and
+  # therefore the content of the summary.
+  #
+  # If emitted as a separate <thread_summary> system message placed
+  # BETWEEN the recent turn messages and the user message, it sits in
+  # the MIDDLE of OpenRouter's cache-stable prefix. OpenRouter's
+  # automatic prompt cache matches on the longest common message
+  # prefix between consecutive requests — when this system message
+  # differs (even by a single character, e.g. tool-operation counts in
+  # the context_files header incrementing 27→28), the entire prefix
+  # cache collapses, dropping cached_tokens from ~180K to ~25K.
+  #
+  # Folding the compressed_tail into the user message (prepended before
+  # the dynamic UC / user input) places it at the END of the message
+  # array. The cache prefix then extends through
+  # [system_prompt, recent_turns] — the parts that are stable within a
+  # session. Local-inference providers already used this fold path
+  # (since commit 71446bd, for llama.cpp chat-template compatibility);
+  # this unifies both paths.
+  #
+  # The <thread_summary> wrapper tags are still detected by the trim
+  # paths' regexes regardless of whether they appear in a system
+  # message or the user message, so the proactive trim can still find,
+  # extract, and replace the compressed_tail to avoid duplicate
+  # accumulation.
+  my $is_local_inference = 0;
+  if ($self->{api_manager}) {
+      my $cur_provider = $self->{api_manager}->get_current_provider() || '';
+      if ($cur_provider) {
+          require CLIO::Providers;
+          $is_local_inference = CLIO::Providers::is_local_inference($cur_provider);
+      }
+  }
+  if ($projection && (my $tail = $projection->{compressed_tail})) {
+      if (length $tail) {
+          $user_message = $tail . "\n\n" . $user_message;
+          log_debug('WorkflowOrchestrator', "Folded thread_summary into user message" .
+              ($is_local_inference ? " (local inference)" : "") .
+              " (compressed_tail: " . length($tail) . " chars)");
+      }
+  }
    push @messages, { role => 'user', content => $user_message };
 
     # If image attachments are present, convert user message to array-format content

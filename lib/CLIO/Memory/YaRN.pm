@@ -248,7 +248,6 @@ our $DEFAULT_MAX_DECISIONS         = 8;
 our $DEFAULT_MAX_COLLABORATION     = 10;
 our $DEFAULT_MAX_FILES             = 50;
 our $DEFAULT_MAX_COMMITS           = 30;
-our $DEFAULT_MAX_TOOL_TYPES        = 8;
 our $DEFAULT_MAX_DISCOVERIES       = 8;
 our $DEFAULT_MAX_BLOCKERS          = 4;
 our $DEFAULT_USER_REQUEST_LEN      = 600;
@@ -339,7 +338,6 @@ sub _compute_limits {
         collaboration      => $DEFAULT_MAX_COLLABORATION,
         files              => $DEFAULT_MAX_FILES,
         commits            => $DEFAULT_MAX_COMMITS,
-        tool_types         => $DEFAULT_MAX_TOOL_TYPES,
         discoveries        => $DEFAULT_MAX_DISCOVERIES,
         blockers           => $DEFAULT_MAX_BLOCKERS,
         user_request_len   => $DEFAULT_USER_REQUEST_LEN,
@@ -426,7 +424,6 @@ sub compress_messages {
     my $max_collaboration  = $limits->{collaboration};
     my $max_files          = $limits->{files};
     my $max_commits        = $limits->{commits};
-    my $max_tool_types     = $limits->{tool_types};
     my $max_ur_display     = $limits->{user_requests};
     my $max_collab_len     = $limits->{collaboration_len};
     my $max_decision_len   = $limits->{decision_len};
@@ -434,6 +431,12 @@ sub compress_messages {
     my $max_blockers       = $limits->{blockers};
     my $max_discovery_len  = $limits->{discovery_len};
     my $max_next_action_len = $limits->{next_action_len};
+    # NOTE: tool-operation counts are intentionally NOT tracked. They are
+    # non-deterministic (increment every turn as the agent makes more tool
+    # calls) and surfacing them in the compressed_tail breaks OpenRouter's
+    # prefix cache (the count appears in the thread_summary, which is
+    # folded into the user message at the end of the array — but it still
+    # causes unnecessary divergence in any comparison or carryover path).
 
     # Extraction buckets
     my @user_requests;
@@ -444,7 +447,6 @@ sub compress_messages {
     my @discoveries;               # Key findings, conclusions, discoveries
     my @blockers;                  # Current blockers / unresolved issues
     my $next_action = '';
-    my %tool_counts;              # tool_name => total call count (cumulative)
 
     # Optional opts for richer work-state preservation.
     # - active_todos: arrayref of {status, content} — used to surface
@@ -461,8 +463,8 @@ sub compress_messages {
 
     # Seed buckets from previous summary so accumulated history isn't lost
     # across trim cycles. _parse_previous_summary parses ALL sections
-    # (commits, files, decisions, collaboration, tool counts, discoveries,
-    # blockers, next_action) — not just user requests — so no historical
+    # (commits, files, decisions, collaboration, discoveries, blockers,
+    # next_action) — not just user requests — so no historical
     # information is silently dropped between compression cycles.
     if ($previous_summary) {
         _parse_previous_summary($previous_summary, {
@@ -471,7 +473,6 @@ sub compress_messages {
             decisions               => \@decisions,
             user_requests           => \@user_requests,
             collaboration_exchanges => \@collaboration_exchanges,
-            tool_counts             => \%tool_counts,
             discoveries             => \@discoveries,
             blockers                => \@blockers,
         });
@@ -541,9 +542,6 @@ sub compress_messages {
                 for my $tc (@{$msg->{tool_calls}}) {
                     my $name     = $tc->{function}{name}      || 'unknown';
                     my $args_str = $tc->{function}{arguments} || '{}';
-
-                    # Count tool operations (cumulative across carryover)
-                    $tool_counts{$name}++;
 
                     # Track interact calls to pair with responses
                     if ($name eq 'interact' && $tc->{id}) {
@@ -736,9 +734,14 @@ sub compress_messages {
         );
     }
 
-    # Build summary. Includes tool operations with cumulative counts
-    # and collaboration exchanges, in a self-consistent format that
-    # _parse_previous_summary can round-trip.
+    # Build summary. Includes collaboration exchanges, in a
+    # self-consistent format that _parse_previous_summary can round-trip.
+    # Note: tool-operation counts are intentionally NOT included — they
+    # are non-deterministic (they change every turn as the agent makes
+    # more tool calls) and break OpenRouter's prefix cache stability
+    # (the count appears inside the compressed_tail which is now folded
+    # into the user message at the end of the array, but it still
+    # causes unnecessary divergence in any comparison).
     my @parts;
     push @parts, "<thread_summary>";
     push @parts, "";
@@ -771,20 +774,6 @@ sub compress_messages {
         push @parts, "Files worked on:";
         for my $f (@files_touched) {
             push @parts, "- " . substr($f, 0, 200);
-        }
-        push @parts, "";
-    }
-
-    # Tool operations: cumulative counts per tool type (deduplicated).
-    if (%tool_counts) {
-        push @parts, "Tool operations:";
-        my @sorted = sort { $tool_counts{$b} <=> $tool_counts{$a}
-                             || $a cmp $b } keys %tool_counts;
-        my $shown = 0;
-        for my $name (@sorted) {
-            last if $shown >= $max_tool_types;
-            push @parts, "- $name: $tool_counts{$name}";
-            $shown++;
         }
         push @parts, "";
     }
@@ -1026,7 +1015,6 @@ sub _parse_previous_summary {
     my $files_touched          = $buckets->{files_touched}          || [];
     my $commits                = $buckets->{commits}                || [];
     my $collaboration_exchanges = $buckets->{collaboration_exchanges} || [];
-    my $tool_counts            = $buckets->{tool_counts}            || {};
     my $discoveries            = $buckets->{discoveries}            || [];
     my $blockers               = $buckets->{blockers}               || [];
 
@@ -1084,21 +1072,6 @@ sub _parse_previous_summary {
         # Legacy: "Files:" with comma-separated list
         @items = $parse_file_list->($summary_text, qr/^Files:/m);
         push @$files_touched, @items if @items;
-    }
-
-    # --- Tool operations (current "Tool operations:" + legacy "Tool usage:" / "Tools:") ---
-    for my $hdr (qr/Tool operations/i, qr/Tool usage/i, qr/^Tools:/m) {
-        @items = $parse_bullets->($summary_text, $hdr);
-        if (@items) {
-            for my $item (@items) {
-                if ($item =~ /^(\w[\w_]*)\s*:\s*(\d+)/) {
-                    my ($name, $count) = ($1, $2);
-                    # Accumulate counts across carryover cycles
-                    $tool_counts->{$name} += $count;
-                }
-            }
-            last;
-        }
     }
 
     # --- Commits (current "Commits:" + legacy "Git commits made during compressed period:") ---
@@ -1278,7 +1251,6 @@ compression format marker) that preserves:
   request kept as C<<- [original] >>)
 - Key decisions (collaboration exchanges; capped at 8 for 128K+)
 - Files worked on (path-only, deduplicated; capped at 50 for 128K+)
-- Tool operations (cumulative counts per tool type; top 8 shown)
 - Commits (deduped, most recent kept; capped at 30 for 128K+)
 - Discussion (collaboration Q/A pairs from interact calls; capped at 10 for 128K+)
 
@@ -1305,7 +1277,7 @@ by C<$MIN_SUMMARY_CAP> (4,000) and C<$MAX_SUMMARY_CAP> (60,000).
 
 Extraction limits (C<_compute_limits>): 128K is the baseline
 (16 user requests, 8 decisions, 10 discussion pairs, 50 files,
-30 commits, 8 tool types). Scales DOWN for contexts below 128K
+30 commits). Scales DOWN for contexts below 128K
 (local models, 64K and smaller) and UP for 256K+ contexts.
 
 Callers that know the model's context window should pass it:
@@ -1334,14 +1306,16 @@ C<< <thread_summary> >> block from the message array (via
 C<_extract_thread_summary_from_messages>) and feeds it as
 C<previous_summary> to C<compress_messages>, so accumulated summaries
 survive successive trim cycles instead of being reset each time.
-C<_parse_previous_summary> parses ALL sections (user requests,
-decisions, files, commits, tool operations, discussion) — not just
+C<compress_messages> is designed to be called repeatedly as the
+session progresses and the proactive/reactive trims drop older turns
+into the compressed_tail. Each call receives the C<previous_summary>
+from the prior cycle (extracted from the C<< <thread_summary> >> block
+in the message array via C<_extract_thread_summary_from_messages>),
+so accumulated summaries survive successive trim cycles instead of
+being reset each time. C<_parse_previous_summary> parses ALL sections
+(user requests, decisions, files, commits, discussion) — not just
 user requests — so no historical information is silently dropped
 between cycles.
-
-C<compress_messages> accepts C<%tool_counts> (accumulated counts) in
-the buckets hash; these are added to rather than replaced, producing
-cumulative tool-operation totals across the entire session.
 
 C<YaRN> is the durable, lossless record. C<State::add_message> stores
 every message in both C<$self->{history}> (active window) and

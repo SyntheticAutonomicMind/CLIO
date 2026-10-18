@@ -55,8 +55,7 @@ sub count_thread_summaries {
     my $n = 0;
     for my $msg (@$messages) {
         if (ref($msg) eq 'HASH'
-            && ($msg->{role} // '') eq 'system'
-            && ($msg->{content} // '') =~ /<thread_summary>/) {
+            && (_extract_content_text($msg->{content}) =~ /<thread_summary>/)) {
             $n++;
         }
     }
@@ -66,12 +65,34 @@ sub count_thread_summaries {
 sub extract_thread_summary {
     my ($messages) = @_;
     for my $msg (@$messages) {
-        if (ref($msg) eq 'HASH'
-            && ($msg->{role} // '') eq 'system'
-            && ($msg->{content} // '') =~ /<thread_summary>/
-            && ($msg->{content} // '') =~ /<\/thread_summary>/) {
-            return $msg->{content};
+        if (ref($msg) eq 'HASH') {
+            my $text = _extract_content_text($msg->{content});
+            # Extract just the <thread_summary>...</thread_summary> block
+            # (now folded into user messages, not standalone system messages)
+            if ($text =~ /(<thread_summary>.*?<\/thread_summary>)/s) {
+                return $1;
+            }
         }
+    }
+    return '';
+}
+
+# Helper: extract text content from either a string or arrayref
+# (multimodal content parts) message.
+sub _extract_content_text {
+    my ($content) = @_;
+    return '' unless defined $content;
+    return $content unless ref($content);
+    if (ref($content) eq 'ARRAY') {
+        my $text = '';
+        for my $part (@$content) {
+            if (ref($part) eq 'HASH' && exists $part->{text}) {
+                $text .= $part->{text};
+            } elsif (!ref($part)) {
+                $text .= $part;
+            }
+        }
+        return $text;
     }
     return '';
 }
@@ -706,7 +727,9 @@ subtest 'test_provider_payload_matches_trimmed_context' => sub {
     my @roles = map { ref($_) eq 'HASH' ? ($_->{role} // '') : '' } @$trimmed;
     my $valid = 1;
     for (my $i = 1; $i < @roles; $i++) {
-        # System can appear anywhere (thread_summary system message)
+        # System can appear at [0] (system prompt) — after that, no
+        # mid-conversation system messages (thread_summary is now folded
+        # into user messages, not system messages)
         # but not two systems in a row (except system_prompt at [0])
         if ($roles[$i] eq 'system' && $roles[$i-1] eq 'system') {
             $valid = 0;
