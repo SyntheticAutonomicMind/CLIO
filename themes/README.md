@@ -17,6 +17,8 @@ Themes define the output format and layout of CLIO's terminal display. While sty
 | `default` | Standard output with all elements visible |
 | `compact` | Condensed output, fewer blank lines |
 | `console` | Console-optimized layout |
+| `dense` | Maximum information density, minimal whitespace |
+| `spacious` | Generous whitespace and vertical spacing |
 | `verbose` | Detailed output with full context |
 
 ## Theme File Format

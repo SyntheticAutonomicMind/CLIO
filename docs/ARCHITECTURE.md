@@ -346,10 +346,19 @@ Tools can be restricted via `--enable` (allowlist) or `--disable` (blocklist) CL
 | Text Sanitizer | `TextSanitizer.pm` | Sanitize text for safe display |
 | JSON | `JSON.pm` | Opportunistic fast JSON (JSON::XS > Cpanel::JSON::XS > JSON::PP) |
 | JSON Repair | `JSONRepair.pm` | Repair malformed JSON from AI responses |
+| Config Path | `ConfigPath.pm` | Resolve config file/directory locations (XDG-aware) |
+| Atomic Write | `AtomicWrite.pm` | Atomic file writes (temp + rename) to prevent corruption |
+| Rate Limit | `RateLimit.pm` | Rate limiting utilities |
 | Git Ignore | `GitIgnore.pm` | Auto-manage `.clio/` entries in `.gitignore` |
 | Input Helpers | `InputHelpers.pm` | Terminal input utilities |
 | XML Tool Parser | `AnthropicXMLParser.pm` | Parse XML-format tool calls from AI responses |
 | YAML | `YAML.pm` | Lightweight YAML parser (no CPAN required) |
+| CA Bundle | `CABundle.pm` | CA certificate bundle management |
+| Curl | `Curl.pm` | Curl wrapper for HTTP operations |
+| Proxy | `Proxy.pm` | Proxy configuration |
+| Image Attachment | `ImageAttachment.pm` | Image file reading, validation, base64 encoding |
+| Image Display | `ImageDisplay.pm` | Inline image rendering via kitty/iTerm/sixel protocols |
+| UUID | `UUID.pm` | UUID v4 generation |
 
 **How it works:**
 - Debug mode: `clio --debug`

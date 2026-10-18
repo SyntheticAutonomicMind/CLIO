@@ -21,8 +21,8 @@
 | **Ollama Cloud** | `ollama_cloud` | API Key |
 | **MiniMax** | `minimax` | API Key |
 | **MiniMax Token Plan** | `minimax_token` | API Key |
-| **Z.AI** | `zai` | API Key |
-| **Z.AI Coding Plan** | `zai_coding` | API Key |
+| **Z.AI (Chat)** | `zai` | API Key |
+| **Z.AI (Coding)** | `zai_coding` | API Key |
 | **NVIDIA NIM** | `nvidia` | API Key |
 | **Vercel AI Gateway** | `vercel` | API Key |
 | **llama.cpp** | `llama.cpp` | None |
@@ -537,7 +537,7 @@ CLIO parses these and displays human-readable reset times.
 
 ---
 
-### Z.AI Coding Plan
+### Z.AI (Coding)
 
 **Best for:** Free coding assistance with GLM-4.7, GLM-5.1, and GLM-5 models
 

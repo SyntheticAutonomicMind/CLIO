@@ -253,12 +253,12 @@ License selection requires an explicit conversation with the user - never defaul
 Fetch BOTH of these template files to use as schemas:
 
 **A) Methodology template:**
-https://raw.githubusercontent.com/SyntheticAutonomicMind/CLIO/main/docs/templates/instructions.md.template
+https://raw.githubusercontent.com/SyntheticAutonomicMind/CLIO/main/skills/templates/instructions.md.template
 
 This defines HOW agents work - The Unbroken Method, collaboration checkpoints, workflow protocols.
 
 **B) Technical reference template:**
-https://raw.githubusercontent.com/SyntheticAutonomicMind/CLIO/main/docs/templates/AGENTS.md.template
+https://raw.githubusercontent.com/SyntheticAutonomicMind/CLIO/main/skills/templates/AGENTS.md.template
 
 This defines WHAT technical knowledge agents need - setup commands, code style, testing, architecture.
 The template is a generic schema with [PLACEHOLDER] tokens ready to fill in.
@@ -352,12 +352,12 @@ License selection requires an explicit conversation with the user - never defaul
 Fetch BOTH of these template files to use as schemas:
 
 **A) Methodology template:**
-https://raw.githubusercontent.com/SyntheticAutonomicMind/CLIO/main/docs/templates/instructions.md.template
+https://raw.githubusercontent.com/SyntheticAutonomicMind/CLIO/main/skills/templates/instructions.md.template
 
 This defines HOW agents work - The Unbroken Method, collaboration checkpoints, workflow protocols.
 
 **B) Technical reference template:**
-https://raw.githubusercontent.com/SyntheticAutonomicMind/CLIO/main/docs/templates/AGENTS.md.template
+https://raw.githubusercontent.com/SyntheticAutonomicMind/CLIO/main/skills/templates/AGENTS.md.template
 
 This defines WHAT technical knowledge agents need - setup commands, code style, testing, architecture.
 The template is a generic schema with [PLACEHOLDER] tokens ready to fill in.
