@@ -498,9 +498,12 @@ sub _list_skills {
         $self->display_section_header("LOADED (IN SYSTEM PROMPT)");
         for my $ls (@$loaded) {
             my $name = $ls->{name} || 'unknown';
-            my $desc = $ls->{description} || '';
+            my $desc = $ls->{description} || '(no description)';
             my $size = length($ls->{content} || '');
-            $self->display_key_value($name, $desc . " (${size}b)", 16);
+            $self->display_list_item(
+                $self->colorize($name, 'ASSISTANT') .
+                " " . $self->colorize("- $desc (${size}b)", 'DIM')
+            );
         }
         $self->writeline("", markdown => 0);
     }
@@ -529,7 +532,7 @@ sub _list_skills {
         my $label = uc($self->_scope_label($scope));
         $self->display_section_header("$label SKILLS" . ($filter{scope} ? '' : ''));
         if ($scope_descriptions{$scope} && !$filter{scope}) {
-            $self->writeline("  " . $self->colorize($scope_descriptions{$scope}, 'DIM'), markdown => 0);
+            $self->display_tip($scope_descriptions{$scope});
         }
 
         for my $name (sort @$names) {
@@ -546,7 +549,9 @@ sub _list_skills {
             elsif ($scope eq 'project' && $s->{source}) {
                 $source_label = " (freeform: project)";
             }
-            $self->display_key_value($name, $desc . $source_label . $indicator, 16);
+            my $name_colored = $self->colorize($name, 'ASSISTANT');
+            my $meta = $self->colorize(" - $desc" . $source_label . $indicator, 'DIM');
+            $self->display_list_item("$name_colored$meta");
         }
         $self->writeline("", markdown => 0);
     }
@@ -554,14 +559,14 @@ sub _list_skills {
     # Empty hint when no skills are visible at all.
     if ($total_visible == 0) {
         my $hint = $filter{scope}
-            ? "(no $filter{scope} skills)"
-            : '(none)';
-        $self->writeline("  " . $self->colorize($hint, 'DIM'), markdown => 0);
+            ? "No $filter{scope} skills found"
+            : 'No skills found';
+        $self->display_tip($hint);
         $self->writeline("", markdown => 0);
     }
 
     # Summary
-    print "\n";
+    $self->writeline("", markdown => 0);
     my $custom_count = scalar(@{$by_scope{user}   // []}) +
                        scalar(@{$by_scope{project}// []}) +
                        scalar(@{$by_scope{session}// []});
@@ -592,36 +597,8 @@ sub _list_skills {
     }
     $self->writeline($summary, markdown => 0);
 
-    # Management commands
-    $self->display_section_header("COMMANDS");
-    $self->{chat}->display_command_row("/skills use <name> [file]", "Execute skill as user input", 35);
-    $self->{chat}->display_command_row("/skills load <name>", "Load skill into system prompt", 35);
-    $self->{chat}->display_command_row("/skills unload <name>", "Remove from system prompt", 35);
-    $self->{chat}->display_command_row("/skills show <name>", "Display skill details", 35);
-    $self->{chat}->display_command_row("/skills add <name> \"<text>\" [--scope=...]", "Add custom skill", 35);
-    $self->{chat}->display_command_row("/skills delete <name>", "Delete custom skill", 35);
-    $self->{chat}->display_command_row("/skills autocreate [on|off]", "Toggle auto-skill creation on substantial work", 35);
-    $self->writeline("", markdown => 0);
-
-    $self->display_section_header("FILTERS");
-    $self->{chat}->display_command_row("/skills --scope=user", "Show user-level skills only", 35);
-    $self->{chat}->display_command_row("/skills --scope=project", "Show project-level skills only", 35);
-    $self->{chat}->display_command_row("/skills --scope=session", "Show session-level skills only", 35);
-    $self->writeline("", markdown => 0);
-
-    $self->display_section_header("CATALOG");
-    $self->{chat}->display_command_row("/skills search [query]", "Search skills catalog", 35);
-    $self->{chat}->display_command_row("/skills install <name>", "Install skill from catalog", 35);
-    $self->writeline("", markdown => 0);
-
-    $self->display_section_header("REPOSITORIES");
-    $self->{chat}->display_command_row("/skills repo add <name> <url>", "Add skill repository", 35);
-    $self->{chat}->display_command_row("/skills repo remove <name>", "Remove repository", 35);
-    $self->{chat}->display_command_row("/skills repo list", "List configured repos", 35);
-    $self->{chat}->display_command_row("/skills repo sync [name]", "Sync repositories", 35);
-    $self->{chat}->display_command_row("/skills repo enable <name>", "Enable repository", 35);
-    $self->{chat}->display_command_row("/skills repo disable <name>", "Disable repository", 35);
-    $self->writeline("", markdown => 0);
+    # Brief help tip — command reference lives in /skills help
+    $self->display_tip("Run /skills help for command reference. Use /skills load <name> to load a skill.");
 }
 
 =head2 _load_skill($sm, @args)

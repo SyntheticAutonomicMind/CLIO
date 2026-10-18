@@ -89,7 +89,11 @@ sub init {
     
     # Priority 3: Check if running from development directory
     # (has lib/ and .clio/ subdirectories)
-    my $script_dir = $FindBin::Bin;
+    # Use RealBin (resolves symlinks) so that an installed clio invoked via
+    # a symlink (e.g. ~/.local/bin/clio -> ~/.local/clio/clio) still resolves
+    # to the real directory that contains lib/ and skills/. Fall back to Bin
+    # for environments where RealBin is not populated (e.g. perl -e).
+    my $script_dir = $FindBin::RealBin || $FindBin::Bin;
     if (-d "$script_dir/lib" && -d "$script_dir/.clio") {
         # Development mode - use script directory for base (lib/ access)
         # CONFIG_DIR always goes to HOME for global config (API keys, provider)
