@@ -312,20 +312,8 @@ sub _clear_patterns {
     
     $self->writeline("", markdown => 0);
     $self->display_warning_message("This will clear ALL long-term memory patterns for this project!");
-    
-    # Display confirmation prompt using theme
-    my $prompt = $self->{chat}{theme_mgr}->get_confirmation_prompt(
-        "Clear all patterns?",
-        "yes/no",
-        "cancel"
-    );
-    
-    print $prompt;
-    
-    my $response = <STDIN>;
-    chomp $response if defined $response;
-    
-    if ($response && $response =~ /^y(es)?$/i) {
+
+    if ($self->confirm_yes_no("Clear all patterns?")) {
         eval {
             require CLIO::Memory::LongTerm;
             my $new_ltm = CLIO::Memory::LongTerm->new(

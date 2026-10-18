@@ -380,7 +380,7 @@ sub handle_commit_command {
             "",
             "cancel"
         );
-        print $prompt;
+        $self->writeline($prompt, markdown => 0, raw => 1);
         $message = <STDIN>;
         chomp $message if defined $message;
         

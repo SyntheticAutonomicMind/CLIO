@@ -448,17 +448,7 @@ sub _clear_session_history {
     }
     
     # Confirm
-    my $prompt = $self->{chat}{theme_mgr}->get_confirmation_prompt(
-        "Clear all conversation history?",
-        "yes/no",
-        "cancel"
-    );
-    
-    print $prompt;
-    my $response = <STDIN>;
-    chomp $response if defined $response;
-    
-    unless ($response && $response =~ /^y(es)?$/i) {
+    unless ($self->confirm_yes_no("Clear all conversation history?")) {
         $self->display_system_message("Cancelled");
         return;
     }
@@ -695,17 +685,7 @@ sub _trim_sessions {
     # Confirm
     $self->writeline("", markdown => 0);
     
-    my $prompt = $self->{chat}{theme_mgr}->get_confirmation_prompt(
-        "Delete these sessions?",
-        "yes/no",
-        "cancel"
-    );
-    
-    print $prompt;
-    my $response = <STDIN>;
-    chomp $response if defined $response;
-    
-    unless ($response && $response =~ /^y(es)?$/i) {
+    unless ($self->confirm_yes_no("Delete these sessions?")) {
         $self->display_system_message("Cancelled");
         return;
     }

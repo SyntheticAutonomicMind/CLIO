@@ -197,24 +197,13 @@ sub _install_update {
     $self->writeline("New version:     " . $self->colorize($check_result->{latest_version}, 'command_value'), markdown => 0);
     $self->writeline("", markdown => 0);
     
-    my $prompt = $self->{chat}{theme_mgr}->get_confirmation_prompt(
-        "Install update?",
-        "yes/no",
-        "cancel"
-    );
-    
-    print $prompt;
-    my $confirm = <STDIN>;
-    chomp $confirm if $confirm;
-    
-    unless ($confirm && $confirm =~ /^y(es)?$/i) {
+    unless ($self->confirm_yes_no("Install update?")) {
         $self->display_info_message("Update cancelled");
         return;
     }
     
     $self->writeline("", markdown => 0);
     $self->display_info_message("Installing update...");
-    $self->writeline("", markdown => 0);
     
     my $result = $updater->install_latest();
     
@@ -419,17 +408,7 @@ sub _switch_version {
     $self->writeline("Target version:  " . $self->colorize($target_version, 'command_value'), markdown => 0);
     $self->writeline("", markdown => 0);
     
-    my $prompt = $self->{chat}{theme_mgr}->get_confirmation_prompt(
-        "Switch to version $target_version?",
-        "yes/no",
-        "cancel"
-    );
-    
-    print $prompt;
-    my $confirm = <STDIN>;
-    chomp $confirm if $confirm;
-    
-    unless ($confirm && $confirm =~ /^y(es)?$/i) {
+    unless ($self->confirm_yes_no("Switch to version $target_version?")) {
         $self->display_info_message("Switch cancelled");
         return;
     }

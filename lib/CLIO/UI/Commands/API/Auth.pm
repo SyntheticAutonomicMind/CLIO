@@ -43,17 +43,7 @@ sub check_github_auth {
         $self->writeline("", markdown => 0);
         $self->display_system_message("GitHub Copilot requires authentication");
 
-        my $prompt = $self->{chat}{theme_mgr}->get_confirmation_prompt(
-            "Login now?",
-            "yes/no",
-            "skip"
-        );
-
-        print $prompt;
-        my $response = <STDIN>;
-        chomp $response if defined $response;
-
-        if ($response && $response =~ /^y(es)?$/i) {
+        if ($self->confirm_yes_no("Login now?", 'skip')) {
             $self->handle_login();
         } else {
             $self->display_system_message("You can login later with: /api login");

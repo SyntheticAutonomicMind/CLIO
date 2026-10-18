@@ -902,11 +902,7 @@ sub _delete_skill {
         "cancel"
     );
     
-    print $prompt;
-    my $confirm = <STDIN>;
-    chomp $confirm if defined $confirm;
-    
-    unless ($confirm && $confirm =~ /^y(es)?$/i) {
+    unless ($self->confirm_yes_no("Delete skill '$name'?")) {
         $self->display_system_message("Deletion cancelled");
         return;
     }
@@ -1048,17 +1044,7 @@ sub _repo_remove {
     }
     
     # Confirm removal
-    my $prompt = $self->{chat}{theme_mgr}->get_confirmation_prompt(
-        "Remove repository '$name' and its cached skills?",
-        "yes/no",
-        "cancel"
-    );
-    
-    print $prompt;
-    my $confirm = <STDIN>;
-    chomp $confirm if defined $confirm;
-    
-    unless ($confirm && $confirm =~ /^y(es)?$/i) {
+    unless ($self->confirm_yes_no("Remove repository '$name' and its cached skills?")) {
         $self->display_system_message("Removal cancelled");
         return;
     }
@@ -1402,19 +1388,9 @@ sub _install_skill {
     $self->display_key_value("Lines", scalar(@lines), 15);
     
     # Ask if user wants to preview full content
-    print "\n";
-    
-    my $prompt1 = $self->{chat}{theme_mgr}->get_confirmation_prompt(
-        "View full content?",
-        "yes/no",
-        "skip"
-    );
-    
-    print $prompt1;
-    my $view_full = <STDIN>;
-    chomp $view_full if defined $view_full;
-    
-    if ($view_full && $view_full =~ /^y(es)?$/i) {
+    $self->writeline("", markdown => 0);
+
+    if ($self->confirm_yes_no("View full content?", 'skip')) {
         # Display full content with markdown rendering and pagination
         $self->writeline("", markdown => 0);
         $self->display_section_header("FULL CONTENT");
@@ -1432,17 +1408,7 @@ sub _install_skill {
     }
     
     # Confirm installation
-    my $prompt2 = $self->{chat}{theme_mgr}->get_confirmation_prompt(
-        "Install '$name'?",
-        "yes/no",
-        "cancel"
-    );
-    
-    print $prompt2;
-    my $confirm = <STDIN>;
-    chomp $confirm if defined $confirm;
-    
-    unless ($confirm && $confirm =~ /^y(es)?$/i) {
+    unless ($self->confirm_yes_no("Install '$name'?")) {
         $self->display_system_message("Installation cancelled");
         return;
     }

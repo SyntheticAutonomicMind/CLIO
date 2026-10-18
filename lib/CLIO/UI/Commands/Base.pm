@@ -87,6 +87,30 @@ sub _require_interactive {
     return 0;
 }
 
+=head2 confirm_yes_no($question, $default_action)
+
+Render a themed confirmation prompt and read a yes/no response from STDIN.
+Returns true for an affirmative answer, false otherwise.
+
+All confirmation prompts in CLIO are now routed through this helper so the
+themed prompt is emitted through the Chat display buffer (not a raw print)
+and read handling is uniform.
+
+=cut
+
+sub confirm_yes_no {
+    my ($self, $question, $default_action) = @_;
+    $default_action //= 'cancel';
+    return 0 if $self->_require_interactive('confirmation prompt');
+    my $prompt = $self->{chat}{theme_mgr}->get_confirmation_prompt(
+        $question, 'yes/no', $default_action
+    );
+    $self->writeline($prompt, markdown => 0, raw => 1);
+    my $response = <STDIN>;
+    chomp $response if defined $response;
+    return ($response && $response =~ /^y(es)?$/i) ? 1 : 0;
+}
+
 1;
 
 __END__

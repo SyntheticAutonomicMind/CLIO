@@ -309,7 +309,7 @@ sub _build_command_registry {
         { summary => 'Exit the chat', category => 'BASICS', names => [qw(exit quit q)], handler => sub { return 0 }, returns => 'exit' },
         
         # Core UI
-        { summary => 'Display this help', category => 'BASICS', names => [qw(help h)], handler => sub { $chat->display_help(@_) }, help => sub { $self->{chat}->display_help() } },
+        { summary => 'Display this help', category => 'BASICS', names => [qw(help h ?)], handler => sub { $chat->display_help(@_) }, help => sub { $self->{chat}->display_help() } },
         { summary => 'Clear the screen', category => 'BASICS', names => [qw(clear cls)], handler => sub { $chat->repaint_screen() } },
         { summary => 'Reset terminal and kill stale processes', category => 'BASICS', name => 'reset', handler => sub { $self->_handle_reset_command() } },
         { summary => 'Toggle debug mode', category => 'BASICS', name => 'debug', handler => sub {
