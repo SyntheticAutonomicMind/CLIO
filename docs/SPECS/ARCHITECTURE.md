@@ -152,7 +152,6 @@ flowchart TD
 - Ollama Cloud
 - MiniMax
 - Z.AI
-- SAM (local inference)
 - llama.cpp (local inference)
 - LM Studio (local inference)
 - Additional providers configurable

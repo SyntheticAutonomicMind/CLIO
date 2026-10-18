@@ -87,7 +87,7 @@ That means CLIO can help with real development work, not just produce text.
 - OpenRouter API key with MiniMax (recommended), OR
 - GitHub Copilot subscription (supports GPT, Claude, and more), OR
 - API key from any supported provider: OpenAI, Anthropic, Google Gemini, DeepSeek, MiniMax, OR
-- Local model server: llama.cpp, LM Studio, or SAM (no API key needed)
+- Local model server: llama.cpp, LM Studio (no API key needed)
 
 ### Installation Steps
 
@@ -183,7 +183,7 @@ All `/api set` commands save globally by default. To set a value for the current
 
 Use `/api show` to see your current configuration and whether any values are session overrides.
 
-See [PROVIDERS.md](PROVIDERS.md) for setup instructions for all 20 providers.
+See [PROVIDERS.md](PROVIDERS.md) for setup instructions for all 19 providers.
 
 **Optional Environment Variables**
 
@@ -2802,11 +2802,11 @@ git init
 
 **Q: Is CLIO free?**
 
-A: CLIO itself is open-source and free (GPL v3). You need access to an AI provider - GitHub Copilot (included with GitHub subscriptions), Anthropic, OpenAI, Google, DeepSeek, OpenRouter, MiniMax, or a local model (llama.cpp, LM Studio, SAM).
+A: CLIO itself is open-source and free (GPL v3). You need access to an AI provider - GitHub Copilot (included with GitHub subscriptions), Anthropic, OpenAI, Google, DeepSeek, OpenRouter, MiniMax, or a local model (llama.cpp, LM Studio).
 
 **Q: Does CLIO work offline?**
 
-A: With cloud providers, you need an internet connection. With local providers (llama.cpp, LM Studio, SAM), CLIO works completely offline. Session data is always stored locally regardless of provider.
+A: With cloud providers, you need an internet connection. With local providers (llama.cpp, LM Studio), CLIO works completely offline. Session data is always stored locally regardless of provider.
 
 **Q: Can I use CLIO with ChatGPT/Claude directly?**
 
@@ -2849,7 +2849,7 @@ A: CLIO supports models from multiple providers. The recommended option is MiniM
 
 **Q: How much does API usage cost?**
 
-A: This depends on your AI provider. Check your provider's website for current pricing. Local models (llama.cpp, LM Studio, SAM) run on your hardware at no cost. CLIO itself doesn't add any costs.
+A: This depends on your AI provider. Check your provider's website for current pricing. Local models (llama.cpp, LM Studio) run on your hardware at no cost. CLIO itself doesn't add any costs.
 
 **Q: Can I add custom tools to CLIO?**
 

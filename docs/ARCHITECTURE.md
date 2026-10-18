@@ -6,7 +6,7 @@
 
 ## Quick Overview
 
-CLIO is a **terminal-first AI code assistant** built in Perl. It integrates AI models (GitHub Copilot, Anthropic, OpenAI, Google, OpenRouter, Ollama Cloud, MiniMax, Z.AI, NVIDIA NIM, DeepSeek, SAM, llama.cpp, LM Studio) with local tools (file operations, git, terminal) to help developers work more effectively.
+CLIO is a **terminal-first AI code assistant** built in Perl. It integrates AI models (GitHub Copilot, Anthropic, OpenAI, Google, OpenRouter, Ollama Cloud, MiniMax, Z.AI, NVIDIA NIM, DeepSeek, llama.cpp, LM Studio) with local tools (file operations, git, terminal) to help developers work more effectively.
 
 **Core concept:** User types → CLIO thinks → CLIO uses tools → Results displayed
 
@@ -104,7 +104,7 @@ Terminal Output
 | Logger | `Logger.pm` | Debug and trace output |
 
 **How it works:**
-1. APIManager connects to AI provider (GitHub Copilot, OpenAI, Google, OpenRouter, MiniMax, Z.AI, Ollama Cloud, NVIDIA NIM, DeepSeek, SAM, llama.cpp, LM Studio, etc.)
+1. APIManager connects to AI provider (GitHub Copilot, OpenAI, Google, OpenRouter, MiniMax, Z.AI, Ollama Cloud, NVIDIA NIM, DeepSeek, llama.cpp, LM Studio, etc.)
 2. PromptBuilder builds the system prompt (messages[0]) - base prompt + tools section + skills catalog + user profile + plugin instructions + puppeteer topology. Cache-stable across turns.
 3. WorkflowOrchestrator calls ContextBuilder::build_projection to select the anchor turn, recent turns, score LTM, dedup cross-turn tool calls, and read session state. Recent turns are pushed as role-based messages; the projection dynamic fields are rendered by MessageHistory::messages_to_prose_dynamic as a single trailing system message.
 4. WorkflowOrchestrator appends the user input and any current-turn exchanges.
@@ -415,7 +415,7 @@ CLIO has no other protocol modules. The earlier `Architect.pm`, `Editor.pm`, `Va
 
 | Component | File | Purpose |
 |-----------------------------------------------------------------------------------------------------------------------------------------------------------|------------------------------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------|
-| Provider Registry | `Providers.pm` | AI provider registration and lookup (20 providers) |
+| Provider Registry | `Providers.pm` | AI provider registration and lookup (19 providers) |
 | Base | `Base.pm` | Abstract base class for providers |
 | Anthropic | `Anthropic.pm` | Native Anthropic Messages API |
 | Google | `Google.pm` | Native Google Gemini API |
@@ -424,7 +424,7 @@ CLIO has no other protocol modules. The earlier `Architect.pm`, `Editor.pm`, `Va
 **How it works:**
 - Base.pm defines the provider interface
 - Each native provider implements its own API communication
-- 20 providers configured in Providers.pm: SAM, GitHub Copilot, OpenAI, Anthropic, Google Gemini, DeepSeek, llama.cpp, LM Studio, Ollama Cloud, OpenRouter, Vercel AI Gateway, OrcaRouter, KiloCode, Opper, Charm Hyper, MiniMax, MiniMax Token Plan, Z.A.I (Chat), Z.A.I (Coding), NVIDIA NIM
+- 19 providers in `Providers.pm`: GitHub Copilot, OpenAI, Anthropic, Google Gemini, DeepSeek, llama.cpp, LM Studio, Ollama Cloud, OpenRouter, Vercel AI Gateway, OrcaRouter, KiloCode, Opper, Charm Hyper, MiniMax, MiniMax Token Plan, Z.A.I (Chat), Z.A.I (Coding), NVIDIA NIM
 - OpenAI-compatible providers (OpenAI, DeepSeek, MiniMax, Z.AI, OpenRouter, etc.) and GitHub Copilot are handled directly by APIManager
 
 ### 13. OpenSpec Integration

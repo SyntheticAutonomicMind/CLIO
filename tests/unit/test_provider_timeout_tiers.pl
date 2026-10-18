@@ -20,7 +20,7 @@ use CLIO::Providers qw(build_endpoint_config get_provider);
 
 # ── Test 1: slow_api is propagated for local providers ──────────────
 {
-    my @local_providers = ('sam', 'llama.cpp', 'lmstudio');
+    my @local_providers = ('llama.cpp', 'lmstudio');
     for my $p (@local_providers) {
         my $cfg = build_endpoint_config($p, 'test-key');
         ok($cfg->{slow_api} == 1,
@@ -60,9 +60,6 @@ use CLIO::Providers qw(build_endpoint_config get_provider);
 
 # ── Test 5: Provider definitions still carry the flags ──────────────
 {
-    my $sam_def = get_provider('sam');
-    ok($sam_def->{slow_api} == 1, "Provider definition has slow_api=1 for sam");
-
     my $llama_def = get_provider('llama.cpp');
     ok($llama_def->{slow_api} == 1, "Provider definition has slow_api=1 for llama.cpp");
 

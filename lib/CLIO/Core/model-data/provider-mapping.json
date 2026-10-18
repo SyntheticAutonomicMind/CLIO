@@ -219,10 +219,6 @@
       "model_id_format": "provider/model",
       "models": []
     },
-    "sam": {
-      "model_id_format": "model",
-      "models": []
-    },
     "zai": {
       "model_id_format": "model",
       "models": [

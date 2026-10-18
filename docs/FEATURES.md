@@ -380,7 +380,6 @@ CLIO supports 20 AI providers out of the box. Switch between them at any time - 
 | **Vercel AI Gateway** | Cloud | API key |
 | **llama.cpp** | Local | None |
 | **LM Studio** | Local | None |
-| **SAM** | Local | API key (optional) |
 
 ### Switching Providers
 
@@ -578,7 +577,7 @@ The `/model` command is a shortcut for model switching that resolves aliases. It
 
 ### Local Models
 
-For complete privacy, use local providers (llama.cpp, LM Studio, SAM). Your data never leaves your machine. Local models work with smaller context windows, so CLIO automatically adjusts its trimming thresholds.
+For complete privacy, use local providers (llama.cpp, LM Studio). Your data never leaves your machine. Local models work with smaller context windows, so CLIO automatically adjusts its trimming thresholds.
 
 ### Proxy Support
 

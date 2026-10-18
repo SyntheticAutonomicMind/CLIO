@@ -90,10 +90,9 @@ subtest '_extract_thread_summary_from_messages scans all roles' => sub {
     done_testing();
 };
 
-# ---- Test 3: is_local_inference returns true for sam/llama.cpp/lmstudio ----
+# ---- Test 3: is_local_inference returns true for llama.cpp/lmstudio ----
 
 subtest 'is_local_inference' => sub {
-    ok(CLIO::Providers::is_local_inference('sam'),           'SAM is local inference');
     ok(CLIO::Providers::is_local_inference('llama.cpp'),     'llama.cpp is local inference');
     ok(CLIO::Providers::is_local_inference('lmstudio'),      'LM Studio is local inference');
     ok(!CLIO::Providers::is_local_inference('openai'),       'OpenAI is NOT local inference');

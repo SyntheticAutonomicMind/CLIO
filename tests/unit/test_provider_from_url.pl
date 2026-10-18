@@ -61,14 +61,14 @@ subtest 'local providers' => sub {
     is(provider_from_url('http://192.168.1.50:1234/v1'), 'lmstudio',
         'LM Studio (LAN IP) detected');
 
-    is(provider_from_url('http://localhost:8080/v1/chat/completions'), 'sam',
-        'SAM (localhost) detected');
-    is(provider_from_url('http://127.0.0.1:8080/v1'), 'sam',
-        'SAM (127.0.0.1) detected');
-    is(provider_from_url('http://max:8080/v1/chat/completions'), 'sam',
-        'SAM (LAN hostname) detected');
-    is(provider_from_url('http://192.168.1.50:8080/v1'), 'sam',
-        'SAM (LAN IP) detected');
+    is(provider_from_url('http://localhost:8080/v1/chat/completions'), 'llama.cpp',
+        'llama.cpp (localhost) detected');
+    is(provider_from_url('http://127.0.0.1:8080/v1'), 'llama.cpp',
+        'llama.cpp (127.0.0.1) detected');
+    is(provider_from_url('http://max:8080/v1/chat/completions'), 'llama.cpp',
+        'llama.cpp (LAN hostname) detected');
+    is(provider_from_url('http://192.168.1.50:8080/v1'), 'llama.cpp',
+        'llama.cpp (LAN IP) detected');
 
     # llama.cpp has no default port - users must --provider llama.cpp explicitly
     is(provider_from_url('http://localhost:9090/v1/chat/completions'), undef,

@@ -32,7 +32,6 @@ subtest 'schema modes match provider expectations' => sub {
         ['llama.cpp',   'disabled'],
         ['lmstudio',    'disabled'],
         ['ollama_cloud', 'disabled'],
-        ['sam',         'disabled'],
         ['anthropic',   'native'],
         ['google',      'native'],
         ['openai',      'effort'],

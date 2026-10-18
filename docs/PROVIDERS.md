@@ -27,7 +27,6 @@
 | **Vercel AI Gateway** | `vercel` | API Key |
 | **llama.cpp** | `llama.cpp` | None |
 | **LM Studio** | `lmstudio` | None |
-| **SAM** | `sam` | API Key |
 
 Models change frequently. After configuring your provider, use `/api models` to see the current list of available models.
 
@@ -662,26 +661,6 @@ No API key needed - connects to `http://localhost:1234` by default.
 
 ---
 
-### SAM (Synthetic Autonomic Mind)
-
-**Best for:** Users running SAM locally for enhanced capabilities
-
-**Requirements:**
-- SAM server running locally
-- SAM API token (if configured)
-
-**Configure CLIO:**
-```bash
-clio --new
-/api set provider sam
-/api set key <sam-token-if-required>
-/config save
-```
-
-Default endpoint: `http://localhost:8080/v1/chat/completions`
-
----
-
 ## Common Tasks
 
 ### Switching Providers
@@ -744,7 +723,7 @@ CLIO applies a tiered `--max-time` to provider requests so a slow upstream does 
 |------|--------------|------------------|
 | Cloud | **300 s** | Direct provider connections (OpenAI, Anthropic, Google, DeepSeek, NVIDIA, MiniMax, Z.AI, GitHub Copilot, Ollama Cloud, KiloCode) |
 | Route-based | **300 s** | Multi-hop providers that add an intermediate proxy (OpenRouter, OrcaRouter, Opper, Vercel AI Gateway) |
-| Local | **900 s** | Inference servers running on this machine (SAM, llama.cpp, LM Studio) |
+| Local | **900 s** | Inference servers running on this machine (llama.cpp, LM Studio) |
 
 The tier is selected per provider via two flags propagated through `build_endpoint_config()`:
 

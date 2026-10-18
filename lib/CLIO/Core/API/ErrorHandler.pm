@@ -1210,7 +1210,7 @@ Returns:
 
 Inject a summary into the non-system message array. For cloud providers,
 injects a system message BEFORE the last user message. For local-inference
-providers (llama.cpp, SAM, LM Studio), folds the summary content INTO the
+providers (llama.cpp, LM Studio), folds the summary content INTO the
 last user message — these providers use Jinja chat templates (e.g. Qwen3)
 that reject mid-conversation role=system messages with "System message
 must be at the beginning" errors.
@@ -1282,7 +1282,7 @@ sub _inject_summary_before_last_user {
 
 Push a recovery/guidance message onto the messages array. For cloud
 providers, pushes a role=system message (canonical placement). For
-local-inference providers (llama.cpp, SAM, LM Studio), folds the
+local-inference providers (llama.cpp, LM Studio), folds the
 content into the last user message to avoid Jinja chat-template
 rejections of mid-conversation system messages.
 
@@ -1379,7 +1379,7 @@ sub trim_for_token_limit {
         log_debug('ErrorHandler', "Extracted provider max input limit from error: $provider_max_input tokens");
     }
 
-    # Determine if the current provider is local inference (llama.cpp, SAM,
+    # Determine if the current provider is local inference (llama.cpp,
     # LM Studio). Local inference providers use Jinja chat templates that
     # reject mid-conversation role=system messages (e.g. Qwen3's
     # "System message must be at the beginning"). When true, thread_summary

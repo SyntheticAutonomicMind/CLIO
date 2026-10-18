@@ -125,7 +125,7 @@ sub validate_and_truncate {
 
     # Note: thread_summary compaction artifacts are now folded into the
     # last user message for ALL providers (not just local-inference ones).
-    # Local-inference providers (llama.cpp, SAM, LM Studio) previously
+    # Local-inference providers (llama.cpp, LM Studio) previously
     # needed this because their Jinja chat templates reject mid-conversation
     # role=system messages — but cloud providers also benefit from it
     # because it preserves the OpenRouter prefix cache (a mid-array system
@@ -153,7 +153,7 @@ sub validate_and_truncate {
             # Unrecognized LAN URL with explicit port - sentinel value;
             # any local_inference provider would work, but we use
             # the local registry value to pick the smaller window.
-            $resolved_provider = 'sam';
+            $resolved_provider = 'llama.cpp';
         }
 
         $max_prompt = CLIO::Providers::default_context_window($resolved_provider);
@@ -248,7 +248,7 @@ without its call, or vice versa).
 
 When messages are dropped, a YaRN-compressed thread_summary is injected
 so the model retains a factual record of what was trimmed. For local-
-inference providers (llama.cpp, SAM, LM Studio), the summary is folded
+inference providers (llama.cpp, LM Studio), the summary is folded
 into the last user message — these providers use Jinja chat templates
 (e.g. Qwen3) that reject mid-conversation role=system messages with
 "System message must be at the beginning" errors. For cloud providers,

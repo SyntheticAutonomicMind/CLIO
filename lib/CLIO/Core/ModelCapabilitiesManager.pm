@@ -167,7 +167,7 @@ sub get_capabilities {
     #   or hosts.
     my $cache_key = $self->_build_cache_key($provider, $model);
 
-    # Local inference providers (llama.cpp, SAM, LM Studio) always hit the
+    # Local inference providers (llama.cpp, LM Studio) always hit the
     # live server — their --ctx-size and loaded model can change between
     # sessions, making the on-disk cache stale. APIManager already caches
     # results in-memory for within-session deduplication.
@@ -633,7 +633,7 @@ sub _fetch_provider_capabilities {
         log_debug('ModelCapabilitiesManager', "Using api_base for $provider: $effective_api_base");
     }
 
-    # For local inference providers (llama.cpp, SAM, LM Studio, and any
+    # For local inference providers (llama.cpp, LM Studio, and any
     # custom aliases based on them): the API is the primary source for the
     # runtime context window. We query /v1/models and /props first, then
     # fall back to the JSON database for model metadata (supports_reasoning,
@@ -2542,7 +2542,7 @@ sub _fetch_deepseek_capabilities {
 
 =head2 _fetch_llama_cpp_capabilities
 
-Fetch capabilities for local inference models (llama.cpp, SAM, LM Studio)
+Fetch capabilities for local inference models (llama.cpp, LM Studio)
 by querying the server's /v1/models and /props endpoints.
 
 The /v1/models response contains model metadata including C<meta.n_ctx>
@@ -2555,7 +2555,7 @@ Heuristics provide model-name-based metadata (C<supports_reasoning>,
 C<max_output_tokens>) that neither endpoint reports.
 
 Arguments:
-- $provider: Provider name ('llama.cpp', 'sam', 'lmstudio')
+- $provider: Provider name ('llama.cpp', 'lmstudio')
 - $model: Model identifier (resolved from sentinel if needed)
 - $api_base: Optional. If provided, used instead of config lookup for
   the server URL. This is needed for custom provider aliases (e.g.
@@ -2917,7 +2917,7 @@ sub _fetch_openai_compatible_capabilities {
         # runtime --ctx-size value. Query /props to get the real n_ctx.
         # Gating logic centralised through CLIO::Providers:
         #   - exposes_props() covers the named local providers
-        #     (sam, llama.cpp, lmstudio) that declare this in the registry.
+        #     (llama.cpp, lmstudio) that declare this in the registry.
         #   - ai_type eq 'generic' catches unrecognised OpenAI-compatible
         #     servers we autodetected through provider_from_url. These
         #     may be local llama.cpp forks that match the same /props
@@ -3191,7 +3191,7 @@ the /v1/models response which only exposes n_ctx_train (training context), not t
 server's runtime --ctx-size value.
 
 Called for any OpenAI-compatible server with a /props endpoint. In practice this
-means local inference servers (llama.cpp, LM Studio, SAM), but the host may be
+means local inference servers (llama.cpp, LM Studio), but the host may be
 localhost, a LAN hostname, or an IP address - the function does not filter by URL.
 
 =cut
@@ -3349,11 +3349,11 @@ sub _get_api_base_for_provider {
 
 =head2 _query_llama_props_for_provider (Internal)
 
-Query the /props endpoint for a local inference provider (llama.cpp, SAM, LM Studio).
+Query the /props endpoint for a local inference provider (llama.cpp, LM Studio).
 Reads the user's configured api_base for the given provider from CLIO config.
 
 Arguments:
-- $provider: Provider name ('llama.cpp', 'sam', or 'lmstudio')
+- $provider: Provider name ('llama.cpp', 'lmstudio')
 
 Returns the integer n_ctx value on success, or undef if unavailable.
 

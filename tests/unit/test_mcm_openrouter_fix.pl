@@ -41,7 +41,7 @@ for my $provider (qw(openai vercel kilo orca ollama_cloud)) {
 my @all_providers = sort keys %{$loader->{_cache}{provider_mapping}};
 my @known_providers = qw(anthropic deepseek github_copilot google kilo llama.cpp
     lmstudio minimax minimaxi nvidia ollama_cloud openai openrouter
-    orca sam vercel zai zai_coding);
+    orca vercel zai zai_coding);
 # Just verify openrouter is in the list (the primary bug)
 ok(grep { $_ eq 'openrouter' } @all_providers, "openrouter is in provider_mapping");
 ok(grep { $_ eq 'openai' } @all_providers, "openai is in provider_mapping");

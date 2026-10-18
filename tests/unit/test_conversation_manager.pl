@@ -165,7 +165,7 @@ subtest 'enforce_message_alternation - inserts placeholder for local inference' 
         { role => 'assistant', content => 'Response' },
     );
 
-    my $result = enforce_message_alternation(\@messages, 'sam');
+    my $result = enforce_message_alternation(\@messages, 'llama.cpp');
     is(scalar(@$result), 4, 'Placeholder assistant inserted between consecutive user messages');
     is($result->[0]{content}, 'First question', 'First user message preserved');
     is($result->[1]{role}, 'assistant', 'Placeholder assistant inserted');

@@ -264,12 +264,12 @@ sub _run_adapt {
     ok(!exists $p->{thinking}, 'Ollama Cloud: NO thinking params');
 }
 
-# Case 23: SAM -> NO reasoning params
+# Case 23: llama.cpp -> NO reasoning params
 {
     my $payload = { model => 'local-model', messages => [], max_tokens => 2048 };
-    my ($p, $cfg) = _run_adapt(provider => 'sam', payload => $payload, thinking_mode => 'enabled', effort => 'high');
-    ok(!exists $p->{reasoning_effort}, 'SAM: NO reasoning params');
-    ok(!exists $p->{thinking}, 'SAM: NO thinking params');
+    my ($p, $cfg) = _run_adapt(provider => 'llama.cpp', payload => $payload, thinking_mode => 'enabled', effort => 'high');
+    ok(!exists $p->{reasoning_effort}, 'llama.cpp: NO reasoning params');
+    ok(!exists $p->{thinking}, 'llama.cpp: NO thinking params');
 }
 
 # Case 24: Z.AI + minimal/none pass through verbatim

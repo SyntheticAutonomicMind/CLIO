@@ -192,7 +192,7 @@ sub handle_set {
                 $self->display_warning_message(
                     "Provider does not support reasoning params. "
                     . "thinking_mode=enabled has no effect on local inference servers "
-                    . "(llama.cpp, LM Studio, Ollama, SAM). Set show_thinking=1 instead "
+                    . "(llama.cpp, LM Studio, Ollama). Set show_thinking=1 instead "
                     . "to display the model's built-in thinking output."
                 );
             }
@@ -902,8 +902,8 @@ sub _set_base {
         return;
     }
 
-    # Normalize the URL for local inference providers (llama.cpp, lmstudio,
-    # sam). These providers expose an OpenAI-compatible /v1/chat/completions
+    # Normalize the URL for local inference providers (llama.cpp, lmstudio).
+    # These providers expose an OpenAI-compatible /v1/chat/completions
     # endpoint and are configured with path_suffix => '' in Providers.pm,
     # meaning CLIO does not append any suffix - the user must provide the
     # full URL. A bare host like http://nimo:9090 silently produces a 404
@@ -932,7 +932,7 @@ sub _set_base {
 =head2 _normalize_local_inference_url($url, $provider)
 
 Auto-append the OpenAI-compatible chat completions path for local inference
-providers (llama.cpp, lmstudio, sam). These servers expose the chat
+providers (llama.cpp, lmstudio). These servers expose the chat
 endpoint at /v1/chat/completions and are configured with path_suffix => ''
 in CLIO::Providers, so the user must provide the full URL. Normalize the
 common mistake of providing a bare host (http://nimo:9090) by appending
@@ -969,7 +969,7 @@ sub _normalize_local_inference_url {
     my $rewritten = "${clean}/v1/chat/completions";
     return ($rewritten,
         "Normalized: appended /v1/chat/completions. Local inference servers (llama.cpp, "
-        . "LM Studio, SAM) expect the full chat completions path. Pass a bare host "
+        . "LM Studio) expect the full chat completions path. Pass a bare host "
         . "like http://localhost:8080 and we'll fill in the rest; pass a custom "
         . "path and it will be left alone.");
 }
@@ -1915,7 +1915,7 @@ sub _activate_model_with_provider {
 Check whether the given provider has credentials configured.
 Returns ($has_auth, $error_message). $has_auth is 1 when credentials
 are present OR when the provider does not require explicit credentials
-(e.g. github_copilot with device flow, sam, llama.cpp, lmstudio).
+(e.g. github_copilot with device flow, llama.cpp, lmstudio).
 
 =cut
 
@@ -1932,7 +1932,6 @@ sub _check_provider_auth {
     # Providers that don't need an API key in CLIO config
     my %NO_KEY_NEEDED = map { $_ => 1 } qw(
         github_copilot
-        sam
         llama.cpp
         lmstudio
     );
@@ -3074,7 +3073,7 @@ sub _detect_api_type {
         'openai'         => ['openai', 'https://api.openai.com/v1/models'],
         'dashscope-cn'   => ['dashscope', 'https://dashscope.aliyuncs.com/compatible-mode/v1/models'],
         'dashscope-intl' => ['dashscope', 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1/models'],
-        'sam'            => ['sam', 'http://localhost:8080/v1/models'],
+        'llama.cpp'      => ['llama.cpp', 'http://localhost:8080/v1/models'],
     );
 
     if (exists $api_configs{$api_base}) {
@@ -3091,13 +3090,13 @@ sub _detect_api_type {
         $base_url =~ s{/compatible-mode/v1.*$}{};
         return ('dashscope', "$base_url/compatible-mode/v1/models");
     } elsif ($api_base =~ m{^https?://[^/]+:8080/}i) {
-        # SAM conventionally listens on 8080. Use the user-supplied base URL
+        # llama.cpp conventionally listens on 8080. Use the user-supplied base URL
         # directly so LAN deployments (e.g. http://max:8080) work.
         my $base_url = $api_base;
         $base_url =~ s{/chat/completions$}{};
         $base_url =~ s{/v1$}{};
         $base_url =~ s{/+$}{};
-        return ('sam', "$base_url/v1/models");
+        return ('llama.cpp', "$base_url/v1/models");
     }
 
     if ($api_base =~ m{^https?://}) {

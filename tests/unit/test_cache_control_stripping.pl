@@ -39,7 +39,7 @@ $api->isa('CLIO::Core::APIManager');  # ensure package is loaded
 
 # ── Test 1: cache_control stripped for providers that DON'T support it ─
 {
-    my $endpoint_config = build_endpoint_config('sam', 'test-key');
+    my $endpoint_config = build_endpoint_config('llama.cpp', 'test-key');
 
     my $payload = {
         model => 'test',
@@ -57,18 +57,18 @@ $api->isa('CLIO::Core::APIManager');  # ensure package is loaded
 
     # System message cache_control should be stripped
     ok(!$payload->{messages}[0]{cache_control},
-        'SAM: cache_control stripped from system message');
+        'llama.cpp: cache_control stripped from system message');
     ok(!$payload->{messages}[1]{cache_control},
-        'SAM: cache_control stripped from user message');
+        'llama.cpp: cache_control stripped from user message');
 
     # Tool cache_control should be stripped
     ok(!$payload->{tools}[1]{cache_control},
-        'SAM: cache_control stripped from last tool');
+        'llama.cpp: cache_control stripped from last tool');
 }
 
 # ── Test 2: cache_control stripped from content blocks (array format) ─
 {
-    my $endpoint_config = build_endpoint_config('sam', 'test-key');
+    my $endpoint_config = build_endpoint_config('llama.cpp', 'test-key');
 
     my $payload = {
         model => 'test',
@@ -84,7 +84,7 @@ $api->isa('CLIO::Core::APIManager');  # ensure package is loaded
 
     for my $block (@{$payload->{messages}[0]{content}}) {
         ok(!$block->{cache_control},
-            "SAM: cache_control stripped from content block (block type=$block->{type})");
+            "llama.cpp: cache_control stripped from content block (block type=$block->{type})");
     }
 }
 
@@ -152,20 +152,20 @@ $api->isa('CLIO::Core::APIManager');  # ensure package is loaded
 
 # ── Test 6: No messages -> no crash ────────────────────────────────────
 {
-    my $endpoint_config = build_endpoint_config('sam', 'test-key');
+    my $endpoint_config = build_endpoint_config('llama.cpp', 'test-key');
     my $payload = { model => 'test', messages => [] };
 
     my $ok = eval { $api->adapt_request_for_endpoint($payload, $endpoint_config); 1 };
-    ok($ok, 'SAM: empty messages array does not crash');
+    ok($ok, 'llama.cpp: empty messages array does not crash');
 }
 
 # ── Test 7: Undefined messages -> no crash ─────────────────────────────
 {
-    my $endpoint_config = build_endpoint_config('sam', 'test-key');
+    my $endpoint_config = build_endpoint_config('llama.cpp', 'test-key');
     my $payload = { model => 'test' };
 
     my $ok = eval { $api->adapt_request_for_endpoint($payload, $endpoint_config); 1 };
-    ok($ok, 'SAM: no messages key does not crash');
+    ok($ok, 'llama.cpp: no messages key does not crash');
 }
 
 done_testing();

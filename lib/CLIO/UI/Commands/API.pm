@@ -246,7 +246,6 @@ sub _display_api_help {
             ['custom',            'Custom OpenAI-compatible API', 40],
             ['llama.cpp',         'Local llama.cpp server', 40],
             ['lmstudio',          'Local LM Studio server', 40],
-            ['sam',               'Local SAM server', 40],
           ],
           lines => [''],
         },

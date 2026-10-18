@@ -1097,7 +1097,7 @@ sub list_provider_keys {
 Get the API base URL for a specific provider from per-provider storage.
 
 Arguments:
-- $provider: Provider name (e.g., 'llama.cpp', 'sam')
+- $provider: Provider name (e.g., 'llama.cpp')
 
 Returns: API base URL string or undef if not set
 
@@ -1119,7 +1119,7 @@ This stores the URL in per-provider storage and also sets it as current
 if the provider matches the current provider.
 
 Arguments:
-- $provider: Provider name (e.g., 'llama.cpp', 'sam')
+- $provider: Provider name (e.g., 'llama.cpp')
 - $url: API base URL value
 
 Returns: 1 on success

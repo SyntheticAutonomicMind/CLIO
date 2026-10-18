@@ -3,7 +3,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 Andrew Wyatt (Fewtarius)
 #
 # Test: /api set base URL normalization for local inference providers
-# (llama.cpp, lmstudio, sam). The user reported a fresh llama.cpp install
+# (llama.cpp, lmstudio). The user reported a fresh llama.cpp install
 # with a bare host URL like http://nimo:9090 producing a useless "File Not
 # Found" error because the request hit the server root instead of
 # /v1/chat/completions. CLIO now auto-appends the conventional path for
@@ -76,9 +76,8 @@ my @cases = (
     ['llama.cpp', 'http://nimo:9090/v1/chat/completions', 'http://nimo:9090/v1/chat/completions', undef],
     ['llama.cpp', 'http://nimo:9090/v1/chat/completions/', 'http://nimo:9090/v1/chat/completions/', undef],
 
-    # lmstudio and sam are also local inference - same rules apply
+    # lmstudio is also local inference - same rules apply
     ['lmstudio', 'http://localhost:1234', 'http://localhost:1234/v1/chat/completions', 'appended /v1/chat/completions'],
-    ['sam',      'http://localhost:8080', 'http://localhost:8080/v1/chat/completions', 'appended /v1/chat/completions'],
 
     # Non-local providers (e.g. openai, github_copilot, google) - leave alone
     # even when bare host. They use different URL conventions.

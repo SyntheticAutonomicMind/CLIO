@@ -76,10 +76,10 @@ is(_derive_models_url('https://ollama.com/v1/chat/completions'),
    'https://ollama.com/v1/models',
    'ollama_cloud: /v1/chat/completions -> /v1/models');
 
-# Test 5: sam (local, port 8080)
+# Test 5: llama.cpp (local, port 8080)
 is(_derive_models_url('http://localhost:8080/v1/chat/completions'),
    'http://localhost:8080/v1/models',
-   'sam: local /v1/chat/completions -> /v1/models');
+   'llama.cpp: local /v1/chat/completions -> /v1/models');
 
 # Test 6: lmstudio (local, port 1234)
 is(_derive_models_url('http://localhost:1234/v1/chat/completions'),

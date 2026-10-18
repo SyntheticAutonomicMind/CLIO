@@ -695,7 +695,6 @@ if ($mode eq 'list_models') {
         my $api_key = $config->get_provider_key($provider_name);
         my $has_auth = $api_key
             || $provider_name eq 'github_copilot'
-            || $provider_name eq 'sam'
             || $provider_name eq 'llama.cpp'
             || $provider_name eq 'lmstudio';
 

@@ -779,7 +779,7 @@ Behavior:
 
 Arguments:
 - $messages: Arrayref of messages
-- $provider: Provider name string (e.g., 'github_copilot', 'google', 'sam')
+- $provider: Provider name string (e.g., 'github_copilot', 'google')
 - %opts: Options hash
   - debug => 0|1
 

@@ -1531,14 +1531,6 @@ sub adapt_request_for_endpoint {
         }
     }
     
-    # Add SAM config if required (for bypass_processing support)
-    if ($endpoint_config->{requires_sam_config}) {
-        $payload->{sam_config} = {
-            bypass_processing => \1,  # JSON true via scalar reference
-        };
-        log_debug('APIManager', "Added sam_config with bypass_processing=true");
-    }
-    
     # Remove GitHub Copilot-specific fields for non-Copilot endpoints
     if (!$endpoint_config->{requires_copilot_headers}) {
         delete $payload->{copilot_thread_id};
@@ -1617,7 +1609,7 @@ appropriate thinking/reasoning parameters into $payload.
 
 Schema modes:
   disabled     - Never send reasoning params (llama.cpp, LM Studio,
-                 Ollama, SAM). Models that support reasoning think
+                 Ollama). Models that support reasoning think
                  automatically; no param is needed.
   native       - Handled by provider's native API (Anthropic, Google).
                  Skip OpenAI-compat injection here.
@@ -2044,7 +2036,7 @@ sub get_model_capabilities {
     }
 
     # Use MCM for all providers — it handles native APIs (Anthropic, Google),
-    # static maps/local fetchers (llama.cpp, SAM, LM Studio), openai-compatible
+    # static maps/local fetchers (llama.cpp, LM Studio), openai-compatible
     # /models fetches (OpenAI, OpenRouter, Vercel, KiloCode, OrcaRouter), and
     # heuristics for unknown models.
     # Resolve custom provider aliases (e.g. "nimo" -> "llama.cpp") so MCM
@@ -2365,7 +2357,7 @@ sub _detect_api_type_and_url {
         'openai'         => ['openai', 'https://api.openai.com/v1/models'],
         'dashscope-cn'   => ['dashscope', 'https://dashscope.aliyuncs.com/compatible-mode/v1/models'],
         'dashscope-intl' => ['dashscope', 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1/models'],
-        'sam'            => ['sam', 'http://localhost:8080/v1/models'],
+        'llama.cpp'      => ['llama.cpp', 'http://localhost:8080/v1/models'],
         'lmstudio'       => ['lmstudio', 'http://localhost:1234/v1/models'],
         'ollama-cloud'   => ['ollama-cloud', 'https://ollama.com/v1/models'],
         'openrouter'     => ['openrouter', 'https://openrouter.ai/api/v1/models'],
@@ -2383,7 +2375,7 @@ sub _detect_api_type_and_url {
 
     # Map provider names to (api_type, models_url). Note: the models_url here
     # is only used as a fallback when the api_base supplied by the user lacks
-    # a discernible URL pattern. For LAN-local SAM/LM Studio deployments the
+    # a discernible URL pattern. For LAN-local llama.cpp/LM Studio deployments the
     # user-supplied api_base (e.g. http://max:8080/...) takes precedence and
     # these localhost URLs are not used.
     my %provider_models_urls = (
@@ -2396,7 +2388,7 @@ sub _detect_api_type_and_url {
         'minimax'        => ['minimax', 'https://api.minimax.io/v1/models'],
         'ollama-cloud'   => ['ollama-cloud', 'https://ollama.com/v1/models'],
         'lmstudio'       => ['lmstudio', 'http://localhost:1234/v1/models'],
-        'sam'            => ['sam', 'http://localhost:8080/v1/models'],
+        'llama.cpp'      => ['llama.cpp', 'http://localhost:8080/v1/models'],
     );
 
     if ($provider_name && exists $provider_models_urls{$provider_name}) {
@@ -3780,7 +3772,7 @@ sub _prepare_api_request {
 
     # Create HTTP client with appropriate timeout for the provider tier.
     # Tiered timeouts via curl's --max-time:
-    #   - Local inference (slow_api): 900s — llama.cpp/SAM/LM Studio are CPU-bound
+    #   - Local inference (slow_api): 900s — llama.cpp/LM Studio are CPU-bound
     #   - Route-based (route_timeout): 300s — OpenRouter/OrcaRouter add upstream hop latency
     #   - Direct cloud (default):     300s — OpenAI, Anthropic, Google, Copilot respond fast
     # Use shared client for connection pooling (keep-alive)

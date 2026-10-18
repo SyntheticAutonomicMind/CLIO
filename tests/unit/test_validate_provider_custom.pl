@@ -43,8 +43,8 @@ subtest 'validate_provider accepts built-in providers' => sub {
     ($ok, $err) = validate_provider('github_copilot', $config);
     ok($ok, 'github_copilot is valid');
 
-    ($ok, $err) = validate_provider('sam', $config);
-    ok($ok, 'sam is valid');
+    ($ok, $err) = validate_provider('llama.cpp', $config);
+    ok($ok, 'llama.cpp is valid');
 
     ($ok, $err) = validate_provider('llama.cpp', $config);
     ok($ok, 'llama.cpp is valid');

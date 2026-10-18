@@ -80,7 +80,7 @@ You need at least one AI provider. See [PROVIDERS.md](PROVIDERS.md) for the full
 
 **Common choices:**
 - **GitHub Copilot** - easiest starting point, access to multiple models
-- **Local models** - llama.cpp, LM Studio, or SAM
+- **Local models** - llama.cpp, LM Studio
 - **API providers** - OpenAI, Google, DeepSeek, OpenRouter, MiniMax, Z.AI
 
 ---

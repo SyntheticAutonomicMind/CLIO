@@ -3,7 +3,7 @@
 #
 # Validates the local_inference / exposes_props / default_context_window
 # / url_detection_patterns feature flags introduced to replace scattered
-# `provider =~ /^sam|lmstudio|llama\.cpp$/i` regex checks across the
+# `provider =~ /^(llama\.cpp|lmstudio)$/i` regex checks across the
 # codebase.
 #
 # Adding a new local inference provider should require:
@@ -31,7 +31,7 @@ use CLIO::Core::Defaults qw(
 use CLIO::Core::ModelDataLoader;
 
 # Each tier name + the providers that should belong to it.
-my @LOCAL_NAMES  = qw(sam lmstudio llama.cpp);
+my @LOCAL_NAMES  = qw(llama.cpp lmstudio);
 my @CLOUD_NAMES  = qw(openai anthropic google minimax zai deepseek nvidia github_copilot openrouter ollama_cloud orca kilo hyper opper);
 
 # ============================================================================
@@ -100,8 +100,8 @@ for my $name (@CLOUD_NAMES) {
 # any non-empty provider name that triggers a "true" result works.
 {
     # A fake provider name that's in the registry gets its own result
-    is(default_context_window('sam'),  DEFAULT_LOCAL_CONTEXT_WINDOW(),
-        "default_context_window sam -> local window");
+    is(default_context_window('llama.cpp'),  DEFAULT_LOCAL_CONTEXT_WINDOW(),
+        "default_context_window llama.cpp -> local window");
     is(default_context_window('openai'), DEFAULT_CONTEXT_WINDOW(),
         "default_context_window openai -> cloud window");
 }
@@ -110,15 +110,15 @@ for my $name (@CLOUD_NAMES) {
 # url_detection_patterns - registry-driven URL discovery
 # ============================================================================
 {
-    # SAM listens on 8080
-    is(provider_from_url('http://localhost:8080/v1/models'),    'sam',
-        'SAM URL pattern matches via registry');
-    is(provider_from_url('http://localhost:8080/v1/chat/completions'), 'sam',
-        'SAM URL with /chat path still matches');
-    is(provider_from_url('http://192.168.1.50:8080/v1'), 'sam',
-        'SAM pattern matches LAN host too');
-    is(provider_from_url('https://api.example.com:8080/'), 'sam',
-        'SAM pattern is port-based (not just localhost)');
+    # llama.cpp listens on 8080
+    is(provider_from_url('http://localhost:8080/v1/models'),    'llama.cpp',
+        'llama.cpp URL pattern matches via registry');
+    is(provider_from_url('http://localhost:8080/v1/chat/completions'), 'llama.cpp',
+        'llama.cpp URL with /chat path still matches');
+    is(provider_from_url('http://192.168.1.50:8080/v1'), 'llama.cpp',
+        'llama.cpp pattern matches LAN host too');
+    is(provider_from_url('https://api.example.com:8080/'), 'llama.cpp',
+        'llama.cpp pattern is port-based (not just localhost)');
 
     # LM Studio listens on 1234
     is(provider_from_url('http://localhost:1234/v1/models'), 'lmstudio',
@@ -130,8 +130,8 @@ for my $name (@CLOUD_NAMES) {
     # Confirm the URL falls through to undef, which means user must
     # specify --provider llama.cpp explicitly.
     is(provider_from_url('http://localhost:8080/v1/models'),
-        'sam',
-        'llama.cpp explicitly NOT in URL detection (falls through to sam on 8080)');
+        'llama.cpp',
+        'llama.cpp detected on port 8080 via URL detection');
 }
 
 # ============================================================================
@@ -186,7 +186,7 @@ for my $name (@CLOUD_NAMES) {
         'github_copilot' => 'github_copilot',
         # Local llama.cpp-compatible servers share the llama_cpp fetcher:
         # SAM is a llama.cpp fork, LM Studio exposes /props.
-        'sam'            => 'llama_cpp',
+        'llama.cpp'            => 'llama_cpp',
         'lmstudio'       => 'llama_cpp',
         'llama.cpp'      => 'llama_cpp',
     );
@@ -259,7 +259,7 @@ for my $name (@CLOUD_NAMES) {
 # supports_cache_control - which providers accept cache_control fields
 # ============================================================================
 # Cloud providers with automatic or explicit caching accept cache_control.
-# Local inference providers (SAM, llama.cpp, LM Studio, Ollama Cloud)
+# Local inference providers (llama.cpp, LM Studio, Ollama Cloud)
 # rely on automatic caching at the API level or local SSD-backed KV cache.
 my @CACHE_CONTROL_PROVIDERS = qw(
     anthropic google openai deepseek github_copilot
@@ -267,7 +267,7 @@ my @CACHE_CONTROL_PROVIDERS = qw(
 );
 
 my @NO_CACHE_CONTROL_PROVIDERS = qw(
-    sam llama.cpp lmstudio ollama_cloud
+    llama.cpp lmstudio ollama_cloud
     minimax zai zai_coding nvidia minimax_token
 );
 

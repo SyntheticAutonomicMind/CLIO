@@ -37,11 +37,11 @@ Users can override any setting via /api commands, but these are the defaults.
 
     use CLIO::Providers qw(get_provider list_providers);
     
-    my $provider = get_provider('sam');
-    # Returns: { name => 'SAM', api_base => 'http://localhost:8080/api/chat/completions', ... }
+    my $provider = get_provider('llama.cpp');
+    # Returns: { name => 'llama.cpp (Local)', api_base => 'http://localhost:8080/v1/chat/completions', ... }
     
     my @providers = list_providers();
-    # Returns: ('sam', 'github_copilot', 'openai', ...)
+    # Returns: ('llama.cpp', 'github_copilot', 'openai', ...)
 
 =cut
 
@@ -57,30 +57,6 @@ Users can override any setting via /api commands, but these are the defaults.
 #   - slow_api: Flag for local inference providers requiring longer HTTP timeouts (cloud: 300s, route-based: 300s, slow_api: 900s)
 
 my %PROVIDERS = (
-    sam => {
-        name => 'SAM (Local)',
-        api_base => 'http://localhost:8080/v1/chat/completions',
-        model => undef,  # No default - user must specify (local inference)
-        requires_auth => 'apikey',
-        supports_tools => 1,
-        supports_streaming => 1,
-        slow_api => 1,  # Local inference is significantly slower than cloud APIs
-        # Provider-feature flags (replaces scattered `provider =~ /^sam$/`
-        # checks in MessageValidator/APIManager/MCM). See the helper
-        # functions is_local_inference() and exposes_props() below for
-        # usage and the per-flag rationale.
-        local_inference => 1,
-        exposes_props => 1,
-        capability_fetcher => 'llama_cpp',  # SAM is a llama.cpp fork
-        url_detection_patterns => [ qr{^https?://[^/]+:8080/}i ],
-        endpoint => {
-            path_suffix => '',
-            temperature_range => [0.0, 2.0],
-            supports_tools => 1,
-            requires_sam_config => 1,
-        },
-    },
-    
     github_copilot => {
         name => 'GitHub Copilot',
         api_base => 'https://api.githubcopilot.com',
@@ -190,9 +166,11 @@ my %PROVIDERS = (
         local_inference => 1,
         exposes_props => 1,
         capability_fetcher => 'llama_cpp',
-        # No url_detection_patterns - llama.cpp's port is freely configurable
-        # (the server binds to whatever --port flag was passed), so we can't
-        # safely auto-detect. Users explicitly register as --provider llama.cpp.
+        # Port 8080 is the conventional llama.cpp server port (the default
+        # --port flag). Auto-detect those URLs so users keep one-step local
+        # inference setup; other ports require explicit /api set provider
+        # llama.cpp since the port is freely configurable.
+        url_detection_patterns => [ qr{^https?://[^/]+:8080/}i ],
         endpoint => {
             path_suffix => '',
             temperature_range => [0.0, 2.0],
@@ -594,7 +572,7 @@ my %PROVIDERS = (
 Get provider configuration by name
 
 Arguments:
-  $name - Provider name (e.g. 'sam', 'openai')
+  $name - Provider name (e.g. 'llama.cpp', 'openai')
 
 Returns:
   Hashref with provider config, or undef if not found
@@ -822,7 +800,7 @@ sub build_endpoint_config {
         $endpoint->{supports_reasoning} //= $provider->{supports_reasoning};
     }
     # Propagate slow_api so APIManager can use extended HTTP timeouts
-    # for local inference providers (llama.cpp, SAM, LM Studio).
+    # for local inference providers (llama.cpp, LM Studio).
     if ($provider && $provider->{slow_api}) {
         $endpoint->{slow_api} = 1;
     }
@@ -922,11 +900,11 @@ sub validate_provider {
 
 =head2 is_local_inference($provider_name)
 
-Returns 1 if the named provider is a local-inference server (sam,
-llama.cpp, lmstudio, ...), 0 otherwise.
+Returns 1 if the named provider is a local-inference server (llama.cpp,
+lmstudio, ...), 0 otherwise.
 
 Centralizes the "is this a local inference server?" check that used to
-live as `provider =~ /^(sam|llama\.cpp|lmstudio)$/i` scattered across
+live as `provider =~ /^(llama.cpp|lmstudio)$/i` scattered across
 MessageValidator.pm and APIManager.pm. Adding a new local inference
 provider now requires setting the C<local_inference> flag in the
 provider's registry entry - no other code changes.
@@ -939,7 +917,7 @@ Local inference is flagged when:
 - Server-defined extras (conservative timeout) apply.
 
 Arguments:
-- $provider_name: provider key (e.g. 'sam', 'llama.cpp')
+- $provider_name: provider key (e.g. 'llama.cpp', 'lmstudio')
 
 Returns: 1 if local inference, 0 otherwise (including unknown providers).
 
@@ -949,7 +927,7 @@ sub is_local_inference {
     my ($provider_name) = @_;
 
     # Fast path: built-in providers don't need Config. This covers
-    # the common case (llama.cpp, sam, lmstudio, openai, etc.) without
+    # the common case (llama.cpp, lmstudio, openai, etc.) without
     # the overhead of loading and instantiating CLIO::Core::Config.
     if (defined $provider_name && exists $PROVIDERS{$provider_name}) {
         return $PROVIDERS{$provider_name}{local_inference} ? 1 : 0;
@@ -979,11 +957,11 @@ Returns 1 if the named provider's HTTP server exposes the llama.cpp-style
 C</props> endpoint (default_generation_settings.n_ctx), 0 otherwise.
 
 Centralizes the "try /props to discover runtime context window" gating
-that used to live as C<$api_type =~ /^(generic|sam|lmstudio|llama\.cpp)$/i>
+that used to live as C<$api_type =~ /^(generic|lmstudio|llama.cpp)$/i>
 in ModelCapabilitiesManager.pm.
 
 /props is reported by llama.cpp and compatible servers (LM Studio,
-SAM forks) as the runtime C<n_ctx>, which is set with C<--ctx-size> on
+llama.cpp forks) as the runtime C<n_ctx>, which is set with C<--ctx-size> on
 server start and may differ from the model's training context
 (n_ctx_train) reported by /v1/models. For other servers the endpoint
 returns 404 or malformed JSON, so we only query it when the flag is set.
@@ -1201,9 +1179,9 @@ sub provider_from_url {
     # Provider-declared URL detection patterns. Iterates each provider
     # that opts in by listing url_detection_patterns -> [qr{}, ...].
     # Useful for local servers where hostname/port identifies the
-    # service (e.g. lmstudio on :1234, sam on :8080). llama.cpp
-    # intentionally has no entries because its port is freely
-    # configurable - users must register it explicitly.
+    # service (e.g. lmstudio on :1234, llama.cpp on :8080). llama.cpp's
+    # port is freely configurable; port 8080 (the --port default) is
+    # auto-detected, other ports require explicit /api set provider llama.cpp.
     for my $name (list_providers()) {
         my $p = $PROVIDERS{$name};
         next unless $p && ref($p->{url_detection_patterns}) eq 'ARRAY';
