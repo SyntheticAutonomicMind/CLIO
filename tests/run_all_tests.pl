@@ -122,8 +122,14 @@ for my $category (qw(unit integration e2e)) {
 # Print summary
 print_summary();
 
-# Exit with failure code if any tests failed
-exit($results{failed} > 0 ? 1 : 0);
+# Print a final, machine-parseable one-liner so that even when output is
+# piped through `tail -N` or `grep`, the result is unambiguously visible.
+print_final_result();
+
+# Exit nonzero if ANY tests failed or hung. (A hung test is a failure:
+# a timeout means the test did not produce a clean pass.)
+my $overall_ok = ($results{failed} == 0 && $results{hung} == 0);
+exit($overall_ok ? 0 : 1);
 
 #=============================================================================
 # Subroutines
@@ -219,7 +225,11 @@ sub run_test_file {
         my $wait_result = waitpid($pid, &WNOHANG);
         my $deadline = time() + $opts{per_test_timeout};
         my $timed_out = 0;
-        while ($wait_result <= 0) {
+        # waitpid returns:
+        #   >0 = child reaped (PID), $? is now set
+        #    0 = child still running, keep polling
+        #   -1 = error (no such child) — child is gone, stop polling
+        while ($wait_result == 0) {
             if (time() >= $deadline) {
                 kill('KILL', -$pid) or warn "kill pgid: $!";
                 $timed_out = 1;
@@ -228,8 +238,11 @@ sub run_test_file {
             select(undef, undef, undef, 0.1);
             $wait_result = waitpid($pid, &WNOHANG);
         }
+        # If the non-blocking wait didn't reap the child ($wait_result <= 0),
+        # do a blocking wait to reap it. This covers the timeout case
+        # (child was just killed) and the -1 case (child already gone).
         if ($wait_result <= 0) {
-            waitpid($pid, 0);  # Reap
+            waitpid($pid, 0);
         }
         $exit_code = $timed_out ? 124 : ($? >> 8);
     } else {
@@ -325,6 +338,19 @@ sub print_summary {
     } elsif ($results{passed} > 0) {
         say "\n✅ ALL TESTS PASSED!";
         say "";
+    }
+}
+
+# Print a final, machine-parseable one-liner so that even when output is
+# piped through `tail -N` or `grep`, the result is unambiguously visible.
+# This prevents the caller (or an AI model) from relying solely on the
+# exit code -- which is lost when piped through `tail` or `grep` -- and
+# re-running tests unnecessarily.
+sub print_final_result {
+    if ($results{failed} > 0 || $results{hung} > 0) {
+        say "=== TEST RESULT: FAIL ($results{failed} failed, $results{hung} hung, $results{passed} passed) ===";
+    } else {
+        say "=== TEST RESULT: PASS ($results{passed} passed, $results{failed} failed, $results{hung} hung) ===";
     }
 }
 

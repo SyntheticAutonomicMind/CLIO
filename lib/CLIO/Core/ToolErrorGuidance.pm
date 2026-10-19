@@ -216,6 +216,13 @@ sub _categorize_error {
     # by running `git init` or by running the command from the right cwd.
     return 'not_a_git_repository' if $error =~ /not a git repository/i;
 
+    # Git author identity is missing or a placeholder (e.g. a task harness
+    # left `Test User <test@test.com>` in .git/config). The commit/tag/stash
+    # operations refuse to stamp bad authorship; the agent must fix the
+    # identity, not retry the commit as-is.
+    return 'git_identity_misconfigured'
+        if $error =~ /git author identity/i;
+
     # Operation cancelled by the user/coordinator. The agent should not
     # retry - it should treat this as "user wants to stop" and surface
     # a final answer rather than continuing the loop.
@@ -452,6 +459,15 @@ sub _get_category_guidance {
             return "WHAT WENT WRONG: The current directory is not a Git repository.\n" .
                    "HOW TO FIX: Either run 'git init' to initialize a new repo, or change to a directory " .
                    "that is already a Git repo. Check your current working directory with terminal_operations: exec 'pwd'.";
+        },
+
+        git_identity_misconfigured => sub {
+            return "WHAT WENT WRONG: Git author identity is missing or looks like a placeholder " .
+                   "(e.g. \`Test User <test\@test.com>\` left by a task harness).\n" .
+                   "HOW TO FIX: Set a real git identity for this repository before committing, then retry:\n" .
+                   "  git config user.name \"Your Name\"\n" .
+                   "  git config user.email \"your\@email.com\"\n" .
+                   "Check current values: git config user.name; git config user.email";
         },
 
         operation_cancelled => sub {

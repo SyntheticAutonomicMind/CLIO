@@ -72,6 +72,8 @@ my @cases = (
     [q{No such file or directory},                  'directory_not_found'],
     [q{Directory not readable: /tmp/foo},           'directory_not_readable'],
     [q{Not a Git repository: /tmp/foo},             'not_a_git_repository'],
+    [q{Git author identity is not configured for this repository}, 'git_identity_misconfigured'],
+    [q{Git author identity looks bogus and is rejected},       'git_identity_misconfigured'],
     [q{User cancelled collaboration or provided no input}, 'operation_cancelled'],
     [q{Received stop signal from coordinator},      'operation_cancelled'],
     [q{Timeout waiting for user response via broker (waited 30s)}, 'user_input_timeout'],

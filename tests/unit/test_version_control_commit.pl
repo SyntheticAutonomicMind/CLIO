@@ -39,8 +39,8 @@ sub init_repo {
     mkdir $dir unless -d $dir;
     chdir $dir;
     system("git init -q -b main . 2>&1");
-    system("git config user.email 'test\@test.com' 2>&1");
-    system("git config user.name 'Test User' 2>&1");
+    system("git config user.email 'clio-tester\@steamfork.org' 2>&1");
+    system("git config user.name 'CLIO Tester' 2>&1");
     system("git config commit.gpgsign false 2>&1");
     system("git config tag.gpgsign false 2>&1");
 }
@@ -146,6 +146,55 @@ sub write_file {
         or diag("error: $r->{error}");
     is_deeply($r->{staged_files}, ['a.txt'],
         'staged_files shows the pre-staged file with status prefix stripped');
+}
+
+# ─── Test 5: identity guard rejects bogus author identity ────────────────
+# A task harness (or a copy-pasted .git/config) can leave a placeholder
+# identity like `Test User <test@test.com>`. The commit operation must refuse
+# to stamp such an identity onto a real commit, and the error must be clean
+# (no caller-location leak) and classifiable as invalid_value by
+# ToolErrorGuidance.
+{
+    my $dir = tempdir(CLEANUP => 1) . "/test5";
+    init_repo($dir);
+    # Overwrite the real identity with a known-bogus one.
+    system("git config user.name 'Test User' 2>&1");
+    system("git config user.email 'test\@test.com' 2>&1");
+    write_file("x.txt", "x\n");
+    system("git add x.txt 2>&1");
+
+    my $r = $vc->commit({ message => 'should be blocked' });
+    ok(!$r->{success}, 'commit refused under bogus identity');
+    like($r->{error}, qr/bogus/, 'error mentions bogus identity');
+    like($r->{error}, qr/test\@test\.com/, 'error includes the detected bad identity');
+    unlike($r->{error}, qr/VersionControl\.pm line/, 'error does not leak caller location');
+
+    # Sanity: with a real identity, the guard passes (commit then hits
+    # the clean-tree or success path — either way NOT the identity error).
+    system("git config user.name 'CLIO Tester' 2>&1");
+    system("git config user.email 'clio-tester\@steamfork.org' 2>&1");
+    my $r2 = $vc->commit({ message => 'real identity passes guard' });
+    ok($r2->{success} || ($r2->{error} && $r2->{error} !~ /bogus/),
+        'commit proceeds past identity guard under real identity');
+}
+
+# ─── Test 6: identity guard rejects missing identity ───────────────────────
+# Use an isolated HOME (no global gitconfig) so unsetting the *local* config
+# truly leaves identity unset, instead of falling back to the host's global
+# identity.
+{
+    my $dir = tempdir(CLEANUP => 1) . "/test6";
+    init_repo($dir);
+    system("git config --unset user.name 2>&1");
+    system("git config --unset user.email 2>&1");
+    write_file("y.txt", "y\n");
+    system("git add y.txt 2>&1");
+
+    local $ENV{HOME} = tempdir(CLEANUP => 1);  # no global gitconfig
+    my $r = $vc->commit({ message => 'no identity' });
+    ok(!$r->{success}, 'commit refused with no identity configured');
+    like($r->{error}, qr/not configured|identity is not configured/i,
+        'error explains identity is not configured');
 }
 
 print "\n=== Test Summary ===\n";

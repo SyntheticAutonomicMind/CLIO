@@ -245,8 +245,10 @@ like($r->{error}, qr/Not a Git repository: \/tmp/,
 my $git_dir = tempdir(CLEANUP => 1);
 system('git', '-C', $git_dir, 'init', '-q') == 0
     or die "git init failed: $?";
-system('git', '-C', $git_dir, 'config', 'user.email', 'test@example.com') == 0;
-system('git', '-C', $git_dir, 'config', 'user.name', 'Test User') == 0;
+system('git', '-C', $git_dir, 'config', 'user.email', 'clio-tester@steamfork.org') == 0
+    or die "git config email failed: $?";
+system('git', '-C', $git_dir, 'config', 'user.name', 'CLIO Tester') == 0
+    or die "git config name failed: $?";
 
 $r = $vc->execute({
     operation => 'status',

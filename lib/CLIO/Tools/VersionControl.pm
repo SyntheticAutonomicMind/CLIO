@@ -201,8 +201,78 @@ sub before_route {
     unless ($self->_is_git_repo($repo_path)) {
         return $self->error_result("Not a Git repository: $repo_path");
     }
-    
+
+    # NOTE: git-identity validation is intentionally NOT done in before_route()
+    # so that read-only operations (status, log, diff, branch, blame, etc.)
+    # still work on a repo that happens to carry a placeholder author identity.
+    # The guard runs only inside author-attributing operations (commit,
+    # tag-create, stash-save) via _ensure_git_identity().
     return undef;
+}
+
+# Refuse to operate when git author identity is missing or obviously bogus
+# (e.g. `Test User <test@test.com>` left by a task harness overwriting
+# .git/config). We only inspect the *effective* identity (user.name /
+# user.email, resolved local > global > system, exactly as git sees it).
+# We do NOT write/overwrite any config here -- refusing is safer than
+# silently mutating the user's environment; the agent sets a real identity
+# and retries. Invoked only by commit / tag-create / stash-save.
+sub _ensure_git_identity {
+    my ($self, $repo_path) = @_;
+    $repo_path //= '.';
+
+    my ($name, $email);
+    eval {
+        _in_repo($repo_path, sub {
+            $name  = `git config user.name`;
+            $email = `git config user.email`;
+            chomp($name);
+            chomp($email);
+        });
+    };
+    if ($@) {
+        log_debug('VersionControl', "Identity check skipped: $@");
+        return;
+    }
+
+    # Missing identity entirely.
+    if (!defined($name) || $name eq '' || !defined($email) || $email eq '') {
+        return $self->error_result(
+            "Git author identity is not configured for this repository.\n" .
+            "Set a real identity before committing:\n" .
+            "  git config user.name \"Your Name\"\n" .
+            '  git config user.email "your@email.com"' . "\n" .
+            "Current values: name=[$name] email=[" . $email . "]"
+        );
+    }
+
+    # Reject known-bogus / placeholder identities. Matching is case-insensitive.
+    my ($nl, $el) = (lc($name), lc($email));
+    my @bogus = (
+        qr/^test$/i,              # name "test"
+        qr/^test user$/i,         # name "Test User"
+        qr/^git user$/i,          # name "git user"
+        qr/\btest\@test\.com\b/i,  # email test@test.com
+        qr/\btest\@\w+\b/i,        # email test@anything
+        qr/\bexample\.com\b/i,    # email @example.com
+        qr/\bdummy\b/i,           # name/email "dummy"
+        qr/\bnobody\b/i,          # nobody@
+        qr/^user$/i,              # name "user"
+    );
+    for my $re (@bogus) {
+        if ($nl =~ $re || $el =~ $re) {
+            return $self->error_result(
+                "Git author identity looks bogus and is rejected to prevent " .
+                "bad-commit attribution.\n" .
+                "Detected identity: '$name <$email>'\n" .
+                "Set a real identity before proceeding:\n" .
+                "  git config user.name \"Your Name\"\n" .
+                '  git config user.email "your@email.com"'
+            );
+        }
+    }
+
+    return;
 }
 
 sub dispatch_table {
@@ -425,6 +495,12 @@ sub commit {
     my $result;
 
  return $self->error_result("Missing required parameter: message") unless $message;
+
+    # Refuse to commit under a missing/bogus git author identity (e.g.
+    # `Test User <test@test.com>` left by a task harness). See
+    # _ensure_git_identity() — invoked before any git write happens.
+    my $id_err = $self->_ensure_git_identity($repo_path);
+    return $id_err if $id_err;
 
     # Multi-agent coordination: Request git lock via broker
     my $lock_acquired = 0;
@@ -692,6 +768,11 @@ sub stash {
             my $output;
             if ($action eq 'save') {
                 my $message = $params->{message} || 'stash';
+                # `git stash save` creates a stash entry (a commit object),
+                # so stamp author identity is involved. Guard against a
+                # bogus/missing identity before writing.
+                my $id_err = $self->_ensure_git_identity($repo_path);
+                return $id_err if $id_err;
                 $output = `git stash save @{[_sq($message)]} 2>&1`;
             } elsif ($action eq 'list') {
                 $output = `git stash list 2>&1`;
@@ -746,6 +827,14 @@ sub tag {
         return $self->error_result(
             "Missing required parameter: name (required for action '$action')"
         );
+    }
+
+    # Creating an annotated tag stamps author identity; reject bogus/missing
+    # identity to prevent bad attribution. (Plain `git tag <name>` with no
+    # message does not create an object, so it's not guarded.)
+    if ($action eq 'create' && $params->{message}) {
+        my $id_err = $self->_ensure_git_identity($repo_path);
+        return $id_err if $id_err;
     }
 
     my $result;
