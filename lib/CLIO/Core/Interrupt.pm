@@ -386,6 +386,13 @@ sub install_alrm_handler {
                 # a session reference.
                 $state->{user_interrupted} = 1;
                 $GLOBAL_INTERRUPT_FLAG = 1;
+                # Drain any remaining bytes from the buffer. On some
+                # terminals (notably Linux), a late-arriving DSR response
+                # from the previous readline's cursor query may still be
+                # trickling in. Without this drain, those bytes sit in the
+                # buffer and leak into the next readline's input line as
+                # literal characters (e.g. "R" or "[24;80R").
+                while (defined(eval { ReadKey(-1) })) { }
                 # Re-arm best-effort. Use copy of interval to avoid
                 # surprises if the next install_alrm_handler call
                 # mutates $ALRM_INTERVAL between now and alarm().

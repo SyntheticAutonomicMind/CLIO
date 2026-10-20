@@ -444,7 +444,7 @@ sub _query_cursor_pos {
     # Only meaningful on a real TTY
     return (0, 1) unless -t STDIN;
 
-    my $timeout = $opts{timeout} // 0.1;
+    my $timeout = $opts{timeout} // 0.25;
 
     # Use cbreak mode (echo off) to prevent the DSR response from being
     # echoed back to stdout.
@@ -497,6 +497,82 @@ sub _query_cursor_pos {
     # Any remaining probe bytes that didn't form a complete DSR response.
     if (!$parsed && length($probe)) {
         push @{$self->{_key_queue}}, split //, $probe;
+    }
+
+    # DSR late-drain: if the query timed out, the terminal may still send its
+    # DSR response. On slow Linux terminals, the response can arrive a few
+    # milliseconds after the deadline. Without draining, these bytes sit in
+    # the stdin buffer and leak into readline: the ESC is read by the escape
+    # sequence reader (which only captures 5 bytes after ESC), and the
+    # remaining bytes (e.g. "0R" or just "R") are inserted as literal text
+    # into the user's input.
+    #
+    # We do a short blocking drain (safe here — not in signal context) to
+    # give the terminal a grace period to finish sending the DSR response.
+    # Any bytes we read that form a DSR pattern are discarded; anything
+    # else is pushed to _key_queue for readline to handle.
+    if (!$parsed) {
+        my $drain_deadline = time() + 0.05;
+        my $drain_probe = '';
+        my $drain_saw_esc = 0;
+        while (time() < $drain_deadline) {
+            my $remaining = $drain_deadline - time();
+            $remaining = 0.04 if $remaining > 0.04 || $remaining < 0;
+            my $ch = ReadKey($remaining);
+            next unless defined $ch;
+
+            if (!$drain_saw_esc) {
+                if ($ch eq "\e") {
+                    $drain_saw_esc = 1;
+                    $drain_probe = $ch;
+                } else {
+                    push @{$self->{_key_queue}}, $ch;
+                }
+                next;
+            }
+
+            $drain_probe .= $ch;
+
+            if ($drain_probe =~ /^\e\[(\d+);(\d+)R$/) {
+                log_debug('ReadLine', "DSR late-drain: consumed '$drain_probe'");
+                $drain_probe = '';
+                $drain_saw_esc = 0;
+                next;
+            }
+
+            if ($drain_probe !~ /^\e(?:\[\d*(;\d+)?)?$/) {
+                push @{$self->{_key_queue}}, split //, $drain_probe;
+                $drain_probe = '';
+                $drain_saw_esc = 0;
+                next;
+            }
+        }
+
+        # Final non-blocking sweep for any remaining DSR bytes.
+        if ($drain_saw_esc && length($drain_probe)) {
+            my $drained = $drain_probe;
+            while (defined(my $byte = ReadKey(-1))) {
+                $drained .= $byte;
+                if ($drained =~ /^\e\[(\d+);(\d+)R$/) {
+                    log_debug('ReadLine', "DSR late-drain: consumed '$drained'");
+                    $drained = '';
+                    last;
+                }
+                if ($drained !~ /^\e(?:\[\d*(;\d+)?)?$/) {
+                    push @{$self->{_key_queue}}, split //, $drained;
+                    $drained = '';
+                    last;
+                }
+            }
+            if (length($drained)) {
+                push @{$self->{_key_queue}}, split //, $drained;
+            }
+        }
+
+        # Final non-blocking sweep for any non-escape bytes.
+        while (defined(my $byte = ReadKey(-1))) {
+            push @{$self->{_key_queue}}, $byte;
+        }
     }
 
     # Restore terminal mode (readline will set raw mode afterwards).
@@ -1295,11 +1371,19 @@ sub readline {
             next;
         }
 
-        # Escape sequence (arrow keys, function keys, etc.)
+        # Escape sequence (arrow keys, function keys, DSR response, etc.)
         if ($ord == 27) {
             my $seq = $char;
 
-            for my $i (1..5) {
+            # Read up to 8 bytes after ESC — enough to capture a full DSR
+            # response (ESC[row;colR, e.g. ESC[24;80R is 7 bytes after ESC).
+            # The previous limit of 5 was too small: it captured ESC[24;8
+            # from a DSR response and left "0R" in the buffer to leak as
+            # literal text. 8 covers even 3-digit row/col values (e.g.
+            # ESC[100;99R = 8 bytes after ESC); most DSR responses are
+            # 4-6 bytes after ESC and will terminate early because the
+            # trailing 'R' matches the letter-class check below.
+            for my $i (1..8) {
                 my $next = ReadKey(0.1);
                 last unless defined $next;
                 $seq .= $next;
@@ -1603,6 +1687,7 @@ sub _read_bracketed_paste {
 Handle escape sequences (arrow keys, function keys, etc.)
 
 Supported sequences:
+- ESC [ row ; col R - DSR (Device Status Report) response, silently consumed
 - ESC [ A/B/C/D - Arrow keys (up/down/right/left)
 - ESC [ 1;5C/D - Ctrl+Right/Left (word forward/backward, standard xterm)
 - ESC [ 1;3C/D - Ctrl+Right/Left (Terminal.app sends modifier 3)
@@ -1623,6 +1708,15 @@ sub handle_escape_sequence {
     my ($self, $seq, $input_ref, $cursor_pos_ref, $prompt) = @_;
 
     log_debug('ReadLine', "Escape sequence: " . join(' ', map { sprintf('%02X', ord($_)) } split //, $seq) . " = '$seq'");
+
+    # DSR (Device Status Report) response: ESC [ row ; col R
+    # This can arrive late after _query_cursor_pos times out and leak into
+    # the readline main loop. Silently consume it so it does not appear as
+    # literal text in the user's input.
+    if ($seq =~ /^\e\[\d+;\d+R$/) {
+        log_debug('ReadLine', "DSR response consumed: '$seq'");
+        return;
+    }
 
     # Arrow keys: ESC [ A/B/C/D
     if ($seq =~ /^\e\[([ABCD])$/) {

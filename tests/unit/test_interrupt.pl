@@ -267,12 +267,15 @@ END {
         'Ctrl+C (0x03) does NOT set user_interrupted - SIGINT path stays live');
 
     # Case 2: an ESC byte (0x1B) arrives. The handler must set the flag.
-    # Same 2-read pattern: main byte + drain probe.
+    # Reads: 1 (ESC) + 1 (non-blocking peek, returns undef for standalone ESC)
+    #        + 1 (drain sweep, returns undef). Total = 3.
+    # The drain sweep prevents late-arriving DSR response bytes from leaking
+    # into the next readline's input.
     @bytes_to_return = ("\x1b");
     $key_read_count = 0;
     CLIO::Core::Interrupt::clear(session => $session);
     $alrm_sub->();
-    is($key_read_count, 2, 'ALRM reads one ESC byte plus one drain probe');
+    is($key_read_count, 3, 'ALRM reads one ESC byte plus one drain probe');
     is($session->{_state}{user_interrupted}, 1,
         'ESC (0x1B) sets user_interrupted flag');
 
