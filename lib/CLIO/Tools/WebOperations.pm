@@ -1042,7 +1042,7 @@ sub _prompt_url_confirmation {
     print "$security_check->{reason}\n\n";
 
     print $ui->colorize("  Options: ", 'BOLD');
-    print "(y)es once, (a)llow web ops for session, (n)o deny\n";
+    print "(y)es once | (a)llow category | (n)o deny\n";
 
     require CLIO::Compat::Terminal;
     CLIO::Compat::Terminal::ReadMode(0);

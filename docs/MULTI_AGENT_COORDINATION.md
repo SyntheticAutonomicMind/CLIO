@@ -683,7 +683,7 @@ graph TD
     SendReq["AuthorizationRelay sends<br/>authorization_request through broker"]
     Queue["Broker queues request in user inbox"]
     Poll["Primary session polls inbox,<br/>displays security prompt"]
-    Respond["User responds:<br/>(y)es once | (a)llow session | (n)o deny"]
+    Respond["User responds:<br/>(y)es once | (a)llow category | (n)o deny"]
     Reply["Response flows back through<br/>broker to child agent"]
     Result["Child tool receives approval/denial,<br/>continues or aborts"]
 
@@ -733,14 +733,17 @@ sequenceDiagram
 |------|-----------------|----------|
 | TerminalOperations | `_prompt_command_confirmation` | `command_execution` |
 | FileOperations | `_prompt_script_confirmation` | `script_creation` |
+| FileOperations | `_prompt_overwrite_confirmation` | `file_overwrite` |
 | WebOperations | `_prompt_url_confirmation` | `web_fetch` |
 
 ### Behavior
 
 - **Timeout:** 60 seconds (configurable). If no response, the operation is denied.
-- **Session grants:** When the user selects "(a)llow session", the grant is stored in the child agent's process (same as interactive mode).
+- **Session grants:** When the user selects "(a)llow category", the grant is stored in the child agent's process (same as interactive mode). The grant is scoped to the security category (e.g., `system_destructive`, `file_overwrite`, `fetch_url`), meaning future commands in that category are auto-approved.
+- **All security prompts** use the same three-option format:
+  `(y)es once | (a)llow category | (n)o deny`
 - **Fallback:** If no broker is connected, operations are denied (same as pre-relay behavior).
-- **Cleanup:** Pending requests are cleaned up when a child agent disconnects.
+- **Cleanup:** Pending requests are cleaned up when a child agent disconnects. Pending grants are also cleared at session start. Use `/security reset` to manually clear all grants.
 - **Polling:** The primary session checks for auth requests both in the input loop and between tool executions.
 
 ---

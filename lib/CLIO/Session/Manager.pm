@@ -177,6 +177,7 @@ sub new {
     require CLIO::Tools::WebOperations;
     CLIO::Tools::TerminalOperations::reset_session_grants();
     CLIO::Tools::FileOperations::reset_script_session_grants();
+    CLIO::Tools::FileOperations::reset_overwrite_session_grants();
     CLIO::Tools::WebOperations::reset_url_session_grants();
 
     # Determine working directory for loading project LTM

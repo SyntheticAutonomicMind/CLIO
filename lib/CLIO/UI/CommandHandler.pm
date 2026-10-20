@@ -344,6 +344,7 @@ sub _build_command_registry {
         { summary => 'Show API usage statistics', category => 'OTHER', names => [qw(billing bill usage)], handler => sub { $self->{billing_cmd}->handle_billing_command(@_) } },
         { summary => 'Show system performance stats', category => 'OTHER', names => [qw(performance perf)], handler => sub { $self->{system_cmd}->handle_performance_command(@_) } },
         { summary => 'Open an interactive shell', category => 'OTHER', names => [qw(shell sh)], handler => sub { $self->{system_cmd}->handle_shell_command() } },
+        { summary => 'Manage security grants and prompts', category => 'OTHER', name => 'security', handler => sub { $self->{system_cmd}->handle_security_command(@_) } },
         { summary => 'List and manage registered devices', category => 'DEVICES & REMOTE', names => [qw(device dev)], handler => sub { CLIO::UI::Commands::Device::handle_device_command(join(' ', @_), { chat => $chat }) } },
         { summary => 'List and manage device groups', category => 'DEVICES & REMOTE', name => 'group', handler => sub { CLIO::UI::Commands::Device::handle_group_command(join(' ', @_), { chat => $chat }) } },
         

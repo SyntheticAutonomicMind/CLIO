@@ -105,7 +105,7 @@ sub _handle_agent_authorization {
         web_fetch         => 'Web Request',
     }->{$category} || ucfirst($category);
 
-    my $options = '(y)es once | (a)llow session | (n)o deny';
+    my $options = '(y)es once | (a)llow category | (n)o deny';
 
     if ($theme_mgr && $theme_mgr->can('get_security_prompt')) {
         my ($prompt_line, $input_line) = $theme_mgr->get_security_prompt(

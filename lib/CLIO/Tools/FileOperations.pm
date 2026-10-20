@@ -2750,8 +2750,11 @@ or the broker relay for sub-agents). The user always has final authority.
 
 =cut
 
-# Session-level grants for script writing
+# Session-level grants for script writing (keyed by category name)
 my %_script_write_grants;
+
+# Session-level grants for file overwrites (keyed by category name)
+my %_overwrite_session_grants;
 
 sub _scan_script_content {
     my ($self, $path, $content, $context) = @_;
@@ -2899,7 +2902,7 @@ sub _prompt_script_confirmation {
         my ($prompt_line, $input_line) = $theme_mgr->get_security_prompt(
             $path,
             $scan_result->{flags},
-            '(y)es once | (a)llow scripts | (n)o deny',
+            '(y)es once | (a)llow category | (n)o deny',
         );
         print "\n$prompt_line\n$input_line";
     } else {
@@ -2909,7 +2912,7 @@ sub _prompt_script_confirmation {
             push @flag_parts, "[$flag->{severity}] $flag->{description}";
         }
         my $flags_str = join(" | ", @flag_parts);
-        print "\n* Security | $path\n  $flags_str\n  (y)es once | (a)llow scripts | (n)o deny: ";
+        print "\n* Security | $path\n  $flags_str\n  (y)es once | (a)llow category | (n)o deny: ";
     }
 
     # Suspend ALRM handler - Chat.pm's 1-second timer calls ReadKey(-1)
@@ -2949,7 +2952,7 @@ sub _prompt_script_confirmation {
 
 =head2 reset_script_session_grants
 
-Reset script writing session grants. Called at session end.
+Reset script writing session grants. Called at session start.
 
 =cut
 
@@ -2957,9 +2960,22 @@ sub reset_script_session_grants {
     %_script_write_grants = ();
 }
 
+=head2 reset_overwrite_session_grants
+
+Reset file-overwrite session grants. Called at session start.
+
+=cut
+
+sub reset_overwrite_session_grants {
+    %_overwrite_session_grants = ();
+}
+
 =head2 _prompt_overwrite_confirmation
 
 Prompt the user to confirm overwriting an existing non-empty file.
+
+Supports interactive prompts (TTY), broker relay (headless sub-agents),
+and session-level grants for the 'file_overwrite' category.
 
 Arguments:
 - $path: File that would be overwritten
@@ -2973,8 +2989,66 @@ Returns: 1 if approved, 0 if denied
 sub _prompt_overwrite_confirmation {
     my ($self, $path, $existing_size, $context) = @_;
 
-    my $ui = $context->{ui};
-    my $spinner = $context->{spinner};
+    # Check session-level grants first
+    if ($_overwrite_session_grants{file_overwrite}) {
+        log_debug('FileOp', "Session grant exists for 'file_overwrite' - auto-approving");
+        return 1;
+    }
+
+    # Non-interactive context: no UI or no TTY. Try broker relay for sub-agents.
+    my $ui = ($context && $context->{ui}) ? $context->{ui} : undef;
+    unless ($ui && $ui->can('colorize') && -t STDIN) {
+        # In --input mode: log a warning and allow
+        if ($ui && $ui->{non_interactive}) {
+            log_debug('FileOp', "Non-interactive mode - overwriting $path ($existing_size bytes) without confirmation");
+            $ui->display_warning_message("Overwriting $path ($existing_size bytes) without confirmation (non-interactive mode)");
+            return 1;
+        }
+
+        # No TTY - try broker relay for headless sub-agents
+        my $broker = ($context && $context->{broker_client}) ? $context->{broker_client} : undef;
+        if ($broker) {
+            log_debug('FileOp', "No TTY - relaying file overwrite authorization through broker");
+            require CLIO::Security::AuthorizationRelay;
+            my $relay = CLIO::Security::AuthorizationRelay->new(broker_client => $broker);
+            if ($relay->available()) {
+                my $result = $relay->request_authorization(
+                    category    => 'file_overwrite',
+                    description => $path,
+                    risk_level  => 'medium',
+                    flags       => [{ category => 'file_overwrite', severity => 'medium', description => "File exists ($existing_size bytes) and will be overwritten" }],
+                );
+                if ($result->{approved}) {
+                    if ($result->{grant_type} eq 'session') {
+                        $_overwrite_session_grants{file_overwrite} = 1;
+                        log_debug('FileOp', "Session grant (via relay) for file_overwrite");
+                    }
+                    return 1;
+                }
+                return 0;
+            }
+        }
+        log_debug('FileOp', "No UI and no broker relay - denying overwrite of $path");
+        return 0;
+    }
+
+    my $spinner = ($context && $context->{spinner}) ? $context->{spinner} : undef;
+    $spinner->stop() if $spinner && $spinner->can('stop');
+
+    # Unified three-option format across all security prompts
+    my $options = '(y)es once | (a)llow category | (n)o deny';
+
+    my $theme_mgr = $ui->{theme_mgr};
+    if ($theme_mgr && $theme_mgr->can('get_security_prompt')) {
+        my ($prompt_line, $input_line) = $theme_mgr->get_security_prompt(
+            $path,
+            [{ category => 'file_overwrite', severity => 'medium', description => "File exists ($existing_size bytes) and will be overwritten" }],
+            $options,
+        );
+        print "\n$prompt_line\n$input_line";
+    } else {
+        print "\n* Security | $path\n  [file_overwrite] File exists ($existing_size bytes) and will be overwritten\n  $options: ";
+    }
 
     # Suspend ALRM + terminal during prompt (same pattern as _prompt_script_confirmation)
     my $saved_alrm = $SIG{ALRM};
@@ -2983,18 +3057,6 @@ sub _prompt_overwrite_confirmation {
     require CLIO::Compat::Terminal;
     while (defined(eval { CLIO::Compat::Terminal::ReadKey(-1) })) { }
     CLIO::Compat::Terminal::ReadMode(0);
-
-    my $theme_mgr = $ui->{theme_mgr};
-    if ($theme_mgr && $theme_mgr->can('get_security_prompt')) {
-        my ($prompt_line, $input_line) = $theme_mgr->get_security_prompt(
-            $path,
-            [{ category => 'file_overwrite', severity => 'medium', description => "File exists ($existing_size bytes) and will be overwritten" }],
-            '(y)es overwrite | (n)o, cancel',
-        );
-        print "\n$prompt_line\n$input_line";
-    } else {
-        print "\n* Security | $path\n  [file_overwrite] File exists ($existing_size bytes) and will be overwritten\n  (y)es overwrite | (n)o, cancel: ";
-    }
 
     my $old_fh = select(STDOUT);
     $| = 1; select($old_fh);
@@ -3009,7 +3071,14 @@ sub _prompt_overwrite_confirmation {
 
     $spinner->start() if $spinner && $spinner->can('start');
 
-    return 1 if ($response eq 'y' || $response eq 'yes');
+    if ($response eq 'y' || $response eq 'yes') {
+        return 1;
+    } elsif ($response eq 'a' || $response eq 'allow') {
+        $_overwrite_session_grants{file_overwrite} = 1;
+        log_debug('FileOp', "Session grant added for file_overwrite");
+        return 1;
+    }
+
     return 0;
 }
 

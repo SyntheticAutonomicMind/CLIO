@@ -959,10 +959,10 @@ sub _prompt_command_confirmation {
     my $spinner = ($context && $context->{spinner}) ? $context->{spinner} : undef;
     $spinner->stop() if $spinner && $spinner->can('stop');
 
-    # Build prompt options
-    my $options = $is_critical
-        ? '(y)es once | (a)llow session | (n)o deny'
-        : '(y)es once | (a)llow category | (n)o deny';
+    # Build prompt options — unified across all risk levels (including critical).
+    # All risk levels use the same three-option format:
+    #   (y)es once | (a)llow category | (n)o deny
+    my $options = '(y)es once | (a)llow category | (n)o deny';
 
     # Use themed security prompt
     my $theme_mgr = $ui->{theme_mgr};
@@ -973,7 +973,7 @@ sub _prompt_command_confirmation {
             $options,
         );
         if ($is_critical) {
-            print "\n\e[1;31m[WARN] CRITICAL RISK\e[0m\n$prompt_line\n$input_line";
+            print "\n" . $ui->colorize('[WARN] CRITICAL RISK', 'error_message') . "\n" . $prompt_line . "\n" . $input_line;
         } else {
             print "\n$prompt_line\n$input_line";
         }

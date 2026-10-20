@@ -101,12 +101,12 @@ my $ansi = CLIO::UI::ANSI->new();
             { category => 'system_destructive', severity => 'critical', description => 'Recursive deletion' },
             { category => 'credential_access', severity => 'high', description => 'Access to credential files' },
         ],
-        '(y)es once | (a)llow session | (n)o deny',
+        '(y)es once | (a)llow category | (n)o deny',
     );
 
     ok_str($prompt_line, 'system_destructive', 'get_security_prompt renders first category (system_destructive)');
     ok_str($prompt_line, 'credential_access', 'get_security_prompt renders second category (credential_access)');
-    ok_str($input_line, '(a)llow session', 'get_security_prompt renders session allow option');
+    ok_str($input_line, '(a)llow category', 'get_security_prompt renders category allow option');
 }
 
 # --- get_security_prompt with empty flags array ---

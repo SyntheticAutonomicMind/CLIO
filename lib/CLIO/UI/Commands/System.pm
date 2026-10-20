@@ -216,6 +216,72 @@ sub handle_multiline_command {
     }
 }
 
+=head2 handle_security_command(@args)
+
+Handle the /security command - manage session-level security grants.
+
+  /security          Show current security grant status
+  /security reset    Clear all session-level security grants
+
+=cut
+
+sub handle_security_command {
+    my ($self, @args) = @_;
+
+    my $action = $args[0] || '';
+
+    if ($action eq 'reset') {
+        require CLIO::Tools::TerminalOperations;
+        require CLIO::Tools::FileOperations;
+        require CLIO::Tools::WebOperations;
+
+        CLIO::Tools::TerminalOperations::reset_session_grants();
+        CLIO::Tools::FileOperations::reset_script_session_grants();
+        CLIO::Tools::FileOperations::reset_overwrite_session_grants();
+        CLIO::Tools::WebOperations::reset_url_session_grants();
+
+        $self->display_command_header("SECURITY GRANTS RESET");
+        $self->display_success_message("All session-level security grants cleared.");
+        $self->display_key_value("Cleared", "Command confirmation grants");
+        $self->display_key_value("Cleared", "Script creation grants");
+        $self->display_key_value("Cleared", "File overwrite grants");
+        $self->display_key_value("Cleared", "Web fetch grants");
+        $self->writeline("", markdown => 0);
+        return;
+    }
+
+    # Default: show current status
+    $self->display_command_header("SECURITY STATUS");
+
+    require CLIO::Tools::TerminalOperations;
+    require CLIO::Tools::FileOperations;
+    require CLIO::Tools::WebOperations;
+
+    my %term = %{$CLIO::Tools::TerminalOperations::_session_grants};
+    my %script = %{$CLIO::Tools::FileOperations::_script_write_grants};
+    my %overwrite = %{$CLIO::Tools::FileOperations::_overwrite_session_grants};
+    my %url = %{$CLIO::Tools::WebOperations::_url_session_grants};
+
+    my @all_cats;
+    push @all_cats, map { "command: $_" } keys %term;
+    push @all_cats, map { "script: $_" } keys %script;
+    push @all_cats, map { "overwrite: $_" } keys %overwrite;
+    push @all_cats, map { "web: $_" } keys %url;
+
+    if (@all_cats) {
+        $self->display_key_value("Active grants", scalar(@all_cats) . " session grant(s)");
+        for my $cat (@all_cats) {
+            $self->display_list_item($cat);
+        }
+    } else {
+        $self->display_info_message("No active session-level security grants.");
+        $self->display_key_value("All security prompts", "active (interactive)");
+    }
+
+    $self->writeline("", markdown => 0);
+    $self->display_key_value("Tip", "Use /security reset to clear all grants");
+}
+
 1;
 
 __END__

