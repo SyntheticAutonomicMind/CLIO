@@ -111,6 +111,13 @@ sub feed {
                             delete $self->{buffer}[$r][$c];
                         }
                     }
+                } elsif ($cmd eq 'K') {
+                    # Erase from cursor to end of line (do NOT touch col 0
+                    # if col > 0, matching terminal behavior: ESC[K clears
+                    # from the cursor position to the end of the current row)
+                    for (my $c = $self->{col}; $c < $self->{cols}; $c++) {
+                        delete $self->{buffer}[$self->{row}][$c];
+                    }
                 } elsif ($cmd eq 'H') {
                     $self->{row} = 0;
                     $self->{col} = 0;
@@ -233,16 +240,16 @@ sub run_scenario {
 sub count_redraw_cursor_up {
     my ($bytes) = @_;
     my $total = 0;
-    # redraw_line pattern: \r \e[NA \e[J (CR, up N, clear)
-    # or: \e[NA \e[J (up N, clear after CR)
-    while ($bytes =~ /\e\[(\d*)A\e\[J/g) {
+    # redraw_line pattern: \r \e[NA \e[K (CR, up N, clear line)
+    # or: \e[NA \e[K (up N, clear after CR)
+    while ($bytes =~ /\e\[(\d*)A\e\[K/g) {
         my $n = $1; $n = 1 if $n eq '';
         $total += $n;
     }
     return $total;
 }
 
-use Test::More tests => 6;
+use Test::More tests => 11;
 
 # Test 1: Multi-line input (3 rows), cursor moved to middle of row 0,
 # insert 3 chars. Terminal: 20 cols. Prompt: "> " (2 cols).
@@ -299,5 +306,38 @@ use Test::More tests => 6;
 
     is(substr($rows[0], 0, 20), '> abcdefghijABCDEklm',
        "scroll bug test 2: row 0 has prompt + 18 chars incl ABCDE");
+}
+
+# Test 3: Type to boundary (wrap), then backspace at end.
+# 40 chars on 20-col terminal = 3 display lines (including prompt).
+# Backspace should reduce to 39 chars = 3 display lines, no content loss.
+{
+    @main::KEY_QUEUE = ();
+    push_input(input_chars_for('a' x 40));   # 40 chars, wraps to row 2
+    push_input(127);                          # backspace (at end)
+    push_input(0x0a);                         # Enter
+
+    my ($vt, $bytes) = run_scenario();
+    my @rows = split /\n/, $vt->render, -1;
+
+    # No \e[J (would wipe content above)
+    ok($bytes !~ /\e\[J/,
+       "scroll bug test 3: no \\e[J after wrap + backspace");
+
+    # Row 0 should have prompt + content
+    ok($rows[0] =~ /^> /,
+       "scroll bug test 3: prompt on row 0 after wrap + backspace");
+
+    # Row 0 should have 18 'a's after prompt (full row)
+    ok(substr($rows[0], 0, 20) eq '> ' . ('a' x 18),
+       "scroll bug test 3: row 0 has prompt + 18 a's");
+
+    # Row 1 should have 18 'a's
+    ok(substr($rows[1], 0, 18) eq 'a' x 18,
+       "scroll bug test 3: row 1 has 18 a's");
+
+    # Row 2 should have 1 'a' (39 - 18 - 20 = 1 remaining)
+    ok(substr($rows[2], 0, 1) eq 'a',
+       "scroll bug test 3: row 2 has remaining a's");
 }
 

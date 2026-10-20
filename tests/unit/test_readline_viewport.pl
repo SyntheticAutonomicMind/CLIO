@@ -52,12 +52,13 @@ sub feed {
                 my $j=$i+2;
                 $j++ while $j<length($b)&&substr($b,$j,1)=~ /[\d;?]/;
                 my $p=substr($b,$i+2,$j-$i-2); my $cmd=substr($b,$j,1);
+                if($p !~ /^[0-9;]*$/){$i=$j+1; next}  # skip private modes like ?2004
                 my $n=($p eq ''?1:$p)+0;$n=1 if $n==0;
                 if($cmd eq 'C'){if($s->{pending}){$s->{row}++;$s->{col}=0;$s->{pending}=0}$s->{col}+=$n;$s->{col}=$s->{cols}-1 if $s->{col}>=$s->{cols}}
                 elsif($cmd eq 'D'){if($s->{pending}){$s->{row}++;$s->{col}=0;$s->{pending}=0}$s->{col}-=$n;$s->{col}=0 if $s->{col}<0}
                 elsif($cmd eq 'A'){if($s->{pending}){$s->{row}++;$s->{col}=0;$s->{pending}=0}$s->{row}-=$n;$s->{row}=0 if $s->{row}<0}
                 elsif($cmd eq 'B'){if($s->{pending}){$s->{row}++;$s->{col}=0;$s->{pending}=0}$s->{row}+=$n}
-                elsif($cmd eq 'J'){for my $r($s->{row}..$s->{rows}-1){my $start=($r==$s->{row})?$s->{col}:0;for my $c($start..$s->{cols}-1){$s->{buffer}[$r][$c]=' '}}}
+                elsif($cmd eq 'K'){for my $c($s->{col}..$s->{cols}-1){$s->{buffer}[$s->{row}][$c]=' '}}
                 $i=$j+1
             }else{$i++}
         }elsif($ch eq "\r"){$s->{col}=0;$s->{pending}=0;$i++}

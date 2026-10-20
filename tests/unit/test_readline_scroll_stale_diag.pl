@@ -34,9 +34,8 @@ my $max_row = $rows - 1;
     my $rl = CLIO::Core::ReadLine->new(prompt => $prompt);
     $rl->{scroll_offset} = 0;
 
-    # Simulate typing 100 chars via _emit_text (as the insert fast-path does)
-    $rl->{last_cursor_row} = 0;
-    $rl->{last_cursor_col} = 3;
+    # _emit_text no longer tracks VT cursor position.
+    # Simulate typing 100 chars:
     for my $i (0..99) {
         $rl->_emit_text('a');
     }

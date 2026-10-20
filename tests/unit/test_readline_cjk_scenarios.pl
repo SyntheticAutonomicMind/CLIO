@@ -112,6 +112,13 @@ sub feed {
                             delete $self->{buffer}[$r][$c];
                         }
                     }
+                } elsif ($cmd eq 'K') {
+                    # Erase from cursor to end of line (do NOT touch col 0
+                    # if col > 0, matching terminal behavior: ESC[K clears
+                    # from the cursor position to the end of the current row)
+                    for (my $c = $self->{col}; $c < $self->{cols}; $c++) {
+                        delete $self->{buffer}[$self->{row}][$c];
+                    }
                 } elsif ($cmd eq 'H') {
                     $self->{row} = 0; $self->{col} = 0; $self->{pending} = 0;
                 }

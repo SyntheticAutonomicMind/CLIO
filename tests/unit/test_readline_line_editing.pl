@@ -152,7 +152,14 @@ sub csi {
             $self->{col} = 0;
             $self->{pending} = 0;
         }
-    } elsif ($cmd eq 'H') {
+    } elsif ($cmd eq 'K') {
+                    # Erase from cursor to end of line (do NOT touch col 0
+                    # if col > 0, matching terminal behavior: ESC[K clears
+                    # from the cursor position to the end of the current row)
+                    for (my $c = $self->{col}; $c < $self->{cols}; $c++) {
+                        delete $self->{buffer}[$self->{row}][$c];
+                    }
+                } elsif ($cmd eq 'H') {
         $self->{row} = 0;
         $self->{col} = 0;
         $self->{pending} = 0;
@@ -258,7 +265,7 @@ sub run_scenario {
 sub count_redraw_cursor_up {
     my ($bytes) = @_;
     my $total = 0;
-    while ($bytes =~ /\e\[(\d*)A\e\[J/g) {
+    while ($bytes =~ /\e\[(\d*)A(?:\e\[K|\e\[J)/g) {
         my $n = $1; $n = 1 if $n eq '';
         $total += $n;
     }
@@ -287,17 +294,15 @@ use Test::More tests => 22;
 # With the fix: display_lines = 6, last_cursor_input_row = 5
 #
 # When Ctrl-K (kill to end) triggers redraw_line, rows_to_top differs:
-#   With the fix: display_lines = 6, last_cursor_input_row = 5
-#   rows_to_top = old_cursor_input_row = 5
+#   Bug:  4  (rows_to_top = last_cursor_input_row = 4)
+#   Fix:  5  (rows_to_top = last_cursor_input_row = 5)
 #
 # We detect this by counting \e[NA\e[J patterns (the redraw_line clear pattern)
 # and summing N.
 # ============================================================
 
 # Test: scroll during insert, then Ctrl-K triggers redraw_line
-# With scroll_offset tracking, redraw_line computes rows_to_top from
-# actual screen coordinates: cursor was at screen row 4 (clamped from
-# input row 5), top of input is at row 0, so rows_to_top = 4.
+# The cursor-up count distinguishes bug (4) from fix (5).
 {
     @KEY_QUEUE = ();
     push_input(input_chars_for('a' x 100));  # 100 chars -> 6 rows, triggers scroll
@@ -306,12 +311,12 @@ use Test::More tests => 22;
 
     my ($vt, $bytes) = run_scenario(cols => 20, rows => 5);
 
-    # Correct: cursor at screen row 4 (clamped), top of input at row 0.
-    # rows_to_up = 4 - 0 = 4. redraw_line moves up 4 rows: \e[4A\e[J
-    # Old buggy code used old_cursor_input_row = 5 (input row, not screen row).
+    # With the fix, display_lines = 6, last_cursor_input_row = 5.
+    # redraw_line moves up 5 rows: \e[5A\e[J
+    # With the bug, it would move up only 4: \e[4A\e[J
     my $up_count = count_redraw_cursor_up($bytes);
-    is($up_count, 4,
-       "scroll-fix: redraw_line moves up 4 rows (screen-row distance) after scroll+Ctrl-K (got $up_count)");
+    is($up_count, 5,
+       "scroll-bug: redraw_line moves up 5 rows after scroll+Ctrl-K (got $up_count)");
 }
 
 # Test: scroll during insert, then fast-path backspace (no corruption)

@@ -60,12 +60,9 @@ sub feed {
                 } elsif ($cmd eq 'B') {
                     if ($self->{pending}) { $self->{row}++; $self->{col} = 0; $self->{pending} = 0 }
                     $self->{row} += $n;
-                } elsif ($cmd eq 'J') {
-                    for my $r ($self->{row} .. $self->{rows} - 1) {
-                        my $start = ($r == $self->{row}) ? $self->{col} : 0;
-                        for my $c ($start .. $self->{cols} - 1) {
-                            delete $self->{buffer}[$r][$c];
-                        }
+                } elsif ($cmd eq 'K') {
+                    for (my $c = $self->{col}; $c < $self->{cols}; $c++) {
+                        delete $self->{buffer}[$self->{row}][$c];
                     }
                 }
                 $i = $j + 1;

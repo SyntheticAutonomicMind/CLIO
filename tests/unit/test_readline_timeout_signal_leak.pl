@@ -29,8 +29,11 @@ sub ok_match {
     close $fh;
     unlike($content, qr/__TIMEOUT__/,
         "ReadLine.pm does NOT emit __TIMEOUT__ (timeout mechanism reverted)");
-    unlike($content, qr/my \$timeout = \$opts\{timeout\}/,
-        "ReadLine.pm does NOT accept timeout option");
+    # Internal _query_cursor_pos may accept a timeout option, but that's
+    # a private method — readline() itself must not use timeouts.
+    my $readline_body = ($content =~ /sub readline \{(.*?)^\}/)[0] || '';
+    unlike($readline_body, qr/timeout/i,
+        "readline() does NOT use timeout parameter");
 }
 
 # --- Layer 2: SessionState.add_message coerces non-string content ---

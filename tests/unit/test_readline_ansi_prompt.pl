@@ -6,7 +6,7 @@
 # bytes from cursor tracking while still printing them to the terminal.
 #
 # Without the fix, _emit_text counts ANSI escape bytes as visible columns,
-# inflating last_cursor_col by the ANSI byte count. This corrupts cursor
+# inflating last_cursor_col (the old incremental VT cursor tracking).
 # positioning for any operation that uses last_cursor_* as a source-of-truth:
 #
 #   - Arrow-key navigation after paste: cursor drifts, characters land
@@ -43,6 +43,19 @@ sub push_input {
     } @_;
 }
 sub input_chars_for { return map { chr(ord($_)) } split //, $_[0] }
+
+# Capture STDOUT into a scalar for inspection.
+sub capture_stdout {
+    my ($code) = @_;
+    my $captured = '';
+    open my $fh, '>', \$captured or die "open to scalar: $!";
+    my $old = select($fh);
+    $| = 1;
+    eval { $code->() };
+    select($old);
+    close $fh;
+    return ($captured, $@);
+}
 
 # --- VirtualTerminal: 2-D buffer that processes escape sequences ---
 
@@ -94,12 +107,9 @@ sub feed {
                     $n = 1 if $n == 0;
                     if ($self->{pending}) { $self->{row}++; $self->{col} = 0; $self->{pending} = 0 }
                     $self->{row} += $n;
-                } elsif ($cmd eq 'J') {
-                    for my $r ($self->{row} .. $self->{rows} - 1) {
-                        my $start = ($r == $self->{row}) ? $self->{col} : 0;
-                        for my $c ($start .. $self->{cols} - 1) {
-                            delete $self->{buffer}[$r][$c];
-                        }
+                } elsif ($cmd eq 'K') {
+                    for (my $c = $self->{col}; $c < $self->{cols}; $c++) {
+                        delete $self->{buffer}[$self->{row}][$c];
                     }
                 } elsif ($cmd eq 'H') {
                     $self->{row} = 0; $self->{col} = 0; $self->{pending} = 0;
@@ -214,7 +224,7 @@ sub run_scenario {
     return ($vt, $buf);
 }
 
-use Test::More tests => 9;
+use Test::More tests => 8;
 
 # ANSI-colored prompt: visible width 2 ("> "), ANSI bytes = 17 across
 # multiple colorize() calls. Each segment wrapped in SGR codes.
@@ -231,24 +241,16 @@ ok($ansi_bytes > 0, "ANSI prompt has $ansi_bytes invisible bytes that must not c
     require CLIO::Core::ReadLine;
 
     my $rl = CLIO::Core::ReadLine->new(prompt => '> ');
-    $rl->{last_cursor_row} = 0;
-    $rl->{last_cursor_col} = 1;
-    $rl->{_prompt_disp_cache} = undef;
-    $rl->{_term_size_cache} = undef;
 
-    # Suppress terminal output
-    open(my $dn, ">", "/dev/null");
-    my $old = select($dn);
-    $rl->_emit_text($ansi_prompt);
-    select($old);
-    close($dn);
+    # _emit_text no longer tracks cursor position -- it just prints.
+    # Verify it prints the raw ANSI text correctly (including escape
+    # sequences) and that _get_prompt_disp correctly strips ANSI.
+    my ($captured, $eval_err) = capture_stdout(sub {
+        $rl->_emit_text($ansi_prompt);
+    });
 
-    is($rl->{last_cursor_col}, 3, "_emit_text: cursor at col 3 after 2-visible-char ANSI prompt");
-    is($rl->{last_cursor_row}, 0, "_emit_text: cursor at row 0 after 2-visible-char ANSI prompt (no wrap)");
-    # Under autowrap semantics the cursor sits at a valid (row, col) with
-    # col in [1, term_width] after every emit. A short 2-char emit can't
-    # exceed 80 cols, so the col==3 assertion above is the real check.
-    cmp_ok($rl->{last_cursor_col}, '<=', 80, "_emit_text: cursor col within terminal width after short emit");
+    ok(!$eval_err, "_emit_text: ran without error");
+    is($captured, $ansi_prompt, "_emit_text: prints raw ANSI text including escape codes");
     ok($rl->_get_prompt_disp($ansi_prompt) == 2, "_get_prompt_disp: strips ANSI, returns 2");
 }
 
@@ -279,7 +281,7 @@ ok($ansi_bytes > 0, "ANSI prompt has $ansi_bytes invisible bytes that must not c
 
 # Scenario 2: paste content that wraps to row 2, then backspace
 # (delete at end across wrap boundary). Without the fix, the inflated
-# last_cursor_col causes the wrong row calculation and cursor jumps.
+# _cursor_at_codepoint (which strips ANSI) is the source of truth.
 {
     @KEY_QUEUE = ();
     push_input(input_chars_for("abcdefghijklmnopqrstuvwxyz"));  # 26 chars

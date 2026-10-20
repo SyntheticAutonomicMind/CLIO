@@ -105,6 +105,13 @@ sub feed {
                             delete $self->{buffer}[$r][$c];
                         }
                     }
+                } elsif ($cmd eq 'K') {
+                    # Erase from cursor to end of line (do NOT touch col 0
+                    # if col > 0, matching terminal behavior: ESC[K clears
+                    # from the cursor position to the end of the current row)
+                    for (my $c = $self->{col}; $c < $self->{cols}; $c++) {
+                        delete $self->{buffer}[$self->{row}][$c];
+                    }
                 } elsif ($cmd eq 'H') {
                     $self->{row} = 0; $self->{col} = 0; $self->{pending} = 0;
                 }
@@ -143,7 +150,6 @@ package main;
 # the cursor at (0, 5) (between 'l' and 'l').
 {
     my $rl = CLIO::Core::ReadLine->new(prompt => '> ');
-    $rl->{last_cursor_col} = 7;  # pre-existing stale tracking
 
     my $input = 'hello';
     my $cursor_pos = 3;
@@ -176,7 +182,6 @@ package main;
 # PromptBuilder-style prompt that includes SGR sequences.
 {
     my $rl = CLIO::Core::ReadLine->new(prompt => '> ');
-    $rl->{last_cursor_col} = 5;  # pre-existing stale tracking
 
     my $ansi_prompt = "\e[36m> \e[0m";  # cyan "> "
     my $input = 'abc';
@@ -204,7 +209,6 @@ package main;
 # Cursor at end of input sits at (1, 3) (after the 22 chars wrap).
 {
     my $rl = CLIO::Core::ReadLine->new(prompt => '> ');
-    $rl->{last_cursor_col} = 19;
 
     my $input = 'a' x 22;
     my $cursor_pos = 22;
