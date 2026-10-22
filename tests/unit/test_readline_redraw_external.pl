@@ -113,7 +113,10 @@ sub feed {
                         delete $self->{buffer}[$self->{row}][$c];
                     }
                 } elsif ($cmd eq 'H') {
-                    $self->{row} = 0; $self->{col} = 0; $self->{pending} = 0;
+                    my @p = split /;/, $param;
+                    $self->{row} = (($p[0] // '') ne '' ? $p[0] : 1) - 1;
+                    $self->{col} = (($p[1] // '') ne '' ? $p[1] : 1) - 1;
+                    $self->{pending} = 0;
                 }
                 $i = $j + 1;
             } else { $i++; }

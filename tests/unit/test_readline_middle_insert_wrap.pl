@@ -97,8 +97,15 @@ sub feed {
                     for (my $c = $self->{col}; $c < $self->{cols}; $c++) {
                         delete $self->{buffer}[$self->{row}][$c];
                     }
+                } elsif ($cmd eq 'H') {
+                    if ($self->{pending}) { $self->{row}++; $self->{col} = 0; $self->{pending} = 0 }
+                    my @p = split /;/, $param;
+                    my $hr = (@p && $p[0] ne '' ? $p[0] : 1) + 0;
+                    my $hc = (@p && defined $p[1] && $p[1] ne '' ? $p[1] : 1) + 0;
+                    $self->{row} = $hr - 1;
+                    $self->{col} = $hc - 1;
                 }
-                $i = $j + 1;
+                                $i = $j + 1;
             } else {
                 $i += 2;
             }
@@ -116,7 +123,7 @@ sub feed {
             $self->{buffer}[$self->{row}][$self->{col}] = $ch;
             $self->{col}++;
             if ($self->{col} >= $self->{cols}) {
-                $self->{pending} = 1;
+                $self->{pending} = 1; $self->{col} = $self->{cols} - 1;
             }
             $i++;
         }

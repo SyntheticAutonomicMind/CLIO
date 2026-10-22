@@ -94,7 +94,10 @@ sub feed {
                         delete $self->{buffer}[$self->{row}][$c];
                     }
                 } elsif ($cmd eq 'H') {
-                    $self->{row} = 0; $self->{col} = 0; $self->{pending} = 0;
+                    my @p = split /;/, $param;
+                    $self->{row} = (($p[0] // '') ne '' ? $p[0] : 1) - 1;
+                    $self->{col} = (($p[1] // '') ne '' ? $p[1] : 1) - 1;
+                    $self->{pending} = 0;
                 } elsif ($cmd eq 'J') {
                     for my $r ($self->{row} .. $self->{rows} - 1) {
                         my $start = ($r == $self->{row}) ? $self->{col} : 0;
@@ -123,7 +126,7 @@ sub feed {
             $self->{buffer}[$self->{row}][$self->{col}] = $ch;
             $self->{col}++;
             if ($self->{col} >= $self->{cols}) {
-                $self->{pending} = 1;
+                $self->{pending} = 1; $self->{col} = $self->{cols} - 1;
             }
             $i++;
         }

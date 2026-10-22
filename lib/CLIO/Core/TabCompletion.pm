@@ -198,6 +198,12 @@ sub complete {
 
     log_debug('TabCompletion', "text='$text' line='$line' start=$start");
 
+    # Handle empty or whitespace-only input: complete paths in the current
+    # directory. Without this, Tab does nothing on an empty line.
+    if (!defined $line || $line eq '' || $line =~ /^\s*$/) {
+        return $self->complete_path_with_prefix('', '');
+    }
+
     # Parse the full line into parts
     my @parts = split(/\s+/, $line);
     my $cmd = $parts[0] || '';
@@ -212,7 +218,11 @@ sub complete {
 
     # Case 1: Completing the command itself (first word, starts with /)
     if ($completing_word_index == 0 && $cmd =~ m{^/}) {
-        return $self->complete_command($cmd);
+        my @cmd_matches = $self->complete_command($cmd);
+        return @cmd_matches if @cmd_matches;
+        # No slash-command matches — fall through to path completion.
+        # This handles bare filesystem paths typed as the first word
+        # (e.g., /usr/home, ./file, ~/dir).
     }
 
     # Case 2: Completing first argument (subcommand or file path)
@@ -284,7 +294,10 @@ sub complete {
         return $self->complete_path_with_prefix($partial, $prefix);
     }
 
-    return ();
+    # Fallback: complete the entire line as a bare path. This is reached
+    # when Case 1 found no slash-command matches (e.g. /usr/home typed
+    # as the first word) or when no other case matched.
+    return $self->complete_path_with_prefix($line, '');
 }
 
 =head2 complete_command

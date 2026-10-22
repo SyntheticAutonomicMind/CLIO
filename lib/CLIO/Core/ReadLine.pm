@@ -52,6 +52,19 @@ State retained (see C<new()> for the full list):
   (0-indexed, NOT a screen row).  Written by C<_refresh_geometry> and
   C<redraw_line>.  Read by C<redraw_line> to compute C<rows_to_top>
   (how many rows to move up before clearing).
+- C<last_cursor_input_col>: the cursor's column within the input buffer
+  (1-indexed). Written by C<_refresh_geometry>, C<redraw_line>,
+  C<_redraw_line_external>, and C<reposition_cursor>. Read by
+  C<reposition_cursor> for the same-row vs cross-row decision.
+- C<last_cursor_input_pending>: whether the cursor is in a pending-wrap
+  state (deferred autowrap — the last character filled the last column).
+  Written by C<_refresh_geometry>, C<redraw_line>,
+  C<_redraw_line_external>, and C<reposition_cursor>. Read by
+  C<redraw_line> and C<_redraw_line_external> to decide whether to emit
+  a space to resolve pending-wrap before CR (Step 1).
+  THIS IS NOT THE SAME AS C<last_cursor_input_col >= term_width> —
+  col=term_width can occur without pending (cursor at the last column
+  but the previous character did not fill it).
 
 The fields C<last_cursor_row> and C<last_cursor_col> (incremental VT
 cursor tracking) have been REMOVED.  They were the source of drift
@@ -293,6 +306,11 @@ sub new {
         # (0 = first row). Written by redraw_line, reposition_cursor,
         # _redraw_line_external, and the fast-path insert/backspace.
         last_cursor_input_row => 0,
+        # The cursor's col within the input buffer (1-indexed).
+        # Written by _refresh_geometry, redraw_line, _redraw_line_external,
+        # and reposition_cursor. Read by reposition_cursor for the same-row
+        # vs cross-row decision.
+        last_cursor_input_col => 1,
         # Kill ring for line-editing commands (Ctrl-K, Ctrl-U, Ctrl-W, etc.)
         # Mirrors GNU readline: text killed by these commands is saved so
         # the user can yank it back with Ctrl-Y. Consecutive kills (without
@@ -609,8 +627,10 @@ sub _refresh_geometry {
     my $base_row = $self->{base_cursor_row} || 0;
     my $available_height = $term_height - $base_row;
     $self->{scroll_offset} = _max(0, $display_lines - $available_height);
-    my ($cursor_input_row, $cursor_col) = $self->_cursor_at_codepoint($input, $cursor_pos, $prompt);
+    my ($cursor_input_row, $cursor_col, $cursor_input_pending) = $self->_cursor_at_codepoint($input, $cursor_pos, $prompt);
     $self->{last_cursor_input_row} = $cursor_input_row;
+    $self->{last_cursor_input_col} = $cursor_col;
+    $self->{last_cursor_input_pending} = $cursor_input_pending;
     return;
 }
 
@@ -640,9 +660,15 @@ Compute the physical (row, col) that the cursor would be at if it sat
 at codepoint $cp in $input. Starts at (0, 1+prompt_disp) and walks through
 each codepoint, tracking wraps.
 
-Position semantics match the terminal's autowrap behavior: a char placed
-at the last column (col=term_width) occupies that column, and the cursor
-advances to (row+1, col=1). The cursor is never reported at col > term_width.
+Position semantics match the terminal's deferred-autowrap (a.k.a.
+pending-wrap) behavior: a char placed at the last column
+(col=term_width) occupies that column, and the cursor STAYS at the
+last column (pending state) until the next character is output, at
+which point the terminal wraps to (row+1, col=1). The cursor is never
+reported at col > term_width.
+
+This model is consistent with the line-start precomputation in
+redraw_line() and _redraw_line_external(), which also use lpending.
 
 This is the single source of truth for cursor position. Every cursor
 movement, redraw, and reposition computes from this pure function.
@@ -651,8 +677,13 @@ B<Note:> This function is pure — it does NOT modify any object state.
 Callers pass its return values through C<_input_row_to_screen_row>
 (which reads the derived C<scroll_offset>) to get screen coordinates.
 
-Returns: ($row, $col) where $row is 0-indexed (input row, NOT screen row)
-and $col is 1-indexed.
+Returns: ($row, $col, $pending) where $row is 0-indexed (input row, NOT
+screen row), $col is 1-indexed, and $pending is a boolean indicating
+whether the cursor is in a deferred-autowrap (pending-wrap) state — i.e.
+the cursor is at col=term_width because the last character placed filled
+the last column. Callers MUST check $pending (not just $col ==
+$term_width) to distinguish this state from a non-pending cursor that
+happens to be at the last column.
 
 =cut
 
@@ -666,21 +697,34 @@ sub _cursor_at_codepoint {
     # Start at (0, prompt_disp+1) - the position right after the prompt.
     my $row = 0;
     my $col = $prompt_disp + 1;
+    my $pending = 0;
+
+    # Clamp cp to input length to avoid substr-out-of-bounds warnings
+    # when callers pass cursor positions past the end of input.
+    $cp = length($input) if $cp > length($input);
 
     # Walk through codepoints 0..cp-1, advancing col and wrapping on
-    # boundary. Two wrap checks per char:
-    #   1. Pre-place: if the char doesn't fit at the current col, wrap first.
-    #   2. Post-place: if the cursor advanced past the last col, the terminal
-    #      autowrapped (char at col=term_width -> cursor at row+1, col=1).
-    # The previous implementation tracked pending=1 when col reached
-    # term_width and modeled the wrap as "wrap first, then place". That
-    # mis-modeled autowrap: the terminal places the char at col=term_width
-    # THEN wraps the cursor. The pending version returned col=2 after the
-    # wrap when the actual position was col=1, causing every cursor position
-    # past the first wrap to be off by one column.
+    # boundary using the terminal's deferred-autowrap (pending-wrap) model.
+    # Each iteration:
+    #   1. If pending wrap from the previous char, resolve it: move to
+    #      (row+1, col=1).
+    #   2. Pre-place wrap: if the char doesn't fit at the current col,
+    #      wrap immediately (col=1, row+1).
+    #   3. Place the char (advance col), and if col exceeded term_width,
+    #      enter pending-wrap state (col=term_width, pending=1). The
+    #      cursor stays at the last column until the next char is output.
     for my $i (0 .. $cp - 1) {
         my $ch = substr($input, $i, 1);
         my $w = _display_width($ch);
+        next unless $w;
+
+        # Resolve pending wrap from the previous char: the terminal wraps
+        # to the next row when the next character is output.
+        if ($pending) {
+            $row += 1;
+            $col = 1;
+            $pending = 0;
+        }
 
         # Pre-place wrap: char doesn't fit at the current col.
         if ($col + $w - 1 > $term_width) {
@@ -688,14 +732,16 @@ sub _cursor_at_codepoint {
             $col = 1;
         }
         $col += $w;
-        # Post-place wrap: cursor advanced past last col (autowrap).
+        # Post-place: cursor advanced past last col -> enter pending state.
+        # The terminal keeps the cursor at the last column; it wraps on
+        # the NEXT character output.
         if ($col > $term_width) {
-            $row += 1;
-            $col = 1;
+            $col = $term_width;
+            $pending = 1;
         }
     }
 
-    return ($row, $col);
+    return ($row, $col, $pending);
 }
 
 =head2 _input_row_to_screen_row
@@ -923,6 +969,8 @@ sub redraw_line {
     # Save old state before _refresh_geometry overwrites it.
     my $old_cursor_input_row = $self->{last_cursor_input_row} || 0;
     my $old_display_lines    = $self->{display_lines} || 1;
+    my $old_cursor_input_col = $self->{last_cursor_input_col} || 1;
+    my $old_cursor_input_pending = $self->{last_cursor_input_pending} || 0;
 
     $self->_refresh_geometry($$input_ref, $$cursor_pos_ref, $prompt);
 
@@ -930,17 +978,37 @@ sub redraw_line {
     my $lines_to_handle   = _max($old_display_lines, $new_display_lines);
 
     # --- Step 1: Move to top of input area ---
-    # \r to column 0, then cursor-up by old_cursor_input_row (the
-    # cursor's distance from the top of the input in input rows).
+    # CR to col 0, then cursor-up by old_cursor_input_row.
+    #
+    # Pending-wrap handling: if the VT cursor was in a pending-wrap state
+    # (old_cursor_input_pending is true), CR does NOT resolve pending on
+    # most terminals (xterm, Terminal.app, Linux console), and ESC[nA may
+    # resolve it on some terminals (Terminal.app, Linux console), causing
+    # the cursor to wrap to the wrong row. We resolve pending by emitting
+    # a space character — the only universal method — before CR + ESC[nA.
+    # The space wraps to the next row, so we go up one extra row, and
+    # increase lines_to_handle by 1 so Step 2 clears the extra line
+    # (erasing the space).
+    #
+    # IMPORTANT: We check old_cursor_input_pending (the actual VT pending
+    # state), NOT (old_cursor_input_col >= term_width). The col can be
+    # term_width without pending — in that case the VT cursor is simply
+    # at the last column with no wrap pending, and emitting a space would
+    # cause an unintended row shift.
+    my $pending = $old_cursor_input_pending;
+    if ($pending) {
+        print ' ';
+    }
     print "\r";
-    my $rows_to_top = $old_cursor_input_row;
-    if ($rows_to_top > $old_display_lines - 1) {
-        $rows_to_top = $old_display_lines - 1;
+    my $rows_to_top = $old_cursor_input_row + ($pending ? 1 : 0);
+    if ($rows_to_top > $old_display_lines - 1 + ($pending ? 1 : 0)) {
+        $rows_to_top = $old_display_lines - 1 + ($pending ? 1 : 0);
     }
     if ($rows_to_top < 0) { $rows_to_top = 0; }
     if ($rows_to_top > 0) {
         print "\e[${rows_to_top}A";
     }
+    $lines_to_handle += $pending ? 1 : 0;
 
     # --- Step 2: Clear + reprint all lines (walk down) ---
     # Per-line \e[K clears the current line only — never wipes content
@@ -992,7 +1060,7 @@ sub redraw_line {
     # area using CR + cursor-up, then move to the desired position.
     # This avoids pending-wrap ambiguity and works regardless of whether
     # the loop walked extra blank lines (when input shrank).
-    my ($desired_input_row, $desired_col) =
+    my ($desired_input_row, $desired_col, $desired_pending) =
         $self->_cursor_at_codepoint($$input_ref, $$cursor_pos_ref, $prompt);
     my $desired_row = $self->_input_row_to_screen_row($desired_input_row);
 
@@ -1008,9 +1076,31 @@ sub redraw_line {
     } elsif ($desired_row < $top_screen_row) {
         print "\e[" . ($top_screen_row - $desired_row) . "A";
     }
-    print "\e[" . ($desired_col - 1) . "C" if $desired_col > 1;
+    if ($desired_pending) {
+        # Target is in pending-wrap state (the last char filled the last
+        # column). ESC[nC cannot set pending on xterm/Terminal.app.
+        # Position at the last column (term_width - 1, 0-indexed), then
+        # emit the input character at cursor_pos-1 to set the VT's
+        # pending state (character output is the only universal
+        # pending-resolution method). This character is at the last column,
+        # so overwriting it with itself is harmless.
+        print "\e[" . ($term_width - 1) . "C";
+        $self->_emit_text(substr($$input_ref, $$cursor_pos_ref - 1, 1))
+            if $$cursor_pos_ref > 0;
+    } elsif ($desired_col == $term_width) {
+        # Cursor is at the last column WITHOUT pending — the last char
+        # before the cursor was placed at col term_width-1, not the last
+        # column. The VT cursor is at col term_width-1 (0-indexed) with no
+        # pending state. Move directly there with ESC[nC; no character
+        # emission needed (doing so would overwrite existing VT content).
+        print "\e[" . ($term_width - 1) . "C" if $term_width > 1;
+    } elsif ($desired_col > 1) {
+        print "\e[" . ($desired_col - 1) . "C";
+    }
 
     $self->{last_cursor_input_row} = $desired_input_row;
+    $self->{last_cursor_input_col} = $desired_col;
+    $self->{last_cursor_input_pending} = $desired_pending;
 }
 
 =head2 _redraw_line_external
@@ -1036,17 +1126,30 @@ sub _redraw_line_external {
     }
 
     my $old_cursor_input_row = $self->{last_cursor_input_row} || 0;
+    my $old_cursor_input_col = $self->{last_cursor_input_col} || 1;
 
     $self->_refresh_geometry($$input_ref, $$cursor_pos_ref, $prompt);
 
+    my $term_width = $self->_get_term_width();
+
     # External output has shifted the cursor down by an unknown number
-    # of rows.  Move back to the top of the input area using \r +
-    # \e[NA (up by old_cursor_input_row).
+    # of rows. Move back to the top of the input area using CR +
+    # ESC[NA (up by old_cursor_input_row).
+    #
+    # Pending-wrap handling: if the VT cursor was in a pending-wrap state
+    # (old_cursor_input_pending) before external output, we cannot know
+    # what the external output did to the VT's pending state. Resolve it
+    # with a space — the only universal method — before CR + ESC[nA.
+    my $old_cursor_input_pending = $self->{last_cursor_input_pending} || 0;
+    my $pending = $old_cursor_input_pending;
+    if ($pending) {
+        print ' ';
+    }
     print "\r";
     my $old_display_lines = $self->{display_lines} || 1;
-    my $rows_to_top = $old_cursor_input_row;
-    if ($rows_to_top > $old_display_lines - 1) {
-        $rows_to_top = $old_display_lines - 1;
+    my $rows_to_top = $old_cursor_input_row + ($pending ? 1 : 0);
+    if ($rows_to_top > $old_display_lines - 1 + ($pending ? 1 : 0)) {
+        $rows_to_top = $old_display_lines - 1 + ($pending ? 1 : 0);
     }
     if ($rows_to_top > 0) {
         print "\e[${rows_to_top}A";
@@ -1056,8 +1159,8 @@ sub _redraw_line_external {
     my $prompt_disp = $self->_get_prompt_disp($prompt);
     my $total_disp  = $prompt_disp + _display_width($$input_ref);
     my $lines_to_clear = $self->_compute_display_lines($total_disp);
+    $lines_to_clear += $pending ? 1 : 0;
     my $input = $$input_ref;
-    my $term_width = $self->_get_term_width();
 
     # Precompute line starts (same autowrap model as redraw_line).
     my @line_starts = (0);
@@ -1101,7 +1204,7 @@ sub _redraw_line_external {
     print "\r";
 
     # Reposition cursor from input state.
-    my ($cursor_input_row, $cursor_col) =
+    my ($cursor_input_row, $cursor_col, $cursor_pending) =
         $self->_cursor_at_codepoint($$input_ref, $$cursor_pos_ref, $prompt);
     my $cursor_row = $self->_input_row_to_screen_row($cursor_input_row);
 
@@ -1115,8 +1218,21 @@ sub _redraw_line_external {
     } elsif ($cursor_row < $top_screen_row) {
         print "\e[" . ($top_screen_row - $cursor_row) . "A";
     }
-    print "\e[" . ($cursor_col - 1) . "C" if $cursor_col > 1;
+    if ($cursor_pending) {
+        # Target is in pending-wrap state (the last char filled the last
+        # column). Emit the char at cursor_pos-1 to set VT pending.
+        print "\e[" . ($term_width - 1) . "C";
+        $self->_emit_text(substr($$input_ref, $$cursor_pos_ref - 1, 1))
+            if $$cursor_pos_ref > 0;
+    } elsif ($cursor_col == $term_width) {
+        # Cursor at the last column WITHOUT pending — move directly.
+        print "\e[" . ($term_width - 1) . "C" if $term_width > 1;
+    } elsif ($cursor_col > 1) {
+        print "\e[" . ($cursor_col - 1) . "C";
+    }
     $self->{last_cursor_input_row} = $cursor_input_row;
+    $self->{last_cursor_input_col} = $cursor_col;
+    $self->{last_cursor_input_pending} = $cursor_pending;
 }
 
 sub readline {
@@ -1132,7 +1248,7 @@ sub readline {
     $self->{display_lines} = 1;
     $self->{scroll_offset} = 0;
     $self->{last_cursor_input_row} = 0;
-
+    $self->{last_cursor_input_col} = 1;
     # Clear any key queue from a previous DSR query.
     $self->{_key_queue} = [];
 
@@ -1352,12 +1468,13 @@ sub readline {
                     # Fast-path: if cursor is on same input row before
                     # and after deletion, and deleted cluster is 1 column,
                     # use \b \b.  Otherwise redraw_line.
+                    my $term_width = $self->_get_term_width();
                     my $old_input = substr($input, 0, $cursor_pos) . $deleted . substr($input, $cursor_pos);
                     my $old_cp = $cursor_pos + length($deleted);
                     my ($old_row, $old_col) = $self->_cursor_at_codepoint($old_input, $old_cp, $prompt);
                     my ($new_row, $new_col) = $self->_cursor_at_codepoint($input, $cursor_pos, $prompt);
 
-                    if ($old_row == $new_row && $old_col > 1 && $deleted_width == 1) {
+                    if ($old_row == $new_row && $old_col > 1 && $old_col < $term_width && $deleted_width == 1) {
                         print "\b \b";
                         $self->_refresh_geometry($input, $cursor_pos, $prompt);
                     } else {
@@ -1464,6 +1581,7 @@ sub readline {
             $self->{base_cursor_row} = 0;
             $self->{display_lines} = 1;
             $self->{last_cursor_input_row} = 0;
+            $self->{last_cursor_input_col} = 1;
             $self->_invalidate_yank();
             $self->redraw_line(\$input, \$cursor_pos, $prompt);
             next;
@@ -1592,16 +1710,24 @@ sub handle_tab {
     return 0 unless $self->{completer};
 
     my $current_input = $$input_ref;
+    my $cursor_pos = $$cursor_pos_ref;
 
-    log_debug('ReadLine', "Tab pressed, input='$current_input'");
+    log_debug('ReadLine', "Tab pressed, input='$current_input', cursor=$cursor_pos");
+
+    # The text to the left of the cursor is what we pass to the completer.
+    # This ensures tab completion works correctly when the cursor is in
+    # the middle of the line or at the very beginning (position 0).
+    my $line_to_complete = substr($current_input, 0, $cursor_pos);
+    my $text_after_cursor = substr($current_input, $cursor_pos);
 
     unless ($state->{active}) {
-        $state->{original_input} = $$input_ref;
+        $state->{original_input} = $current_input;
         $state->{active} = 1;
         $state->{index} = 0;
+        $state->{cursor_pos} = $cursor_pos;
 
         my @candidates = $self->{completer}->complete(
-            $current_input, $current_input, 0
+            $line_to_complete, $line_to_complete, 0
         );
 
         $state->{candidates} = \@candidates;
@@ -1610,17 +1736,20 @@ sub handle_tab {
 
         return 0 unless @candidates;
 
+        # When applying a candidate, replace only the text to the left of
+        # the cursor. This preserves any text that was to the right of
+        # the cursor (important when the cursor is in the middle of the line).
         if (@candidates == 1) {
-            $$input_ref = $candidates[0];
-            $$cursor_pos_ref = length($$input_ref);
+            $$input_ref = $candidates[0] . $text_after_cursor;
+            $$cursor_pos_ref = length($candidates[0]);
             $self->redraw_line($input_ref, $cursor_pos_ref, $prompt);
             $state->{active} = 0;
             log_debug('ReadLine', "Single match, completed to: '$$input_ref'");
             return 1;
         }
 
-        $$input_ref = $candidates[0];
-        $$cursor_pos_ref = length($$input_ref);
+        $$input_ref = $candidates[0] . $text_after_cursor;
+        $$cursor_pos_ref = length($candidates[0]);
         $self->redraw_line($input_ref, $cursor_pos_ref, $prompt);
         log_debug('ReadLine', "Multiple matches, showing first: '$$input_ref'");
         return 1;
@@ -1628,16 +1757,21 @@ sub handle_tab {
     } else {
         $state->{index}++;
 
+        # The text to the right of the original cursor position is preserved
+        # across all cycled candidates.
+        my $text_after = substr($state->{original_input}, $state->{cursor_pos});
+
         if ($state->{index} >= scalar(@{$state->{candidates}})) {
             $state->{index} = -1;
             $$input_ref = $state->{original_input};
+            $$cursor_pos_ref = $state->{cursor_pos};
             log_debug('ReadLine', "Wrapped to original");
         } else {
-            $$input_ref = $state->{candidates}->[$state->{index}];
+            $$input_ref = $state->{candidates}->[$state->{index}] . $text_after;
+            $$cursor_pos_ref = length($state->{candidates}->[$state->{index}]);
             log_debug('ReadLine', "Cycling to: '$$input_ref'");
         }
 
-        $$cursor_pos_ref = length($$input_ref);
         $self->redraw_line($input_ref, $cursor_pos_ref, $prompt);
         return 1;
     }
@@ -1890,19 +2024,20 @@ Arguments:
 sub reposition_cursor {
     my ($self, $old_pos_ref, $new_pos_ref, $input_ref, $prompt) = @_;
 
+    return if $$old_pos_ref == $$new_pos_ref;
+
     $prompt //= '';
+
+    my $term_width = $self->_get_term_width();
+
+    # Compute SOURCE position from input state (pure function, no
+    # _refresh_geometry needed for _cursor_at_codepoint).
+    my ($old_input_row, $old_col, $old_pending) = $self->_cursor_at_codepoint($$input_ref, $$old_pos_ref, $prompt);
+    my ($new_input_row, $new_col, $new_pending) = $self->_cursor_at_codepoint($$input_ref, $$new_pos_ref, $prompt);
 
     # Ensure scroll_offset is derived from current content so
     # _input_row_to_screen_row gives correct screen rows.
     $self->_refresh_geometry($$input_ref, $$new_pos_ref, $prompt);
-
-    my $term_width = $self->_get_term_width();
-
-    # Compute BOTH source and target from input state. _cursor_at_codepoint
-    # is a pure function: given the same (input, cp, prompt), it always
-    # returns the same (row, col). No incrementally-tracked state.
-    my ($old_input_row, $old_col) = $self->_cursor_at_codepoint($$input_ref, $$old_pos_ref, $prompt);
-    my ($new_input_row, $new_col) = $self->_cursor_at_codepoint($$input_ref, $$new_pos_ref, $prompt);
 
     # Convert input rows to screen rows (account for terminal scrolling
     # when the input is taller than the screen).
@@ -1911,16 +2046,55 @@ sub reposition_cursor {
 
     if (should_log('DEBUG')) {
         log_debug('ReadLine', "reposition_cursor: old_pos=$$old_pos_ref, new_pos=$$new_pos_ref");
-        log_debug('ReadLine', "reposition_cursor: from ($old_row,$old_col) to ($new_row,$new_col)");
+        log_debug('ReadLine', "reposition_cursor: from ($old_row,$old_col,pending=$old_pending) to ($new_row,$new_col,pending=$new_pending)");
         log_debug('ReadLine', "reposition_cursor: both computed via _cursor_at_codepoint from input state");
     }
 
-    # Move from source to target. Use CR + vertical + horizontal for
-    # all cross-row movements to avoid pending-wrap ambiguity.
-    # For same-row movements, use relative horizontal movement for
-    # speed (no visible cursor jump) — safe unless at last column.
-    if ($new_row == $old_row && $old_col < $term_width) {
-        # Same row, not at last column: relative movement.
+    # Resolve old pending-wrap state without a full redraw.
+    #
+    # When old_pending is true, the VT cursor sits at the last column of
+    # old_input_row with a deferred autowrap pending. We MUST clear this
+    # before any cursor movement to avoid the VT cursor wrapping to the
+    # wrong row.
+    #
+    # CR (\r) alone does NOT clear pending on all terminals. On xterm and
+    # VTE (GNOME Terminal, VS Code, Konsole) CR happens to work, but on
+    # macOS Terminal.app and the Linux console, CR does NOT clear pending
+    # — and worse, cursor-movement sequences (ESC[nA/B/C/D) DO resolve it
+    # by wrapping, sending the cursor to (old_row+1, col 0) instead of
+    # the intended location. This is the root cause of the "can't get to
+    # row n column 0" bug.
+    #
+    # Character output is the ONLY universal pending-resolution method:
+    # every terminal resolves pending when a character is printed.
+    #
+    # We emit the character that BELONGS at (old_row+1, col 0) — the
+    # codepoint at old_pos (if it exists in the input) or a space (if
+    # old_pos is past the end of input). This overwrites the terminal
+    # cell with the correct content, so no restoration is needed.
+    #
+    # After char output + CR, the VT cursor is at (old_row+1, 0) with
+    # pending cleared on ALL terminal types.
+    if ($old_pending) {
+        # Emit the char that belongs at (old_row+1, col 0) — or a space
+        # if old_pos is past the end of input. Char output resolves
+        # pending universally (wraps to the next row). Then CR moves to
+        # col 0 of that row. After this, the cursor is on the wrapped
+        # row at col 0 with pending cleared on ALL terminal types.
+        my $pending_char = ' ';
+        if ($$old_pos_ref < length($$input_ref)) {
+            $pending_char = substr($$input_ref, $$old_pos_ref, 1);
+        }
+        $self->_emit_text($pending_char);
+        print "\r";
+        $old_row += 1;   # cursor wrapped to the next row
+        $old_col = 1;    # cursor at col 0 (0-indexed) = col 1 (1-indexed)
+    }
+
+    if ($new_row == $old_row) {
+        # Same row: relative movement (ESC[nC / ESC[nD).
+        # After CR-for-pending, old_col is 1. After normal movement,
+        # old_col is the 1-indexed col from _cursor_at_codepoint.
         my $delta = $new_col - $old_col;
         if ($delta > 0) {
             print "\e[${delta}C";
@@ -1929,23 +2103,43 @@ sub reposition_cursor {
         }
         # delta == 0: already there.
     } else {
-        # Cross-row or at last column: CR + vertical + horizontal.
-        print "\r";
-        if ($new_row != $old_row) {
-            if ($new_row > $old_row) {
-                print "\e[" . ($new_row - $old_row) . "B";
-            } else {
-                print "\e[" . ($old_row - $new_row) . "A";
-            }
+        # Cross-row: use absolute positioning (ESC[row;colH) to jump
+        # directly to the target row and column. This avoids the CR +
+        # relative movement sequence that briefly lands the cursor on
+        # column 0 of the current row — a visible flicker at the wrap
+        # boundary where the cursor appears to "skip" the first character
+        # of a wrapped line. When old_pending=0 (no pending resolution
+        # was needed), the cursor is NOT at column 0, so CR would
+        # unnecessarily move it there first. Absolute positioning jumps
+        # straight to the target.
+        #
+        # Pending-wrap is already resolved above (via char output + CR),
+        # so the cursor is in a clean state. Absolute positioning
+        # (ESC[row;colH) does not trigger deferred autowrap, so it is
+        # safe on all terminal types.
+        print "\e[" . ($new_row + 1) . ";" . $new_col . "H";
+    }
+
+    # Set new pending-wrap state: position the VT cursor at the last
+    # column, then emit the character at (new_pos - 1) to trigger the
+    # terminal's deferred autowrap. This character occupies the last
+    # column, so overwriting it with itself is harmless.
+    if ($new_pending) {
+        my $col_0indexed = $new_col - 1;
+        if ($col_0indexed < $term_width - 1) {
+            print "\e[" . ($term_width - 1 - $col_0indexed) . "C";
         }
-        print "\e[" . ($new_col - 1) . "C" if $new_col > 1;
+        $self->_emit_text(substr($$input_ref, $$new_pos_ref - 1, 1))
+            if $$new_pos_ref > 0;
     }
 
     # Update tracking.
     $self->{last_cursor_input_row} = $new_input_row;
+    $self->{last_cursor_input_col} = $new_col;
+    $self->{last_cursor_input_pending} = $new_pending;
 
     if (should_log('DEBUG')) {
-        log_debug('ReadLine', "reposition_cursor: tracking set to ($new_row,$new_col)");
+        log_debug('ReadLine', "reposition_cursor: tracking set to input_row=$new_input_row, col=$new_col, pending=$new_pending");
     }
 }
 

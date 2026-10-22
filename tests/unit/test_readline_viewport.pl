@@ -52,14 +52,15 @@ sub feed {
                 my $j=$i+2;
                 $j++ while $j<length($b)&&substr($b,$j,1)=~ /[\d;?]/;
                 my $p=substr($b,$i+2,$j-$i-2); my $cmd=substr($b,$j,1);
-                if($p !~ /^[0-9;]*$/){$i=$j+1; next}  # skip private modes like ?2004
-                my $n=($p eq ''?1:$p)+0;$n=1 if $n==0;
+               if($p !~ /^[0-9;]*$/){$i=$j+1; next}  # skip private modes like ?2004
+               my $n=($p =~ /^(\d+)/ ? $1 : 1)+0;$n=1 if $n==0;
                 if($cmd eq 'C'){if($s->{pending}){$s->{row}++;$s->{col}=0;$s->{pending}=0}$s->{col}+=$n;$s->{col}=$s->{cols}-1 if $s->{col}>=$s->{cols}}
                 elsif($cmd eq 'D'){if($s->{pending}){$s->{row}++;$s->{col}=0;$s->{pending}=0}$s->{col}-=$n;$s->{col}=0 if $s->{col}<0}
                 elsif($cmd eq 'A'){if($s->{pending}){$s->{row}++;$s->{col}=0;$s->{pending}=0}$s->{row}-=$n;$s->{row}=0 if $s->{row}<0}
                 elsif($cmd eq 'B'){if($s->{pending}){$s->{row}++;$s->{col}=0;$s->{pending}=0}$s->{row}+=$n}
-                elsif($cmd eq 'K'){for my $c($s->{col}..$s->{cols}-1){$s->{buffer}[$s->{row}][$c]=' '}}
-                $i=$j+1
+               elsif($cmd eq 'K'){for my $c($s->{col}..$s->{cols}-1){$s->{buffer}[$s->{row}][$c]=' '}}
+                elsif($cmd eq 'H'){if($s->{pending}){$s->{row}++;$s->{col}=0;$s->{pending}=0}my @pp=split /;/, $p; $s->{row}=($pp[0] // 1)-1; $s->{col}=($pp[1] // 1)-1}
+               $i=$j+1
             }else{$i++}
         }elsif($ch eq "\r"){$s->{col}=0;$s->{pending}=0;$i++}
         elsif($ch eq "\n"){$s->{row}++;$i++}
@@ -71,7 +72,7 @@ sub feed {
             }
             $s->{buffer}[$s->{row}][$s->{col}]=$ch;
             $s->{col}++;
-            if($s->{col}>=$s->{cols}){$s->{pending}=1}
+            if($s->{col}>=$s->{cols}){$s->{pending}=1;$s->{col}=$s->{cols}-1}
             $i++
         }else{$i++}
     }

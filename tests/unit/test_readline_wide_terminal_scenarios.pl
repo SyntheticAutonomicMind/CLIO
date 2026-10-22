@@ -85,8 +85,9 @@ sub feed {
                         }
                     }
                 } elsif ($cmd eq 'H') {
-                    $self->{row} = 0;
-                    $self->{col} = 0;
+                    my @p = split /;/, $param;
+                    $self->{row} = (($p[0] // '') ne '' ? $p[0] : 1) - 1;
+                    $self->{col} = (($p[1] // '') ne '' ? $p[1] : 1) - 1;
                     $self->{pending} = 0;
                 }
             } else {
@@ -111,7 +112,7 @@ sub feed {
             $self->{buffer}[$self->{row}][$self->{col}] = $ch;
             $self->{col}++;
             if ($self->{col} >= $self->{cols}) {
-                $self->{pending} = 1;
+                $self->{pending} = 1; $self->{col} = $self->{cols} - 1;
             }
             $i++;
         }
@@ -201,7 +202,7 @@ sub run_scenario {
     return ($vt, $buf);
 }
 
-use Test::More tests => 25;
+use Test::More tests => 28;
 
 # Scenario 1: Type 39 chars (wraps to 2 rows on 40-col terminal),
 # then backspace at end -> 38 chars (fits on 1 row).
@@ -345,4 +346,50 @@ use Test::More tests => 25;
     # 119 chars: row 0 = 38 (prompt takes 2), row 1 = 40, row 2 = 40, row 3 = 1. Total = 119.
     # So 4 display lines. But terminal has 24 rows, so all visible.
     ok(substr($rows[3], 0, 1) eq 'Y', "wide-s6: row 3 has remaining Y");
+}
+
+# Scenario 7: Right arrow at the pending-wrap boundary (the "press twice" bug)
+#
+# Bug: when the cursor is at the last column at the END of the input text
+# (pending-wrap state), pressing Left then Right (or Home then Right) causes
+# the cursor to flicker and land on the wrong row. This is because
+# pending-wrap is not resolved before cursor-movement escape sequences are
+# emitted, and the subsequent LF (from Enter or redraw_line) resolves the
+# pending state, advancing the cursor one extra row.
+#
+# Test: Type 38 chars on a 40-col terminal (fills row 0 exactly: 38 + 2
+# prompt = 40 cols). Cursor is at end of input at (0, 40) in pending-wrap.
+# Press Home, then Right, then Enter. Content should be intact and cursor
+# should be on the right row.
+{
+    @main::KEY_QUEUE = ();
+    push_input(input_chars_for('a' x 38));  # fills row 0 exactly, pending at col 40
+    push_input(0x1b, ord('['), ord('H'));    # Home -> cp=0
+    push_input(0x1b, ord('['), ord('C'));    # Right -> cp=1
+    push_input(0x0a);
+
+    my ($vt, $bytes) = run_scenario();
+    my @rows = split /\n/, $vt->render, -1;
+    ok(substr($rows[0], 0, 2) eq '> ' && substr($rows[0], 2, 38) eq 'a' x 38,
+       "wide-s7: row 0 has prompt + 38 a's (Home from pending-wrap preserves content)");
+}
+
+# Scenario 8: Left/Right at edge of exactly-filled row
+#
+# Type 38 chars (fills row 0 exactly). Left arrow moves to cp=37 (col 39).
+# Right arrow moves back to cp=38 (col 40, pending). Enter should submit
+# without the pending-wrap causing any cursor displacement.
+{
+    @main::KEY_QUEUE = ();
+    push_input(input_chars_for('a' x 38));
+    push_input(0x1b, ord('['), ord('D'));  # Left: cp=37
+    push_input(0x1b, ord('['), ord('C'));  # Right: cp=38 (edge, pending)
+    push_input(0x0a);
+
+    my ($vt, $bytes) = run_scenario();
+    my @rows = split /\n/, $vt->render, -1;
+    ok(substr($rows[0], 0, 2) eq '> ' && substr($rows[0], 2, 38) eq 'a' x 38,
+       "wide-s8: row 0 has all 38 a's after Left+Right at edge");
+    ok(substr($rows[1] // '', 0, 20) eq ' ' x 20,
+       "wide-s8: row 1 is blank (no stray content from pending-wrap)");
 }
