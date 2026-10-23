@@ -12,6 +12,7 @@ use CLIO::Core::Logger qw(should_log log_debug log_warning);
 use CLIO::Util::ConfigPath qw(get_config_dir);
 use CLIO::Providers qw(get_provider list_providers provider_exists);
 use CLIO::Util::JSON qw(encode_json decode_json);
+use CLIO::Security::SecretRedactor qw(DEFAULT_REDACT_LEVEL);
 use Storable qw(dclone);
 use File::Path qw(make_path);
 use File::Spec;
@@ -107,7 +108,7 @@ use constant DEFAULT_CONFIG => {
     session_replay => 1,        # Auto-render conversation history when resuming/switching sessions (1=on, 0=off)
     session_replay_max => 100,  # Max messages to replay before pagination (0 = no limit)
     # Security configuration
-    redact_level => 'standard', # Redaction level: strict, standard, api_permissive, pii, off (default: standard)
+    redact_level => DEFAULT_REDACT_LEVEL, # Redaction level: strict, standard, api_permissive, pii, off
     # Command security analysis level
     security_level => 'standard',  # Command security: relaxed, standard, strict (default: standard)
     # Text sanitizer mode: strict (warn on invisible char injection), relaxed (filter silently)

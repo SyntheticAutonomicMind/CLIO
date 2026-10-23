@@ -499,7 +499,7 @@ sub _register_default_tools {
                 $tool_args->{session_dir} = $session_dir;
                 log_debug('WorkflowOrchestrator', "Registered $tool_def->{name} with session_dir=$session_dir");
             } else {
-                log_debug('WorkflowOrchestrator', "Registered $tool_def->{name} without session_dir (path authorization disabled)");
+                log_warning('WorkflowOrchestrator', "Registered $tool_def->{name} without session_dir — path authorization DISABLED for this tool");
             }
         }
         $self->{tool_registry}->register_tool(

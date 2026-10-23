@@ -54,6 +54,23 @@ sub new {
     croak "Subclass must define 'description'" unless $opts{description};
     croak "Subclass must define 'supported_operations'" unless $opts{supported_operations};
 
+    # Warn about unknown constructor args in debug mode.
+    # The base class only stores a known set of fields. Any extra keys
+    # (like session_dir, base_dir, etc.) are silently discarded unless
+    # the subclass explicitly stores them after calling SUPER::new.
+    # This warning helps catch the class of bug where a subclass passes
+    # an arg to SUPER::new expecting it to be stored, but it isn't.
+    my %known = map { $_ => 1 } qw(
+        name description supported_operations operation_aliases
+        debug requires_blocking requires_serial is_interactive
+        default_operation
+    );
+    for my $key (sort keys %opts) {
+        unless ($known{$key}) {
+            log_debug('Tool', "Warning: '$class' passed unknown constructor arg '$key' to SUPER::new — it will be silently discarded unless the subclass stores it explicitly");
+        }
+    }
+
     return bless {
         name => $opts{name},
         description => $opts{description},

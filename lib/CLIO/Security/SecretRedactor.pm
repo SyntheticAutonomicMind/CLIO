@@ -9,7 +9,7 @@ use utf8;
 use Exporter 'import';
 use CLIO::Core::Logger qw(log_debug);
 
-our @EXPORT_OK = qw(redact redact_any get_redactor);
+our @EXPORT_OK = qw(redact redact_any get_redactor DEFAULT_REDACT_LEVEL);
 
 =head1 NAME
 
@@ -85,6 +85,11 @@ my %WHITELIST = map { $_ => 1 } qw(
 
 # Valid redaction levels
 my %VALID_LEVELS = map { $_ => 1 } qw(strict standard api_permissive pii off);
+
+# Default redaction level — single source of truth for the entire project.
+# ToolExecutor._get_redact_level() and Config.DEFAULT_CONFIG should both
+# reference this constant rather than hardcoding their own defaults.
+use constant DEFAULT_REDACT_LEVEL => 'standard';
 
 #
 # === PATTERN CATEGORIES ===
@@ -220,8 +225,8 @@ Create a new SecretRedactor instance.
 sub new {
     my ($class, %args) = @_;
     
-    my $level = $args{level} // 'pii';
-    $level = 'pii' unless $VALID_LEVELS{$level};
+    my $level = $args{level} // DEFAULT_REDACT_LEVEL;
+    $level = DEFAULT_REDACT_LEVEL unless $VALID_LEVELS{$level};
     
     my $self = {
         debug           => $args{debug} // 0,
