@@ -21,6 +21,42 @@ Tool names are namespaced as: plugin_<pluginname>_<toolname>
 
 =cut
 
+=head2 before_route
+
+Security gate for plugin tool execution. Provides defense-in-depth alongside
+the sandbox check in ToolExecutor. This method is called as a class method
+before execute_tool dispatches to the plugin manager.
+
+Arguments:
+- $qualified_name: Full qualified tool name (plugin_<name>_<tool>)
+- $arguments: Hashref of tool arguments
+- $context: Execution context (optional, may contain config for sandbox check)
+
+Returns: undef to proceed, or a result hashref to short-circuit dispatch
+
+=cut
+
+sub before_route {
+    my ($class, $qualified_name, $arguments, $context) = @_;
+
+    # Sandbox mode: Block all plugin tool calls as defense-in-depth.
+    # ToolExecutor already checks this, but having it here too ensures
+    # that any future code path that calls execute_tool directly is
+    # also protected.
+    if ($context && $context->{config} && $context->{config}->get('sandbox')) {
+        log_debug('PluginBridge', "Sandbox: BLOCKED plugin tool '$qualified_name'");
+        return {
+            success          => 0,
+            error            => "Sandbox mode: Plugin tools are disabled.\n\n" .
+                "The --sandbox flag blocks all plugin operations. " .
+                "This is a security feature to prevent the agent from reaching outside the local project.",
+            action_description => "Sandbox: blocked plugin tool '$qualified_name'",
+        };
+    }
+
+    return undef;
+}
+
 =head2 generate_tool_definitions
 
 Generate CLIO tool definitions for all plugin tools.
@@ -68,7 +104,13 @@ Returns: CLIO tool result hashref { success, output, action_description }
 =cut
 
 sub execute_tool {
-    my ($class, $plugin_manager, $qualified_name, $arguments) = @_;
+    my ($class, $plugin_manager, $qualified_name, $arguments, $context) = @_;
+
+    # Defense-in-depth: check before_route before dispatching.
+    # ToolExecutor already checks sandbox mode, but this ensures any
+    # direct caller is also protected.
+    my $guard = $class->before_route($qualified_name, $arguments, $context);
+    return $guard if $guard;
 
     unless ($plugin_manager) {
         return {

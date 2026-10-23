@@ -107,7 +107,7 @@ use constant DEFAULT_CONFIG => {
     session_replay => 1,        # Auto-render conversation history when resuming/switching sessions (1=on, 0=off)
     session_replay_max => 100,  # Max messages to replay before pagination (0 = no limit)
     # Security configuration
-    redact_level => 'pii',      # Redaction level: strict, standard, api_permissive, pii, off (default: pii)
+    redact_level => 'standard', # Redaction level: strict, standard, api_permissive, pii, off (default: standard)
     # Command security analysis level
     security_level => 'standard',  # Command security: relaxed, standard, strict (default: standard)
     # Text sanitizer mode: strict (warn on invisible char injection), relaxed (filter silently)

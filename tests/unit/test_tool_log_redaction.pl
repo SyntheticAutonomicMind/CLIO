@@ -200,16 +200,16 @@ $log_content = '';
 
 ok(index($log_content, $secret_value) == -1, "Secret in nested hash parameter is redacted in log");
 
-# ── Test 5: Log redaction works at default pii level ──
-# The default redact_level is 'pii' (only PII patterns).  At pii level,
-# API keys are NOT redacted for AI-facing output — but logs must always
-# use strict level to prevent secrets persisting on disk.  This test
-# verifies that an executor with NO config (defaults to pii) still
+# ── Test 5: Log redaction works at default standard level ──
+# The default redact_level is 'standard' (redacts PII, crypto, API keys, tokens).
+# At standard level, API keys ARE redacted for AI-facing output.  Logs must
+# always use strict level to prevent secrets persisting on disk.  This test
+# verifies that an executor with NO config (defaults to standard) still
 # redacts API keys in logs.
 my $executor_no_config = CLIO::Core::ToolExecutor->new(
     session => { session_id => 'test-no-config', working_directory => $tmp },
     debug => 0,
-    config => undef,  # No config -> _get_redact_level returns 'pii'
+    config => undef,  # No config -> _get_redact_level returns 'standard'
 );
 my $tool_logger_no_config = CLIO::Logging::ToolLogger->new(
     session_id => 'test-no-config',
@@ -219,7 +219,7 @@ my $tool_logger_no_config = CLIO::Logging::ToolLogger->new(
 $executor_no_config->{tool_logger} = $tool_logger_no_config;
 
 my $default_level = $executor_no_config->_get_redact_level();
-ok($default_level eq 'pii', "Default redact level is pii (as configured)");
+ok($default_level eq 'standard', "Default redact level is standard (as configured)");
 
 my $api_key_default = 'sk-proj-' . ('z' x 48);
 $executor_no_config->_log_tool_operation({
@@ -244,7 +244,7 @@ if (-f $log_file_no_config) {
 }
 
 ok(index($log_content_no_config, $api_key_default) == -1,
-   "At default pii level: API key NOT in log (log redaction overrides to strict)");
+   "At default standard level: API key NOT in log (log redaction overrides to strict)");
 
 # ── Test 6: ARRAY parameters are also redacted ──
 my $array_secret = 'ghp_' . ('y' x 36);

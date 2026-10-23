@@ -2308,7 +2308,8 @@ Configure the level of redaction using `/config set redact_level <level>`:
 | `strict` | Everything (PII + crypto + API keys + tokens) | Maximum security |
 | `standard` | Same as strict | Default for production |
 | `api_permissive` | PII + crypto only (API keys/tokens allowed) | When agent needs to work with tokens |
-| `pii` | Only PII (default) | Development with API key usage |
+| `standard` (default) | Redact PII, crypto, API keys, tokens | Most use cases |
+| `pii` | Only PII | Development with API key usage |
 | `off` | Nothing | Testing only (use with caution) |
 
 **Example:**

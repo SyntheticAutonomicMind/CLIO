@@ -50,7 +50,7 @@ Detects and redacts secrets from tool output BEFORE it reaches the AI or logs.
 | `strict` | All: PII + crypto wallets + API keys + tokens |
 | `standard` | Same as strict |
 | `api_permissive` | PII + crypto (allows API keys through) |
-| `pii` (default) | SSN, credit cards, phone numbers, emails |
+| `standard` (default) | SSN, credit cards, phone numbers, emails, crypto, API keys, tokens |
 | `off` | Nothing (use with caution) |
 
 **Pattern Coverage:** AWS keys, GitHub tokens, SSH private keys, crypto wallet
@@ -300,8 +300,8 @@ The attacker would need to bypass ALL layers simultaneously to succeed.
 /config set security_level relaxed     # Only block destructive
 
 # Set secret redaction level
-/config set redact_level pii           # Default: redact PII only
-/config set redact_level strict        # Redact everything
+/config set redact_level standard       # Default: redact everything (recommended)
+/config set redact_level pii            # Only PII
 /config set redact_level off           # No redaction (dangerous)
 
 # Enable sandbox mode

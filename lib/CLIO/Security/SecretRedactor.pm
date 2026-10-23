@@ -28,7 +28,7 @@ display or transmission to AI providers. Supports multiple redaction levels:
 
 =item * B<api_permissive> - Allow API keys/tokens to pass through (PII/crypto still redacted)
 
-=item * B<pii> - Only redact PII (SSN, credit cards, phone, email) [DEFAULT]
+=item * B<pii> - Only redact PII (SSN, credit cards, phone, email)
 
 =item * B<off> - No redaction (use with extreme caution)
 

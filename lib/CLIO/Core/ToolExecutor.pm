@@ -233,7 +233,8 @@ sub execute_tool {
         log_debug('ToolExecutor', "Executing MCP tool: $tool_name");
         
         my $result = CLIO::Tools::MCPBridge->execute_tool(
-            $self->{mcp_manager}, $tool_name, $arguments
+            $self->{mcp_manager}, $tool_name, $arguments,
+            { config => $self->{config}, session => $self->{session} }
         );
         
         my $execution_time_ms = int((time() - $start_time) * 1000);
@@ -281,7 +282,8 @@ sub execute_tool {
         log_debug('ToolExecutor', "Executing plugin tool: $tool_name");
         
         my $result = CLIO::Tools::PluginBridge->execute_tool(
-            $self->{plugin_manager}, $tool_name, $arguments
+            $self->{plugin_manager}, $tool_name, $arguments,
+            { config => $self->{config}, session => $self->{session} }
         );
         
         my $execution_time_ms = int((time() - $start_time) * 1000);
@@ -890,7 +892,7 @@ Returns: 'strict', 'standard', 'api_permissive', 'pii', or 'off'
 sub _get_redact_level {
     my ($self) = @_;
     
-    return 'pii' unless $self->{config};
+    return 'standard' unless $self->{config};
     
     # Check redact_level
     my $level = $self->{config}->get('redact_level');
@@ -899,7 +901,7 @@ sub _get_redact_level {
     }
 
     # Default
-    return 'pii';
+    return 'standard';
 }
 
 1;

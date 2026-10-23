@@ -485,8 +485,25 @@ sub _register_default_tools {
             log_warning('WorkflowOrchestrator', "Failed to load $tool_def->{module}: $@");
             next;
         }
+        # Pass session_dir for tools that need path authorization (FileOperations,
+        # ApplyPatch). The session_dir is the working directory from the session
+        # state, which is used by PathAuthorizer to determine if a path is inside
+        # the allowed workspace or requires user authorization.
+        my $tool_args = { debug => $self->{debug} };
+        if ($tool_def->{name} eq 'file_operations' || $tool_def->{name} eq 'apply_patch') {
+            my $session_dir = '';
+            if ($self->{session} && $self->{session}->can('working_directory')) {
+                $session_dir = $self->{session}->working_directory || '';
+            }
+            if ($session_dir) {
+                $tool_args->{session_dir} = $session_dir;
+                log_debug('WorkflowOrchestrator', "Registered $tool_def->{name} with session_dir=$session_dir");
+            } else {
+                log_debug('WorkflowOrchestrator', "Registered $tool_def->{name} without session_dir (path authorization disabled)");
+            }
+        }
         $self->{tool_registry}->register_tool(
-            $tool_def->{module}->new(debug => $self->{debug})
+            $tool_def->{module}->new(%$tool_args)
         );
     }
     

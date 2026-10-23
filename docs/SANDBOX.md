@@ -158,7 +158,7 @@ CLIO automatically detects and redacts secrets (API keys, tokens, passwords) fro
 
 ```text
 /config set redact_level standard   # Redacts PII, crypto, API keys, tokens
-/config set redact_level pii        # Only PII (default)
+/config set redact_level pii        # Only PII
 /config set redact_level off        # Disable redaction
 ```
 

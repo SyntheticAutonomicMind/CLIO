@@ -23,7 +23,43 @@ Tool names are namespaced as: mcp_<servername>_<toolname>
 
 use CLIO::Util::JSON qw(encode_json decode_json);
 
-use CLIO::Core::Logger qw(log_debug);
+use CLIO::Core::Logger qw(log_debug log_warning);
+
+=head2 before_route
+
+Security gate for MCP tool execution. Provides defense-in-depth alongside
+the sandbox check in ToolExecutor. This method is called as a class method
+before execute_tool dispatches to the MCP manager.
+
+Arguments:
+- $qualified_name: Full qualified tool name (with mcp_ prefix)
+- $arguments: Hashref of tool arguments
+- $context: Execution context (optional, may contain config for sandbox check)
+
+Returns: undef to proceed, or a result hashref to short-circuit dispatch
+
+=cut
+
+sub before_route {
+    my ($class, $qualified_name, $arguments, $context) = @_;
+
+    # Sandbox mode: Block all MCP tool calls as defense-in-depth.
+    # ToolExecutor already checks this, but having it here too ensures
+    # that any future code path that calls execute_tool directly is
+    # also protected.
+    if ($context && $context->{config} && $context->{config}->get('sandbox')) {
+        log_debug('MCP', "Sandbox: BLOCKED MCP tool '$qualified_name'");
+        return {
+            success          => 0,
+            error            => "Sandbox mode: MCP tools are disabled.\n\n" .
+                "The --sandbox flag blocks all MCP operations. " .
+                "This is a security feature to prevent the agent from reaching outside the local project.",
+            action_description => "Sandbox: blocked MCP tool '$qualified_name'",
+        };
+    }
+
+    return undef;
+}
 
 =head2 generate_tool_definitions
 
@@ -90,7 +126,13 @@ Returns: CLIO tool result hashref { success, output, action_description }
 =cut
 
 sub execute_tool {
-    my ($class, $mcp_manager, $qualified_name, $arguments) = @_;
+    my ($class, $mcp_manager, $qualified_name, $arguments, $context) = @_;
+    
+    # Defense-in-depth: check before_route before dispatching.
+    # ToolExecutor already checks sandbox mode, but this ensures any
+    # direct caller is also protected.
+    my $guard = $class->before_route($qualified_name, $arguments, $context);
+    return $guard if $guard;
     
     unless ($mcp_manager) {
         return {

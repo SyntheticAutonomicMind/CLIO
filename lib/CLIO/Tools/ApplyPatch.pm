@@ -61,6 +61,7 @@ sub new {
     );
     
     $self->{base_dir} = $opts{base_dir} || '.';
+    $self->{session_dir} = $opts{session_dir} || '';
 
     return $self;
 }

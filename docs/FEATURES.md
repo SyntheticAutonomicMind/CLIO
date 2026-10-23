@@ -1458,14 +1458,14 @@ CLIO automatically detects and redacts sensitive information from tool output be
 | Level | PII | Private Keys | DB Passwords | API Keys | Tokens |
 |-------|-----|-------------|-------------|----------|--------|
 | **strict** | Redact | Redact | Redact | Redact | Redact |
-| **standard** | Redact | Redact | Redact | Redact | Redact |
+| **standard** (default) | Redact | Redact | Redact | Redact | Redact |
 | **api_permissive** | Redact | Redact | Redact | Allow | Allow |
-| **pii** (default) | Redact | - | - | - | - |
+| **pii** | Redact | - | - | - | - |
 | **off** | - | - | - | - | - |
 
 - **strict / standard** - Redact everything: PII, cryptographic material, API keys, and tokens. Recommended for most use cases.
 - **api_permissive** - Allow API keys and tokens through (useful when the AI legitimately needs to work with them), but still redact PII and cryptographic material.
-- **pii** (default) - Only redact personally identifiable information: SSN, credit cards, phone numbers, email addresses, UK National Insurance numbers.
+- **pii** - Only redact personally identifiable information: SSN, credit cards, phone numbers, email addresses, UK National Insurance numbers.
 - **off** - No redaction. Use with caution.
 
 #### What's Detected
@@ -1480,8 +1480,8 @@ Four pattern categories, each with multiple specific patterns:
 #### Configuration
 
 ```text
-/config set redact_level standard    # Redact everything
-/config set redact_level pii         # Only PII (default)
+/config set redact_level standard    # Redact everything (default)
+/config set redact_level pii         # Only PII
 /config set redact_level off         # Disable redaction
 ```
 

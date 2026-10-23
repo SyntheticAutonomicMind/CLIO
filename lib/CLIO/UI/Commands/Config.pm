@@ -200,7 +200,7 @@ sub _display_config_help {
     $self->display_key_value("workdir", "Working directory path", 25);
     $self->display_key_value("terminal_passthrough", "Force direct terminal access", 25);
     $self->display_key_value("terminal_autodetect", "Auto-detect interactive commands", 25);
-    $self->display_key_value("redact_level", "Redaction level: strict|standard|api_permissive|pii|off", 25);
+    $self->display_key_value("redact_level", "Redaction level: strict|standard|api_permissive|pii|off (default: standard)", 25);
     $self->display_key_value("security_level", "Command security: relaxed|standard|strict", 25);
     $self->display_key_value("sanitize_mode", "Text filter: strict|relaxed", 25);
     $self->display_key_value("enable_subagents", "Enable/disable sub-agent spawning (on/off)", 25);
@@ -215,7 +215,7 @@ sub _display_config_help {
     $self->display_key_value("strict", "Redact all (PII + crypto + API keys + tokens)", 25);
     $self->display_key_value("standard", "Same as strict", 25);
     $self->display_key_value("api_permissive", "Allow API keys/tokens (PII + crypto redacted)", 25);
-    $self->display_key_value("pii", "Only redact PII (default)", 25);
+    $self->display_key_value("pii", "Only redact PII", 25);
     $self->display_key_value("off", "No redaction (use with caution)", 25);
     $self->writeline("", markdown => 0);
     
@@ -613,7 +613,7 @@ sub show_global_config {
     $self->display_section_header("Security");
     
     # Get redact_level
-    my $redact_level = $self->{config}->get('redact_level') || 'pii';  # Default
+    my $redact_level = $self->{config}->get('redact_level') || 'standard';  # Default
     
     my %level_desc = (
         strict => '(all: PII + crypto + keys + tokens)',
