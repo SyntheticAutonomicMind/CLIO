@@ -415,6 +415,13 @@ Detailed description of what this tool does and when to use it.
 sub new {
     my ($class, %opts) = @_;
     
+    # For tools that do file I/O (FileOperations, ApplyPatch, etc.),
+    # pass session_dir so PathAuthorizer can enforce path containment.
+    # WorkflowOrchestrator sets session_dir from session->working_directory
+    # when constructing file_operations and apply_patch tools.
+    # If your tool needs path authorization, store session_dir from $opts
+    # and pass it to PathAuthorizer in your operation handlers.
+    
     return $class->SUPER::new(
         name => 'my_new_tool',
         description => 'What this tool does and when to use it',
@@ -435,6 +442,17 @@ sub route_operation {
     else {
         return $self->operation_error("Unknown operation: $operation");
     }
+}
+
+# Optional: Override before_route for pre-dispatch security checks.
+# The base class calls this before dispatching to the operation handler.
+# External tools (MCPBridge, PluginBridge) use this to enforce sandbox mode.
+sub before_route {
+    my ($self, $operation, $params, $context) = @_;
+    
+    # Return undef to proceed with dispatch, or return an error result
+    # to block execution.
+    return undef;
 }
 
 sub get_additional_parameters {

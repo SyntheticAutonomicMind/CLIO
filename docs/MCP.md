@@ -298,6 +298,17 @@ To re-authenticate manually:
 - **No sampling** - Server-initiated LLM requests not supported
 - **No progress notifications** - Long-running tools show no progress
 
+## Security
+
+MCP tools are registered through `CLIO::Tools::MCPBridge`, which enforces a
+`before_route` security gate. In sandbox mode (`--sandbox`), all MCP tool
+calls are blocked — the bridge returns an error without dispatching to the
+MCP server. This prevents the agent from reaching outside the local project
+via MCP-provided tools.
+
+See [SECURITY.md](SECURITY.md) and [SANDBOX.md](SANDBOX.md) for full details
+on CLIO's defense-in-depth security architecture.
+
 ---
 
 ## Protocol Reference

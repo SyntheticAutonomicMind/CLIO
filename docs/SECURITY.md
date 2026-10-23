@@ -48,9 +48,9 @@ Detects and redacts secrets from tool output BEFORE it reaches the AI or logs.
 | Level | What's Redacted |
 |-------|-----------------|
 | `strict` | All: PII + crypto wallets + API keys + tokens |
-| `standard` | Same as strict |
+| `standard` (default) | Same as strict: PII + crypto + API keys + tokens |
 | `api_permissive` | PII + crypto (allows API keys through) |
-| `standard` (default) | SSN, credit cards, phone numbers, emails, crypto, API keys, tokens |
+| `pii` | SSN, credit cards, phone numbers, emails |
 | `off` | Nothing (use with caution) |
 
 **Pattern Coverage:** AWS keys, GitHub tokens, SSH private keys, crypto wallet

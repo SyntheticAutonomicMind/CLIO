@@ -2306,9 +2306,8 @@ Configure the level of redaction using `/config set redact_level <level>`:
 | Level | What Gets Redacted | Use Case |
 |-------|-------------------|----------|
 | `strict` | Everything (PII + crypto + API keys + tokens) | Maximum security |
-| `standard` | Same as strict | Default for production |
+| `standard` (default) | Same as strict: PII + crypto + API keys + tokens | Most use cases |
 | `api_permissive` | PII + crypto only (API keys/tokens allowed) | When agent needs to work with tokens |
-| `standard` (default) | Redact PII, crypto, API keys, tokens | Most use cases |
 | `pii` | Only PII | Development with API key usage |
 | `off` | Nothing | Testing only (use with caution) |
 
@@ -2317,8 +2316,8 @@ Configure the level of redaction using `/config set redact_level <level>`:
 # Allow API keys to pass through (for GitHub token work, etc.)
 /config set redact_level api_permissive
 
-# Return to default PII-only protection
-/config set redact_level pii
+# Return to default standard protection
+/config set redact_level standard
 
 # Maximum protection
 /config set redact_level strict
@@ -2328,7 +2327,7 @@ Configure the level of redaction using `/config set redact_level <level>`:
 - PII is always redacted unless you set level to `off`
 - At `api_permissive`, database passwords and private keys are still protected
 - Redaction happens before data is sent to the AI provider
-- Git operations use `strict` level by default to prevent accidental commits
+- Log files always use `strict` redaction regardless of the AI-facing level, since logs persist on disk
 
 ### Soft Sandbox (`--sandbox` flag)
 

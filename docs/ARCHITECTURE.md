@@ -237,7 +237,7 @@ routing/session identity; `cached_tokens` reports the observed reuse.
 
 **Architecture:**
 - Base class: `Tool.pm` provides abstract interface
-- Each tool extends Tool.pm and implements execute()
+- Each tool extends Tool.pm and implements route_operation() (or dispatch_table())
 - `Registry.pm` maintains tool registry and handles lookup
 - `ToolExecutor.pm` (in Core) invokes tools and manages execution
 - `ToolResultStore.pm` (in Session) caches large tool outputs for efficiency

@@ -14,7 +14,7 @@
 use strict;
 use warnings;
 use utf8;
-use Test2::V0;
+use Test::More tests => 16;
 use lib './lib';
 
 use CLIO::Tools::FileOperations;
@@ -155,5 +155,3 @@ use CLIO::Tools::ApplyPatch;
     ok(!$result_sandbox_p->{success}, 'PluginBridge: sandbox block result has success=0');
     like($result_sandbox_p->{error}, qr/Sandbox mode/, 'PluginBridge: sandbox block error message mentions sandbox');
 }
-
-done_testing();

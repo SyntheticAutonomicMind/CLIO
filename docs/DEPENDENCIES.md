@@ -94,6 +94,20 @@ No installation needed - these ship with Perl 5.32+:
 
 ---
 
+## Test Dependencies
+
+Tests use `Test::More` (core since Perl 5.6). A small number of tests use
+`Test2::V0`, which was added to core in Perl 5.40. On Perl 5.32-5.38, install
+it from CPAN if you need to run those tests:
+
+```bash
+cpan Test2::Suite
+```
+
+All other tests run with `Test::More` alone.
+
+---
+
 ## Optional Performance Enhancement
 
 | Module | Purpose | Installation |
