@@ -18,6 +18,7 @@
 | **OrcaRouter** | `orca` | API Key |
 | **KiloCode** | `kilo` | API Key |
 | **Opper** | `opper` | API Key |
+| **Cheaper Inference** | `cheaperinference` | API Key |
 | **Ollama Cloud** | `ollama_cloud` | API Key |
 | **MiniMax** | `minimax` | API Key |
 | **MiniMax Token Plan** | `minimax_token` | API Key |
@@ -359,6 +360,37 @@ A bare model name is a pool: Opper routes each request across the providers that
 /api set model opper/claude-sonnet-4-6
 /api set model opper/gpt-5.4-mini
 /api set model opper/anthropic/claude-sonnet-4-6
+```
+
+**Features:**
+- Supports tools/function calling
+- Streaming responses
+
+---
+
+### Cheaper Inference
+
+**Best for:** One API key for models from several labs through an OpenAI-compatible gateway
+
+**Get API Key:**
+1. Go to [cheaperinference.com](https://cheaperinference.com) and sign in
+2. Create a key (keys start with `ci_live_`)
+
+**Configure CLIO:**
+```bash
+clio --new
+/api set provider cheaperinference
+/api set key <your-cheaperinference-key>
+/config save
+```
+
+**Available models:** Cheaper Inference serves models from several labs through one OpenAI-compatible API at `https://api.cheaperinference.com/v1`. Use `/api models` for the current list. The default model is `gpt-5.4-mini`.
+
+Model ids are bare names:
+```bash
+/api set model gpt-5.4-mini
+/api set model claude-sonnet-5
+/api set model deepseek-v4-flash
 ```
 
 **Features:**
@@ -722,7 +754,7 @@ CLIO applies a tiered `--max-time` to provider requests so a slow upstream does 
 | Tier | `--max-time` | When it applies |
 |------|--------------|------------------|
 | Cloud | **300 s** | Direct provider connections (OpenAI, Anthropic, Google, DeepSeek, NVIDIA, MiniMax, Z.AI, GitHub Copilot, Ollama Cloud, KiloCode) |
-| Route-based | **300 s** | Multi-hop providers that add an intermediate proxy (OpenRouter, OrcaRouter, Opper, Vercel AI Gateway) |
+| Route-based | **300 s** | Multi-hop providers that add an intermediate proxy (OpenRouter, OrcaRouter, Opper, Cheaper Inference, Vercel AI Gateway) |
 | Local | **900 s** | Inference servers running on this machine (llama.cpp, LM Studio) |
 
 The tier is selected per provider via two flags propagated through `build_endpoint_config()`:

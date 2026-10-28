@@ -211,6 +211,10 @@
       "model_id_format": "model",
       "models": []
     },
+    "cheaperinference": {
+      "model_id_format": "model",
+      "models": []
+    },
     "orca": {
       "model_id_format": "provider/model",
       "models": []

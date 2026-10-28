@@ -371,6 +371,7 @@ CLIO supports 20 AI providers out of the box. Switch between them at any time - 
 | **OrcaRouter** | Cloud | API key |
 | **KiloCode** | Cloud | API key |
 | **Opper** | Cloud | API key |
+| **Cheaper Inference** | Cloud | API key |
 | **Ollama Cloud** | Cloud | API key |
 | **MiniMax** | Cloud | API key |
 | **MiniMax Token Plan** | Cloud | API key (usage-based) |

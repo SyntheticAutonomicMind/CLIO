@@ -45,6 +45,8 @@ subtest 'standard API providers' => sub {
         'KiloCode detected');
     is(provider_from_url('https://api.opper.ai/v3/compat/chat/completions'), 'opper',
         'Opper detected');
+    is(provider_from_url('https://api.cheaperinference.com/v1/chat/completions'), 'cheaperinference',
+        'Cheaper Inference detected');
 };
 
 # =============================================================================
