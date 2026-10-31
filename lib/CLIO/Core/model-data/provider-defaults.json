@@ -229,6 +229,16 @@
         "mode": "disabled"
       }
     },
+    "cheaperinference": {
+      "default_model": "gpt-5.4-mini",
+      "max_context_tokens": 400000,
+      "max_output_tokens": 128000,
+      "supports_streaming": 1,
+      "supports_tools": 1,
+      "reasoning_schema": {
+        "mode": "disabled"
+      }
+    },
     "zai": {
       "default_model": "glm-5.1",
       "max_context_tokens": 128000,

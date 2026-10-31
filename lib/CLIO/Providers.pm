@@ -324,6 +324,25 @@ my %PROVIDERS = (
         },
     },
 
+    cheaperinference => {
+        name => 'Cheaper Inference',
+        api_base => 'https://api.cheaperinference.com/v1/chat/completions',
+        model => 'gpt-5.4-mini',
+        requires_auth => 'apikey',
+        supports_tools => 1,
+        supports_streaming => 1,
+        route_timeout => 1,  # Routes to upstream providers, extra latency from the intermediate hop
+        url_detection_patterns => [ qr{api\.cheaperinference\.com}i ],
+        # Model ids are bare names (e.g. gpt-5.4-mini, claude-sonnet-5).
+        # The live /v1/models list (needs the API key) is the source of
+        # truth for capabilities.
+        endpoint => {
+            path_suffix => '',
+            temperature_range => [0.0, 2.0],
+            supports_tools => 1,
+        },
+    },
+
     google => {
         name => 'Google Gemini',
         api_base => 'https://generativelanguage.googleapis.com/v1beta',

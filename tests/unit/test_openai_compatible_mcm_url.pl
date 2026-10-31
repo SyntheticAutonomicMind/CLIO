@@ -71,6 +71,11 @@ is(_derive_models_url('https://api.opper.ai/v3/compat/chat/completions'),
    'https://api.opper.ai/v3/compat/models',
    'opper: /v3/compat/chat/completions -> /v3/compat/models');
 
+# Test 3d: Cheaper Inference
+is(_derive_models_url('https://api.cheaperinference.com/v1/chat/completions'),
+   'https://api.cheaperinference.com/v1/models',
+   'cheaperinference: /v1/chat/completions -> /v1/models');
+
 # Test 4: ollama_cloud
 is(_derive_models_url('https://ollama.com/v1/chat/completions'),
    'https://ollama.com/v1/models',

@@ -32,7 +32,7 @@ use CLIO::Core::ModelDataLoader;
 
 # Each tier name + the providers that should belong to it.
 my @LOCAL_NAMES  = qw(llama.cpp lmstudio);
-my @CLOUD_NAMES  = qw(openai anthropic google minimax zai deepseek nvidia github_copilot openrouter ollama_cloud orca kilo hyper opper);
+my @CLOUD_NAMES  = qw(openai anthropic google minimax zai deepseek nvidia github_copilot openrouter ollama_cloud orca kilo hyper opper cheaperinference);
 
 # ============================================================================
 # Registry must declare the flags on every named local provider
@@ -83,14 +83,16 @@ for my $name (@LOCAL_NAMES) {
         "default_context_window($name) == DEFAULT_LOCAL_CONTEXT_WINDOW");
 }
 for my $name (@CLOUD_NAMES) {
-    # anthropic (200000), minimax (1000000) and openrouter (200000) ship explicit
-    # max_context_tokens in provider-defaults.json, which override the
-    # DEFAULT_CONTEXT_WINDOW (128000) fallback. Every other cloud
-    # provider has no override and falls back to the constant.
-    my $expected = ($name eq 'anthropic') ? 200000
-                : ($name eq 'minimax')    ? 1000000
-                : ($name eq 'openrouter') ? 200000
-                :                           DEFAULT_CONTEXT_WINDOW();
+    # anthropic (200000), minimax (1000000), openrouter (200000) and
+    # cheaperinference (400000) ship explicit max_context_tokens in
+    # provider-defaults.json, which override the DEFAULT_CONTEXT_WINDOW
+    # (128000) fallback. Every other cloud provider falls back to the
+    # constant.
+    my $expected = ($name eq 'anthropic')        ? 200000
+                : ($name eq 'minimax')          ? 1000000
+                : ($name eq 'openrouter')       ? 200000
+                : ($name eq 'cheaperinference') ? 400000
+                :                                 DEFAULT_CONTEXT_WINDOW();
     is(default_context_window($name), $expected,
         "default_context_window($name) == $expected");
 }
@@ -197,7 +199,7 @@ for my $name (@CLOUD_NAMES) {
 
     # Providers without a dedicated fetcher return undef so the caller
     # can fall back to the generic OpenAI-compatible path.
-    for my $name (qw(openai ollama_cloud openrouter orca kilo hyper opper)) {
+    for my $name (qw(openai ollama_cloud openrouter orca kilo hyper opper cheaperinference)) {
         is(capability_fetcher($name), undef,
             "$name has no dedicated fetcher -> undef (caller falls back)");
     }
