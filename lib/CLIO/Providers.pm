@@ -175,20 +175,7 @@ my %PROVIDERS = (
             path_suffix => '',
             temperature_range => [0.0, 2.0],
             supports_tools => 1,
-            # DRY anti-repetition sampling prevents local models from
-            # entering verbatim reasoning loops. The server's OAI
-            # endpoint rejects dry_penalty_last_n -1 (full context),
-            # so send a large positive window instead - loops are
-            # recent-history phenomena, and this covers typical local
-            # context sizes. Recovery for the loops DRY can't prevent
-            # is handled in-flight via reasoning_control (see
-            # provider-defaults.json); APIManager injects it into the
-            # payload as a JSON boolean gated on the endpoint flag.
-            sampling_defaults => {
-                temperature => 0.7, top_p => 0.95, top_k => 20,
-                dry_multiplier => 0.8, dry_base => 1.75,
-                dry_allowed_length => 2, dry_penalty_last_n => 65536,
-            },
+            sampling_defaults => { temperature => 0.7, top_p => 0.95, top_k => 20 },
             # Local inference servers map both reasoning_effort and
             # max_tokens into reasoning.* subkeys, causing "Only one of
             # 'reasoning.effort' and 'reasoning.max_tokens' can be
@@ -855,9 +842,8 @@ sub build_endpoint_config {
     # JSON provider defaults (provider-defaults.json) propagate the
     # data-driven knobs APIManager consumes:
     #   reasoning_schema  - reasoning parameter injection dispatch
-    #   exposes_props     - llama.cpp/LM Studio family flag; gates DRY
-    #                       sampling defaults and reasoning_control arming
-    #   sampling_defaults - provider-recommended sampling (anti-repetition)
+    #   exposes_props     - llama.cpp/LM Studio family flag; gates
+    #                       reasoning_control arming
     #   reasoning_control - arm in-flight reasoning budget control
     # Endpoint config wins for keys it already defines; JSON fills gaps.
     my $json_defaults = _get_json_provider_defaults($provider_name);

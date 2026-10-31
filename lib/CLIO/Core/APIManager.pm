@@ -1554,7 +1554,7 @@ sub adapt_request_for_endpoint {
     # `next if exists $payload->{$param}` skip doesn't drop user values
     # that the provider default would otherwise have filled in.
     if ($self->{config}) {
-        for my $param (qw(temperature top_p top_k dry_multiplier dry_base dry_allowed_length dry_penalty_last_n)) {
+        for my $param (qw(temperature top_p top_k)) {
             my $val = $self->{config}->get("sampling_$param");
             next unless defined $val && $val ne '';
             next if exists $payload->{$param};  # caller opts win
@@ -1569,22 +1569,6 @@ sub adapt_request_for_endpoint {
             next unless defined $sd->{$param};
             next if exists $payload->{$param};
             $payload->{$param} = $sd->{$param};
-        }
-
-        # DRY anti-repetition sampling defaults (llama.cpp family only -
-        # the params are llama.cpp-specific and other providers reject
-        # unknown body fields). Caller opts and user config always win.
-        # Prevents the verbatim reasoning loops local models fall into.
-        if ($endpoint_config->{exposes_props}
-            && (!$self->{config} || ($self->{config}->get('llamacpp_dry_sampling') // 1))) {
-            for my $param (qw(dry_multiplier dry_base dry_allowed_length dry_penalty_last_n)) {
-                next unless defined $sd->{$param};
-                next if exists $payload->{$param};
-                $payload->{$param} = $sd->{$param};
-            }
-            if (defined $sd->{dry_sequence_breakers} && !exists $payload->{dry_sequence_breakers}) {
-                $payload->{dry_sequence_breakers} = [ @{$sd->{dry_sequence_breakers}} ];
-            }
         }
     }
 

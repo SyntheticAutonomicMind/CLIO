@@ -34,9 +34,7 @@ The detector is stateless per call - the caller owns the accumulated text
 buffer and passes a reference on each check. Detection is purely
 character-exact; paraphrased loops (same meaning, different wording) are
 deliberately out of scope, since fuzzy similarity matching false-positives
-on legitimate reasoning. Literal loops are the common failure mode, and
-DRY anti-repetition sampling (applied separately) prevents most of them
-from forming in the first place.
+on legitimate reasoning. Literal loops are the common failure mode.
 
 =cut
 

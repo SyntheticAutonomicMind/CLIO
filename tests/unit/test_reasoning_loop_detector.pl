@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Tests for reasoning repetition loop detection and llama.cpp loop
 # recovery wiring: detector thresholds, false-positive resistance, and
-# the DRY sampling_defaults / reasoning_control payload injection.
+# the reasoning_control payload arming.
 
 use strict;
 use warnings;
@@ -77,20 +77,11 @@ subtest 'custom thresholds' => sub {
 # =============================================================================
 # Section 2: llama.cpp endpoint config wiring
 # =============================================================================
-subtest 'llama.cpp provider carries DRY sampling defaults and reasoning_control' => sub {
+subtest 'llama.cpp endpoint arms reasoning_control' => sub {
     my $cfg = build_endpoint_config('llama.cpp', undef);
 
-    my $sd = $cfg->{sampling_defaults};
-    ok($sd, "llama.cpp has sampling_defaults");
-    is($sd->{dry_multiplier}, 0.8, "dry_multiplier 0.8");
-    is($sd->{dry_base}, 1.75, "dry_base 1.75");
-    is($sd->{dry_allowed_length}, 2, "dry_allowed_length 2");
-    is($sd->{dry_penalty_last_n}, 65536,
-        "dry_penalty_last_n 65536 (OAI endpoint rejects -1; 64k window covers recent context)");
-    ok(!exists $sd->{reasoning_control},
-        "sampling_defaults do not carry reasoning_control (arming is endpoint-flag driven)");
     ok($cfg->{reasoning_control}, "llama.cpp arms reasoning_control");
-    ok($cfg->{exposes_props}, "llama.cpp exposes_props (gates both layers)");
+    ok($cfg->{exposes_props}, "llama.cpp exposes_props (gates arming)");
 
     # Simulate the APIManager arming block: JSON boolean required -
     # the server warns (json.exception.type_error.302) and falls back
@@ -104,18 +95,37 @@ subtest 'llama.cpp provider carries DRY sampling defaults and reasoning_control'
         "armed value encodes as JSON boolean true (not number)");
 };
 
-subtest 'other providers do not get DRY defaults or reasoning_control' => sub {
+subtest 'other providers do not arm reasoning_control' => sub {
     for my $provider ('openai', 'anthropic', 'deepseek') {
         my $cfg = build_endpoint_config($provider, 'test-key');
-        ok(!$cfg->{sampling_defaults}{dry_multiplier}, "$provider has no dry_multiplier default");
         ok(!$cfg->{reasoning_control}, "$provider does not arm reasoning_control");
         ok(!$cfg->{exposes_props}, "$provider does not expose_props");
     }
 };
 
+# =============================================================================
+# Section 3: reasoning_control arming reaches the payload
+# =============================================================================
+subtest 'reasoning_control arming applies to llama.cpp payloads' => sub {
+    require CLIO::Core::APIManager;
+    require CLIO::Core::Config;
+
+    my $endpoint = build_endpoint_config('llama.cpp', 'test-key');
+    my $config = CLIO::Core::Config->new();
+    $config->{config}{llamacpp_reasoning_control} = 1;
+    my $api = bless { config => $config, session => undef }, 'CLIO::Core::APIManager';
+
+    my $payload = $api->_build_payload(
+        [ { role => 'user', content => 'test' } ], 'local-model', $endpoint);
+    is($payload->{temperature}, 0.7, "regular sampling defaults still apply");
+    ok(defined $payload->{reasoning_control} && ref($payload->{reasoning_control}) eq 'SCALAR'
+        && ${$payload->{reasoning_control}} == 1,
+        "reasoning_control armed as JSON true");
+};
+
 subtest 'LM Studio exposes props but has no control endpoint' => sub {
     my $cfg = build_endpoint_config('lmstudio', undef);
-    ok($cfg->{exposes_props}, "lmstudio exposes_props (DRY layer applies)");
+    ok($cfg->{exposes_props}, "lmstudio exposes_props");
     ok(!$cfg->{reasoning_control}, "lmstudio does NOT arm reasoning_control (no control endpoint)");
 };
 
