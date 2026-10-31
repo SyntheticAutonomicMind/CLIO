@@ -84,6 +84,7 @@
       "local_inference": 1,
       "max_context_tokens": 65536,
       "max_output_tokens": 16384,
+      "reasoning_control": 1,
       "supports_streaming": 1,
       "supports_tools": 1,
       "reasoning_schema": {

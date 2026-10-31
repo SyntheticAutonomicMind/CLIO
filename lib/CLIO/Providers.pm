@@ -175,7 +175,20 @@ my %PROVIDERS = (
             path_suffix => '',
             temperature_range => [0.0, 2.0],
             supports_tools => 1,
-            sampling_defaults => { temperature => 0.7, top_p => 0.95, top_k => 20 },
+            # DRY anti-repetition sampling prevents local models from
+            # entering verbatim reasoning loops. The server's OAI
+            # endpoint rejects dry_penalty_last_n -1 (full context),
+            # so send a large positive window instead - loops are
+            # recent-history phenomena, and this covers typical local
+            # context sizes. Recovery for the loops DRY can't prevent
+            # is handled in-flight via reasoning_control (see
+            # provider-defaults.json); APIManager injects it into the
+            # payload as a JSON boolean gated on the endpoint flag.
+            sampling_defaults => {
+                temperature => 0.7, top_p => 0.95, top_k => 20,
+                dry_multiplier => 0.8, dry_base => 1.75,
+                dry_allowed_length => 2, dry_penalty_last_n => 65536,
+            },
             # Local inference servers map both reasoning_effort and
             # max_tokens into reasoning.* subkeys, causing "Only one of
             # 'reasoning.effort' and 'reasoning.max_tokens' can be
@@ -839,15 +852,26 @@ sub build_endpoint_config {
         $endpoint->{supports_cache_control} = 1;
     }
 
-    # Propagate reasoning_schema from provider-defaults JSON so
-    # APIManager can drive param injection data-first instead of
-    # hardcoded if-blocks per provider.
-    if (!$endpoint->{reasoning_schema}) {
-        my $json_defaults = _get_json_provider_defaults($provider_name);
-        if ($json_defaults && $json_defaults->{reasoning_schema}) {
-            $endpoint->{reasoning_schema} = $json_defaults->{reasoning_schema};
-        }
+    # JSON provider defaults (provider-defaults.json) propagate the
+    # data-driven knobs APIManager consumes:
+    #   reasoning_schema  - reasoning parameter injection dispatch
+    #   exposes_props     - llama.cpp/LM Studio family flag; gates DRY
+    #                       sampling defaults and reasoning_control arming
+    #   sampling_defaults - provider-recommended sampling (anti-repetition)
+    #   reasoning_control - arm in-flight reasoning budget control
+    # Endpoint config wins for keys it already defines; JSON fills gaps.
+    my $json_defaults = _get_json_provider_defaults($provider_name);
+    if (!$endpoint->{reasoning_schema} && $json_defaults && $json_defaults->{reasoning_schema}) {
+        $endpoint->{reasoning_schema} = $json_defaults->{reasoning_schema};
     }
+    $endpoint->{exposes_props} = 1
+        if !$endpoint->{exposes_props}
+        && (($provider && $provider->{exposes_props}) || ($json_defaults && $json_defaults->{exposes_props}));
+    if (!$endpoint->{sampling_defaults} && $json_defaults && $json_defaults->{sampling_defaults}) {
+        $endpoint->{sampling_defaults} = $json_defaults->{sampling_defaults};
+    }
+    $endpoint->{reasoning_control} = 1
+        if !$endpoint->{reasoning_control} && $json_defaults && $json_defaults->{reasoning_control};
 
     # Add dynamic auth
     $endpoint->{auth_header} = 'Authorization';

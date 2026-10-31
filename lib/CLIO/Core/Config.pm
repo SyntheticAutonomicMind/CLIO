@@ -143,6 +143,15 @@ use constant DEFAULT_CONFIG => {
     sampling_temperature => '',  # Override temperature (e.g. 0.7); empty = use provider default
     sampling_top_p => '',        # Override top_p (e.g. 0.9); empty = use provider default
     sampling_top_k => '',        # Override top_k (e.g. 40); empty = use provider default
+    # llama.cpp-family loop prevention and recovery
+    # DRY anti-repetition sampling defaults for llama.cpp endpoints. Local
+    # models occasionally enter verbatim reasoning loops; DRY prevents most
+    # from forming. Caller opts and user /api set sampling_* always win.
+    llamacpp_dry_sampling => 1,
+    # In-flight reasoning loop recovery: arm llama.cpp reasoning_control
+    # and force reasoning_end mid-stream when a reasoning loop is detected
+    # (POST /v1/chat/completions/control). No-op on servers without it.
+    llamacpp_reasoning_control => 1,
     # Capability overrides (cap_* caps model value, force_* overrides boolean)
     cap_context_window => 0,     # Cap model's context window (0 = no cap, e.g. 128000 for DeepSeek 1M -> 128k)
     cap_max_output => 0,         # Cap model's max output tokens (0 = no cap)

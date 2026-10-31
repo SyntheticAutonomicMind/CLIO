@@ -49,6 +49,7 @@ use CLIO::UI::Terminal qw(ui_char);
 use CLIO::Core::RateLimiter;
 use CLIO::Util::CABundle;
 use CLIO::Util::UUID qw(uuid_v4);
+use CLIO::Core::ReasoningLoopDetector;
 # GitHub Copilot editor identification headers (matches vscode-copilot-chat reference)
 use CLIO::Core::Defaults qw(
     COPILOT_EDITOR_VERSION
@@ -1553,7 +1554,7 @@ sub adapt_request_for_endpoint {
     # `next if exists $payload->{$param}` skip doesn't drop user values
     # that the provider default would otherwise have filled in.
     if ($self->{config}) {
-        for my $param (qw(temperature top_p top_k)) {
+        for my $param (qw(temperature top_p top_k dry_multiplier dry_base dry_allowed_length dry_penalty_last_n)) {
             my $val = $self->{config}->get("sampling_$param");
             next unless defined $val && $val ne '';
             next if exists $payload->{$param};  # caller opts win
@@ -1569,6 +1570,38 @@ sub adapt_request_for_endpoint {
             next if exists $payload->{$param};
             $payload->{$param} = $sd->{$param};
         }
+
+        # DRY anti-repetition sampling defaults (llama.cpp family only -
+        # the params are llama.cpp-specific and other providers reject
+        # unknown body fields). Caller opts and user config always win.
+        # Prevents the verbatim reasoning loops local models fall into.
+        if ($endpoint_config->{exposes_props}
+            && (!$self->{config} || ($self->{config}->get('llamacpp_dry_sampling') // 1))) {
+            for my $param (qw(dry_multiplier dry_base dry_allowed_length dry_penalty_last_n)) {
+                next unless defined $sd->{$param};
+                next if exists $payload->{$param};
+                $payload->{$param} = $sd->{$param};
+            }
+            if (defined $sd->{dry_sequence_breakers} && !exists $payload->{dry_sequence_breakers}) {
+                $payload->{dry_sequence_breakers} = [ @{$sd->{dry_sequence_breakers}} ];
+            }
+        }
+    }
+
+    # Arm llama.cpp in-flight reasoning control. Used by the streaming
+    # reasoning loop detector to force exit from runaway thinking via
+    # POST /v1/chat/completions/control {action: reasoning_end}. The
+    # value must be a JSON boolean (the server's json_value() warns and
+    # falls back to false on a number). Safe to send to llama.cpp
+    # servers: the field is dropped when the chat template declares no
+    # thinking tags, and the reasoning-budget sampler stays IDLE (pure
+    # passthrough) when reasoning never starts. LM Studio has no control
+    # endpoint, so the provider-defaults.json reasoning_control flag
+    # gates this alongside exposes_props.
+    if ($endpoint_config->{exposes_props} && $endpoint_config->{reasoning_control}
+        && !$payload->{reasoning_control}
+        && (!$self->{config} || ($self->{config}->get('llamacpp_reasoning_control') // 1))) {
+        $payload->{reasoning_control} = \1;
     }
 
     # Strip cache_control fields from messages and tools for providers that
@@ -4443,6 +4476,13 @@ sub send_request_streaming {
         reasoning_active => 0,
         in_think_tag     => 0,
         think_buffer     => '',
+        cmpl_id          => undef,   # llama.cpp-family control endpoint: completion id
+        loop_check_len   => 0,       # reasoning chars at last loop-detector check
+        loop_detector    => undef,   # lazy CLIO::Core::ReasoningLoopDetector
+        loop_action_taken => 0,     # one control call per completion max
+        control_url      => undef,  # llama.cpp-family: /v1/chat/completions/control
+        control_auth_header => undef,
+        control_auth_value  => undef,
         use_responses_api => $use_responses_api,
         model            => $model,
         on_chunk         => $on_chunk,
@@ -4450,6 +4490,20 @@ sub send_request_streaming {
         on_thinking      => $on_thinking,
         opts             => \%opts,
     };
+
+    # llama.cpp-family in-flight reasoning loop recovery plumbing.
+    # exposes_props marks the llama.cpp/LM Studio family - the only
+    # endpoints with /v1/chat/completions/control. The control URL is
+    # the streaming endpoint with the trailing path component swapped.
+    if ($ctx->{endpoint_config}{exposes_props}
+        && (!$self->{config} || ($self->{config}->get('llamacpp_reasoning_control') // 1))) {
+        my $control_url = $ctx->{final_endpoint};
+        if ($control_url && $control_url =~ s{/chat/completions$}{/chat/completions/control}) {
+            $ss->{control_url} = $control_url;
+            $ss->{control_auth_header} = $ctx->{endpoint_config}{auth_header};
+            $ss->{control_auth_value}  = $ctx->{endpoint_config}{auth_value};
+        }
+    }
 
     my $buffer = '';
     my $raw_response_body = '';
@@ -4649,6 +4703,10 @@ sub _process_sse_data {
         my $iteration = ($ss->{opts} && $ss->{opts}{tool_call_iteration}) || 1;
         $self->{response_handler}->store_stateful_marker($data->{stateful_marker}, $ss->{model}, $iteration);
     }
+    # llama.cpp-family: remember the completion id so the reasoning loop
+    # detector can address the control endpoint mid-stream.
+    $ss->{cmpl_id} = $data->{id} if $data->{id} && !defined($ss->{cmpl_id});
+
     # Only store response_id when it changes (not every chunk)
     if ($data->{id} && $self->{session} &&
         (!defined($self->{session}{lastGitHubCopilotResponseId}) ||
@@ -4958,10 +5016,82 @@ sub _process_chat_completions_delta {
         $ss->{on_thinking}->($delta->{reasoning});
     }
 
+    # Reasoning loop detection (llama.cpp family). All reasoning extraction
+    # paths converge into accum_reasoning (separate reasoning fields and
+    # inline think tags), so this single check covers every format.
+    # Throttled: run the detector at most once per 128 new reasoning
+    # characters. On detection, force the server's reasoning-budget sampler
+    # to emit the thinking end tag mid-stream (POST /v1/chat/completions/
+    # control). The stream continues into the answer - no abort, no retry.
+    if ($ss->{reasoning_active} && $ss->{control_url} && !$ss->{loop_action_taken}
+        && defined($ss->{cmpl_id})) {
+        my $reasoning_len = length($ss->{accum_reasoning});
+        if ($reasoning_len - $ss->{loop_check_len} >= 128) {
+            $ss->{loop_check_len} = $reasoning_len;
+            $ss->{loop_detector} ||= CLIO::Core::ReasoningLoopDetector->new();
+            my $cycle_len = $ss->{loop_detector}->check(\$ss->{accum_reasoning});
+            if ($cycle_len) {
+                $ss->{loop_action_taken} = 1;
+                $self->_force_reasoning_end($ss, $cycle_len);
+            }
+        }
+    }
+
     # Tool calls delta
     $tool_calls_delta = $delta->{tool_calls} if $delta->{tool_calls} && ref($delta->{tool_calls}) eq 'ARRAY';
 
     return ($content_delta, $tool_calls_delta);
+}
+
+=head2 _force_reasoning_end($ss, $cycle_len)
+
+Force a llama.cpp-family server out of a reasoning repetition loop by
+POSTing to the /v1/chat/completions/control endpoint with
+{action: "reasoning_end"} and the streaming completion id. The server's
+reasoning-budget sampler emits the thinking end tag immediately, and the
+stream continues into the answer - no abort and no retry needed.
+
+Arguments: $ss (streaming state hashref), $cycle_len (detected cycle
+length, used only for logging).
+
+Returns: 1 when the control call was accepted, 0 otherwise. The control
+URL is invalidated on failure so the stream never re-fires it.
+
+=cut
+
+sub _force_reasoning_end {
+    my ($self, $ss, $cycle_len) = @_;
+
+    return 0 unless $ss->{control_url} && defined($ss->{cmpl_id});
+
+    my $id = $ss->{cmpl_id};
+    log_debug('APIManager', "Reasoning loop detected (cycle=$cycle_len chars, id=$id) - forcing reasoning_end");
+
+    my $creq = HTTP::Request->new('POST', $ss->{control_url});
+    $creq->header('Content-Type' => 'application/json');
+    $creq->header($ss->{control_auth_header} => $ss->{control_auth_value})
+        if $ss->{control_auth_header} && $ss->{control_auth_value};
+    $creq->content(encode_json({ id => $id, action => 'reasoning_end' }));
+
+    # Short-lived client: this is a localhost call on a path that was
+    # streaming fine a moment ago. Don't block the stream longer than
+    # the server needs to answer.
+    my $ua = CLIO::Compat::HTTP->new(timeout => 10);
+    my $resp = eval { $ua->request($creq) };
+    if ($@ || !$resp || !$resp->is_success) {
+        my $err = $@ ? $@ : ($resp ? $resp->status_line : 'no response');
+        chomp($err = $err // '');
+        log_debug('APIManager', "reasoning_end control call failed: $err");
+        $ss->{control_url} = undef;
+        return 0;
+    }
+
+    log_debug('APIManager', "reasoning_end accepted - model exiting thinking");
+    # Surface the intervention in the thinking panel so the user can see
+    # why the runaway reasoning stopped instead of trailing off naturally.
+    $ss->{on_thinking}->("\n[CLIO: reasoning repetition loop detected - forcing end of thinking]\n")
+        if $ss->{on_thinking};
+    return 1;
 }
 
 =head2 _accumulate_tool_calls_delta($deltas, $ss)
