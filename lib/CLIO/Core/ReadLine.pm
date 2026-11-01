@@ -12,6 +12,7 @@ use CLIO::Core::Logger qw(should_log log_debug log_warning);
 $| = 1;
 use CLIO::Compat::Terminal qw(ReadMode ReadKey GetTerminalSize);
 use Encode ();
+use Time::HiRes ();
 
 =head1 NAME
 
@@ -436,6 +437,30 @@ sub _invalidate_yank {
     $self->{yank_index} = 0;
 }
 
+=head2 _is_dsr_prefix
+
+Test whether a partial byte sequence could still be the prefix of a DSR
+(Device Status Report) response.
+
+A DSR response is C<ESC[row;colR>. The response arrives one byte at a
+time, so the probe passes through intermediate states such as C<ESC[24;>
+before the column digits arrive. The digit run after the ';' must
+therefore be allowed to be empty — otherwise the probe is rejected
+mid-response and the remaining bytes (including the terminating 'R') are
+pushed into the input queue and appear as literal text in the user's
+input.
+
+Arguments: $probe (string) - the bytes accumulated so far
+Returns: 1 if the sequence could still become a DSR response, 0 otherwise
+
+=cut
+
+sub _is_dsr_prefix {
+    my ($self, $probe) = @_;
+    return 0 unless defined $probe;
+    return $probe =~ /^\e(?:\[\d*(;\d*)?)?$/ ? 1 : 0;
+}
+
 =head2 _query_cursor_pos
 
 Query the terminal for the current cursor position using the DSR
@@ -469,17 +494,43 @@ sub _query_cursor_pos {
     ReadMode(1);
 
     # Send DSR request.
-    print "\e[6n";
-    STDOUT->flush() if STDOUT->can('flush');
+    #
+    # The query has to reach the terminal that will answer it, and the
+    # answer arrives back on stdin. When stdout is redirected (e.g.
+    # `clio | tee log`), printing ESC[6n to stdout would put the escape
+    # sequence into the captured output and the response would arrive
+    # late — if at all. Write the query to /dev/tty instead so the
+    # terminal still answers while stdout stays clean.
+    if (-t STDOUT) {
+        print "\e[6n";
+        STDOUT->flush() if STDOUT->can('flush');
+    } elsif (open(my $tty, '>', '/dev/tty')) {
+        print $tty "\e[6n";
+        $tty->flush() if $tty->can('flush');
+        close($tty);
+    } else {
+        # No way to ask the terminal — restore the terminal mode and
+        # report the default position rather than waiting out the
+        # timeout for a response that can never come.
+        ReadMode(0);
+        return (0, 1);
+    }
 
-    my $deadline = time() + $timeout;
+    # Use a monotonic clock with sub-second resolution. Perl's time() has
+    # one-second granularity, so a deadline built from it would extend the
+    # query window to a full second (or zero) instead of $timeout.
+    my $deadline = Time::HiRes::time() + $timeout;
     my $probe = '';
     my $saw_escape = 0;
     my $parsed;
 
-    while (time() < $deadline) {
-        my $remaining = $deadline - time();
-        $remaining = 0.04 if $remaining > 0.04 || $remaining < 0;
+    while (Time::HiRes::time() < $deadline) {
+        my $remaining = $deadline - Time::HiRes::time();
+        # Clamp to a positive window. ReadKey(0) is a *blocking* read in
+        # this compat layer, so a remainder of exactly 0 would hang until
+        # the user pressed a key.
+        $remaining = 0.04 if $remaining > 0.04;
+        $remaining = 0.001 if $remaining < 0.001;
         my $ch = ReadKey($remaining);
         next unless defined $ch;
 
@@ -503,7 +554,14 @@ sub _query_cursor_pos {
         }
 
         # Check if the probe is still a valid DSR prefix.
-        if ($probe !~ /^\e(?:\[\d*(;\d+)?)?$/) {
+        #
+        # The column digits follow the ';', so the prefix "ESC[24;" is a
+        # legitimate intermediate state. The digit run after ';' must
+        # therefore be allowed to be empty, otherwise the probe is
+        # rejected mid-response and the remaining bytes (including the
+        # terminating 'R') are pushed into the input queue as literal
+        # text.
+        if (!$self->_is_dsr_prefix($probe)) {
             # Not a DSR-shaped prefix — save for readline loop.
             push @{$self->{_key_queue}}, split //, $probe;
             $probe = '';
@@ -530,12 +588,15 @@ sub _query_cursor_pos {
     # Any bytes we read that form a DSR pattern are discarded; anything
     # else is pushed to _key_queue for readline to handle.
     if (!$parsed) {
-        my $drain_deadline = time() + 0.05;
+        my $drain_deadline = Time::HiRes::time() + 0.05;
         my $drain_probe = '';
         my $drain_saw_esc = 0;
-        while (time() < $drain_deadline) {
-            my $remaining = $drain_deadline - time();
-            $remaining = 0.04 if $remaining > 0.04 || $remaining < 0;
+        while (Time::HiRes::time() < $drain_deadline) {
+            my $remaining = $drain_deadline - Time::HiRes::time();
+            # Clamp to a positive window. ReadKey(0) is a *blocking* read
+            # in this compat layer.
+            $remaining = 0.04 if $remaining > 0.04;
+            $remaining = 0.001 if $remaining < 0.001;
             my $ch = ReadKey($remaining);
             next unless defined $ch;
 
@@ -558,7 +619,9 @@ sub _query_cursor_pos {
                 next;
             }
 
-            if ($drain_probe !~ /^\e(?:\[\d*(;\d+)?)?$/) {
+            # Same prefix rule as the primary probe: "ESC[24;" is a valid
+            # intermediate state of a DSR response.
+            if (!$self->_is_dsr_prefix($drain_probe)) {
                 push @{$self->{_key_queue}}, split //, $drain_probe;
                 $drain_probe = '';
                 $drain_saw_esc = 0;
@@ -576,7 +639,7 @@ sub _query_cursor_pos {
                     $drained = '';
                     last;
                 }
-                if ($drained !~ /^\e(?:\[\d*(;\d+)?)?$/) {
+                if (!$self->_is_dsr_prefix($drained)) {
                     push @{$self->{_key_queue}}, split //, $drained;
                     $drained = '';
                     last;
@@ -1360,7 +1423,10 @@ sub readline {
                 }
             }
         } else {
-            $char = ReadKey(0);
+            # Only block on a fresh read if no char was queued by the DSR
+            # cursor query — a blocking ReadKey here would clobber the
+            # queued value and silently drop type-ahead input.
+            $char = ReadKey(0) unless defined $char;
 
             unless (defined $char) {
                 next;

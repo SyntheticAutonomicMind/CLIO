@@ -100,7 +100,7 @@ Options:
 
 =over 4
 
-=item spinner - Spinner object (required)
+=item spinner - Spinner object (optional; undef in non-interactive mode)
 
 =item host_proto - HostProtocol emitter (required)
 
@@ -112,7 +112,7 @@ Returns: coderef suitable for on_chunk parameter.
 
 sub make_on_chunk_callback {
     my ($self, %opts) = @_;
-    my $spinner    = $opts{spinner}    || croak "spinner required";
+    my $spinner    = $opts{spinner};
     my $host_proto = $opts{host_proto} || croak "host_proto required";
     my $ui = $self->{ui};
 
@@ -128,7 +128,7 @@ sub make_on_chunk_callback {
 
         # Print prefix on first chunk or after tool execution continuation
         if (!$self->{first_chunk_received} || $ui->{_prepare_for_next_iteration}) {
-            $spinner->stop();
+            $spinner->stop() if $spinner;
             my $agent = $ui->agent_name();
             print $ui->colorize("$agent: ", 'ASSISTANT');
             STDOUT->flush() if STDOUT->can('flush');

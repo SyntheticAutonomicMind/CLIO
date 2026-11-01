@@ -151,9 +151,11 @@ is($sc->content(), '', 'flush with empty buffers is safe');
     is(ref($callback), 'CODE', 'make_on_chunk_callback returns a coderef');
 }
 
-# Test 13: make_on_chunk_callback requires spinner
-eval { $sc->make_on_chunk_callback(host_proto => bless({}, 'MockHostProto')) };
-like($@, qr/spinner required/, 'dies without spinner');
+# Test 13: make_on_chunk_callback works without spinner (optional)
+{
+    my $cb = $sc->make_on_chunk_callback(host_proto => bless({}, 'MockHostProto'));
+    ok(defined($cb) && ref($cb) eq 'CODE', 'make_on_chunk_callback works without spinner');
+}
 
 # Test 14: make_on_chunk_callback requires host_proto
 eval { $sc->make_on_chunk_callback(spinner => bless({}, 'MockSpinner')) };
