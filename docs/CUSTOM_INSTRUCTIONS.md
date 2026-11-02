@@ -176,7 +176,7 @@ touch .clio/instructions.md
 This project follows The Unbroken Method for AI collaboration:
 - Seven Pillars: Continuous Context, Complete Ownership, Investigation First, 
   Root Cause Focus, Complete Deliverables, Structured Handoffs, Learning from Failure
-- See ai-assisted/THE_UNBROKEN_METHOD.md for complete details
+- See your project's methodology documentation for complete details
 
 When working on this project:
 1. Always maintain continuous context (no breaking conversation threads)
@@ -417,7 +417,7 @@ CLIO uses custom instructions via `.clio/instructions.md` (when working on CLIO)
 
 ## The Unbroken Method
 
-Follow The Unbroken Method (see ai-assisted/THE_UNBROKEN_METHOD.md):
+Follow The Unbroken Method (see .clio/instructions.md):
 1. Continuous Context - Never break the conversation
 2. Complete Ownership - Fix all discovered problems
 3. Investigation First - Read code before changing it
