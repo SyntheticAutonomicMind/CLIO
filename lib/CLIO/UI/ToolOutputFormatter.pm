@@ -45,16 +45,18 @@ Create new formatter instance.
 
 Arguments:
 - ui: CLIO::UI::Chat instance (required for colorization and theme access)
+- non_interactive: Boolean - force machine-readable output regardless of UI
 
 =cut
 
 sub new {
     my ($class, %args) = @_;
-    
+
     my $self = {
         ui => $args{ui},  # CLIO::UI::Chat instance
+        non_interactive => $args{non_interactive} ? 1 : 0,
     };
-    
+
     bless $self, $class;
     return $self;
 }
@@ -88,7 +90,16 @@ Check whether we're in non-interactive (machine-readable) mode.
 
 sub _is_non_interactive {
     my ($self) = @_;
-    return ($self->{ui} && $self->{ui}{non_interactive}) ? 1 : 0;
+
+    # Explicitly forced non-interactive (sub-agents, --input mode).
+    return 1 if $self->{non_interactive};
+
+    # No UI object means there is no terminal to render to. Treat that as
+    # non-interactive so forked sub-agents emit machine-readable tagged
+    # lines rather than painting box-drawing chrome into their log files.
+    return 1 unless $self->{ui};
+
+    return $self->{ui}{non_interactive} ? 1 : 0;
 }
 
 =head2 _emit_noninteractive($tag, $content)

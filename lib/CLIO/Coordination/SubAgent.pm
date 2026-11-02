@@ -9,7 +9,8 @@ use utf8;
 use CLIO::Coordination::Broker;
 use CLIO::Coordination::Client;
 use CLIO::Core::Logger qw(log_debug log_warning);
-use POSIX qw(setsid);
+use POSIX qw(setsid WNOHANG);
+use File::Spec;
 use Carp qw(croak);
 
 # Parse provider prefix from model name (e.g., "minimax/MiniMax-M3")
@@ -41,6 +42,21 @@ sub log_path_for {
     my ($class, $agent_id) = @_;
     my $tmpdir = $^O eq 'MSWin32' ? ($ENV{TEMP} || $ENV{TMP} || 'C:\\Temp') : '/tmp';
     return File::Spec->catfile($tmpdir, "clio-agent-$agent_id.log");
+}
+
+=head2 report_path_for($agent_id)
+
+Return the path of the agent's final report file. The report holds the
+agent's complete final answer on its own, separate from the human-facing
+log which interleaves tool output. The manager pulls it on demand via
+the agent_operations 'report' operation.
+
+=cut
+
+sub report_path_for {
+    my ($class, $agent_id) = @_;
+    my $tmpdir = $^O eq 'MSWin32' ? ($ENV{TEMP} || $ENV{TMP} || 'C:\\Temp') : '/tmp';
+    return File::Spec->catfile($tmpdir, "clio-agent-$agent_id-report.txt");
 }
 
 
@@ -252,6 +268,23 @@ sub _run_agent_loop {
         task => $task,
         debug => $debug,
     );
+
+    # Give the child a host protocol wired to the broker.
+    #
+    # HostProtocol::set_broker_relay forwards status and tool events to
+    # the broker as status_update and activity messages, which the parent
+    # session renders as live agent cards. The relay existed but was never
+    # connected, so no status or activity events were ever produced and
+    # the parent had no way to see what a child was doing.
+    #
+    # The child writes to a log file rather than a terminal, so clear any
+    # inherited OSC host flag: OSC escape sequences in a log file are
+    # noise, and the broker relay is the channel that matters here.
+    delete $ENV{CLIO_HOST_PROTOCOL};
+    require CLIO::UI::HostProtocol;
+    my $host_proto = CLIO::UI::HostProtocol->new(debug => $debug);
+    $host_proto->set_broker_relay($client);
+    log_debug('SubAgent', "Agent $agent_id: host protocol relay enabled");
     
     # Create Config and Session (same as main CLIO initialization)
     my $config = CLIO::Core::Config->new();
@@ -362,22 +395,45 @@ sub _run_agent_loop {
     # Define task handler callback
     my $task_handler = sub {
         my ($task_content, $loop) = @_;
-        
+
         print "[AgentLoop] Processing task: $task_content\n";
-        
+
+        # Relay tool activity to the parent so the user can see what this
+        # agent is doing while it works.
+        my $on_tool_call = sub {
+            my ($tool_name) = @_;
+            return unless defined $tool_name;
+            $host_proto->emit_status('tools');
+            $host_proto->emit_tool_start($tool_name);
+        };
+        my $on_tool_end = sub {
+            my ($tool_name) = @_;
+            return unless defined $tool_name;
+            $host_proto->emit_tool_end($tool_name);
+        };
+
         # Call AI to process task using SimpleAIAgent (same as main CLIO)
         my $result = $ai_agent->process_user_request($task_content, {
             on_chunk => sub {
                 my ($chunk) = @_;
                 print $chunk if defined $chunk;
             },
+            on_tool_call => $on_tool_call,
+            on_tool_end => $on_tool_end,
         });
         
         if ($result->{success}) {
             print "[AgentLoop] Task completed successfully\n";
+
+            my $report = $self->_extract_report($result);
+
+            # Persist the report on its own so the manager can pull the
+            # full text on demand without parsing the interleaved log.
+            $self->_write_report($agent_id, $report);
+
             return {
                 completed => 1,
-                message => $result->{content} || "Completed: $task_content",
+                message => $self->_build_completion_message($report, $task_content),
             };
         } else {
             print "[AgentLoop] Task failed: " . ($result->{error} || 'Unknown error') . "\n";
@@ -409,6 +465,88 @@ sub _run_agent_loop {
     $client->disconnect();
 }
 
+=head2 _extract_report($result)
+
+Pull the agent's final answer out of a SimpleAIAgent result.
+
+SimpleAIAgent stores the assistant's final text in 'final_response', with
+'ai_response' holding the same value. It never populates 'content'.
+Reading 'content' here always yielded undef, so the manager received a
+restated copy of the task instead of the agent's findings.
+
+Arguments:
+- $result: The SimpleAIAgent result hashref
+
+Returns: The report text, or an empty string.
+
+=cut
+
+sub _extract_report {
+    my ($self, $result) = @_;
+
+    return '' unless $result && ref($result) eq 'HASH';
+
+    my $report = $result->{final_response};
+    $report = $result->{ai_response}
+        if (!defined $report || $report eq '');
+    return '' unless defined $report;
+
+    return $report;
+}
+
+=head2 _build_completion_message($report, $task_content)
+
+Build the message the agent sends when it completes.
+
+Arguments:
+- $report: The agent's final answer
+- $task_content: The task the agent was given, used as a fallback
+
+Returns: The report, or a restatement of the task when there is no
+report.
+
+=cut
+
+sub _build_completion_message {
+    my ($self, $report, $task_content) = @_;
+
+    return $report if defined $report && $report ne '';
+    return "Completed: $task_content";
+}
+
+=head2 _write_report($agent_id, $report)
+
+Persist the agent's final report to its own file. Runs in the child
+process after stdout has been redirected to the agent log.
+
+Arguments:
+- $agent_id: The agent identifier
+- $report: The full final answer text
+
+Returns: 1 on success, 0 on failure.
+
+=cut
+
+sub _write_report {
+    my ($self, $agent_id, $report) = @_;
+
+    my $path = __PACKAGE__->report_path_for($agent_id);
+    eval {
+        open(my $fh, '>:encoding(UTF-8)', $path)
+            or die "Cannot open report file $path: $!";
+        print $fh $report;
+        close $fh;
+        1;
+    };
+    if ($@) {
+        log_debug('SubAgent', "Agent $agent_id: cannot write report: $@");
+        return 0;
+    }
+
+    log_debug('SubAgent', "Agent $agent_id: report written to $path");
+    return 1;
+}
+
 =head2 list_agents()
 
 Returns hash of all active agents.
@@ -417,23 +555,55 @@ Returns hash of all active agents.
 
 sub list_agents {
     my ($self) = @_;
-    
-    # Check which agents are still running
+
+    # Check which agents are still running.
+    #
+    # Use waitpid(WNOHANG) rather than kill(0, $pid). A child that has
+    # exited but has not been reaped is a zombie, and a zombie still
+    # answers kill(0) successfully, so the old check reported every
+    # finished agent as 'running' and no exit event was ever raised.
+    # waitpid both detects the exit and reaps the child.
     for my $agent_id (keys %{$self->{agents}}) {
         my $agent = $self->{agents}{$agent_id};
         next unless $agent->{status} eq 'running';
-        
-        if (kill(0, $agent->{pid}) == 0) {
-            # Process no longer exists
-            if ($agent->{mode} eq 'oneshot') {
-                $agent->{status} = 'exited';  # Oneshot agents exit after task
-            } else {
-                $agent->{status} = 'stopped';  # Persistent agents shouldn't exit
-            }
+
+        my $reaped = waitpid($agent->{pid}, WNOHANG);
+        if ($reaped == $agent->{pid}) {
+            # Child exited and has now been reaped. $? holds its status.
+            $agent->{exit_code} = $?;
+            $self->_mark_agent_exited($agent);
+        }
+        elsif ($reaped == -1) {
+            # No such child (already reaped elsewhere, or never existed).
+            $self->_mark_agent_exited($agent);
         }
     }
-    
+
     return $self->{agents};
+}
+
+=head2 _mark_agent_exited($agent)
+
+Transition an agent's status to its terminal state. Oneshot agents exit
+when their task completes; persistent agents exiting is unexpected and
+is recorded as 'stopped'.
+
+Arguments:
+- $agent: The agent record hashref
+
+Returns: Nothing.
+
+=cut
+
+sub _mark_agent_exited {
+    my ($self, $agent) = @_;
+
+    if ($agent->{mode} eq 'oneshot') {
+        $agent->{status} = 'exited';
+    }
+    else {
+        $agent->{status} = 'stopped';
+    }
 }
 
 =head2 kill_agent($agent_id)

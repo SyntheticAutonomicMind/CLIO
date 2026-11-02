@@ -26,6 +26,7 @@ Commands:
 - /subagent spawn <task>
 - /subagent list
 - /subagent status <agent-id>
+- /subagent report <agent-id>
 - /subagent kill <agent-id>
 - /subagent killall
 - /subagent locks
@@ -64,6 +65,9 @@ sub handle {
     }
     elsif ($subcommand eq 'status') {
         return $self->cmd_status($args);
+    }
+    elsif ($subcommand eq 'report') {
+        return $self->cmd_report($args);
     }
     elsif ($subcommand eq 'kill') {
         return $self->cmd_kill($args);
@@ -351,11 +355,28 @@ sub cmd_list {
         
         my $task_display = $agent->{task};
         $task_display = substr($task_display, 0, 45) . '...' if length($task_display) > 48;
-        
+
+        # Live activity for this agent. The session tracks it as the
+        # agent's tool events stream in, so this shows what the agent is
+        # doing right now rather than only that it exists.
+        my $activity = '';
+        my $states = ($self->{chat} && $self->{chat}->can('agent_states'))
+            ? $self->{chat}->agent_states()
+            : {};
+        my $state = $states->{$id};
+        if ($state) {
+            my $phase = $state->{phase} || '';
+            my $tool = $state->{tool} || '';
+            $activity = $tool ? "$phase: $tool" : $phase;
+        }
+
         # Display agent row
         my $status_colored = $self->colorize("[$status_label]", $status_style);
         my $row = sprintf("  %-12s %s%s  %s (%s)",
             $self->colorize($id, 'BOLD'), $status_colored, $mode_badge, $task_display, $time_str);
+        if ($activity ne '') {
+            $row .= "  " . $self->colorize($activity, 'DIM');
+        }
         return unless $self->writeline($row, markdown => 0);
     }
 
@@ -367,6 +388,66 @@ sub cmd_list {
     $self->{chat}{pager}->disable();
     
     return "";  # Already displayed
+}
+
+sub cmd_report {
+    my ($self, $args) = @_;
+
+    my $agent_id = '';
+    if ($args) {
+        ($agent_id) = $args =~ /(\S+)/;
+    }
+
+    unless ($agent_id) {
+        $self->display_error_message("Usage: /subagent report <agent-id>");
+        return "";
+    }
+
+    require CLIO::Coordination::SubAgent;
+
+    my $report_path = CLIO::Coordination::SubAgent->report_path_for($agent_id);
+    my $report = '';
+
+    if (-f $report_path) {
+        eval {
+            open(my $fh, '<:encoding(UTF-8)', $report_path)
+                or die "Cannot open report file: $!";
+            $report = do { local $/; <$fh> };
+            close $fh;
+        };
+        $report = '' if $@;
+    }
+
+    # Fall back to the tail of the agent's log when no report was written.
+    my $source = 'report';
+    unless (length $report) {
+        my $log_path = CLIO::Coordination::SubAgent->log_path_for($agent_id);
+        if (-f $log_path) {
+            eval {
+                open(my $fh, '<:encoding(UTF-8)', $log_path)
+                    or die "Cannot open log file: $!";
+                my @lines = <$fh>;
+                close $fh;
+                @lines = @lines[-100 .. -1] if @lines > 100;
+                $report = join('', @lines);
+            };
+            $source = 'log tail' if !$@ && length $report;
+        }
+    }
+
+    unless (length $report) {
+        $self->display_error_message("No report available for $agent_id");
+        return "";
+    }
+
+    return unless $self->display_section_header("REPORT: $agent_id");
+
+    $self->writeline($self->colorize("Source: $source", 'DIM'), markdown => 0);
+    $self->writeline("", markdown => 0);
+    $self->writeline($report, markdown => 1);
+    $self->writeline("", markdown => 0);
+
+    return "";
 }
 
 sub cmd_status {
@@ -910,6 +991,7 @@ sub cmd_help {
             ['  --persistent',                   'Keep agent alive for multiple tasks', 35],
             ['/subagent list',                   'List all sub-agents and their status', 35],
             ['/subagent status <id>',            'Show detailed agent status', 35],
+            ['/subagent report <id>',            'Show an agent\'s full final report', 35],
             ['/subagent kill <id>',              'Terminate specific agent', 35],
             ['/subagent killall',                'Terminate all sub-agents', 35],
         ], after => [''] },

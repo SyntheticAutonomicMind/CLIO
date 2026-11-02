@@ -56,20 +56,32 @@ sub check_agent_messages {
 
     return 1 unless $messages && @$messages;
 
-    my @handled_ids;
+    # Skip messages already shown to the user. The broker does not clear
+    # the inbox on read, so without this every tool call would reprint
+    # the same message.
+    my $fresh = $chat->can('_filter_undisplayed_messages')
+        ? $chat->_filter_undisplayed_messages($messages)
+        : $messages;
 
-    for my $msg (@$messages) {
+    return 1 unless $fresh && @$fresh;
+
+    my @auth_ids;
+
+    for my $msg (@$fresh) {
+        $chat->_note_agent_alert($msg) if $chat->can('_note_agent_alert');
         if ($msg->{type} eq 'authorization_request') {
             $self->_handle_agent_authorization($msg, $broker_client);
-            push @handled_ids, $msg->{id} if $msg->{id};
+            push @auth_ids, $msg->{id} if $msg->{id};
         } else {
             $self->display_agent_message($msg);
-            push @handled_ids, $msg->{id} if $msg->{id};
         }
     }
 
-    if (@handled_ids) {
-        eval { $broker_client->acknowledge_messages(@handled_ids) };
+    # Only authorization requests are acknowledged here. Ordinary agent
+    # messages stay unread so the manager can review them through the
+    # agent_operations 'inbox' operation.
+    if (@auth_ids) {
+        eval { $broker_client->acknowledge_messages(@auth_ids) };
     }
 
     return 1;

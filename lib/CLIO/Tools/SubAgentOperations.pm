@@ -42,7 +42,7 @@ sub new {
     
     my $self = $class->SUPER::new(
         name => 'agent_operations',
-        supported_operations => [qw(spawn list status wait kill killall inbox acknowledge history send broadcast)],
+        supported_operations => [qw(spawn list status wait kill killall inbox acknowledge history send broadcast report)],
         description => q{Sub-agent management for multi-agent coordination.
 
 Spawn and manage sub-agents to work on tasks in parallel.
@@ -101,12 +101,18 @@ Spawn and manage sub-agents to work on tasks in parallel.
    Parameters: message (required)
    Returns: Confirmation
 
+━━━━━━━━━━━━━━━━━━━━━ READ (reports) ━━━━━━━━━━━━━━━━━━━━━━━━━
+-  report - Read an agent's full final report
+   Parameters: agent_id (required)
+   Returns: The complete text the agent reported
+
 EXAMPLE WORKFLOW:
 1. Spawn agents: agent_operations(operation: "spawn", task: "create file X")
-2. Wait for activity: agent_operations(operation: "wait", timeout: 60)
-3. Check messages: agent_operations(operation: "inbox")
-4. Reply if needed: agent_operations(operation: "send", agent_id: "agent-1", message: "yes")
-5. Mark as read: agent_operations(operation: "acknowledge")
+2. Keep working, do not block on them
+3. When an agent reports in, read the message: agent_operations(operation: "inbox")
+4. Pull the full text of one report: agent_operations(operation: "report", agent_id: "agent-1")
+5. Reply if needed: agent_operations(operation: "send", agent_id: "agent-1", message: "yes")
+6. Mark as read: agent_operations(operation: "acknowledge")
 },
         %opts,
     );
@@ -120,7 +126,7 @@ sub schema {
         properties => {
             operation => {
                 type => 'string',
-                enum => ['spawn', 'list', 'status', 'wait', 'kill', 'killall', 'inbox', 'acknowledge', 'history', 'send', 'broadcast'],
+                enum => ['spawn', 'list', 'status', 'wait', 'kill', 'killall', 'inbox', 'acknowledge', 'history', 'send', 'broadcast', 'report'],
                 description => '[REQUIRED] Operation to perform.',
             },
             task => {
@@ -137,7 +143,7 @@ sub schema {
             },
             agent_id => {
                 type => 'string',
-                description => '[REQUIRED for status/kill/send operations] Agent ID to target. Omit for list/inbox/broadcast/spawn operations.',
+                description => '[REQUIRED for status/kill/send/report operations] Agent ID to target. Omit for list/inbox/broadcast/spawn operations.',
             },
             message => {
                 type => 'string',
@@ -204,6 +210,7 @@ sub dispatch_table {
         history     => '_dispatch_history',
         send        => '_dispatch_send',
         broadcast   => '_dispatch_broadcast',
+        report      => '_dispatch_report',
     };
 }
 
@@ -220,6 +227,7 @@ sub _dispatch_inbox       { my ($self, $params, $ctx) = @_; $self->inbox($self->
 sub _dispatch_acknowledge { my ($self, $params, $ctx) = @_; $self->acknowledge($params, $self->{_subagent_cmd}) }
 sub _dispatch_history     { my ($self, $params, $ctx) = @_; $self->history($self->{_subagent_cmd}) }
 sub _dispatch_send        { my ($self, $params, $ctx) = @_; $self->send($params, $self->{_subagent_cmd}) }
+sub _dispatch_report      { my ($self, $params, $ctx) = @_; $self->report($params, $self->{_subagent_cmd}) }
 sub _dispatch_broadcast   { my ($self, $params, $ctx) = @_; $self->broadcast($params, $self->{_subagent_cmd}) }
 
 sub _get_subagent_handler {
@@ -412,11 +420,16 @@ sub spawn {
             push @expanded, sprintf("%-20s %s", "Working Dir:", $working_dir);
         }
         
-        # Register agent's project context with Chat for display labels
-        if ($working_dir && $context && $context->{ui}) {
+        # Register the agent with the session so the UI can track its
+        # state, report elapsed time and label its cards.
+        if ($context && $context->{ui}) {
             my $ui = $context->{ui};
-            if ($ui->can('register_agent_project')) {
-                $ui->register_agent_project($agent_id, $working_dir);
+            if ($ui->can('register_agent')) {
+                $ui->register_agent($agent_id,
+                    project => $working_dir,
+                    task    => $task,
+                    model   => $model,
+                );
             }
         }
         
@@ -476,28 +489,13 @@ sub _emit_agent_tree {
     });
 }
 
-# Poll broker for status_update messages from child agents and re-emit as OSC events
-# This bridges the gap between child agent state and the host application's UI
-sub _relay_child_status {
-    my ($self, $handler, $context) = @_;
-    
-    return unless $handler->{broker_client};
-    
-    my $updates = eval { $handler->{broker_client}->poll_status_updates() };
-    return unless $updates && @$updates;
-    
-    my $host_proto = $self->_get_host_proto($context);
-    return unless $host_proto;
-    
-    for my $update (@$updates) {
-        $host_proto->emit_agent_event('status',
-            agent_id => $update->{agent_id} || 'unknown',
-            state    => $update->{state}    || 'unknown',
-            ($update->{tool}    ? (tool    => $update->{tool})    : ()),
-            ($update->{message} ? (message => $update->{message}) : ()),
-        );
-    }
-}
+# NOTE: the status_update and activity queues are owned by the session
+# UI (CLIO::UI::Chat::_poll_broker_events), which polls them once per
+# loop to render live agent cards and to forward OSC agent events to an
+# external host application. Polling them here as well would steal
+# events from that consumer, because both broker queues are destructive
+# on read.
+
 
 
 sub wait {
@@ -514,60 +512,97 @@ sub wait {
 
     my $start = time();
     my @events;
-    
-    while ((time() - $start) < $timeout) {
-        # Relay child status updates via OSC
-        $self->_relay_child_status($handler, $context);
 
-        # Check for new messages from agents
+    # Cursors stop the same event being reported twice. poll_user_inbox
+    # is non-destructive by design (messages stay unread until the AI
+    # acknowledges them), so without a cursor every poll re-delivered
+    # every message the AI had already seen and 'wait' could never
+    # return a quiet result.
+    my $msg_cursor = $handler->{_wait_msg_cursor} // 0;
+    my %reported_exit = %{ $handler->{_wait_exit_cursor} || {} };
+
+    while ((time() - $start) < $timeout) {
+        # Allow the user to break out of a long wait. Every other
+        # long-running tool honours this; wait did not, so a multi-minute
+        # wait could not be interrupted with ESC.
+        if ($self->check_interrupt($context)) {
+            my $elapsed = int(time() - $start);
+            $handler->{_wait_msg_cursor} = $msg_cursor;
+            $handler->{_wait_exit_cursor} = \%reported_exit;
+            return $self->success_result(
+                "Wait interrupted by user after ${elapsed}s",
+                action_description => "wait interrupted after ${elapsed}s",
+                events => \@events,
+                count => scalar(@events),
+                elapsed => $elapsed,
+                timed_out => 0,
+                interrupted => 1,
+            );
+        }
+
+        # Render live agent activity so the user can see what the agents
+        # are doing while this wait blocks the session. Without this the
+        # wait is a black box: nothing appears on screen until it
+        # returns.
+        if ($context && $context->{ui}
+            && $context->{ui}->can('poll_agent_activity')
+            && $handler->{broker_client}) {
+            eval {
+                $context->{ui}->poll_agent_activity($handler->{broker_client});
+            };
+        }
+
+        # Check for new messages from agents. Only messages we have not
+        # already reported are returned.
         if ($handler->{broker_client}) {
             my $messages = eval { $handler->{broker_client}->poll_user_inbox() };
             if ($messages && @$messages) {
-                my @msg_ids;
                 for my $msg (@$messages) {
-                    push @msg_ids, $msg->{id} if $msg->{id};
+                    my $id = $msg->{id} // 0;
+                    next if $id && $id <= $msg_cursor;
+                    $msg_cursor = $id if $id > $msg_cursor;
+
+                    # Bound the content. A wave of agent reports would
+                    # otherwise put every full report into the manager's
+                    # context in one tool result. The full text stays
+                    # available through the 'report' operation.
+                    my $content = $msg->{content};
+                    if (!ref($content) && defined($content) && length($content) > 2000) {
+                        $content = substr($content, 0, 2000)
+                            . "\n[truncated - call agent_operations(operation: 'report', "
+                            . "agent_id: '" . ($msg->{from} // 'unknown') . "') for the full text]";
+                    }
+
                     push @events, {
                         type => 'message',
                         from => $msg->{from},
                         message_type => $msg->{type},
-                        content => $msg->{content},
+                        content => $content,
                         timestamp => $msg->{timestamp},
-                    };
-                }
-                # Acknowledge so they don't re-appear on next poll.
-                # Consistent with inbox() design: messages should only be
-                # acknowledged when the AI explicitly calls acknowledge().
-                # Here we leave them unread so the AI can review them via inbox().
-            }
-
-            # Check for status updates
-            my $updates = eval { $handler->{broker_client}->poll_status_updates() };
-            if ($updates && @$updates) {
-                for my $update (@$updates) {
-                    push @events, {
-                        type => 'status_update',
-                        agent_id => $update->{agent_id},
-                        state => $update->{state},
-                        ($update->{tool} ? (tool => $update->{tool}) : ()),
-                        ($update->{message} ? (message => $update->{message}) : ()),
-                        timestamp => $update->{timestamp},
+                        id => $msg->{id},
                     };
                 }
             }
         }
 
-        # Check for agent exits
+        # Check for agent exits. An agent is reported once.
         my $agents = $handler->{manager}->list_agents();
         for my $id (sort keys %$agents) {
             my $agent = $agents->{$id};
-            if ($agent->{status} && $agent->{status} eq 'exited') {
-                push @events, {
-                    type => 'exit',
-                    agent_id => $id,
-                    task => $agent->{task},
-                };
-            }
+            next unless $agent->{status} && $agent->{status} eq 'exited';
+            next if $reported_exit{$id};
+            $reported_exit{$id} = 1;
+
+            push @events, {
+                type => 'exit',
+                agent_id => $id,
+                task => $agent->{task},
+                exit_code => $agent->{exit_code},
+            };
         }
+
+        $handler->{_wait_msg_cursor} = $msg_cursor;
+        $handler->{_wait_exit_cursor} = \%reported_exit;
 
         # Return early if any events occurred
         if (@events) {
@@ -605,10 +640,7 @@ sub list {
     my ($self, $handler, $context) = @_;
     
     my $action_desc = "listing active sub-agents";
-    
-    # Poll broker for status updates from child agents and re-emit as OSC
-    $self->_relay_child_status($handler, $context);
-    
+
     unless ($handler->{manager}) {
         return $self->success_result("No sub-agents spawned", action_description => $action_desc, agents => []);
     }
@@ -664,7 +696,17 @@ sub status {
     my $log_path = CLIO::Coordination::SubAgent->log_path_for($agent_id);
     my $log_tail = '';
     if (-f $log_path) {
-        $log_tail = ($^O eq "MSWin32" ? "" : `tail -20 "$log_path" 2>/dev/null`);
+        # Read in-process rather than shelling out. The agent id reaches
+        # this code from a tool call, and interpolating it into a shell
+        # command would allow command substitution.
+        eval {
+            open(my $fh, '<:encoding(UTF-8)', $log_path) or die "Cannot open log: $!";
+            my @lines = <$fh>;
+            close $fh;
+            @lines = @lines[-20 .. -1] if @lines > 20;
+            $log_tail = join('', @lines);
+        };
+        $log_tail = '' if $@;
     }
     
     $action_desc = "$agent_id: $agent->{status} (${elapsed}s)";
@@ -683,9 +725,79 @@ sub status {
     );
 }
 
+=head2 report($params, $handler)
+
+Read an agent's full final report.
+
+The inbox operation returns a bounded preview so a wave of agent reports
+cannot flood the manager's context. This operation returns the complete
+text of one agent's report.
+
+Arguments:
+- $params: Hashref with agent_id
+- $handler: The sub-agent command handler
+
+Returns: Success result carrying the full report text.
+
+=cut
+
+sub report {
+    my ($self, $params, $handler) = @_;
+
+    my $agent_id = $params->{agent_id};
+    return $self->error_result("Missing required parameter: agent_id") unless $agent_id;
+
+    my $report_path = CLIO::Coordination::SubAgent->report_path_for($agent_id);
+    my $report = '';
+
+    if (-f $report_path) {
+        eval {
+            open(my $fh, '<:encoding(UTF-8)', $report_path)
+                or die "Cannot open report file: $!";
+            $report = do { local $/; <$fh> };
+            close $fh;
+        };
+        if ($@) {
+            return $self->error_result("Cannot read agent report: $@");
+        }
+    }
+
+    # Fall back to the tail of the agent's log when no report was
+    # written. The agent may still be running, or may have failed before
+    # producing a final answer.
+    my $source = 'report';
+    unless (length $report) {
+        my $log_path = CLIO::Coordination::SubAgent->log_path_for($agent_id);
+        if (-f $log_path) {
+            eval {
+                open(my $fh, '<:encoding(UTF-8)', $log_path)
+                    or die "Cannot open log file: $!";
+                my @lines = <$fh>;
+                close $fh;
+                @lines = @lines[-100 .. -1] if @lines > 100;
+                $report = join('', @lines);
+            };
+            $source = 'log tail' if !$@ && length $report;
+        }
+    }
+
+    unless (length $report) {
+        return $self->error_result("No report available for $agent_id");
+    }
+
+    my $action_desc = "reading report for $agent_id ($source)";
+
+    return $self->success_result(
+        $report,
+        action_description => $action_desc,
+        agent_id => $agent_id,
+        source => $source,
+        report_path => $report_path,
+    );
+}
+
 sub kill {
-    my ($self, $params, $handler, $context) = @_;
-    
+    my ($self, $params, $handler, $context) = @_;    
     my $agent_id = $params->{agent_id};
     return $self->error_result("Missing required parameter: agent_id") unless $agent_id;
 
@@ -750,10 +862,7 @@ sub inbox {
     my ($self, $handler, $context) = @_;
     
     my $action_desc = "checking agent inbox";
-    
-    # Poll broker for status updates from child agents and re-emit as OSC
-    $self->_relay_child_status($handler, $context);
-    
+
     unless ($handler->{broker_client}) {
         return $self->success_result("No messages (broker not active)", action_description => $action_desc, messages => []);
     }
@@ -807,6 +916,13 @@ sub inbox {
     
     # Build output that shows actual message content prominently
     # This ensures AI cannot ignore the messages
+    #
+    # Each message is bounded. A wave of agent reports would otherwise
+    # put every full report into the manager's context at once, which is
+    # the resource that decides whether the manager can still synthesise
+    # the results. The full text stays available through the 'report'
+    # operation.
+    my $max_preview = 2000;
     my @output_lines;
     push @output_lines, "=== UNREAD MESSAGES ($count) ===";
     for my $msg (@formatted) {
@@ -819,7 +935,13 @@ sub inbox {
             for my $key (sort keys %$content) {
                 push @output_lines, "  $key: $content->{$key}";
             }
-        } else {
+        }
+        elsif (length($content) > $max_preview) {
+            push @output_lines, "  " . substr($content, 0, $max_preview);
+            push @output_lines,
+                "  [truncated - call agent_operations(operation: 'report', agent_id: '$from') for the full text]";
+        }
+        else {
             push @output_lines, "  $content";
         }
     }

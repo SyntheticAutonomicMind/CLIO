@@ -277,6 +277,7 @@ sub process_user_request {
             on_chunk => $on_chunk,  # Pass through streaming callback
             on_system_message => $context->{on_system_message},  # Pass through system message callback for rate limits
             on_tool_call => $context->{on_tool_call},  # Pass through tool call tracker
+            on_tool_end => $context->{on_tool_end},  # Pass through tool end tracker
             on_thinking => $context->{on_thinking},  # Pass through thinking/reasoning content callback
             image_attachments => $context->{image_attachments},
         );

@@ -502,6 +502,22 @@ sub run {
         # Get user input
         my $input = $self->get_input();
 
+        # An agent reported in while the prompt was idle. Build a pointer
+        # so the manager reviews the message through the broker rather
+        # than having the agent's content injected into its context.
+        my $from_agent_event = 0;
+        if (ref $input eq 'HASH' && ($input->{source} || '') eq 'agent_event') {
+            my $pointer = $self->_agent_event_pointer($input->{alerts} || []);
+            if ($pointer) {
+                $from_agent_event = 1;
+                $input = $pointer;
+            }
+            else {
+                # Nothing actionable came in. Back to the prompt.
+                next;
+            }
+        }
+
         # Parse image attachments from input (@path/to/image.png syntax)
         my @image_attachments;
         if (defined $input && length($input) > 0) {
@@ -583,7 +599,12 @@ sub run {
         log_debug('Chat', "Before display check: input starts with /? " . ($input =~ /^\// ? "YES" : "NO"));
         unless ($input =~ /^\//) {
             log_debug('Chat', "Calling display_user_message with input length=" . length($input));
-            $self->display_user_message($input);
+            if ($from_agent_event) {
+                $self->display_system_message($input);
+            }
+            else {
+                $self->display_user_message($input);
+            }
         }
 
         # User message is added to session history by
@@ -1630,24 +1651,44 @@ sub get_input {
         # user input.
         while (1) {
             if ($broker_client && !$self->{_broker_dead}) {
+                my @pending;
                 my $event_cb = sub {
                     my $events = $self->_poll_broker_events($broker_client);
-                    return 0 unless $events && @$events;
-                    for my $event (@$events) {
-                        if (($event->{message_type} || '') eq 'authorization_request') {
-                            print "\r\e[K";
-                            $self->_handle_agent_authorization($event->{_raw_msg}, $broker_client);
-                        } else {
-                            my $rendered = $self->_render_broker_event($event);
-                            if ($rendered) {
+                    if ($events && @$events) {
+                        for my $event (@$events) {
+                            if (($event->{message_type} || '') eq 'authorization_request') {
                                 print "\r\e[K";
-                                print $rendered;
+                                $self->_handle_agent_authorization($event->{_raw_msg}, $broker_client);
+                            } else {
+                                my $rendered = $self->_render_broker_event($event);
+                                if ($rendered) {
+                                    print "\r\e[K";
+                                    print $rendered;
+                                }
                             }
                         }
                     }
-                    return 1;
+                    # An agent with something to say interrupts the idle
+                    # prompt so the manager can act on it. This also
+                    # covers messages that were already shown to the user
+                    # while the manager was busy, which is the case that
+                    # matters most.
+                    return 'BREAK' if $self->has_pending_agent_alerts();
+                    return ($events && @$events) ? 1 : 0;
                 };
                 $input = $self->{readline}->readline($prompt, event_callback => $event_cb);
+
+                if (ref $input eq 'HASH' && ($input->{type} || '') eq '__AGENT_EVENT__') {
+                    # An agent reported in while the prompt was idle. Hand
+                    # control back to the main loop so the manager can
+                    # review it.
+                    return {
+                        source => 'agent_event',
+                        input => undef,
+                        events => \@pending,
+                        alerts => $self->consume_agent_alerts(),
+                    };
+                }
             } else {
                 $input = $self->{readline}->readline($prompt);
             }
@@ -2367,6 +2408,203 @@ sub request_collaboration {
     }
 }
 
+=head2 poll_agent_activity
+
+Poll the broker for agent activity and render it as agent cards. Used
+during the tool loop so the user can see what child agents are doing
+while the manager is still working.
+
+Arguments:
+- $broker_client: The session's broker client
+
+Returns: The number of activity lines rendered.
+
+=cut
+
+sub poll_agent_activity {
+    my ($self, $broker_client) = @_;
+
+    return 0 unless $broker_client;
+
+    my $events = $self->_poll_broker_events($broker_client);
+    return 0 unless $events && @$events;
+
+    my $count = 0;
+    for my $event (@$events) {
+        my $type = $event->{type} || '';
+        next unless $type eq 'status_update'
+            || $type eq 'activity'
+            || $type eq 'agent_exit';
+
+        my $rendered = $self->_render_broker_event($event);
+        next unless $rendered;
+        print $rendered;
+        $count++;
+    }
+
+    return $count;
+}
+
+=head2 _filter_undisplayed_messages($messages)
+
+Return the messages that have not already been shown to the user.
+
+The broker's user inbox is not cleared on read, so every poll returns
+the same messages until they are acknowledged. Tracking what has already
+been displayed keeps the terminal from repeating the same message on
+every poll while leaving the messages unread for the manager.
+
+Arguments:
+- $messages: Arrayref of broker messages
+
+Returns: Arrayref of messages not yet displayed.
+
+=cut
+
+sub _filter_undisplayed_messages {
+    my ($self, $messages) = @_;
+
+    return [] unless $messages && @$messages;
+
+    my $displayed = $self->{_displayed_agent_messages} ||= {};
+    my @fresh;
+
+    for my $msg (@$messages) {
+        my $id = $msg->{id};
+        next if $id && $displayed->{$id};
+        $displayed->{$id} = 1 if $id;
+        push @fresh, $msg;
+    }
+
+    return \@fresh;
+}
+
+=head2 _note_agent_alert($msg)
+
+Record that an actionable agent message is waiting for the manager.
+
+A message is actionable when the agent is asking something, has finished,
+is blocked, or has found something worth sharing. These are recorded
+separately from what has been displayed to the user, because the user
+may already have seen the message while the manager has not yet
+reviewed it.
+
+Arguments:
+- $msg: Broker message hashref
+
+Returns: Nothing.
+
+=cut
+
+sub _note_agent_alert {
+    my ($self, $msg) = @_;
+
+    return unless $msg && ref($msg) eq 'HASH';
+
+    my $id = $msg->{id};
+    return unless $id;
+
+    my $type = $msg->{type} || $msg->{message_type} || '';
+    return unless $type eq 'question'
+        || $type eq 'complete'
+        || $type eq 'completion'
+        || $type eq 'blocked'
+        || $type eq 'discovery';
+
+    my $alerts = $self->{_pending_agent_alerts} ||= {};
+    $alerts->{$id} ||= {
+        agent_id => $msg->{from} || 'unknown',
+        kind     => $type,
+        time     => time(),
+    };
+}
+
+=head2 pending_agent_alerts
+
+Get the actionable agent messages the manager has not acted on yet.
+
+Returns: Arrayref of alert records, oldest first.
+
+=cut
+
+sub pending_agent_alerts {
+    my ($self) = @_;
+
+    my $alerts = $self->{_pending_agent_alerts} || {};
+    return [] unless %$alerts;
+
+    return [
+        map { { id => $_, %{$alerts->{$_}} } }
+        sort { $alerts->{$a}{time} <=> $alerts->{$b}{time} } keys %$alerts
+    ];
+}
+
+=head2 has_pending_agent_alerts
+
+Whether any actionable agent message is waiting for the manager.
+
+Returns: 1 if there are pending alerts, 0 otherwise.
+
+=cut
+
+sub has_pending_agent_alerts {
+    my ($self) = @_;
+    return scalar @{ $self->pending_agent_alerts() } > 0 ? 1 : 0;
+}
+
+=head2 consume_agent_alerts
+
+Take the pending agent alerts and clear them. Called when the alerts are
+handed to the manager so they do not fire again.
+
+Returns: Arrayref of alert records, oldest first.
+
+=cut
+
+sub consume_agent_alerts {
+    my ($self) = @_;
+
+    my $alerts = $self->pending_agent_alerts;
+    $self->{_pending_agent_alerts} = {};
+    return $alerts;
+}
+
+=head2 _agent_event_pointer($alerts)
+
+Build the pointer the manager receives when an agent reports in while the
+session was idle.
+
+The pointer names the agents that reported and tells the manager where to
+read the messages. The agent's own text is deliberately not included:
+it stays in the broker and the manager reviews it through the inbox
+operation, the same convention every other agent message follows.
+
+Arguments:
+- $alerts: Arrayref of alert records
+
+Returns: The pointer text, or undef if nothing actionable came in.
+
+=cut
+
+sub _agent_event_pointer {
+    my ($self, $alerts) = @_;
+
+    return unless $alerts && @$alerts;
+
+    my @parts;
+    my %seen;
+    for my $alert (@$alerts) {
+        my $agent = $alert->{agent_id} || 'unknown';
+        next if $seen{$agent}++;
+        push @parts, "$agent ($alert->{kind})";
+    }
+
+    return unless @parts;
+
+    return "[agent event] " . join(', ', @parts)
+        . " reported in. Call agent_operations(operation: 'inbox') to review the message(s).";
+}
+
 =head2 _poll_broker_events
 
 Poll the broker client for pending events (messages, status updates, exits).
@@ -2392,18 +2630,21 @@ sub _poll_broker_events {
     my @message_ids;
     eval {
         my $messages = $broker_client->poll_user_inbox();
-        for my $msg (@$messages) {
-            push @message_ids, $msg->{id} if $msg->{id};
+        my $fresh = $self->_filter_undisplayed_messages($messages);
+        for my $msg (@$fresh) {
+            $self->_note_agent_alert($msg);
             my $event = {
                 type => 'agent_message',
                 agent_id => $msg->{from} || 'unknown',
                 message_type => $msg->{type} || $msg->{message_type} || 'generic',
                 content => $msg->{content} || '',
                 timestamp => $msg->{timestamp} || time(),
+                id => $msg->{id},
             };
             # Preserve raw message for authorization handling
             if (($msg->{type} || '') eq 'authorization_request') {
                 $event->{_raw_msg} = $msg;
+                push @message_ids, $msg->{id} if $msg->{id};
             }
             push @events, $event;
         }
@@ -2412,26 +2653,39 @@ sub _poll_broker_events {
         log_debug('Chat', "Error polling broker user inbox: $@");
         $had_error = 1;
     }
-    
-    # Acknowledge messages so they don't re-appear on next poll
+
+    # Only authorization requests are acknowledged here. They are
+    # resolved interactively by the caller and the response goes back
+    # through the broker, so the unread entry is no longer needed.
+    #
+    # Ordinary agent messages are deliberately left unread: they stay in
+    # the broker until the manager reviews them through the
+    # agent_operations 'inbox' operation and acknowledges them
+    # explicitly. Acknowledging here would hide the agent's findings from
+    # the manager.
     if (@message_ids) {
         eval { $broker_client->acknowledge_messages(@message_ids) };
     }
     
-    # Poll for status updates (agent state transitions)
+    # Poll for status updates (agent state transitions).
+    # The broker records the state under 'state' and the tool currently
+    # running under 'tool'. Reading 'status' here always came back
+    # empty, so agent status lines rendered blank.
     eval {
         if ($broker_client->can('poll_status_updates')) {
             my $updates = $broker_client->poll_status_updates();
             for my $update (@$updates) {
+                my $state = $update->{state} || 'unknown';
                 my $event_type = 'status_update';
-                if (($update->{status} || '') eq 'exited' || ($update->{status} || '') eq 'completed') {
+                if ($state eq 'exited' || $state eq 'completed') {
                     $event_type = 'agent_exit';
                 }
                 push @events, {
                     type => $event_type,
                     agent_id => $update->{agent_id} || 'unknown',
-                    status => $update->{status} || '',
-                    detail => $update->{detail} || '',
+                    status => $state,
+                    tool => $update->{tool},
+                    detail => $update->{message} || '',
                     timestamp => $update->{timestamp} || time(),
                 };
             }
@@ -2451,6 +2705,7 @@ sub _poll_broker_events {
                     type => 'activity',
                     agent_id => $activity->{agent_id} || 'unknown',
                     action => $activity->{action} || '',
+                    tool => $activity->{tool_name},
                     detail => $activity->{detail} || '',
                     timestamp => $activity->{timestamp} || time(),
                 };
@@ -2468,8 +2723,34 @@ sub _poll_broker_events {
     } else {
         $self->{_broker_poll_failures} = 0;
     }
-    
-    return \@events;
+
+    # Suppress redundant agent activity. An agent that runs the same tool
+    # repeatedly would otherwise flood the transcript with one line per
+    # call.
+    my @filtered = grep {
+        ($_->{type} eq 'status_update'
+            || $_->{type} eq 'activity'
+            || $_->{type} eq 'agent_exit')
+            ? $self->_track_agent_event($_)
+            : 1;
+    } @events;
+
+    # Forward agent events to an external host application.
+    if ($self->{host_proto} && $self->{host_proto}->active()) {
+        for my $event (@filtered) {
+            next unless $event->{type} eq 'status_update'
+                || $event->{type} eq 'activity';
+            $self->{host_proto}->emit_agent_event('status',
+                agent_id => $event->{agent_id} || 'unknown',
+                state    => ($event->{type} eq 'activity')
+                    ? 'tools'
+                    : ($event->{status} || 'unknown'),
+                ($event->{tool} ? (tool => $event->{tool}) : ()),
+            );
+        }
+    }
+
+    return \@filtered;
 }
 
 =head2 _render_broker_event
@@ -2556,19 +2837,159 @@ sub _render_broker_event {
         $agent_label .= " ($project)" if $project;
         return $self->colorize("$agent_label: ", 'GREEN') . $self->colorize("exited ($status)", 'DIM') . "\n";
     }
-    elsif ($type eq 'status_update') {
-        my $status = $event->{status} || 'unknown';
-        # Brief inline status - keep dim and compact
-        return $self->colorize("[$agent_id] $status", 'DIM') . ($content ? " $content" : '') . "\n";
-    }
-    elsif ($type eq 'activity') {
-        my $action = $event->{action} || '';
-        # Brief inline activity - keep dim and compact
-        return $self->colorize("[$agent_id] $action", 'DIM') . ($content ? " $content" : '') . "\n";
+    elsif ($type eq 'status_update' || $type eq 'activity') {
+        return $self->_render_agent_event($event);
     }
     
     # Unknown event type
     return $self->colorize("[$agent_id]", 'DIM') . " $content\n";
+}
+
+=head2 register_agent
+
+Register a newly spawned agent so the session can track its state and
+report how long it has been running.
+
+Arguments:
+- $agent_id: The agent identifier
+- %info: Optional metadata (project, task, model)
+
+Returns: Nothing.
+
+=cut
+
+sub register_agent {
+    my ($self, $agent_id, %info) = @_;
+    return unless $agent_id;
+
+    my $states = $self->{_agent_states} ||= {};
+    $states->{$agent_id} ||= {
+        started => time(),
+        phase   => 'starting',
+        tool    => '',
+    };
+    $states->{$agent_id}{task}  = $info{task}  if $info{task};
+    $states->{$agent_id}{model} = $info{model} if $info{model};
+
+    $self->register_agent_project($agent_id, $info{project}) if $info{project};
+}
+
+=head2 agent_states
+
+Get the tracked state of every known agent.
+
+Returns: Hashref keyed by agent id.
+
+=cut
+
+sub agent_states {
+    my ($self) = @_;
+    return $self->{_agent_states} || {};
+}
+
+=head2 _track_agent_event($event)
+
+Update the per-agent state cache from a broker event and decide whether
+the event is worth showing.
+
+Activity is coalesced. Repeated calls to the same tool by the same agent
+do not each produce a line; a change of tool or a change of phase does.
+Without this a single agent running a long task floods the transcript.
+
+Arguments:
+- $event: Broker event hashref
+
+Returns: 1 if the event should be rendered, 0 if it should be suppressed.
+
+=cut
+
+sub _track_agent_event {
+    my ($self, $event) = @_;
+
+    return 0 unless $event && ref($event) eq 'HASH';
+
+    my $agent_id = $event->{agent_id} || 'unknown';
+    my $states = $self->{_agent_states} ||= {};
+
+    my $state = $states->{$agent_id} ||= {
+        started => time(),
+        phase   => 'starting',
+        tool    => '',
+    };
+
+    if ($event->{type} eq 'activity') {
+        # The end event says nothing the start event did not already say.
+        return 0 if ($event->{action} || '') eq 'end';
+
+        my $tool = $event->{tool} || '';
+        my $op   = $event->{detail} || '';
+        return 0 if $tool ne '' && $tool eq $state->{tool};
+
+        $state->{tool}  = $tool;
+        $state->{op}    = $op;
+        $state->{phase} = 'tools';
+        return 1;
+    }
+
+    if ($event->{type} eq 'status_update') {
+        my $phase = $event->{status} || 'unknown';
+        return 0 if $phase eq $state->{phase};
+
+        $state->{phase} = $phase;
+        $state->{tool}  = $event->{tool} || '';
+        return 1;
+    }
+
+    if ($event->{type} eq 'agent_exit') {
+        return 0 if $state->{phase} eq 'exited';
+        $state->{phase} = 'exited';
+        return 1;
+    }
+
+    return 0;
+}
+
+=head2 _render_agent_event($event)
+
+Render an agent status or activity event as a compact card line.
+
+Arguments:
+- $event: Broker event hashref
+
+Returns: A formatted string, or undef if the event carries nothing worth
+showing.
+
+=cut
+
+sub _render_agent_event {
+    my ($self, $event) = @_;
+
+    my $agent_id = $event->{agent_id} || 'unknown';
+    my $label = uc($agent_id);
+    my $project = $self->get_agent_project($agent_id);
+    $label .= " ($project)" if $project;
+
+    my $detail = '';
+    if ($event->{type} eq 'activity') {
+        my $tool = $event->{tool} || '';
+        my $op   = $event->{detail} || '';
+        $detail = $tool;
+        $detail .= " ($op)" if $op;
+        $detail = $event->{action} || '' if $detail eq '';
+    }
+    else {
+        $detail = $event->{status} || 'unknown';
+        my $tool = $event->{tool} || '';
+        $detail .= " ($tool)" if $tool;
+    }
+
+    return unless $detail ne '';
+
+    return $self->colorize('∙ ', 'DIM')
+        . $self->colorize($label, 'ASSISTANT')
+        . $self->colorize(' -> ', 'DIM')
+        . $self->colorize($detail, 'DATA')
+        . "\n";
 }
 
 =head2 register_agent_project
@@ -2577,7 +2998,6 @@ Register an agent's project context for display labels.
 Called by SubAgentOperations after spawning an agent.
 
 =cut
-
 sub register_agent_project {
     my ($self, $agent_id, $project) = @_;
     return unless $agent_id && $project;

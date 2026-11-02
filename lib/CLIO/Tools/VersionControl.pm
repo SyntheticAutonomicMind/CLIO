@@ -17,6 +17,7 @@ use File::Temp qw(tempfile);
 use CLIO::Util::PathResolver qw(expand_tilde);
 use CLIO::Util::JSON qw(decode_json encode_json);
 use POSIX qw(WNOHANG _exit);
+use Time::HiRes ();
 
 # Shell-quote a string for safe interpolation into backtick commands.
 # Uses single-quote wrapping with embedded single-quote escaping.
@@ -98,7 +99,11 @@ sub _run_with_interrupt {
             $exit_code = 130;
             last;
         }
-        sleep 0.1;  # 100ms poll - matches ALRM interval for sub-second interrupt
+        # 100ms poll - matches ALRM interval for sub-second interrupt.
+        # Use Time::HiRes::sleep: the builtin sleep truncates a
+        # fractional argument to an integer, so sleep 0.1 would not sleep
+        # at all and this loop would spin.
+        Time::HiRes::sleep(0.1);
     }
 
     my $output = '';

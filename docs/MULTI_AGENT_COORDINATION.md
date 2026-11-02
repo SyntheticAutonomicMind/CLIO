@@ -235,7 +235,29 @@ The relay works through two mechanisms:
 
 **Child side (automatic):** When SubAgent spawns a process, the child's HostProtocol gets a broker Client via `set_broker_relay()`. Every `emit_status()` and `emit_tool_start()` call additionally sends a `status_update` message to the broker. This requires no configuration - it happens automatically for any coordinated agent.
 
-**Primary side (polling):** The primary session's WorkflowOrchestrator periodically calls `poll_status_updates()` on the broker client. Any accumulated status updates are re-emitted as `clio:agent status` OSC events for the host application.
+**Primary side (polling):** The primary session polls `poll_status_updates()` and `poll_activity()` on the broker client, renders what it finds as agent cards, and re-emits it as `clio:agent status` OSC events for the host application.
+
+Both broker queues are cleared on read, so they have exactly one consumer. The
+session owns them. Tools that want agent state read it through the session
+rather than polling the queues themselves, otherwise one consumer steals
+events from the other.
+
+### Message Ownership
+
+Ordinary agent messages stay unread in the broker until the manager reviews
+them. This is deliberate:
+
+- The session renders them for the user as they arrive.
+- The manager reads them with `agent_operations(operation: 'inbox')` and
+  marks them read with `operation: 'acknowledge'`.
+
+Acknowledging them at display time would hide the agent's findings from the
+manager. Authorization requests are the exception: they are resolved
+interactively and acknowledged once handled.
+
+The session tracks which messages it has already displayed separately from
+which ones the manager has read, so the terminal never repeats a message
+while the broker still holds it unread.
 
 ---
 
@@ -285,6 +307,9 @@ The relay works through two mechanisms:
 # View messages from agents
 /subagent inbox
 
+# Read an agent's full final report
+/subagent report agent-1
+
 # Reply to agent question
 /subagent reply agent-1 "yes, proceed with that approach"
 
@@ -298,7 +323,7 @@ The relay works through two mechanisms:
 ### Monitoring
 
 ```bash
-# List all agents
+# List all agents with their live state
 /subagent list
 
 # Show detailed status
@@ -312,6 +337,37 @@ The relay works through two mechanisms:
 
 # List child projects
 /subagent projects
+```
+
+### Talking to an Agent Directly
+
+Type `@agent-1 do the thing` at the main prompt to send a message straight
+to an agent without going through the manager. The agent picks it up on its
+next poll and the manager is not involved.
+
+### Watching Agents Work
+
+Agent activity is relayed to the session as it happens. The session renders
+a compact card per change:
+
+```
+∙ AGENT-1 -> file_operations (read_file)
+∙ AGENT-1 -> terminal_operations (exec)
+```
+
+Activity is coalesced. Repeated calls to the same tool by the same agent do
+not each produce a line, so a busy agent does not flood the transcript.
+
+When an agent finishes, asks a question, or reports a finding while the
+session is idle, the session wakes the manager so it can review the message
+and respond. The agent's text is not injected into the manager's context.
+The manager reads it from the broker, the same convention every other agent
+message follows:
+
+```
+agent_operations(operation: 'inbox')                    # bounded preview
+agent_operations(operation: 'report', agent_id: 'agent-1')  # full text
+agent_operations(operation: 'acknowledge')               # mark read
 ```
 
 ---
@@ -336,6 +392,38 @@ The relay works through two mechanisms:
 | `complete` | Green | Task finished |
 | `status` | Cyan | Progress update |
 | `discovery` | Magenta | Shared finding |
+
+### Side Channels
+
+These bypass the message bus. They are relayed to the session so it can
+render live agent cards and forward them to an external host application.
+
+| Type | Carries | Consumer |
+|------|---------|----------|
+| `status_update` | Agent state and the tool it is running | Session UI, OSC host apps |
+| `activity` | Tool start and end events | Session UI, OSC host apps |
+
+Both queues are bounded. The broker keeps the most recent 100 status
+updates and 200 activity entries.
+
+---
+
+## Reports
+
+An agent's final answer is written to its own file when it completes:
+
+```
+/tmp/clio-agent-<agent-id>-report.txt
+```
+
+The file holds the report on its own, separate from the human-facing log
+which interleaves tool output. The manager pulls it on demand with the
+`report` operation. The `inbox` operation returns a bounded preview of each
+message and points at `report` for the rest, so a wave of agent reports
+cannot flood the manager's context.
+
+If an agent failed before producing a report, `report` falls back to the
+tail of its log.
 
 ---
 

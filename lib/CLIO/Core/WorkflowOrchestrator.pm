@@ -124,7 +124,10 @@ sub new {
     }
     
     # Initialize tool output formatter
-    $self->{formatter} = CLIO::UI::ToolOutputFormatter->new(ui => $args{ui});
+    $self->{formatter} = CLIO::UI::ToolOutputFormatter->new(
+        ui => $args{ui},
+        non_interactive => $args{non_interactive},
+    );
     
     # Initialize tool error guidance
     $self->{error_guidance} = CLIO::Core::ToolErrorGuidance->new();
@@ -1699,6 +1702,10 @@ sub _execute_tool_round {
         # This allows the primary to service auth prompts even during its own tool loop
         $self->_check_authorization_requests();
 
+        # Render live agent activity so the user can see what child
+        # agents are doing while the manager is still working.
+        $self->_poll_agent_activity();
+
         my $tool_call = $ordered_tools->[$i];
         my $tool_name = $tool_call->{function}->{name} || 'unknown';
         my $tool_display_name = uc($tool_name);
@@ -2795,19 +2802,76 @@ Only active for primary sessions that have a broker client and UI.
 
 sub _check_authorization_requests {
     my ($self) = @_;
-    
+
     # Only for primary sessions with broker and UI
-    return unless $self->{ui} && $self->{broker_client};
-    
-    # Sub-agents have broker_client too, but no UI - skip them
+    return unless $self->{ui};
+
+    # Sub-agents have a UI too but no broker of their own - skip them
     return unless $self->{ui}->can('check_agent_messages');
-    
+
+    my $broker_client = $self->_session_broker_client();
+    return unless $broker_client;
+
     # Quick poll - non-blocking
     eval {
-        $self->{ui}->check_agent_messages($self->{broker_client});
+        $self->{ui}->check_agent_messages($broker_client);
     };
     if ($@) {
         log_warning('WorkflowOrchestrator', "Auth relay check failed: $@");
+    }
+}
+
+=head2 _session_broker_client
+
+Resolve the broker client for this session.
+
+The orchestrator is handed a broker client when it runs as a sub-agent.
+The primary session has no broker at startup: the broker is created on
+demand when the first sub-agent is spawned, and that client belongs to
+the session UI rather than to the agent. Ask the UI for it so the
+orchestrator picks it up once it exists.
+
+Returns: The broker client, or undef.
+
+=cut
+
+sub _session_broker_client {
+    my ($self) = @_;
+
+    return $self->{broker_client} if $self->{broker_client};
+
+    if ($self->{ui} && $self->{ui}->can('_get_broker_client')) {
+        my $client = $self->{ui}->_get_broker_client();
+        return $client if $client;
+    }
+
+    return undef;
+}
+
+=head2 _poll_agent_activity
+
+Render live agent activity during the tool loop so the user can see what
+child agents are doing while the manager works. Non-blocking, and a no-op
+when there is no UI or no broker.
+
+Returns: Nothing.
+
+=cut
+
+sub _poll_agent_activity {
+    my ($self) = @_;
+
+    return unless $self->{ui};
+    return unless $self->{ui}->can('poll_agent_activity');
+
+    my $broker_client = $self->_session_broker_client();
+    return unless $broker_client;
+
+    eval {
+        $self->{ui}->poll_agent_activity($broker_client);
+    };
+    if ($@) {
+        log_debug('WorkflowOrchestrator', "Agent activity poll failed: $@");
     }
 }
 

@@ -699,6 +699,7 @@ sub handle_send_message {
     if ($recipient eq 'user') {
         push @{$self->{user_inbox}}, $message;
         push @{$self->{user_inbox_history}}, $message;  # Keep in history
+        $self->_cap_user_inbox();
         $self->log_debug("Message from $sender to user: $message_type");
     }
     elsif ($recipient eq 'all') {
@@ -708,6 +709,7 @@ sub handle_send_message {
         # broadcasts from sub-agents.
         push @{$self->{user_inbox}}, $message;
         push @{$self->{user_inbox_history}}, $message;
+        $self->_cap_user_inbox();
         for my $agent_id (keys %{$self->{agent_status}}) {
             next if $agent_id eq $sender || $agent_id eq 'user';  # Don't send to self or user (already handled above)
             $self->{agent_inboxes}{$agent_id} ||= [];
@@ -729,6 +731,37 @@ sub handle_send_message {
         success => \1,
         message_id => $message->{id},
     });
+}
+
+=head2 _cap_user_inbox
+
+Trim the primary session's inbox and its history to their maximum sizes.
+
+The user inbox only shrinks when the AI acknowledges messages, so a
+session that never acknowledges would otherwise grow the broker's memory
+without bound. The history buffer was never trimmed at all.
+
+Oldest messages are dropped first.
+
+Returns: Nothing.
+
+=cut
+
+sub _cap_user_inbox {
+    my ($self) = @_;
+
+    my $max_inbox = 500;
+    my $max_history = 2000;
+
+    if (scalar @{$self->{user_inbox} || []} > $max_inbox) {
+        splice(@{$self->{user_inbox}}, 0,
+            scalar(@{$self->{user_inbox}}) - $max_inbox);
+    }
+
+    if (scalar @{$self->{user_inbox_history} || []} > $max_history) {
+        splice(@{$self->{user_inbox_history}}, 0,
+            scalar(@{$self->{user_inbox_history}}) - $max_history);
+    }
 }
 
 sub handle_poll_inbox {
@@ -1252,7 +1285,8 @@ sub handle_authorization_request {
     
     push @{$self->{user_inbox}}, $message;
     push @{$self->{user_inbox_history}}, $message;
-    
+    $self->_cap_user_inbox();
+
     $self->log_debug("Authorization request $request_id from $sender queued for user");
     
     # Don't ack yet - the child agent is blocking on send_and_wait
