@@ -1473,6 +1473,14 @@ sub readline {
         # Enter key
         if ($ord == 10 || $ord == 13) {
             print "\e[?2004l";
+            # Move the cursor to the end of the input before emitting the
+            # submit newline. The user may have scrolled back to an earlier
+            # row to edit, leaving the cursor in the middle of a multi-row
+            # input. Submitting from there would emit the newline inside
+            # the input, so everything printed afterwards (the busy
+            # indicator, the echoed user message) would start inside the
+            # input line instead of after it.
+            $self->_move_cursor_to_end(\$input, \$cursor_pos, $prompt);
             $self->_emit_newline();
             ReadMode('restore');
 
@@ -1504,6 +1512,9 @@ sub readline {
         # Ctrl-C
         if ($ord == 3) {
             print "\e[?2004l";
+            # Move the cursor to the end of the input so the abort marker
+            # lands after the whole input instead of splitting it.
+            $self->_move_cursor_to_end(\$input, \$cursor_pos, $prompt);
             $self->_emit_ctrl_c();
             ReadMode('restore');
             kill 'INT', $$;
@@ -2207,6 +2218,40 @@ sub reposition_cursor {
     if (should_log('DEBUG')) {
         log_debug('ReadLine', "reposition_cursor: tracking set to input_row=$new_input_row, col=$new_col, pending=$new_pending");
     }
+}
+
+=head2 _move_cursor_to_end
+
+Move the cursor to the end of the input buffer without redrawing it.
+
+Used when submitting the input. The cursor is often left on an earlier
+row of a multi-row input after the user scrolls back to edit part of it.
+Submitting from there emits the submit newline in the middle of the
+input, which leaves the tail of the input on screen and starts the next
+output (busy indicator, echoed user message) inside the input line
+instead of after it.
+
+The cursor is moved with reposition_cursor() so the pending-wrap and
+scroll-offset edge cases are handled by the same code path used for
+ordinary cursor movement. No-op when the cursor is already at the end
+of the input.
+
+Arguments:
+- $input_ref:      Reference to the input string
+- $cursor_pos_ref: Reference to the cursor position (updated in place)
+- $prompt:         Prompt string (for calculating display positions)
+
+=cut
+
+sub _move_cursor_to_end {
+    my ($self, $input_ref, $cursor_pos_ref, $prompt) = @_;
+
+    my $end_pos = length($$input_ref);
+    return if $$cursor_pos_ref == $end_pos;
+
+    my $old_pos = $$cursor_pos_ref;
+    $$cursor_pos_ref = $end_pos;
+    $self->reposition_cursor(\$old_pos, $cursor_pos_ref, $input_ref, $prompt);
 }
 
 =head2 move_word_forward

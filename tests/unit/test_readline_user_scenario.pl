@@ -219,11 +219,12 @@ sub run_scenario {
     close $read_end;
 
    my $vt = VirtualTerminal->new(cols => $cols, rows => 24);
-    # Strip the trailing \r\n that _emit_newline emits when Enter is pressed.
-    # This is the "submit" newline (cursor moves to the next line), not part
-    # of cursor positioning — the VT cursor position must reflect the state
-    # before Enter was pressed, to match model_pos.
-    (my $vt_buf = $buf) =~ s/\r\n$//;
+    # Strip everything from the submit point onward: the bracketed-paste
+    # disable, the move-to-end-of-input, and the submit newline emitted when
+    # Enter is pressed. This is the "submit" sequence, not part of
+    # cursor positioning. The VT cursor must reflect the state before
+    # Enter was pressed, to match model_pos.
+    (my $vt_buf = $buf) =~ s/\e\[\?2004l.*\z//s;
     $vt->feed($vt_buf);
     return ($vt, $buf);
 }
