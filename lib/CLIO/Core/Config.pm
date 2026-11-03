@@ -623,6 +623,29 @@ sub get {
     return $self->{config}->{$key};
 }
 
+=head2 is_user_set
+
+Check whether a configuration key was explicitly set by the user.
+
+Every key present in the saved config file is marked user-set when the
+file loads, and Config::set marks a key user-set unless told otherwise.
+This lets callers tell "the user chose this value" apart from "this is
+the built-in default", which matters for settings where the default and
+an explicit zero have different meanings.
+
+Arguments: $key (string)
+Returns: 1 if the user explicitly set the key, 0 otherwise
+Example: my $explicit = $cfg->is_user_set('max_iterations');
+
+=cut
+
+sub is_user_set {
+    my ($self, $key) = @_;
+
+    return 0 unless defined $key && length $key;
+    return $self->{user_set}->{$key} ? 1 : 0;
+}
+
 =head2 set
 
 Set a configuration value (marks as user-explicitly-set)

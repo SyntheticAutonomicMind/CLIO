@@ -79,7 +79,6 @@ sub new {
             skip_system_skills => $self->{skip_system_skills},
             broker_client => $self->{broker_client},  # Pass broker client to orchestrator
             non_interactive => $self->{non_interactive},  # Pass non-interactive mode
-            max_iterations => $self->{api}->{config}->get('max_iterations'),
             enable_tools => $effective_enable_tools,      # Tool allowlist
             disable_tools => $self->{disable_tools},    # Tool blocklist
             prompt_override => $effective_prompt_override, # System prompt override
@@ -217,7 +216,6 @@ sub process_user_request {
                 skip_custom => $self->{skip_custom},
                 skip_ltm => $self->{skip_ltm},
                 skip_system_skills => $self->{skip_system_skills},
-                max_iterations => $self->{api}->{config}->get('max_iterations'),
                 non_interactive => $self->{non_interactive},
                 broker_client => $self->{broker_client},
                 enable_tools => $self->{enable_tools},

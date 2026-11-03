@@ -189,6 +189,7 @@ sub _display_api_help {
             ['/api set tools on|off|auto',        'Force tool calling on/off (auto = model default)', 40],
             ['/api set vision on|off|auto',       'Force vision support on/off', 40],
             ['/api set reasoning on|off|auto',    'Force reasoning support on/off', 40],
+            ['/api set max_iterations <value>',   'Agent iteration limit (0 = unlimited)', 40],
             ['/api set github_pat <token>',       'Set GitHub PAT for extended models', 40],
             ['/api providers',                    'Show available providers', 40],
             ['/api models',                       'List available models', 40],

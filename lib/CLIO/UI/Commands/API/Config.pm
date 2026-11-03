@@ -255,9 +255,12 @@ sub handle_set {
     elsif ($setting eq 'tools' || $setting eq 'vision' || $setting eq 'reasoning') {
         $self->_set_capability_force($setting, $value, $session_only);
     }
+    elsif ($setting eq 'max_iterations') {
+        $self->_set_max_iterations($value, $session_only);
+    }
     else {
         $self->display_error_message("Unknown setting: $setting");
-        $self->writeline("Valid settings: model, provider, base, key, thinking, thinking_effort, thinking_mode, temperature, top_p, top_k, github_pat, serpapi_key, search_engine, search_provider, context_window, max_output, max_prompt, tools, vision, reasoning", markdown => 0);
+        $self->writeline("Valid settings: model, provider, base, key, thinking, thinking_effort, thinking_mode, temperature, top_p, top_k, github_pat, serpapi_key, search_engine, search_provider, context_window, max_output, max_prompt, tools, vision, reasoning, max_iterations", markdown => 0);
     }
 }
 =head2 handle_route
@@ -2245,6 +2248,64 @@ sub _set_capability_cap {
     );
 }
 
+=head2 _set_max_iterations($value, $session_only)
+
+Handle /api set max_iterations <number|0>.
+
+Sets the agent iteration limit. 0 removes the limit entirely: the agent
+loops until it produces a final answer or hits one of the other
+termination guards (tool error loop, session error budget, completion
+gate). Without this setting, interactive runs are unlimited and
+non-interactive runs (--input, piped stdin, sub-agents, remote
+execution) use the safety default.
+
+Accepts a non-negative integer. Use --session to apply the change to
+the current session only.
+
+Arguments:
+    $value       - The limit (integer >= 0; 0 means unlimited)
+    $session_only - When true, apply to this session instead of persisting
+
+=cut
+
+sub _set_max_iterations {
+    my ($self, $value, $session_only) = @_;
+
+    if (!defined $value || $value !~ /^\d+$/) {
+        $self->display_error_message("Invalid max_iterations value: '$value'");
+        $self->writeline("Use a non-negative integer. 0 removes the limit entirely (unlimited).", markdown => 0);
+        return;
+    }
+
+    my $limit = $value + 0;
+    my $label = $limit ? $limit : 'unlimited';
+
+    unless ($self->{config}) {
+        $self->display_error_message("Cannot set max_iterations: no configuration is loaded");
+        return;
+    }
+
+    if ($session_only) {
+        # Written directly rather than through _write_session_override:
+        # that helper treats 0 as "clear the override", but 0 is a
+        # meaningful value here (unlimited).
+        my $state = ($self->{session} && $self->{session}->can('state'))
+            ? $self->{session}->state() : undef;
+        if ($state) {
+            $state->{api_config} ||= {};
+            $state->{api_config}{max_iterations} = $limit;
+            $self->{session}->save() if $self->{session}->can('save');
+        }
+        $self->display_system_message("Iteration limit set to $label" . $self->_scope_tag(1));
+        return;
+    }
+
+    $self->{config}->set('max_iterations', $limit);
+    $self->{config}->save();
+    $self->display_system_message("Iteration limit set to $label" . $self->_scope_tag(0));
+    $self->writeline("Takes effect on the next turn.", markdown => 0);
+}
+
 =head2 _write_session_override($config_key, $value)
 
 Store a session-only override for a setting (mirrors _set_api_setting
@@ -2441,7 +2502,7 @@ sub display_config {
     if ($self->{session} && $self->{session}->state()) {
         my $state = $self->{session}->state();
         if ($state->{api_config}) {
-            for my $key (qw(provider model api_base api_key)) {
+            for my $key (qw(provider model api_base api_key max_iterations)) {
                 $session_overrides{$key} = 1 if exists $state->{api_config}{$key};
             }
         }
@@ -2462,9 +2523,16 @@ sub display_config {
    $self->display_key_value("Think Effort", $effort, 16);
    $self->display_key_value("Think Mode", $mode, 16);
 
+    # Show the agent iteration limit. An explicit 0 means unlimited, which
+    # reads as a bare "0" otherwise and hides the actual behaviour.
+    my $iter_limit = $self->{config}->get('max_iterations');
+    my $iter_display = defined $iter_limit
+        ? ($iter_limit ? $iter_limit : 'unlimited')
+        : 'default';
+    $self->display_key_value("Max Iterations", $iter_display . $session_tag->('max_iterations'), 16);
+
     # Show reasoning mode from model capabilities (how the model handles thinking)
-    my $reasoning_mode = undef;
-    if ($self->{ai_agent} && $self->{ai_agent}->{api}) {
+    my $reasoning_mode = undef;    if ($self->{ai_agent} && $self->{ai_agent}->{api}) {
         my $api_manager = $self->{ai_agent}->{api};
         if ($api_manager->can('get_model_capabilities')) {
             my $caps = eval {

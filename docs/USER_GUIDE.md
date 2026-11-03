@@ -457,6 +457,7 @@ CLIO provides 35+ slash commands. Type `/help` in any session to see the full li
 | `/api set tools on\|off\|auto` | Force tool calling on/off (auto = model default) |
 | `/api set vision on\|off\|auto` | Force vision support on/off |
 | `/api set reasoning on\|off\|auto` | Force reasoning support on/off |
+| `/api set max_iterations <value>` | Agent iteration limit (0 = unlimited) |
 | `/api set <setting> <value> --session` | Set value for this session only |
 | `/api models` | List available models |
 | `/api alias <name> <model>` | Create a model alias |
@@ -1812,6 +1813,23 @@ Add `--session` to any `/api set` command to apply it to the current session onl
 /api set model gpt-4.1 --session      # Session-only override
 /api set provider llama.cpp --session  # Session-only override
 ```
+
+### Agent Iteration Limit
+
+The agent loop is capped at a number of iterations - one iteration is one
+model call plus whatever tools it requested. Interactive sessions are
+unlimited by default. Unattended runs (`--input`, piped input, sub-agents,
+remote execution) use a safety default of 200 iterations so a runaway agent
+cannot spin forever.
+
+```bash
+/api set max_iterations 0        # Unlimited
+/api set max_iterations 500      # Raise the cap
+/api set max_iterations 0 --session  # Unlimited for this session only
+```
+
+A value of `0` means unlimited. The setting takes effect on the next turn.
+When the limit is reached, CLIO stops and tells you the limit that was hit.
 
 Session overrides are visible in `/api show` and the session header.
 

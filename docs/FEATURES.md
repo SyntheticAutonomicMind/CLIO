@@ -954,6 +954,7 @@ These send structured prompts to the AI:
 | `/api set temperature <value>` | Override sampling temperature |
 | `/api set top_p <value>` | Override top_p sampling |
 | `/api set top_k <value>` | Override top_k sampling |
+| `/api set max_iterations <value>` | Agent iteration limit (0 = unlimited) |
 | `/api models` | List available models |
 | `/api status` | Show current provider status |
 | `/api alias <name> <model>` | Create a model alias |

@@ -51,6 +51,12 @@ use constant INTERRUPT_ALRM_INTERVAL => 0.25;
 # at least this often.
 use constant INTERRUPT_POLL_INTERVAL_MS => 100;
 
+# Safety net for unattended runs. This is the iteration cap applied when no
+# explicit limit is configured and the agent is running non-interactively
+# (--input, piped stdin, sub-agents, remote execution). 0 means unlimited
+# and disables the cap entirely - see _resolve_max_iterations.
+use constant DEFAULT_MAX_ITERATIONS => 200;
+
 # ANSI color codes for terminal output - FALLBACK only when UI is unavailable
 =head1 NAME
 
@@ -97,7 +103,10 @@ sub new {
     my $self = {
         api_manager => $args{api_manager},
         session => $args{session},
-        max_iterations => $args{max_iterations} // 0,  # 0 = unlimited (interactive); overridden below for non-interactive
+        # Caller-imposed iteration cap. undef means "resolve from the
+        # configured value and the run mode" - see _resolve_max_iterations.
+        # 0 means unlimited.
+        max_iterations_override => $args{max_iterations},
         debug => $args{debug} || 0,
         ui => $args{ui},  # Store UI reference for buffer flushing
         spinner => $args{spinner},  # Store spinner for interactive tools (interact)
@@ -115,14 +124,7 @@ sub new {
     };
     
     bless $self, $class;
-    
-    # Apply default iteration limit for non-interactive mode
-    # Prevents runaway oneshot agents that loop indefinitely
-    if ($self->{non_interactive} && !$self->{max_iterations}) {
-        $self->{max_iterations} = 200;  # Generous limit for complex tasks
-        log_debug('WorkflowOrchestrator', "Non-interactive mode: defaulting max_iterations to $self->{max_iterations}");
-    }
-    
+
     # Initialize tool output formatter
     $self->{formatter} = CLIO::UI::ToolOutputFormatter->new(
         ui => $args{ui},
@@ -134,6 +136,11 @@ sub new {
 
     # Store config reference for tool registration decisions
     $self->{config} = $args{config};
+
+    # Resolve the effective iteration limit. This has to happen after the
+    # config reference is stored, because the configured value is one of
+    # the inputs to the resolution.
+    $self->{max_iterations} = $self->_resolve_max_iterations($args{session});
     
     # Initialize tool registry
     require CLIO::Tools::Registry;
@@ -278,12 +285,84 @@ sub new {
     $self->{process_stats}->capture('session_start');
     
     log_debug('WorkflowOrchestrator', "Initialized with max_iterations=$self->{max_iterations}");
-    
+
     if ($self->{skip_custom} || $self->{skip_ltm}) {
         log_debug('WorkflowOrchestrator', "Incognito flags: skip_custom=$self->{skip_custom}, skip_ltm=$self->{skip_ltm}");
     }
     
     return $self;
+}
+
+=head2 _resolve_max_iterations($session)
+
+Resolve the effective agent iteration limit.
+
+Precedence, highest first:
+
+    1. A caller-imposed cap passed to the constructor. 0 means unlimited.
+    2. A session-only override from "/api set max_iterations --session".
+    3. A persisted user setting from "/api set max_iterations".
+       0 means unlimited.
+    4. DEFAULT_MAX_ITERATIONS for non-interactive runs (a safety net
+       against runaway unattended agents), 0 (unlimited) for interactive.
+
+The explicit-versus-unset distinction is load-bearing. 0 is falsy in
+Perl, so a naive "!$max_iterations" test cannot tell an explicit 0
+(unlimited) apart from an unset value, and would silently re-impose the
+safety default. That contradiction is why an explicit "max_iterations 0"
+could never disable the cap in non-interactive mode.
+
+Arguments: $session (session object or undef)
+Returns: integer iteration limit, 0 meaning unlimited
+
+=cut
+
+sub _resolve_max_iterations {
+    my ($self, $session) = @_;
+
+    # 1. Caller-imposed cap (tests, embedded programmatic use).
+    return $self->{max_iterations_override}
+        if defined $self->{max_iterations_override};
+
+    # 2. Session-only override.
+    my $session_value = $self->_session_max_iterations($session);
+    return $session_value if defined $session_value;
+
+    # 3. Persisted user setting.
+    my $cfg = $self->{config};
+    if ($cfg && $cfg->can('is_user_set') && $cfg->is_user_set('max_iterations')) {
+        my $value = $cfg->get('max_iterations');
+        return defined $value ? $value + 0 : 0;
+    }
+
+    # 4. Mode default.
+    return $self->{non_interactive} ? DEFAULT_MAX_ITERATIONS : 0;
+}
+
+=head2 _session_max_iterations($session)
+
+Read a session-only iteration limit override.
+
+Reads the session state directly instead of going through the generic
+session override helper, because that helper treats 0 as "clear the
+override" - but 0 is a meaningful value here (unlimited).
+
+Arguments: $session (session object or undef)
+Returns: integer limit, or undef when no override is set
+
+=cut
+
+sub _session_max_iterations {
+    my ($self, $session) = @_;
+
+    return undef unless $session && $session->can('state');
+    my $state = $session->state();
+    return undef unless $state && ref($state->{api_config}) eq 'HASH';
+    return undef unless exists $state->{api_config}{max_iterations};
+
+    my $value = $state->{api_config}{max_iterations};
+    return undef unless defined $value;
+    return $value + 0;
 }
 
 # _looks_premature_stop retained as a deprecated compatibility shim.
@@ -519,7 +598,13 @@ sub process_input {
     my $session_error_count = $session->{_error_count} // 0;
     my $max_session_errors = 10;  # Hard limit per request processing
     
+    # Re-resolve the iteration limit every turn so that
+    # "/api set max_iterations" takes effect on the next turn instead of
+    # requiring a restart.
+    $self->{max_iterations} = $self->_resolve_max_iterations($session);
+
     my $max_iter = $self->{max_iterations};
+    my $iter_limit_display = $max_iter ? $max_iter : 'unlimited';
     while (!$max_iter || $iteration < $max_iter) {
         $iteration++;
 
@@ -547,7 +632,7 @@ sub process_input {
         $self->{process_stats}->capture('iteration_start', { iteration => $iteration })
             if $self->{process_stats};
         
-        log_debug('WorkflowOrchestrator', "Iteration $iteration/$self->{max_iterations}");
+        log_debug('WorkflowOrchestrator', "Iteration $iteration/$iter_limit_display");
 
         # Check for user interrupt (any keypress)
         if ($self->_check_for_user_interrupt($session)) {
@@ -1169,7 +1254,8 @@ sub process_input {
     
     my $error_msg = sprintf(
         "Iteration limit (%d) reached after %.1fs. " .
-        "To remove the limit, run: /api set max_iterations 0",
+        "To remove the limit, run: /api set max_iterations 0 (unlimited), " .
+        "or set a higher number.",
         $self->{max_iterations},
         $elapsed_time
     );
