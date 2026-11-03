@@ -51,7 +51,7 @@ Conditional: `remote_execution`, `agent_operations`, `skill_operations`.
 
 ### AI Providers
 
-20 providers are configured in `lib/CLIO/Providers.pm`. Anthropic, Google, and NVIDIA use native protocol adapters - everything else is OpenAI-compatible or Copilot format.
+21 providers are configured in `lib/CLIO/Providers.pm`. Anthropic, Google, and NVIDIA use native protocol adapters - everything else is OpenAI-compatible or Copilot format.
 
 | Provider | Auth | Notes |
 |---|---|---|

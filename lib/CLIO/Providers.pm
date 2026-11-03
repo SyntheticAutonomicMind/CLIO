@@ -33,6 +33,41 @@ Single source of truth for all API provider configurations.
 Defines default settings for each provider (api_base, model, capabilities).
 Users can override any setting via /api commands, but these are the defaults.
 
+=head2 Roster
+
+The registry holds 21 providers. The display names below are what the
+registry keys map to; the key is listed first, since that is what users
+type.
+
+    github_copilot    GitHub Copilot
+    openai            OpenAI
+    anthropic         Anthropic
+    google            Google Gemini
+    deepseek          DeepSeek
+    llama.cpp         llama.cpp (Local)
+    lmstudio          LM Studio
+    ollama_cloud      Ollama Cloud
+    openrouter        OpenRouter
+    vercel            Vercel AI Gateway
+    orca              OrcaRouter
+    kilo              KiloCode
+    opper             Opper
+    hyper             Charm Hyper
+    cheaperinference  Cheaper Inference
+    cheapaimodel      cheapaimodel
+    minimax           MiniMax
+    minimax_token     MiniMax Token Plan
+    zai               Z.AI (Chat)
+    zai_coding        Z.AI (Coding)
+    nvidia            NVIDIA NIM
+
+Anthropic, Google, and NVIDIA use native protocol adapters. Every other
+provider speaks the OpenAI-compatible or Copilot format.
+
+tests/unit/test_provider_doc_count.pl asserts that the provider count
+claimed in README.md and docs/ matches the registry, so adding a provider
+without updating the documentation fails the suite.
+
 =head1 SYNOPSIS
 
     use CLIO::Providers qw(get_provider list_providers);

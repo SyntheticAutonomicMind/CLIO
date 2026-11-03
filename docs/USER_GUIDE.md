@@ -183,7 +183,7 @@ All `/api set` commands save globally by default. To set a value for the current
 
 Use `/api show` to see your current configuration and whether any values are session overrides.
 
-See [PROVIDERS.md](PROVIDERS.md) for setup instructions for all 19 providers.
+See [PROVIDERS.md](PROVIDERS.md) for setup instructions for all 21 providers.
 
 **Optional Environment Variables**
 
