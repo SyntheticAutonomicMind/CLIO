@@ -47,6 +47,8 @@ subtest 'standard API providers' => sub {
         'Opper detected');
     is(provider_from_url('https://api.cheaperinference.com/v1/chat/completions'), 'cheaperinference',
         'Cheaper Inference detected');
+    is(provider_from_url('https://api.cheapaimodel.ai/v1/chat/completions'), 'cheapaimodel',
+        'cheapaimodel detected');
 };
 
 # =============================================================================

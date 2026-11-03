@@ -19,6 +19,7 @@
 | **KiloCode** | `kilo` | API Key |
 | **Opper** | `opper` | API Key |
 | **Cheaper Inference** | `cheaperinference` | API Key |
+| **cheapaimodel** | `cheapaimodel` | API Key |
 | **Ollama Cloud** | `ollama_cloud` | API Key |
 | **MiniMax** | `minimax` | API Key |
 | **MiniMax Token Plan** | `minimax_token` | API Key |
@@ -399,6 +400,40 @@ Model ids are bare names:
 
 ---
 
+### cheapaimodel
+
+**Best for:** Open-weight models (DeepSeek, GLM, Kimi) and Grok through one OpenAI-compatible gateway, prepaid in USD per token
+
+**Get API Key:**
+1. Go to [cheapaimodel.ai](https://cheapaimodel.ai) and sign in
+2. Create a key at [console.cheapaimodel.ai/keys](https://console.cheapaimodel.ai/keys)
+
+**Configure CLIO:**
+```bash
+clio --new
+/api set provider cheapaimodel
+/api set key <your-cheapaimodel-key>
+/config save
+```
+
+**Available models:** cheapaimodel serves its models through one OpenAI-compatible API at `https://api.cheapaimodel.ai/v1`. Use `/api models` for the current list, or see [cheapaimodel.ai/models](https://cheapaimodel.ai/models) for prices and context windows. The default model is `deepseek-v4-1-flash`.
+
+Model ids are bare names:
+```bash
+/api set model deepseek-v4-1-flash
+/api set model glm-5.3
+/api set model kimi-k3
+```
+
+**Features:**
+- Supports tools/function calling
+- Streaming responses
+
+**Notes:**
+- `kimi-k3` only accepts `temperature` 1 or 0.6 and `top_p` 0.95. Leave `sampling_temperature` and `sampling_top_p` unset (the default) when using it; other values return HTTP 400.
+
+---
+
 ### Vercel AI Gateway
 
 **Best for:** Accessing models across providers via Vercel's AI Gateway, free poolside models with reasoning
@@ -754,7 +789,7 @@ CLIO applies a tiered `--max-time` to provider requests so a slow upstream does 
 | Tier | `--max-time` | When it applies |
 |------|--------------|------------------|
 | Cloud | **300 s** | Direct provider connections (OpenAI, Anthropic, Google, DeepSeek, NVIDIA, MiniMax, Z.AI, GitHub Copilot, Ollama Cloud, KiloCode) |
-| Route-based | **300 s** | Multi-hop providers that add an intermediate proxy (OpenRouter, OrcaRouter, Opper, Cheaper Inference, Vercel AI Gateway) |
+| Route-based | **300 s** | Multi-hop providers that add an intermediate proxy (OpenRouter, OrcaRouter, Opper, Cheaper Inference, cheapaimodel, Vercel AI Gateway) |
 | Local | **900 s** | Inference servers running on this machine (llama.cpp, LM Studio) |
 
 The tier is selected per provider via two flags propagated through `build_endpoint_config()`:

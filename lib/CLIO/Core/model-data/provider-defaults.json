@@ -240,6 +240,16 @@
         "mode": "disabled"
       }
     },
+    "cheapaimodel": {
+      "default_model": "deepseek-v4-1-flash",
+      "max_context_tokens": 500000,
+      "max_output_tokens": 128000,
+      "supports_streaming": 1,
+      "supports_tools": 1,
+      "reasoning_schema": {
+        "mode": "disabled"
+      }
+    },
     "zai": {
       "default_model": "glm-5.1",
       "max_context_tokens": 128000,
