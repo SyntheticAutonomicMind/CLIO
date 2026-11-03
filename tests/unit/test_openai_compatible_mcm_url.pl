@@ -76,6 +76,11 @@ is(_derive_models_url('https://api.cheaperinference.com/v1/chat/completions'),
    'https://api.cheaperinference.com/v1/models',
    'cheaperinference: /v1/chat/completions -> /v1/models');
 
+# Test 3e: cheapaimodel
+is(_derive_models_url('https://api.cheapaimodel.ai/v1/chat/completions'),
+   'https://api.cheapaimodel.ai/v1/models',
+   'cheapaimodel: /v1/chat/completions -> /v1/models');
+
 # Test 4: ollama_cloud
 is(_derive_models_url('https://ollama.com/v1/chat/completions'),
    'https://ollama.com/v1/models',

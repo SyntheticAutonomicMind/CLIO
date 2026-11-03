@@ -343,6 +343,25 @@ my %PROVIDERS = (
         },
     },
 
+    cheapaimodel => {
+        name => 'cheapaimodel',
+        api_base => 'https://api.cheapaimodel.ai/v1/chat/completions',
+        model => 'deepseek-v4-1-flash',
+        requires_auth => 'apikey',
+        supports_tools => 1,
+        supports_streaming => 1,
+        route_timeout => 1,  # Routes to upstream providers, extra latency from the intermediate hop
+        url_detection_patterns => [ qr{api\.cheapaimodel\.ai}i ],
+        # Model ids are bare names (e.g. deepseek-v4-1-flash, kimi-k3).
+        # The live /v1/models list (needs the API key) is the source of
+        # truth for the model list.
+        endpoint => {
+            path_suffix => '',
+            temperature_range => [0.0, 2.0],
+            supports_tools => 1,
+        },
+    },
+
     google => {
         name => 'Google Gemini',
         api_base => 'https://generativelanguage.googleapis.com/v1beta',

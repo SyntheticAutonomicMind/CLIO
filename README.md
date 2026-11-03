@@ -10,7 +10,7 @@ I built CLIO for myself. I spend more time in terminal sessions than I do using 
 
 Give CLIO a task and it works through it end to end - investigates your codebase, proposes a plan, implements after your approval, runs tests, and commits. It reads your code, edits files across multiple modules, searches with understanding, and runs shell commands. You can interrupt it mid-task with any keypress and it picks up where you left off next session.
 
-CLIO is a Perl-based agent harness that works anywhere Perl runs. No CPAN, no pip, no npm - just core Perl and standard Unix tools. It supports 20 AI providers including GitHub Copilot, OpenAI, Anthropic, Google Gemini, DeepSeek, OpenRouter, MiniMax, Z.AI, NVIDIA NIM, Opper, and local models via llama.cpp or LM Studio. You can also point it at any OpenAI-compatible endpoint.
+CLIO is a Perl-based agent harness that works anywhere Perl runs. No CPAN, no pip, no npm - just core Perl and standard Unix tools. It supports 21 AI providers including GitHub Copilot, OpenAI, Anthropic, Google Gemini, DeepSeek, OpenRouter, MiniMax, Z.AI, NVIDIA NIM, Opper, and local models via llama.cpp or LM Studio. You can also point it at any OpenAI-compatible endpoint.
 
 For the full architecture overview - the six-layer security model, memory system, multi-agent coordination, and how all the pieces fit together - the [website has a thorough writeup](https://www.syntheticautonomicmind.org/docs/CLIO/index.html). This README gets you running.
 
