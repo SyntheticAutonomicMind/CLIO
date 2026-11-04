@@ -61,6 +61,8 @@ use Cwd qw(getcwd abs_path);
 # sets CLIO_CONFIG_DIR itself is respected (we never stomp a pre-set value).
 my $SANDBOX_CONFIG_DIR = tempdir(CLEANUP => 1);
 
+our $TEST_MODEL = $ENV{CLIO_TEST_MODEL} || 'nvidia/nemotron-3-ultra-550b-a55b';
+
 our @EXPORT = qw(
     assert_equals
     assert_not_equals
@@ -79,12 +81,25 @@ our @EXPORT = qw(
     run_clio
     run_clio_with_session
     get_clio_path
+    get_test_model
     test_passed
     test_failed
     get_test_results
     reset_test_results
     print_test_summary
 );
+
+=head2 get_test_model
+
+Returns the model name used for integration tests. Defaults to
+'nvidia/nemotron-3-ultra-550b-a55b'. Override with the CLIO_TEST_MODEL
+environment variable.
+
+=cut
+
+sub get_test_model {
+    return $TEST_MODEL;
+}
 
 # Test result tracking
 our $TESTS_PASSED = 0;

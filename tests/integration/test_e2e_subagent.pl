@@ -17,6 +17,9 @@ Requires: CLIO configured with API access (GitHub Copilot or OpenAI)
 use strict;
 use warnings;
 use lib './lib';
+use FindBin qw($RealBin);
+use lib "$RealBin/../lib";
+use TestHelpers;
 use Cwd;
 use File::Path qw(make_path remove_tree);
 use Time::HiRes qw(sleep);
@@ -61,7 +64,7 @@ my $task1 = "Create a file at $SCRATCH_DIR/agent-test.txt with the content 'Hell
 print "Task: $task1\n\n";
 
 my $result1 = run_clio_test(
-    input => "/subagent spawn \"$task1\" --model gpt-5-mini",
+    input => "/subagent spawn \"$task1\" --model " . get_test_model(),
     wait_for_completion => 1,
 );
 
@@ -95,15 +98,13 @@ print "=" x 60 . "\n\n";
 my $task2a = "Create a file at $SCRATCH_DIR/part1.txt with the text 'Part 1 from agent A'";
 my $task2b = "Create a file at $SCRATCH_DIR/part2.txt with the text 'Part 2 from agent B'";
 
-print "Task A (gpt-5-mini): $task2a\n";
-print "Task B (gpt-4.1): $task2b\n\n";
+print "Task A (" . get_test_model() . "): $task2a\n";
+print "Task B (" . get_test_model() . "): $task2b\n\n";
 
 # Spawn both agents in parallel using a session
-my $input2 = <<INPUT;
-/subagent spawn "$task2a" --model gpt-5-mini
-/subagent spawn "$task2b" --model gpt-4.1
-/exit
-INPUT
+my $input2 = "/subagent spawn \"$task2a\" --model " . get_test_model() . "\n"
+           . "/subagent spawn \"$task2b\" --model " . get_test_model() . "\n"
+           . "/exit\n";
 
 my $result2 = run_clio_session($input2);
 

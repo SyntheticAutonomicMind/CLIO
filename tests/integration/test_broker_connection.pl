@@ -19,6 +19,8 @@ use warnings;
 use utf8;
 use FindBin qw($RealBin);
 use lib "$RealBin/../../lib";
+use lib "$RealBin/../lib";
+use TestHelpers;
 
 binmode(STDOUT, ':encoding(UTF-8)');
 binmode(STDERR, ':encoding(UTF-8)');
@@ -31,7 +33,7 @@ print "━━━━━━━━━━━━━━━━━━━━━━━━�
 print " [1/3] Spawning agent with broker connection...\n";
 
 my $task = 'create scratch/broker_test.txt with content: Broker connected';
-my $cmd = "$RealBin/../../clio --input '/subagent spawn \"$task\" --model gpt-5-mini' --exit 2>&1";
+my $cmd = "$RealBin/../../clio --input '/subagent spawn \"$task\" --model " . get_test_model() . "' --exit 2>&1";
 my $output = `$cmd`;
 
 if ($output =~ /Spawned sub-agent: (agent-\d+)/m) {

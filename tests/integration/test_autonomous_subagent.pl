@@ -19,6 +19,8 @@ use utf8;
 use FindBin qw($RealBin);
 use lib "$RealBin/../../lib";
 use File::Temp qw(tempdir);
+use lib "$RealBin/../lib";
+use TestHelpers;
 use Time::HiRes qw(sleep);
 
 binmode(STDOUT, ':encoding(UTF-8)');
@@ -38,7 +40,7 @@ print " Test dir: $test_dir\n\n";
 
 # Spawn sub-agent via CLIO command
 print " [1/4] Spawning sub-agent...\n";
-my $cmd = "$RealBin/../../clio --input '/subagent spawn \"$task\" --model gpt-5-mini' --exit 2>&1";
+my $cmd = "$RealBin/../../clio --input '/subagent spawn \"$task\" --model " . get_test_model() . "' --exit 2>&1";
 my $output = `$cmd`;
 my $exit_code = $? >> 8;
 

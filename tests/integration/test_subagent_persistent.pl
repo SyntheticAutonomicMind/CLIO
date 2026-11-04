@@ -25,6 +25,8 @@ use utf8;
 use FindBin qw($RealBin);
 use lib "$RealBin/../../lib";
 use File::Temp qw(tempdir);
+use lib "$RealBin/../lib";
+use TestHelpers;
 
 binmode(STDOUT, ':encoding(UTF-8)');
 binmode(STDERR, ':encoding(UTF-8)');
@@ -45,7 +47,7 @@ print "Command:\n";
 my $task1 = "Create three files in $test_dir named file1.txt file2.txt and file3.txt";
 print "  Task: $task1\n\n";
 
-my $spawn_cmd = qq{$RealBin/../../clio --input '/subagent spawn --persistent "$task1" --model gpt-4o-mini' --exit};
+my $spawn_cmd = qq{$RealBin/../../clio --input '/subagent spawn --persistent "$task1" --model } . get_test_model() . qq{' --exit};
 print "Executing: $spawn_cmd\n\n";
 
 system($spawn_cmd);

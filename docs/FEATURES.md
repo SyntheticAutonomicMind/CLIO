@@ -878,9 +878,19 @@ Rendered by `MessageHistory::messages_to_prose_dynamic` as markdown. Changes eve
 
 No framework narration. No tier labels. No "After context trimming" footer. No "Use `memory_operations` to retrieve" instructions. These were removed because the model was treating them as directives and spending turns on unnecessary tool calls.
 
-#### Cross-turn tool-call dedup
+#### Repeated tool-call collapse
 
-Within the recent turns, identical-tool-call turns (same tool + same args + same result, where the second turn's user message is a short continuation prompt like "continue", "ok", "go on") are collapsed. The dedup sets a `_repeats` counter on the kept turn's tool message; WorkflowOrchestrator pushes that message to the API once. This recovers budget for the common "model re-reads the same file after a retry" case without losing signal.
+Two collapses remove duplicate tool calls from the projection. Both record the run length and render it in front of the tool result, so the model can see that it repeated the call.
+
+**Cross-turn.** Within the recent turns, identical-tool-call turns (same tool + same args + same result, where the second turn's user message is a short continuation prompt like "continue", "ok", "go on") are collapsed. This recovers budget for the common "model re-reads the same file after a retry" case without losing signal.
+
+**Agent tool loop.** A run of tool exchanges with no user message between them (the shape a tool loop produces) lives inside a single turn, because turns start at a user message. The cross-turn collapse cannot see it, so those runs are collapsed per turn: the last exchange is kept (the most recent result is the current state) and the run length is recorded. Each copy of a repeated call reinforces the repetition, so leaving 40 of them in the context is what turns a stray repeat into a runaway loop.
+
+The rendered marker is prefixed to the tool result:
+
+```
+[repeated call: this exact call ran 12 times in succession. The result shown is from the last run; all 12 runs took effect.]
+```
 
 ### What Gets Preserved During Trimming
 

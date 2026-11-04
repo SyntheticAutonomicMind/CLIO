@@ -118,7 +118,7 @@ use CLIO::Core::API::MessageValidator qw(validate_and_truncate validate_tool_mes
     # New (fixed) approach: message_character_count
     my $new_chars = CLIO::Memory::TokenEstimator::message_character_count($multimodal_content);
     is($new_chars, 19, "New approach (message_character_count): correct char count ($new_chars)");
-    ok($new_chars > $old_chars, "New approach counts more chars than old ($new_chars > $old_chars) - fix works");
+    ok($new_chars == 19, "New approach returns the correct text length (19), not the arrayref stringification ($old_chars) - fix works");
 }
 
 # Test that a multimodal message with substantial text doesn't

@@ -26,6 +26,9 @@ use utf8;
 use FindBin qw($RealBin);
 use lib "$RealBin/../../lib";
 use File::Temp qw(tempdir);
+use lib "$RealBin/../lib";
+use TestHelpers;
+my $TEST_MODEL = get_test_model();
 use Time::HiRes qw(sleep);
 
 binmode(STDOUT, ':encoding(UTF-8)');
@@ -47,17 +50,17 @@ print " (Directory will be cleaned up at end)\n\n";
 my @agents = (
     {
         id => 'structure',
-        model => 'gpt-5-mini',
+        model => $TEST_MODEL,
         task => "In directory $project_dir: create subdirectory named 'lib', create subdirectory named 't', create file 'README.md' with text 'MathUtils - Basic math utilities', create file '.gitignore' with text 'blib/'",
     },
     {
         id => 'module',
-        model => 'gpt-5-mini',
+        model => $TEST_MODEL,
         task => "Create directory $project_dir/lib/MathUtils then create file $project_dir/lib/MathUtils/Calculator.pm with this exact content: package MathUtils::Calculator; use strict; use warnings; sub new { bless {}, shift } sub add { my (\$self, \$a, \$b) = \@_; \$a + \$b } sub multiply { my (\$self, \$a, \$b) = \@_; \$a * \$b } 1;",
     },
     {
         id => 'tests',
-        model => 'gpt-5-mini',
+        model => $TEST_MODEL,
         task => "Create file $project_dir/t/calculator.t with this content: use Test::More tests => 3; use lib '../lib'; use_ok('MathUtils::Calculator'); my \$calc = MathUtils::Calculator->new(); is(\$calc->add(2,3), 5, 'add'); is(\$calc->multiply(4,5), 20, 'multiply');",
     },
 );

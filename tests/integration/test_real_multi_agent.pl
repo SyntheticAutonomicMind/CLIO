@@ -13,6 +13,9 @@ use strict;
 use warnings;
 use FindBin;
 use lib "$FindBin::Bin/../lib";
+use TestHelpers;
+my $TEST_MODEL = get_test_model();
+use lib "$FindBin::Bin/../lib";
 
 print "=== Multi-Agent Real-World Test ===\n\n";
 
@@ -32,17 +35,17 @@ print "-" x 50, "\n";
 my @tasks = (
     {
         task => "create a Perl script in scratch/test_script1.pl that prints Fibonacci numbers",
-        model => "gpt-5-mini",
+        model => $TEST_MODEL,
         id => "agent-fib",
     },
     {
         task => "create a Perl script in scratch/test_script2.pl that prints prime numbers",
-        model => "gpt-5-mini",
+        model => $TEST_MODEL,
         id => "agent-primes",
     },
     {
         task => "analyze lib/CLIO/Core/Config.pm structure and create scratch/test_config_notes.txt",
-        model => "gpt-4.1",
+        model => $TEST_MODEL,
         id => "agent-analyze",
     },
 );

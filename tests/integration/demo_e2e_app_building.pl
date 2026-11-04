@@ -1,7 +1,7 @@
 #!/usr/bin/env perl
 # End-to-end demo: Multiple CLIO agents building a complete application
 #
-# This demo spawns real CLIO agents (gpt-4o-mini and gpt-4.1) that work together
+# This demo spawns real CLIO agents using the configured test model that work together
 # to build a simple web application in scratch/demo-app/
 #
 # Demonstrates:
@@ -14,6 +14,8 @@
 use strict;
 use warnings;
 use FindBin;
+use lib "$FindBin::Bin/../lib";
+use TestHelpers;
 use lib "$FindBin::Bin/../../lib";
 use CLIO::Coordination::Broker;
 use Time::HiRes qw(sleep time);
@@ -28,7 +30,7 @@ print "=== CLIO Multi-Agent End-to-End Demo ===\n\n";
 print "This demo will:\n";
 print "1. Start coordination broker\n";
 print "2. Spawn 3 CLIO agents with different models\n";
-print "3. Have them build a simple web app together\n";
+print "3. Have them build a simple web app together (model: " . get_test_model() . ")\n";
 print "4. Demonstrate file locking and coordination\n";
 print "5. Show knowledge sharing between agents\n\n";
 
@@ -69,7 +71,7 @@ print "[Broker] Started (PID: $broker_pid)\n\n";
 my @agents = (
     {
         id => 'architect',
-        model => 'gpt-4o-mini',
+        model => get_test_model(),
         task => qq{
             You are the architect agent. Your task:
             
@@ -87,7 +89,7 @@ my @agents = (
     },
     {
         id => 'backend',
-        model => 'gpt-4.1',
+        model => get_test_model(),
         task => qq{
             You are the backend agent. Your task:
             
@@ -105,7 +107,7 @@ my @agents = (
     },
     {
         id => 'frontend',
-        model => 'gpt-4o-mini',
+        model => get_test_model(),
         task => qq{
             You are the frontend agent. Your task:
             

@@ -206,15 +206,27 @@ sub build_projection {
     # Score LTM entries against the current request.
     my $relevant = score_ltm($ltm, $user_input, $active_task, $unresolved);
 
-    my $anchor_list = ref($anchor_turn) eq 'ARRAY' ? $anchor_turn : [];
+    # Agent tool-loop collapse. A run of repeated tool exchanges carries
+    # no user message between the exchanges, so _split_into_turns puts
+    # the whole run in ONE turn and the cross-turn collapse above cannot
+    # see it. Collapse those runs per turn, then render the repeat
+    # markers so the model can see that it repeated the call.
+    my @collapsed_recent = map {
+        _render_repeat_markers(collapse_repeated_tool_exchanges($_))
+    } @deduped_recent;
+    my $anchor_collapsed = ref($anchor_turn) eq 'ARRAY'
+        ? _render_repeat_markers(collapse_repeated_tool_exchanges($anchor_turn))
+        : undef;
+
+    my $anchor_list = ref($anchor_collapsed) eq 'ARRAY' ? $anchor_collapsed : [];
     my @all_messages;
     push @all_messages, @$anchor_list;
-    push @all_messages, @deduped_recent;
+    push @all_messages, @collapsed_recent;
     my $token_estimate = estimate_messages_tokens(\@all_messages);
 
     return {
-        turns               => \@deduped_recent,
-        anchor              => $anchor_turn,
+        turns               => \@collapsed_recent,
+        anchor              => $anchor_collapsed,
         compressed_tail     => $compressed_tail,
         relevant_memory     => $relevant,
         active_task         => $active_task,
@@ -630,6 +642,185 @@ sub collapse_repeated_tool_calls_across_turns {
     }
 
     return \@out;
+}
+
+=head2 collapse_repeated_tool_exchanges
+
+Collapse a run of repeated tool exchanges inside a single turn.
+
+An agent tool loop produces a message run shaped like
+
+    [user] [assistant+tool_call] [tool result] [assistant+tool_call] [tool result] ...
+
+with no user message between the exchanges. L</_split_into_turns> starts
+a turn at a user message, so that whole run lands in ONE turn and
+L</collapse_repeated_tool_calls_across_turns> never sees the duplicates:
+it needs two adjacent pure-tool *turns*, and the within-turn variant it
+was derived from has been removed.
+
+A model that re-issues the same call then finds N copies of the same
+call/result pair in its context. Each copy reinforces the pattern, so
+the repetition becomes self-sustaining instead of ending on its own.
+This function collapses such a run to its last exchange - the most
+recent result is the current state - and records the run length on the
+tool message so the count can be rendered for the model.
+
+Only mechanical exchanges collapse: exactly one tool call and no
+substantive assistant text (the same 80-character rule the pure-tool
+turn check uses). An exchange where the model wrote a real explanation
+is left alone, as is any exchange separated from the next by a user or
+assistant-text message.
+
+Returns a new arrayref. The input messages are not modified.
+
+=cut
+
+sub collapse_repeated_tool_exchanges {
+    my ($messages) = @_;
+    return $messages unless ref($messages) eq 'ARRAY' && @$messages;
+
+    my @out;
+    my $i = 0;
+    my $total = scalar(@$messages);
+
+    while ($i < $total) {
+        my $exchange = _tool_exchange_at($messages, $i);
+        if (!$exchange) {
+            push @out, $messages->[$i];
+            $i++;
+            next;
+        }
+
+        my ($assistant, $tool, $after) = @$exchange;
+        my $signature = _exchange_signature($assistant);
+        my $count = 1;
+        my $last_assistant = $assistant;
+        my $last_tool = $tool;
+        my $cursor = $after;
+
+        # Walk forward over adjacent exchanges with the same signature.
+        # _tool_exchange_at only matches a pair that starts at the
+        # cursor, so anything between two exchanges (a user message, an
+        # assistant message with prose, a multi-call assistant) stops the
+        # run - which is the correct boundary.
+        while ($cursor < $total) {
+            my $next = _tool_exchange_at($messages, $cursor);
+            last unless $next;
+            my ($next_assistant, $next_tool, $next_after) = @$next;
+            last unless _exchange_signature($next_assistant) eq $signature;
+            $count++;
+            $last_assistant = $next_assistant;
+            $last_tool = $next_tool;
+            $cursor = $next_after;
+        }
+
+        if ($count > 1) {
+            push @out, _copy_with_repeat_count($last_assistant, $last_tool, $count);
+        } else {
+            push @out, $assistant, $tool;
+        }
+        $i = $cursor;
+    }
+
+    return \@out;
+}
+
+# Match a tool exchange at $idx: an assistant message carrying exactly
+# one tool call, immediately followed by its tool result. Returns
+# [assistant, tool, index_after_the_pair] or undef.
+sub _tool_exchange_at {
+    my ($messages, $idx) = @_;
+    return undef if $idx + 1 > $#$messages;
+    my $assistant = $messages->[$idx];
+    my $tool = $messages->[$idx + 1];
+    return undef unless ref($assistant) eq 'HASH' && ref($tool) eq 'HASH';
+    return undef unless ($assistant->{role} // '') eq 'assistant';
+    return undef unless ($tool->{role} // '') eq 'tool';
+    my $calls = $assistant->{tool_calls};
+    return undef unless ref($calls) eq 'ARRAY' && @$calls == 1;
+    my $content = $assistant->{content};
+    return undef if ref($content);  # structured content - not mechanical
+    return undef if length($content // '') > 80;
+    return [$assistant, $tool, $idx + 2];
+}
+
+# Identity of a tool exchange: the tool name plus its arguments.
+# The result is deliberately excluded - the same call with the same
+# arguments can legitimately produce a different result on each run
+# (a growing counter, a changing file). The tool_call_id is excluded
+# for the same reason as in _turn_signature: it is an opaque per-turn
+# identifier.
+sub _exchange_signature {
+    my ($assistant) = @_;
+    return '' unless ref($assistant) eq 'HASH';
+    my $calls = $assistant->{tool_calls};
+    return '' unless ref($calls) eq 'ARRAY' && @$calls;
+    my $call = $calls->[0];
+    return '' unless ref($call) eq 'HASH';
+    my $function = $call->{function};
+    return '' unless ref($function) eq 'HASH';
+    my $name = $function->{name} // '';
+    my $arguments = $function->{arguments} // '';
+    if (ref($arguments) eq 'HASH') {
+        $arguments = join(',',
+            map { $_ . '=' . (defined $arguments->{$_} ? $arguments->{$_} : '') }
+            sort keys %{$arguments});
+    } elsif (ref($arguments) eq 'ARRAY') {
+        $arguments = join(',', map { defined $_ ? $_ : '' } @{$arguments});
+    }
+    return $name . '|' . $arguments;
+}
+
+# Copy an exchange and stamp the repeat count on the tool message. The
+# copies keep the original history untouched; the count is rendered
+# into the tool content by _render_repeat_markers.
+sub _copy_with_repeat_count {
+    my ($assistant, $tool, $count) = @_;
+    my %assistant_copy = %{$assistant};
+    my %tool_copy = %{$tool};
+    my $existing = $tool_copy{_repeats} // 1;
+    $tool_copy{_repeats} = $existing > $count ? $existing : $count;
+    return (\%assistant_copy, \%tool_copy);
+}
+
+=head2 _render_repeat_markers
+
+Render the repeat count recorded on a tool message into its content so
+the model can see how many times it repeated the call. The count alone
+is not enough - a collapsed run that looks like a single call gives
+the model no reason to change behavior.
+
+Returns a new arrayref. The input messages are not modified.
+
+=cut
+
+sub _render_repeat_markers {
+    my ($messages) = @_;
+    return $messages unless ref($messages) eq 'ARRAY';
+    my @out;
+    for my $msg (@$messages) {
+        if (ref($msg) eq 'HASH'
+            && ($msg->{role} // '') eq 'tool'
+            && ($msg->{_repeats} // 0) > 1) {
+            my $content = $msg->{content};
+            if (!defined $content) {
+                push @out, { %{$msg}, content => _repeat_note($msg->{_repeats}) };
+                next;
+            }
+            if (!ref($content)) {
+                push @out, { %{$msg}, content => _repeat_note($msg->{_repeats}) . $content };
+                next;
+            }
+        }
+        push @out, $msg;
+    }
+    return \@out;
+}
+
+sub _repeat_note {
+    my ($count) = @_;
+    return "[repeated call: this exact call ran $count times in succession. "
+         . "The result shown is from the last run; all $count runs took effect.]\n";
 }
 
 =head2 digest

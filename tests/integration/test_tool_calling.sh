@@ -22,8 +22,8 @@ echo "Test directory: $TEST_DIR"
 echo ""
 
 # Run the test
-echo "Running test with gpt-4.1..."
-./clio --model gpt-4.1 --exit --input "Please do a series of tools tests using $TEST_DIR as the working directory. You must test both correctly formed and incorrectly formed tool calls, in OpenAI and in Anthropic tool calling formats. *CRITICAL*: You must not test or use user_collaboration, this is a non-interactive test. Develop your plan and execute it immediately." 2>&1 | tee "$TEST_DIR/test_output.log"
+echo "Running test with ${CLIO_TEST_MODEL:-nvidia/nemotron-3-ultra-550b-a55b}..."
+./clio --model "${CLIO_TEST_MODEL:-nvidia/nemotron-3-ultra-550b-a55b}" --exit --input "Please do a series of tools tests using $TEST_DIR as the working directory. You must test both correctly formed and incorrectly formed tool calls, in OpenAI and in Anthropic tool calling formats. *CRITICAL*: You must not test or use user_collaboration, this is a non-interactive test. Develop your plan and execute it immediately." 2>&1 | tee "$TEST_DIR/test_output.log"
 
 EXIT_CODE=${PIPESTATUS[0]}
 
