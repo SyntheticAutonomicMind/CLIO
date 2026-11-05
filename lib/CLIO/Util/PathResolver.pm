@@ -239,6 +239,21 @@ sub get_project_data_dir {
     my $config_base = _get_config_base_dir();
     $PROJECT_DATA_DIR = File::Spec->catdir($config_base, 'projects');
 
+    # A project_uuid file is often copied between projects (e.g. when a
+    # project directory is duplicated or moved with its .clio/ intact).
+    # Two projects sharing one UUID share one data directory, so sessions
+    # from one project leak into the other. The owning project root is
+    # recorded in the data directory; when it disagrees with the current
+    # project root, the UUID was copied and a fresh one is generated.
+    if (defined $uuid && length $uuid) {
+        my $owner = _read_project_owner($config_base, $uuid);
+        if (defined $owner && $owner ne $project_root) {
+            log_debug('PathResolver', "project_uuid $uuid is owned by '$owner' "
+                . "but this project is '$project_root' - UUID was copied, regenerating");
+            $uuid = undef;
+        }
+    }
+
     unless (defined $uuid && length $uuid) {
         # Generate new UUID v4
         require CLIO::Util::UUID;
@@ -261,6 +276,7 @@ sub get_project_data_dir {
         $PROJECT_UUID = $uuid;
         $PROJECT_DATA_DIR = File::Spec->catdir($config_base, 'projects', $uuid);
         make_path($PROJECT_DATA_DIR, { mode => 0700 }) unless -d $PROJECT_DATA_DIR;
+        _write_project_owner($PROJECT_DATA_DIR, $project_root);
         _migrate_old_project_data($clio_dir, $PROJECT_DATA_DIR);
         return $PROJECT_DATA_DIR;
     }
@@ -269,7 +285,62 @@ sub get_project_data_dir {
     $PROJECT_DATA_DIR = File::Spec->catdir($config_base, 'projects', $uuid);
     make_path($PROJECT_DATA_DIR, { mode => 0700 }) unless -d $PROJECT_DATA_DIR;
 
+    # First time this project claims this data directory - record the owner.
+    _write_project_owner($PROJECT_DATA_DIR, $project_root);
+
     return $PROJECT_DATA_DIR;
+}
+
+=head2 _read_project_owner($config_base, $uuid)
+
+Read the project root recorded as the owner of a project's data directory.
+
+Returns: Absolute project root path, or undef when no owner is recorded.
+
+=cut
+
+sub _read_project_owner {
+    my ($config_base, $uuid) = @_;
+
+    return undef unless defined $uuid && length $uuid;
+
+    my $owner_file = File::Spec->catfile($config_base, 'projects', $uuid, 'project_root');
+    return undef unless -f $owner_file;
+
+    my $owner;
+    eval {
+        open my $fh, '<:utf8', $owner_file or die "Cannot read: $!";
+        $owner = <$fh>;
+        close $fh;
+        chomp $owner;
+    };
+    return undef if $@ || !defined $owner || !length $owner;
+
+    return $owner;
+}
+
+=head2 _write_project_owner($data_dir, $project_root)
+
+Record which project root owns a project data directory. Used to detect
+project_uuid files that were copied between projects.
+
+=cut
+
+sub _write_project_owner {
+    my ($data_dir, $project_root) = @_;
+
+    return unless defined $data_dir && defined $project_root && length $project_root;
+
+    my $owner_file = File::Spec->catfile($data_dir, 'project_root');
+    return if -f $owner_file;
+
+    eval {
+        require CLIO::Util::AtomicWrite;
+        CLIO::Util::AtomicWrite::atomic_write($owner_file, $project_root . "\n");
+    };
+    if ($@) {
+        log_debug('PathResolver', "Failed to write project_root owner file: $@");
+    }
 }
 
 =head2 get_project_data_dir_for($project_root)
@@ -328,6 +399,8 @@ sub _get_config_base_dir {
     my $home = $ENV{HOME} || $ENV{USERPROFILE} || '.';
     return File::Spec->catdir($home, '.clio');
 }
+
+=head2 _get_default_config_dir (Internal)
 
 =head2 _migrate_old_project_data (Internal)
 
@@ -809,25 +882,23 @@ sub find_ltm_path {
 
 =head2 find_clio_dir($working_dir)
 
-Walk upward from $working_dir looking for a directory containing a
-C<.clio/> subdirectory. Returns the path to the directory containing
-.clio/ (i.e. the project root), or the directory containing C<.git/>
-(the repository root) if no .clio/ is found within the project boundary.
+Return the project root for a launch directory.
 
-If neither .clio/ nor .git/ is found, returns $working_dir.
+CLIO treats the directory it was launched in as the project directory.
+No upward search is performed: a directory CLIO was started in is its
+own project, even when it sits inside another project.
 
-Stops at the project boundary (directory containing C<.git/>) so the
-search never walks past the repo root into user-home territory.
-
-Used by PromptBuilder, PromptManager, and MemoryOperations to anchor
-session-scoped files (goals, LTM, OpenSpec, memory) to the project root
-instead of the current working directory.
+This keeps project boundaries explicit. A walk-up search cannot
+distinguish a project-local C<.clio/> directory from the global config
+directory C<~/.clio>, and every directory under C<$HOME> without its
+own C<.clio/> or C<.git/> would collapse onto the home project -
+mixing unrelated projects' sessions, LTM, and memory together.
 
 Arguments:
-- $working_dir: Directory to start searching from (default: current dir)
+- $working_dir: Directory CLIO was launched in (default: current dir)
 
 Returns:
-- String path to the project root directory
+- Absolute path to the project root directory
 
 =cut
 
@@ -836,20 +907,6 @@ sub find_clio_dir {
 
     $working_dir = defined $working_dir ? abs_path($working_dir) : undef;
     $working_dir ||= Cwd::getcwd();
-
-    my $dir = $working_dir;
-    my %visited;
-    while ($dir && !defined $visited{$dir}) {
-        $visited{$dir} = 1;
-        return $dir if -d File::Spec->catdir($dir, '.clio');
-        # Return the git root when .clio/ is not found - this is the
-        # project boundary and the correct place to create .clio/ on
-        # first launch.
-        return $dir if -d File::Spec->catdir($dir, '.git');
-        my $parent = abs_path(File::Spec->catdir($dir, '..'));
-        last if !$parent || $parent eq $dir;
-        $dir = $parent;
-    }
 
     return $working_dir;
 }

@@ -458,6 +458,13 @@ if ($working_dir) {
     }
     $working_dir = $abs;
     log_debug('Main', "Working directory resolved to: $working_dir");
+
+    # Change into the target directory so that PathResolver::get_project_data_dir()
+    # resolves the correct project root. Without this, --dir only set
+    # CLIO_PROJECT_DIR (consumed by SkillManager) but get_project_data_dir()
+    # still resolved from the process CWD, causing sessions to be read from
+    # or written to the wrong project's data directory.
+    chdir $working_dir or die "Cannot chdir to $working_dir: $!";
 }
 
 # Communicate the project root to all components that construct a

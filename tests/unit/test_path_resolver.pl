@@ -56,12 +56,20 @@ print "\n--- find_clio_dir exports and works ---\n";
     my @exports = @CLIO::Util::PathResolver::EXPORT_OK;
     ok(grep(/find_clio_dir/, @exports), 'find_clio_dir is in EXPORT_OK list');
 
-    # Test it finds the project root from a subdirectory
-    my $dir = CLIO::Util::PathResolver::find_clio_dir("$RealBin/../../lib/CLIO/Core");
-    ok(-d File::Spec->catdir($dir, '.clio'), 'find_clio_dir finds project root containing .clio/');
+    # Test it returns the launch directory itself (no upward search).
+    # CLIO treats the directory it was launched in as the project directory.
+    # This prevents the bug where a project with a .clio/project_uuid would
+    # resolve to a different project's data directory via upward walk.
+    my $subdir = "$RealBin/../../lib/CLIO/Core";
+    my $dir = CLIO::Util::PathResolver::find_clio_dir($subdir);
+    ok($dir eq abs_path($subdir), 'find_clio_dir returns the launch directory (no walk-up)');
 
     # Test it returns a usable path
     ok(-d $dir, 'find_clio_dir returns an existing directory');
+
+    # Test default (no argument) returns current directory
+    my $cwd_dir = CLIO::Util::PathResolver::find_clio_dir();
+    ok(-d $cwd_dir, 'find_clio_dir with no args returns a valid directory');
 }
 
 print "\n--- find_clio_dir works in PromptBuilder ---\n";
