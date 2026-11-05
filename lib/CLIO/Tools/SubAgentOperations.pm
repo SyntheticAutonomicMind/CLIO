@@ -933,7 +933,7 @@ sub inbox {
         push @output_lines, "--- Message #$msg->{id} from $from [$type] ---";
         if (ref($content) eq 'HASH') {
             for my $key (sort keys %$content) {
-                push @output_lines, "  $key: $content->{$key}";
+                push @output_lines, "  $key: " . ($content->{$key} // 'undef');
             }
         }
         elsif (length($content) > $max_preview) {
@@ -1033,7 +1033,7 @@ sub history {
         push @output_lines, "--- Message #$msg->{id} from $from [$type] at $time ---";
         if (ref($content) eq 'HASH') {
             for my $key (sort keys %$content) {
-                push @output_lines, "  $key: $content->{$key}";
+                push @output_lines, "  $key: " . ($content->{$key} // 'undef');
             }
         } else {
             push @output_lines, "  $content";

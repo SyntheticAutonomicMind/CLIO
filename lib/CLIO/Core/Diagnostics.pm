@@ -152,7 +152,7 @@ sub dump_diagnostic {
                 } elsif (ref($val)) {
                     $val = safe_encode_json($val, ref($val));
                 }
-                print $fh "  $key: $val\n";
+                print $fh "  $key: " . ($val // 'undef') . "\n";
             }
         } else {
             print $fh "  (no capabilities available)\n";

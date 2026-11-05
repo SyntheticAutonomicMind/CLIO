@@ -940,7 +940,7 @@ sub save_style {
     my $style = $self->{styles}->{$self->{current_style}};
     for my $key (sort keys %$style) {
         next if $key eq 'name' || $key eq 'file';
-        print $fh "$key=$style->{$key}\n";
+        print $fh "$key=" . ($style->{$key} // 'undef') . "\n";
     }
     
     close($fh);
@@ -980,7 +980,7 @@ sub save_theme {
     my $theme = $self->{themes}->{$self->{current_theme}};
     for my $key (sort keys %$theme) {
         next if $key eq 'name' || $key eq 'file';
-        print $fh "$key=$theme->{$key}\n";
+        print $fh "$key=" . ($theme->{$key} // 'undef') . "\n";
     }
     
     close($fh);
