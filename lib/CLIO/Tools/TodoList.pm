@@ -432,14 +432,85 @@ sub _all_completed_message {
     return "All " . scalar(@todos) . " tasks completed.\n";
 }
 
-sub handle_write {
-    my ($self, $params, $session_id) = @_;
-    
-    unless ($params->{todoList}) {
-        return $self->error_result("Missing required parameter: todoList (for the write operation, an array of todos to create)");
+=head2 _normalize_todo_array (Internal)
+
+Silent remediation for when the model sends the todo array under the
+wrong parameter key.
+
+The model frequently confuses the three array field names (todoList,
+newTodos, todoUpdates) and sends the array under a different key than
+the operation expects - e.g. sending 'newTodos' or 'content' for a
+'write' operation, or 'todoList' for an 'add'. Without normalization
+this produces a hard "Missing required parameter" failure that the
+model cannot learn from (it just retries the same wrong key).
+
+This method scans the params for any key holding an array of todo-like
+hashes and, if the canonical key is absent, moves the first match into
+the canonical slot. The model is never informed - it just sees a
+successful result, which is the only signal it can act on.
+
+The candidate set is deliberately conservative: only keys that are
+either (a) a sibling array field of this tool, or (b) a generic name
+the model reaches for when it doesn't know the right one. We never
+move an array that isn't the canonical key unless the canonical key is
+missing, so a legitimately-supplied canonical value always wins.
+
+Arguments:
+    $params     - Hashref of tool parameters (mutated in place)
+    $canonical  - The canonical key for this operation ('todoList',
+                  'newTodos', or 'todoUpdates')
+
+Returns: nothing (mutates $params in place)
+
+=cut
+
+sub _normalize_todo_array {
+    my ($self, $params, $canonical) = @_;
+
+    return unless $params && ref($params) eq 'HASH';
+
+    # Already have the canonical key with an array - nothing to do.
+    return if $params->{$canonical} && ref($params->{$canonical}) eq 'ARRAY';
+
+    # All array field names this tool uses, plus the generic names the
+    # model reaches for when it doesn't know the right one. Order is
+    # significant only in that we take the first match; the canonical
+    # key is always checked first (and returns early above).
+    my @candidates = qw(todoList newTodos todoUpdates todos items content updates);
+
+    for my $key (@candidates) {
+        next if $key eq $canonical;
+        next unless exists $params->{$key};
+        my $val = $params->{$key};
+        # Only move array refs (the actual todo/update lists). Never
+        # move a scalar 'content' that happens to be a string - that
+        # would be the terminal_operations 'content' parameter leaking
+        # in, not a todo array.
+        next unless ref($val) eq 'ARRAY' && @$val;
+        $params->{$canonical} = $val;
+        delete $params->{$key};
+        log_debug('TodoList', "Silently normalized '$key' -> '$canonical' (array of " . scalar(@$val) . " items)");
+        return;
     }
-    
-    my $todo_list = $params->{todoList};
+}
+
+sub handle_write {
+   my ($self, $params, $session_id) = @_;
+   
+    # Silent normalization: the model frequently sends the todo array
+    # under the wrong key (e.g. 'newTodos' or 'content' instead of
+    # 'todoList'). Rather than failing, accept the array under any of
+    # the known field names and move it to the canonical key. This
+    # mirrors the silent-remediation pattern already used in
+    # Tool::execute (_infer_operation_from_params) and
+    # ToolExecutor::_normalize_dual_json_params.
+    $self->_normalize_todo_array($params, 'todoList');
+
+   unless ($params->{todoList}) {
+       return $self->error_result("Missing required parameter: todoList (for the write operation, an array of todos to create)");
+   }
+   
+   my $todo_list = $params->{todoList};
     
     unless (ref $todo_list eq 'ARRAY') {
         return $self->error_result("'todoList' must be an array");
@@ -523,13 +594,18 @@ sub handle_write {
 }
 
 sub handle_update {
-    my ($self, $params, $session_id) = @_;
-    
-    unless ($params->{todoUpdates}) {
-        return $self->error_result("Missing required parameter: todoUpdates (for the update operation, an array of {id, ...fields} objects to change - NOT todoList)");
-    }
-    
-    my $updates = $params->{todoUpdates};
+   my ($self, $params, $session_id) = @_;
+   
+    # Silent normalization: accept the update array under any known
+    # field name (e.g. 'todoList' or 'updates') and move it to
+    # 'todoUpdates'. See _normalize_todo_array for the full rationale.
+    $self->_normalize_todo_array($params, 'todoUpdates');
+
+   unless ($params->{todoUpdates}) {
+       return $self->error_result("Missing required parameter: todoUpdates (for the update operation, an array of {id, ...fields} objects to change - NOT todoList)");
+   }
+   
+   my $updates = $params->{todoUpdates};
     
     unless (ref $updates eq 'ARRAY') {
         return $self->error_result("'todoUpdates' must be an array");
@@ -623,13 +699,18 @@ sub handle_update {
 }
 
 sub handle_add {
-    my ($self, $params, $session_id) = @_;
-    
-    unless ($params->{newTodos}) {
-        return $self->error_result("Missing required parameter: newTodos (for the add operation, an array of todos to append - NOT todoList)");
-    }
-    
-    my $new_todos = $params->{newTodos};
+   my ($self, $params, $session_id) = @_;
+   
+    # Silent normalization: accept the new-todos array under any known
+    # field name (e.g. 'todoList' or 'todos') and move it to
+    # 'newTodos'. See _normalize_todo_array for the full rationale.
+    $self->_normalize_todo_array($params, 'newTodos');
+
+   unless ($params->{newTodos}) {
+       return $self->error_result("Missing required parameter: newTodos (for the add operation, an array of todos to append - NOT todoList)");
+   }
+   
+   my $new_todos = $params->{newTodos};
     
     unless (ref $new_todos eq 'ARRAY') {
         return $self->error_result("'newTodos' must be an array");
