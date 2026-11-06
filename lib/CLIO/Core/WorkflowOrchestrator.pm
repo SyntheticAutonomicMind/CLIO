@@ -620,6 +620,12 @@ sub process_input {
     # requiring a restart.
     $self->{max_iterations} = $self->_resolve_max_iterations($session);
 
+    # Fresh loop-detector state every turn: the detector tracks contiguous
+    # read-only call runs within a single turn. Cross-turn repeats are
+    # legitimate (re-running tests after edits in a later turn), so the
+    # window must not carry over.
+    $self->{tool_loop_detector}->reset() if $self->{tool_loop_detector};
+
     my $max_iter = $self->{max_iterations};
     my $iter_limit_display = $max_iter ? $max_iter : 'unlimited';
     while (!$max_iter || $iteration < $max_iter) {
@@ -998,6 +1004,28 @@ sub process_input {
                     error_type => 'tool_error_loop',
                     tool_name => $break->{tool},
                     tool_error => $break->{error},
+                    iterations => $iteration,
+                    tool_calls_made => \@tool_calls_made,
+                };
+            }
+
+            # Check for tool success loop break before looping back.
+            if (my $sbreak = delete $self->{_tool_success_loop_break}) {
+                my $msg = sprintf(
+                    "Tool success loop broken: %d similar successful calls to '%s' "
+                    . "(sig: %s) produced near-identical results. A guidance note was "
+                    . "injected at the warning threshold; the pattern continued, so the "
+                    . "turn was ended instead of burning more iterations. Review the "
+                    . "session history and give the agent new direction.",
+                    $sbreak->{count} // 5,
+                    $sbreak->{tool} || 'unknown',
+                    $sbreak->{sig} || '',
+                );
+                return {
+                    success => 0,
+                    error => $msg,
+                    error_type => 'tool_success_loop',
+                    tool_name => $sbreak->{tool},
                     iterations => $iteration,
                     tool_calls_made => \@tool_calls_made,
                 };
@@ -2167,6 +2195,37 @@ sub _execute_tool_round {
             $self->{_tool_error_loop_count} = {};
             $self->{_tool_error_loop_last_sig} = undef;
             $self->{_tool_error_loop_last_iteration} = undef;
+
+            # Success-loop detection: successful read-only calls sharing a
+            # loose signature (argument variations collapsed) with
+            # near-identical results. The detector returns either a
+            # guidance note (append to the tool result the model sees) or
+            # a break flag (checked by process_input after this round).
+            # An interact result means the user engaged, which is a
+            # strategy change - clear the detector rather than track.
+            if ($tool_name eq 'interact') {
+                $self->{tool_loop_detector}->reset() if $self->{tool_loop_detector};
+            } else {
+                my $detector = $self->_get_tool_loop_detector();
+                if ($detector) {
+                    my $verdict = $detector->record_call($tool_name, $tool_args, $ai_content);
+                    if ($verdict->{break}) {
+                        $self->{_tool_success_loop_break} = {
+                            tool  => $tool_name,
+                            sig   => $verdict->{sig} // '',
+                            count => $verdict->{count},
+                        };
+                        log_warning('WorkflowOrchestrator',
+                            "Tool success loop: $verdict->{count} similar successful calls "
+                            . "to $tool_name (sig: $verdict->{sig}). Breaking to user.");
+                    } elsif ($verdict->{guidance}) {
+                        $ai_content .= "\n\n" . $verdict->{guidance};
+                        log_debug('WorkflowOrchestrator',
+                            "Tool success loop guidance injected (count=$verdict->{count}, "
+                            . "sig=$verdict->{sig})");
+                    }
+                }
+            }
         }
 
         # Sanitize tool result content
@@ -2301,6 +2360,18 @@ sub _execute_tool_round {
     }
 }
 
+
+# Lazily create the success-loop detector. Kept on $self so the window
+# survives across iterations within a turn; reset() is called at turn
+# start and on interact.
+sub _get_tool_loop_detector {
+    my ($self) = @_;
+    unless ($self->{tool_loop_detector}) {
+        require CLIO::Core::ToolLoopDetector;
+        $self->{tool_loop_detector} = CLIO::Core::ToolLoopDetector->new();
+    }
+    return $self->{tool_loop_detector};
+}
 
 # Validate, classify, and order tool calls from an API response.
 #

@@ -453,14 +453,20 @@ sub compute_prompt_budget {
                       || CLIO::Core::Defaults::DEFAULT_CONTEXT_WINDOW();
     $context_window = CLIO::Core::Defaults::DEFAULT_CONTEXT_WINDOW() if $context_window <= 0;
 
-    # Resolve output reserve. Use the model's actual max_output_tokens
-    # directly - no hard cap (per design: each model knows its own
-    # output limit, and reserving more wastes context). Fall back to
-    # DEFAULT_MAX_OUTPUT_TOKENS only when the model has no reported
-    # output cap (e.g. local models, unmapped providers).
+    # Resolve output reserve. Use the model's actual max_output_tokens,
+    # clamped to MAX_MODEL_OUTPUT_TOKENS (131072) and to the context
+    # window itself. Some providers report implausible output caps
+    # (e.g. 943717 on a 1M-context model), which would starve the
+    # prompt budget. Fall back to min(MAX_MODEL_OUTPUT_TOKENS,
+    # context_window) when the model has no reported output cap
+    # (e.g. local models, unmapped providers) - a small-context model
+    # reserves only what it can hold.
     my $output_reserve = $caps->{max_output_tokens}
                       || CLIO::Core::Defaults::DEFAULT_MAX_OUTPUT_TOKENS();
+    my $output_cap = CLIO::Core::Defaults::MAX_MODEL_OUTPUT_TOKENS();
     $output_reserve = CLIO::Core::Defaults::DEFAULT_MAX_OUTPUT_TOKENS() if $output_reserve <= 0;
+    $output_reserve = $output_cap if $output_reserve > $output_cap;
+    $output_reserve = $context_window if $context_window < $output_reserve;
 
     # Estimation buffer: constant + proportional, capped. Covers
     # token estimation error, per-message overhead not captured by the

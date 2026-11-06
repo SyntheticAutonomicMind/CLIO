@@ -58,6 +58,7 @@ use constant DEFAULT_LOCAL_CONTEXT_WINDOW => 65536;   # Local models (llama.cpp,
 
 # Output token fallbacks
 use constant DEFAULT_MAX_OUTPUT_TOKENS    => 16384;   # When no output limit is known
+use constant MAX_MODEL_OUTPUT_TOKENS      => 131072;  # Hard ceiling on output reserve
 use constant DEFAULT_MAX_RESPONSE_TOKENS  => 16000;   # Response budget for conversation management
 
 # Output reservation buffer for context budgeting.

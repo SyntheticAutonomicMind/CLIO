@@ -177,7 +177,7 @@ sub get_capabilities {
     }
     if ($cached) {
         log_debug('ModelCapabilitiesManager', "Cache hit for $cache_key");
-        return $cached;
+        return $self->_sanitize_token_limits($cached);
     }
     
     log_debug('ModelCapabilitiesManager', "Cache miss for $cache_key, fetching");
@@ -188,10 +188,58 @@ sub get_capabilities {
     if ($capabilities) {
         # Post-process: ensure reasoning_mode is populated
         $self->_ensure_reasoning_mode($capabilities, $provider, $model);
+        $self->_sanitize_token_limits($capabilities);
         $self->_set_cached($cache_key, $capabilities);
     }
     
     return $capabilities;
+}
+
+=head2 _sanitize_token_limits (Internal)
+
+Clamp token limits to sane ceilings. Some providers (notably OpenRouter)
+report max_output_tokens values that are implausibly large - e.g. a
+model with a 1M context window reported as being able to output 943717
+tokens. Reserving that much for output in compute_prompt_budget leaves
+the prompt with almost no budget, causing aggressive conversation
+trimming.
+
+Rules:
+- max_output_tokens is clamped to min(MAX_MODEL_OUTPUT_TOKENS, context_window)
+- when max_output_tokens is unknown, the default is DEFAULT_MAX_OUTPUT_TOKENS
+  (16384) rounded down to the context window - reserving the full context for
+  output would starve the prompt budget of small models.
+
+Do not call directly. Applied on every get_capabilities return path.
+
+=cut
+
+sub _sanitize_token_limits {
+    my ($self, $caps) = @_;
+    return $caps unless ref($caps) eq 'HASH';
+
+    require CLIO::Core::Defaults;
+
+    my $out_cap = CLIO::Core::Defaults::MAX_MODEL_OUTPUT_TOKENS();
+
+    my $effective_ctx = $caps->{context_window} // $caps->{max_context_window_tokens} // $caps->{max_prompt_tokens};
+
+    # Output reserve: never exceed the hard output ceiling, and never
+    # exceed the context window (an output reserve larger than the
+    # context is meaningless). Default unknown output to
+    # DEFAULT_MAX_OUTPUT_TOKENS rounded down to the context window so
+    # small models don't reserve their entire context for output.
+    my $out_default = CLIO::Core::Defaults::DEFAULT_MAX_OUTPUT_TOKENS();
+    $out_default = $effective_ctx if defined($effective_ctx) && $effective_ctx < $out_default;
+    if (!defined $caps->{max_output_tokens} || $caps->{max_output_tokens} <= 0) {
+        $caps->{max_output_tokens} = $out_default;
+    } elsif ($caps->{max_output_tokens} > $out_cap) {
+        $caps->{max_output_tokens} = $out_cap;
+    } elsif (defined $effective_ctx && $caps->{max_output_tokens} > $effective_ctx) {
+        $caps->{max_output_tokens} = $effective_ctx;
+    }
+
+    return $caps;
 }
 
 =head2 supports_feature

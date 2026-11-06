@@ -1,0 +1,296 @@
+#!/usr/bin/env perl
+# SPDX-License-Identifier: GPL-3.0-only
+# SPDX-FileCopyrightText: Copyright (c) 2026 Andrew Wyatt (Fewtarius)
+#
+# Tests for the tool success loop detector (ToolLoopDetector):
+# - Loose signatures collapse argument variations (grep flags/patterns)
+# - Result-similarity gate: only near-identical results escalate
+# - Guidance note at the warning threshold, hard break after
+# - State-changing calls clear the window (edit-then-verify never loops)
+# - Interleaved target switches still escalate (best match over window)
+# - Repeated empty results are a loop signal
+
+use strict;
+use warnings;
+use utf8;
+use lib './lib';
+
+use Test::More;
+use CLIO::Core::ToolLoopDetector;
+
+my $GREP_RESULT_A = join("\n",
+    'lib/CLIO/Core/PluginManager.pm:654:    my $script = $tool_def->{script} || $tool_def->{command};',
+    'lib/CLIO/Security/CommandAnalyzer.pm:439:                description => "Environment dump command \'$cmd\' (may expose API keys and tokens)",',
+    'lib/CLIO/Security/CommandAnalyzer.pm:456:                description => \'Potentially destructive system command detected\',',
+    'lib/CLIO/Session/State.pm:793:    # output blocks), pre_action_description (command/preview shown before execution),',
+    'lib/CLIO/Tools/RemoteExecution.pm:249:    my $command = $params->{task_description} || $params->{command};',
+);
+
+my $GREP_RESULT_B = join("\n",
+    'lib/CLIO/Core/PluginManager.pm:654:    my $script = $tool_def->{script} || $tool_def->{command};',
+    'lib/CLIO/Core/RepositoryLoader.pm:87:  name, description, prompt, type, source_repo, skill_path, readonly',
+    'lib/CLIO/Security/CommandAnalyzer.pm:456:                description => \'Potentially destructive system command detected\',',
+    'lib/CLIO/Session/Manager.pm:179:    reset_script_session_grants();',
+);
+
+subtest 'loose signature collapses grep argument variations' => sub {
+    my $d = CLIO::Core::ToolLoopDetector->new();
+
+    my $sig1 = $d->call_signature('terminal_operations',
+        { operation => 'exec', command => 'grep -rn "script" lib/CLIO/ | grep -i "script.*command" | head -10' });
+    my $sig2 = $d->call_signature('terminal_operations',
+        { operation => 'exec', command => 'grep -rn "script" lib/CLIO/ --include="*.pm" | head -10' });
+    my $sig3 = $d->call_signature('terminal_operations',
+        { operation => 'exec', command => 'grep "script" lib/CLIO/ | grep -v "script_session" | head -10' });
+
+    is($sig1, $sig2, 'different flags and pipe tails collapse to one signature');
+    is($sig1, $sig3, 'different patterns collapse to one signature');
+
+    # Different target directory changes the signature
+    my $sig4 = $d->call_signature('terminal_operations',
+        { operation => 'exec', command => 'grep -rn "script" lib/CLIO/UI/ | head -10' });
+    isnt($sig1, $sig4, 'different target path gets a different signature');
+
+    # Different binary changes the signature
+    my $sig5 = $d->call_signature('terminal_operations',
+        { operation => 'exec', command => 'rg -n "script" lib/CLIO/ | head -10' });
+    isnt($sig1, $sig5, 'different binary gets a different signature');
+
+    # Quoted pipe inside a pattern must not fragment the signature
+    my $sig6 = $d->call_signature('terminal_operations',
+        { operation => 'exec', command => 'grep -i "script.*command\\|script.*util" lib/CLIO/ | head -5' });
+    is($sig6, $sig1, 'quoted pipe inside pattern does not truncate the stage');
+};
+
+subtest 'guidance fires after threshold similar calls with similar results' => sub {
+    my $d = CLIO::Core::ToolLoopDetector->new();
+
+    my @commands = (
+        'grep -rn "script" lib/CLIO/ | head -10',
+        'grep -rn "script" lib/CLIO/ --include="*.pm" | head -10',
+        'grep "script" lib/CLIO/ | grep -v "script_session" | head -10',
+    );
+
+    my $verdict;
+    for my $i (0 .. $#commands) {
+        # Results vary slightly: token overlap stays high.
+        my $content = $GREP_RESULT_A;
+        $content .= "\nlib/CLIO/Core/Extra$i.pm:1:    description => 'filler',";
+        $verdict = $d->record_call('terminal_operations',
+            { operation => 'exec', command => $commands[$i] }, $content);
+    }
+
+    ok(defined $verdict->{guidance}, 'guidance note returned at threshold');
+    like($verdict->{guidance}, qr/LOOP WARNING/, 'guidance text has the LOOP WARNING header');
+    is($verdict->{break}, 0, 'no hard break at guidance threshold');
+    is($verdict->{count}, 3, 'count reached the guidance threshold');
+};
+
+subtest 'hard break after guidance is ignored' => sub {
+    my $d = CLIO::Core::ToolLoopDetector->new();
+
+    my $verdict;
+    for my $i (0 .. 3) {
+        my $content = $GREP_RESULT_A . "\nlib/CLIO/Filler$i.pm:1:    description => 'x',";
+        $verdict = $d->record_call('terminal_operations',
+            { operation => 'exec', command => "grep -rn \"script\" lib/CLIO/ | head -10 #v$i" }, $content);
+    }
+
+    # Call 3 fires guidance; call 4 must break because guidance is active.
+    is($verdict->{break}, 1, 'break after continued pattern post-guidance');
+    is($verdict->{guidance}, undef, 'no guidance note on the break call');
+};
+
+subtest 'state-changing call clears the window (edit-then-verify)' => sub {
+    my $d = CLIO::Core::ToolLoopDetector->new();
+
+    # Two similar read-only calls, then a state-changing one, then more reads.
+    $d->record_call('terminal_operations',
+        { operation => 'exec', command => 'grep -rn "script" lib/CLIO/ | head -5' }, $GREP_RESULT_A);
+    $d->record_call('terminal_operations',
+        { operation => 'exec', command => 'grep "script" lib/CLIO/ --include="*.pm"' }, $GREP_RESULT_B);
+
+    # apply_patch is state-changing: clears the window.
+    my $verdict = $d->record_call('apply_patch',
+        { patch => '*** Update File: lib/X.pm' }, 'patch applied');
+    is($verdict->{tracked}, 0, 'state-changing call is not tracked');
+
+    # Same grep again: window was cleared, so the run restarts.
+    $verdict = $d->record_call('terminal_operations',
+        { operation => 'exec', command => 'grep -rn "script" lib/CLIO/ | head -5' }, $GREP_RESULT_A);
+    is($verdict->{count}, 1, 'window cleared: count restarts at 1');
+    is($verdict->{break}, 0, 'no break after window reset');
+};
+
+subtest 'file write between test runs does not escalate' => sub {
+    my $d = CLIO::Core::ToolLoopDetector->new();
+
+    my $test_output = join("\n", map { "ok $_ - test_$_" } 1 .. 20);
+
+    # edit, test, edit, test, edit, test. Both sides are state-changing:
+    # the write clears the window, and running an arbitrary executable is
+    # conservatively classified as state-changing too. No read-only run
+    # ever accumulates across the rounds, so nothing escalates - that is
+    # the point: the classic edit-test cycle must never false-positive.
+    for my $round (1 .. 3) {
+        my $w = $d->record_call('file_operations',
+            { operation => 'write_file', path => 'lib/X.pm', content => 'x' }, 'written');
+        is($w->{tracked}, 0, "write $round is state-changing");
+        my $v = $d->record_call('terminal_operations',
+            { operation => 'exec', command => "perl -I./lib tests/unit/test_x.pl" }, $test_output);
+        is($v->{tracked}, 0, "test run $round is state-changing (not tracked)");
+        is($v->{count}, 0, "test run $round resets the window");
+        is($v->{break}, 0, "test run $round does not break");
+    }
+};
+
+subtest 'differing results do not escalate (converging work)' => sub {
+    my $d = CLIO::Core::ToolLoopDetector->new();
+
+    my @results = (
+        join("\n", map { "lib/File$_\.pm:1: unique_line_$_" } 1 .. 10),
+        join("\n", map { "lib/Other$_\.pm:1: totally_different_$_" } 1 .. 10),
+        join("\n", map { "lib/Third$_\.pm:1: another_set_$_" } 1 .. 10),
+    );
+
+    my $verdict;
+    for my $i (0 .. $#results) {
+        $verdict = $d->record_call('terminal_operations',
+            { operation => 'exec', command => 'grep -rn "script" lib/CLIO/ | head -10' },
+            $results[$i]);
+    }
+
+    is($verdict->{count}, 3, 'three calls counted');
+    is($verdict->{guidance}, undef, 'no guidance: results are substantially different');
+    is($verdict->{break}, 0, 'no break: results are substantially different');
+};
+
+subtest 'repeated empty results are a loop signal' => sub {
+    my $d = CLIO::Core::ToolLoopDetector->new();
+
+    my $verdict;
+    for my $i (0 .. 2) {
+        $verdict = $d->record_call('terminal_operations',
+            { operation => 'exec', command => "grep -rn \"no_such_thing\" lib/CLIO/ | head -5 #var$i" }, '');
+    }
+
+    is($verdict->{count}, 3, 'empty-result calls counted');
+    ok(defined $verdict->{guidance}, 'guidance fires for repeated empty results');
+};
+
+subtest 'interleaved target switches still escalate via window counting' => sub {
+    # The observed failure mode: the model alternates targets but keeps
+    # searching the same directory with the same binary. Window counting
+    # catches this where a strict consecutive counter would not.
+    my $d = CLIO::Core::ToolLoopDetector->new();
+
+    my @calls = (
+        ['grep -rn "script" lib/CLIO/ | head -10', $GREP_RESULT_A],
+        ['grep "script" lib/CLIO/UI/Chat.pm | head -5', ''],
+        ['grep -rn "script" lib/CLIO/ --include="*.pm" | head -10', $GREP_RESULT_B],
+        ['grep "script" lib/CLIO/UI/SessionReplay.pm | head -5', ''],
+        ['grep -rn "script" lib/CLIO/ | grep -v description | head -10', $GREP_RESULT_A],
+    );
+
+    my $verdict;
+    for my $call (@calls) {
+        $verdict = $d->record_call('terminal_operations',
+            { operation => 'exec', command => $call->[0] }, $call->[1]);
+    }
+
+    # The lib/CLIO/ grep signature appeared 3 times in the window (calls
+    # 1, 3, 5) with similar results, so guidance fires at call 5.
+    ok(defined $verdict->{guidance}, 'guidance fires despite interleaved target switches');
+    is($verdict->{count}, 3, 'same-signature calls counted across the window');
+};
+
+subtest 'git read-only commands are tracked' => sub {
+    my $d = CLIO::Core::ToolLoopDetector->new();
+
+    my $status_output = "On branch main\nnothing to commit, working tree clean";
+    my $verdict;
+    for my $i (0 .. 2) {
+        $verdict = $d->record_call('terminal_operations',
+            { operation => 'exec', command => "git status --short #$i" }, $status_output);
+    }
+
+    is($verdict->{count}, 3, 'git status calls tracked as read-only');
+    ok(defined $verdict->{guidance}, 'guidance fires for repeated identical git status');
+};
+
+subtest 'mutating commands clear the window' => sub {
+    my $d = CLIO::Core::ToolLoopDetector->new();
+
+    $d->record_call('terminal_operations',
+        { operation => 'exec', command => 'grep -rn "script" lib/CLIO/ | head -5' }, $GREP_RESULT_A);
+    $d->record_call('terminal_operations',
+        { operation => 'exec', command => 'grep "script" lib/CLIO/ --include="*.pm"' }, $GREP_RESULT_B);
+
+    # A build/test run is state-changing: clears the window.
+    my $verdict = $d->record_call('terminal_operations',
+        { operation => 'exec', command => 'perl -I./lib tests/unit/test_x.pl' }, 'ok 1');
+    is($verdict->{tracked}, 0, 'perl test run treated as state-changing');
+
+    # git commit is also state-changing.
+    $d->record_call('terminal_operations',
+        { operation => 'exec', command => 'grep -rn "script" lib/CLIO/ | head -5' }, $GREP_RESULT_A);
+    $d->record_call('terminal_operations',
+        { operation => 'exec', command => 'grep "script" lib/CLIO/' }, $GREP_RESULT_B);
+    $verdict = $d->record_call('terminal_operations',
+        { operation => 'exec', command => 'git commit -m "test"' }, 'committed');
+    is($verdict->{tracked}, 0, 'git commit treated as state-changing');
+};
+
+subtest 'file_operations read-only ops tracked, writes clear' => sub {
+    my $d = CLIO::Core::ToolLoopDetector->new();
+
+    # read_file same path repeatedly with identical content -> loop.
+    my $verdict;
+    for my $i (0 .. 2) {
+        $verdict = $d->record_call('file_operations',
+            { operation => 'read_file', path => 'lib/CLIO/Core/X.pm' }, 'package X; 1;');
+    }
+    is($verdict->{count}, 3, 'read_file runs counted');
+    ok(defined $verdict->{guidance}, 'guidance fires for repeated identical reads');
+
+    # A write clears the window.
+    $verdict = $d->record_call('file_operations',
+        { operation => 'write_file', path => 'lib/CLIO/Core/X.pm', content => 'x' }, 'written');
+    is($verdict->{tracked}, 0, 'write_file is state-changing');
+
+    # grep_search (file_operations) is read-only and tracked.
+    $verdict = $d->record_call('file_operations',
+        { operation => 'grep_search', query => 'script', scope => 'lib' }, 'some results');
+    is($verdict->{tracked}, 1, 'grep_search is read-only and tracked');
+};
+
+subtest 'different signature resets run' => sub {
+    my $d = CLIO::Core::ToolLoopDetector->new();
+
+    $d->record_call('terminal_operations',
+        { operation => 'exec', command => 'grep -rn "script" lib/CLIO/ | head -5' }, $GREP_RESULT_A);
+    $d->record_call('terminal_operations',
+        { operation => 'exec', command => 'grep -rn "script" lib/CLIO/ | head -5' }, $GREP_RESULT_A);
+
+    # Different binary: window keeps entries but the run for the new sig is 1.
+    my $verdict = $d->record_call('terminal_operations',
+        { operation => 'exec', command => 'rg -n "script" lib/CLIO/' }, $GREP_RESULT_A);
+    is($verdict->{count}, 1, 'new signature starts at count 1');
+};
+
+subtest 'validate operation and empty command are handled' => sub {
+    my $d = CLIO::Core::ToolLoopDetector->new();
+
+    # validate operation is read-only but its calls are cheap and varied;
+    # they should be tracked without breaking anything.
+    my $verdict = $d->record_call('terminal_operations',
+        { operation => 'validate', command => 'ls -la' }, 'ok');
+    is($verdict->{tracked}, 1, 'validate is tracked as read-only');
+
+    # Empty command: signature forms, no crash.
+    $verdict = $d->record_call('terminal_operations',
+        { operation => 'exec', command => '' }, '');
+    is($verdict->{tracked}, 0, 'empty command treated as state-changing (not tracked)');
+};
+
+done_testing();
