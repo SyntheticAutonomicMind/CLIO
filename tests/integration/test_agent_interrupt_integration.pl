@@ -31,6 +31,19 @@ sub test {
     }
 }
 
+# Build a self-sufficient test config. APIManager validates api_base at
+# construction time, so tests must provide a real (dummy) endpoint rather
+# than depending on the user's local ~/.clio config.
+sub make_test_config {
+    my $dir = "/tmp/clio-test-agent-interrupt";
+    `rm -rf $dir`;
+    my $config = CLIO::Core::Config->new(config_dir => $dir);
+    $config->set("provider", "openrouter", 0);
+    $config->set("api_base", "https://openrouter.ai/api/v1/chat/completions", 0);
+    $config->set("api_key", "test-key", 0);
+    return $config;
+}
+
 # Test 1: Verify WorkflowOrchestrator has interrupt methods
 test("WorkflowOrchestrator has _check_for_user_interrupt method", sub {
     require CLIO::Core::WorkflowOrchestrator;
@@ -54,7 +67,7 @@ test("Interrupt message uses role=user (not system)", sub {
     require CLIO::Core::APIManager;
     
     # Create minimal objects
-    my $config = CLIO::Core::Config->new();
+    my $config = make_test_config();
     my $api_manager = CLIO::Core::APIManager->new(config => $config);
     my $session = CLIO::Session::Manager->new();
     
@@ -107,7 +120,7 @@ test("_check_for_user_interrupt returns 0 when no TTY", sub {
     require CLIO::Core::APIManager;
     require CLIO::Session::Manager;
     
-    my $config = CLIO::Core::Config->new();
+    my $config = make_test_config();
     my $api_manager = CLIO::Core::APIManager->new(config => $config);
     my $session = CLIO::Session::Manager->new();
     
@@ -136,7 +149,7 @@ test("Interrupt detected via flag (fast path, no STDIN read)", sub {
     require CLIO::Core::APIManager;
     require CLIO::Session::Manager;
     
-    my $config = CLIO::Core::Config->new();
+    my $config = make_test_config();
     my $api_manager = CLIO::Core::APIManager->new(config => $config);
     my $session = CLIO::Session::Manager->new();
     
@@ -168,7 +181,7 @@ test("Interrupt message has expected structure", sub {
     require CLIO::Core::APIManager;
     require CLIO::Session::Manager;
     
-    my $config = CLIO::Core::Config->new();
+    my $config = make_test_config();
     my $api_manager = CLIO::Core::APIManager->new(config => $config);
     my $session = CLIO::Session::Manager->new();
     
@@ -193,6 +206,125 @@ test("Interrupt message has expected structure", sub {
     if ($msg->{content} =~ /cancelled interrupt/i) {
         die "Placeholder doesn't mention interrupt" unless $msg->{content} =~ /interrupt/i;
     }
+});
+
+# Test 7: Verify the steering response is persisted to session history.
+# Regression: _handle_interrupt used to push the user's response into the
+# in-flight messages array only. The assistant's ACK was persisted by the
+# normal turn-end path, so the stored history contained an assistant reply
+# to an instruction that was never stored. The next turn's projection
+# rebuild read that history, dropped the steering, kept the ACK, and the
+# model reverted to its prior plan (steering "ignored after the ack").
+test("Interrupt steering response persisted to session history", sub {
+    require CLIO::Core::WorkflowOrchestrator;
+    require CLIO::Core::Config;
+    require CLIO::Core::APIManager;
+    require CLIO::Session::Manager;
+
+    my $config = make_test_config();
+    my $api_manager = CLIO::Core::APIManager->new(config => $config);
+    my $session = CLIO::Session::Manager->new();
+
+    my $orch = CLIO::Core::WorkflowOrchestrator->new(
+        api_manager => $api_manager,
+        session => $session,
+        debug => 0
+    );
+
+    # Stub the interact tool so _handle_interrupt takes the success path
+    # deterministically (non-TTY environments would otherwise land in the
+    # cancel path and never exercise the steering persistence). The stub
+    # receives the steering text via its constructor because a named sub
+    # cannot reliably close over enclosing lexicals in Perl.
+    my $steer_text = 'Steer: stop auditing, start fixing the duplicates';
+    {
+        package StubInteractTool;
+        sub new {
+            my ($class, $text) = @_;
+            return bless { text => $text }, $class;
+        }
+        sub execute {
+            my ($self, $args, $ctx) = @_;
+            return {
+                success => 1,
+                output  => $self->{text},
+                metadata => { user_response => $self->{text} },
+            };
+        }
+    }
+
+    my $registry = $orch->{tool_registry};
+    die "No tool registry on orchestrator" unless $registry;
+    $registry->{tools}{interact} = StubInteractTool->new($steer_text);
+
+    my @messages = ();
+    $orch->_handle_interrupt($session, \@messages);
+
+    # In-memory: steering message appended as role=user
+    die "No message added to in-flight array" unless @messages > 0;
+    my $inflight = $messages[-1];
+    die "In-flight role is not 'user'" unless $inflight->{role} eq 'user';
+    die "In-flight content missing steering text"
+        unless index($inflight->{content}, $steer_text) >= 0;
+
+    # Session history: steering message persisted (the actual fix)
+    my $history = $session->get_conversation_history();
+    die "Session history empty after interrupt steering" unless $history && @$history;
+    my $found = 0;
+    for my $m (@$history) {
+        next unless ($m->{role} // '') eq 'user';
+        if (index($m->{content} // '', $steer_text) >= 0) {
+            $found = 1;
+            # YaRN preservation tag must be present so trimming keeps it
+            die "Persisted steering message missing collaboration=interrupt metadata"
+                unless $m->{metadata}
+                    && $m->{metadata}{collaboration}
+                    && $m->{metadata}{collaboration} eq 'interrupt';
+            last;
+        }
+    }
+    die "Steering response NOT persisted to session history" unless $found;
+});
+
+# Test 8: Verify the cancel-path continuation message is persisted too,
+# so the model's response to it has a matching user message in history.
+test("Cancel-path continuation message persisted to session history", sub {
+    require CLIO::Core::WorkflowOrchestrator;
+    require CLIO::Core::Config;
+    require CLIO::Core::APIManager;
+    require CLIO::Session::Manager;
+
+    my $config = make_test_config();
+    my $api_manager = CLIO::Core::APIManager->new(config => $config);
+    my $session = CLIO::Session::Manager->new();
+
+    my $orch = CLIO::Core::WorkflowOrchestrator->new(
+        api_manager => $api_manager,
+        session => $session,
+        debug => 0
+    );
+
+    my @messages = ();
+
+    # Non-TTY: interact returns no output -> cancel path. Verify the
+    # synthetic continuation message is persisted as well.
+    $orch->_handle_interrupt($session, \@messages);
+
+    die "No message added" unless @messages > 0;
+    my $msg = $messages[-1];
+    die "Cancel-path role is not 'user'" unless $msg->{role} eq 'user';
+
+    my $history = $session->get_conversation_history();
+    die "Session history empty after cancel path" unless $history && @$history;
+    my $found = 0;
+    for my $m (@$history) {
+        next unless ($m->{role} // '') eq 'user';
+        if (index($m->{content} // '', 'pressed ESC to interrupt') >= 0) {
+            $found = 1;
+            last;
+        }
+    }
+    die "Cancel-path continuation message NOT persisted to session history" unless $found;
 });
 
 # Summary

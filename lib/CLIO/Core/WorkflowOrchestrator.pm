@@ -3111,6 +3111,21 @@ sub _handle_interrupt {
                     role => 'user',
                     content => $user_response,
                 };
+
+                # Persist the steering response to session history. The
+                # assistant's ACK is saved by the normal turn-end path, so
+                # without this the history ends up with an assistant reply
+                # to an instruction that was never stored: the next turn's
+                # projection rebuild (or a session resume) drops the
+                # steering while keeping the ACK, and the model reverts to
+                # its prior plan. collaboration='interrupt' marks it for
+                # YaRN so trimming preserves it.
+                if ($session && $session->can('add_message')) {
+                    $session->add_message('user', $user_response,
+                        { collaboration => 'interrupt' });
+                    log_debug('WorkflowOrchestrator',
+                        "Persisted interrupt steering response to session history");
+                }
                 
                 log_debug('WorkflowOrchestrator', "User responded to interrupt, continuing workflow");
                 return;
@@ -3141,6 +3156,13 @@ sub _handle_interrupt {
                     role => 'user',
                     content => $msg,
                 };
+                # Persist for history pairing coherence: the model's
+                # response to this message will be saved, and an unmatched
+                # assistant reply degrades the projection on rebuild.
+                if ($session && $session->can('add_message')) {
+                    $session->add_message('user', $msg,
+                        { collaboration => 'interrupt' });
+                }
                 return;
             }
         } else {
