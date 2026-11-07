@@ -18,7 +18,10 @@ CLIO::Core::ToolLoopDetector - Detect non-converging runs of successful near-dup
 
     my $detector = CLIO::Core::ToolLoopDetector->new();
     my $verdict = $detector->record_call('terminal_operations', $tool_args, $result_content);
-    if ($verdict->{break}) {
+    if ($verdict->{break} && $verdict->{nudge}) {
+        # Escalation with nudge budget remaining: inject $verdict->{nudge_text}
+        # as a user message and keep the turn running.
+    } elsif ($verdict->{break}) {
         # Hard break: end the turn and report to the user.
     } elsif ($verdict->{guidance}) {
         # Append $verdict->{guidance} to the tool result the model sees.
@@ -54,7 +57,12 @@ one). A search that keeps producing new information never triggers.
     N = guidance_threshold (3)  -> inject a "stop searching" note into the
                                    tool result the model sees
     N = break_threshold (5), or any similar call after guidance fired for
-        the same signature -> hard break; the caller ends the turn
+        the same signature -> escalation. While nudge budget remains, the
+        break is converted into a loop-break INSTRUCTION (nudge) that the
+        orchestrator injects as a user message and the turn CONTINUES -
+        an advisory note the model can ignore becomes a direct order it
+        must follow. When the nudge budget is exhausted, the call breaks
+        hard and the caller ends the turn.
 
 State-changing calls (file writes, patches, builds, mutating git commands)
 clear the window: a model that edits between searches is doing legitimate
@@ -68,8 +76,9 @@ without large call counts.
 # Default thresholds. Overridable via constructor arguments.
 our $DEFAULT_WINDOW_SIZE        = 8;     # sliding window of recent calls
 our $DEFAULT_GUIDANCE_THRESHOLD = 3;     # similar calls before guidance note
-our $DEFAULT_BREAK_THRESHOLD    = 5;     # similar calls before hard break
+our $DEFAULT_BREAK_THRESHOLD    = 5;     # similar calls before escalation
 our $DEFAULT_SIMILARITY         = 0.75;  # token-overlap ratio for "same result"
+our $DEFAULT_NUDGE_BUDGET       = 2;     # break->nudge conversions before hard break
 
 # Terminal commands recognized as read-only. Anything else (make, perl,
 # npm, git mutations, ...) is treated as state-changing and clears the
@@ -116,8 +125,8 @@ my %READ_ONLY_GIT_OPS = map { $_ => 1 } qw(
 =head2 new
 
 Arguments: %args with optional keys window_size, guidance_threshold,
-break_threshold, similarity_threshold (all numeric; defaults from the
-package-level $DEFAULT_* constants).
+break_threshold, similarity_threshold, nudge_budget (all numeric;
+defaults from the package-level $DEFAULT_* constants).
 
 Returns: blessed detector with fresh (empty) state.
 
@@ -130,6 +139,7 @@ sub new {
         guidance_threshold   => $args{guidance_threshold} // $DEFAULT_GUIDANCE_THRESHOLD,
         break_threshold      => $args{break_threshold} // $DEFAULT_BREAK_THRESHOLD,
         similarity_threshold => $args{similarity_threshold} // $DEFAULT_SIMILARITY,
+        nudge_budget         => $args{nudge_budget} // $DEFAULT_NUDGE_BUDGET,
     };
     bless $self, $class;
     $self->reset();
@@ -141,7 +151,8 @@ sub new {
 Clears the sliding window and guidance state. Called by the orchestrator
 at the start of every turn (loop tracking is per-turn, not per-session)
 and whenever the interact tool returns user input, which counts as a
-strategy change.
+strategy change. The nudge budget is restored: a cleared window means a
+fresh escalation ladder.
 
 Returns: $self.
 
@@ -154,6 +165,7 @@ sub reset {
         call_index     => 0,
         guidance_sig   => undef,
         guidance_index => 0,
+        nudges_used    => 0,
     };
     return $self;
 }
@@ -168,13 +180,18 @@ Arguments:
     $content   - the result content the model will receive (string)
 
 Returns a hashref:
-    tracked  - 1 if the call was recorded, 0 if it was state-changing
-               (state-changing calls reset the window and are not tracked)
-    count    - number of window entries sharing this call's signature
-    sig      - the loose signature of this call
-    guidance - guidance note string, or undef (inject into the tool
-               result the model sees)
-    break    - 1 when the caller should hard-break the turn
+    tracked    - 1 if the call was recorded, 0 if it was state-changing
+                 (state-changing calls reset the window and are not tracked)
+    count      - number of window entries sharing this call's signature
+    sig        - the loose signature of this call
+    guidance   - guidance note string, or undef (inject into the tool
+                 result the model sees)
+    break      - 1 when escalation fired (see C<nudge>)
+    nudge      - 1 when the break was converted into a loop-break
+                 instruction (C<nudge_text>) because budget remained.
+                 The caller injects nudge_text as a user message and
+                 CONTINUES the turn. 0/undef when this is a real break.
+    nudge_text - the loop-break instruction text (present when nudge is 1)
 
 =cut
 
@@ -230,6 +247,21 @@ sub record_call {
         && ($st->{call_index} - $st->{guidance_index}) <= $self->{window_size};
 
     if ($guidance_active || $count >= $self->{break_threshold}) {
+        # Escalation. The advisory guidance note was either already active
+        # or the break threshold was hit directly. A hard break that ends
+        # the turn is the last resort, not the first: while nudge budget
+        # remains, return the break WITH a loop-break instruction the
+        # orchestrator injects as a user message so the turn continues.
+        # A model that ignored a note woven into tool results usually
+        # obeys a direct instruction. Budget exhausted -> real break.
+        if ($st->{nudges_used} < $self->{nudge_budget}) {
+            $st->{nudges_used}++;
+            return {
+                tracked    => 1, count => $count, sig => $sig,
+                guidance   => undef, break => 1, nudge => 1,
+                nudge_text => $self->_nudge_text($tool_name, $sig, $count),
+            };
+        }
         return { tracked => 1, count => $count, sig => $sig, guidance => undef, break => 1 };
     }
     if ($count >= $self->{guidance_threshold}) {
@@ -433,7 +465,31 @@ sub _guidance_text {
          . "The search is not converging. STOP searching and do one of:\n"
          . "1. Summarize what you already know and act on it.\n"
          . "2. Change strategy entirely: different tool, different target, or ask the user.\n"
-         . "Do not re-run the same search with another variation.";
+         . "Do not re-run the same search with another variation. Continuing this "
+         . "pattern will trigger a forced loop-break instruction, and then the turn ends.";
+}
+
+=head2 _nudge_text (Internal)
+
+Build the loop-break instruction injected as a user message when a break
+escalation is converted into a nudge. Unlike the guidance note (advice
+woven into a tool result), this is a direct order from the framework.
+It states the loop, points at the existing data, gives concrete exits,
+and declares the consequence of ignoring it.
+
+=cut
+
+sub _nudge_text {
+    my ($self, $tool_name, $sig, $count) = @_;
+    return "LOOP BREAK (from CLIO): This is call #${count} in a run of near-identical "
+         . "'$tool_name' calls (signature: $sig) that all returned the same result. "
+         . "The information you need is already in this conversation - repeating this "
+         . "call produces nothing new. Change tactic NOW:\n"
+         . "1. Act on the results you already have (edit, build, commit, or reason from them).\n"
+         . "2. Switch to a different tool or target - do something that changes state.\n"
+         . "3. If the work is done, give your final answer and stop making tool calls.\n"
+         . "This instruction will not repeat: another call with this signature ends the "
+         . "turn and returns control to the user.";
 }
 
 1;  # MANDATORY: End every .pm file with 1;

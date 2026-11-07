@@ -625,6 +625,7 @@ sub process_input {
     # legitimate (re-running tests after edits in a later turn), so the
     # window must not carry over.
     $self->{tool_loop_detector}->reset() if $self->{tool_loop_detector};
+    $self->{_tool_loop_nudges_injected} = 0;
 
     my $max_iter = $self->{max_iterations};
     my $iter_limit_display = $max_iter ? $max_iter : 'unlimited';
@@ -1013,13 +1014,15 @@ sub process_input {
             if (my $sbreak = delete $self->{_tool_success_loop_break}) {
                 my $msg = sprintf(
                     "Tool success loop broken: %d similar successful calls to '%s' "
-                    . "(sig: %s) produced near-identical results. A guidance note was "
-                    . "injected at the warning threshold; the pattern continued, so the "
-                    . "turn was ended instead of burning more iterations. Review the "
-                    . "session history and give the agent new direction.",
+                    . "(sig: %s) produced near-identical results. A guidance note "
+                    . "and %d loop-break instruction(s) were injected during the "
+                    . "run; the pattern continued, so the turn was ended instead "
+                    . "of burning more iterations. Review the session history and "
+                    . "give the agent new direction.",
                     $sbreak->{count} // 5,
                     $sbreak->{tool} || 'unknown',
                     $sbreak->{sig} || '',
+                    $self->{_tool_loop_nudges_injected} // 0,
                 );
                 return {
                     success => 0,
@@ -1029,6 +1032,31 @@ sub process_input {
                     iterations => $iteration,
                     tool_calls_made => \@tool_calls_made,
                 };
+            }
+
+            # A success-loop escalation was converted into an in-loop
+            # correction instead of a break: inject the loop-break
+            # instruction as an ephemeral user message and keep the
+            # workflow running. Same mechanism as the premature-stop
+            # nudge below - a direct instruction keeps the turn alive
+            # where an advisory note in the tool result did not. The
+            # message is intentionally NOT persisted to session
+            # history: a turn interrupted here resumes without the
+            # instruction, which is harmless because loop-detector
+            # state resets at the start of every turn anyway.
+            if (my $nudge = delete $self->{_tool_success_loop_nudge}) {
+                $self->{_tool_loop_nudges_injected}++;
+                log_debug('WorkflowOrchestrator',
+                    "Injecting tool-loop break instruction "
+                    . "(count=$nudge->{count}, tool=$nudge->{tool})");
+                push @messages, {
+                    role => 'user',
+                    content => $nudge->{text},
+                };
+                # Not a full iteration - same accounting as the
+                # premature-stop nudge.
+                $iteration--;
+                next;
             }
 
             # Loop back - AI will process tool results
@@ -2205,19 +2233,39 @@ sub _execute_tool_round {
             # strategy change - clear the detector rather than track.
             if ($tool_name eq 'interact') {
                 $self->{tool_loop_detector}->reset() if $self->{tool_loop_detector};
+                # The user just engaged - any parked loop-break instruction
+                # predates their direction and must not fire.
+                delete $self->{_tool_success_loop_nudge};
             } else {
                 my $detector = $self->_get_tool_loop_detector();
                 if ($detector) {
                     my $verdict = $detector->record_call($tool_name, $tool_args, $ai_content);
                     if ($verdict->{break}) {
-                        $self->{_tool_success_loop_break} = {
-                            tool  => $tool_name,
-                            sig   => $verdict->{sig} // '',
-                            count => $verdict->{count},
-                        };
-                        log_warning('WorkflowOrchestrator',
-                            "Tool success loop: $verdict->{count} similar successful calls "
-                            . "to $tool_name (sig: $verdict->{sig}). Breaking to user.");
+                        if ($verdict->{nudge}) {
+                            # Escalation with nudge budget remaining: park the
+                            # loop-break instruction instead of the break flag.
+                            # process_input injects it as a user message after
+                            # this round and keeps the turn alive.
+                            $self->{_tool_success_loop_nudge} = {
+                                tool  => $tool_name,
+                                sig   => $verdict->{sig} // '',
+                                count => $verdict->{count},
+                                text  => $verdict->{nudge_text},
+                            };
+                            log_debug('WorkflowOrchestrator',
+                                "Tool success loop: $verdict->{count} similar successful calls "
+                                . "to $tool_name (sig: $verdict->{sig}). Escalating to "
+                                . "loop-break instruction (turn continues).");
+                        } else {
+                            $self->{_tool_success_loop_break} = {
+                                tool  => $tool_name,
+                                sig   => $verdict->{sig} // '',
+                                count => $verdict->{count},
+                            };
+                            log_warning('WorkflowOrchestrator',
+                                "Tool success loop: $verdict->{count} similar successful calls "
+                                . "to $tool_name (sig: $verdict->{sig}). Breaking to user.");
+                        }
                     } elsif ($verdict->{guidance}) {
                         $ai_content .= "\n\n" . $verdict->{guidance};
                         log_debug('WorkflowOrchestrator',

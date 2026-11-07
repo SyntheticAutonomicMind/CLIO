@@ -5,7 +5,8 @@
 # Tests for the tool success loop detector (ToolLoopDetector):
 # - Loose signatures collapse argument variations (grep flags/patterns)
 # - Result-similarity gate: only near-identical results escalate
-# - Guidance note at the warning threshold, hard break after
+# - Guidance note at the warning threshold, nudge ladder on escalation
+#   (break -> loop-break instruction while budget remains, hard break after)
 # - State-changing calls clear the window (edit-then-verify never loops)
 # - Interleaved target switches still escalate (best match over window)
 # - Repeated empty results are a loop signal
@@ -82,12 +83,17 @@ subtest 'guidance fires after threshold similar calls with similar results' => s
 
     ok(defined $verdict->{guidance}, 'guidance note returned at threshold');
     like($verdict->{guidance}, qr/LOOP WARNING/, 'guidance text has the LOOP WARNING header');
+    like($verdict->{guidance}, qr/loop-break instruction/, 'guidance previews the escalation ladder');
     is($verdict->{break}, 0, 'no hard break at guidance threshold');
     is($verdict->{count}, 3, 'count reached the guidance threshold');
 };
 
-subtest 'hard break after guidance is ignored' => sub {
-    my $d = CLIO::Core::ToolLoopDetector->new();
+subtest 'hard break after guidance is ignored (budget exhausted)' => sub {
+    my $d = CLIO::Core::ToolLoopDetector->new(
+        guidance_threshold => 3,
+        break_threshold    => 4,
+        nudge_budget       => 0,
+    );
 
     my $verdict;
     for my $i (0 .. 3) {
@@ -99,6 +105,88 @@ subtest 'hard break after guidance is ignored' => sub {
     # Call 3 fires guidance; call 4 must break because guidance is active.
     is($verdict->{break}, 1, 'break after continued pattern post-guidance');
     is($verdict->{guidance}, undef, 'no guidance note on the break call');
+    ok(!$verdict->{nudge}, 'nudge budget 0: break is not converted to a nudge');
+};
+
+subtest 'nudge ladder: break becomes instruction until budget exhausted' => sub {
+    my $d = CLIO::Core::ToolLoopDetector->new(
+        guidance_threshold => 3,
+        break_threshold    => 4,
+        nudge_budget       => 2,
+    );
+
+    my $make_call = sub {
+        my ($i) = @_;
+        my $content = $GREP_RESULT_A . "\nlib/CLIO/Filler$i.pm:1:    description => 'x',";
+        return $d->record_call('terminal_operations',
+            { operation => 'exec', command => "grep -rn \"script\" lib/CLIO/ | head -10 #v$i" },
+            $content);
+    };
+
+    # Calls 1-2 are below thresholds.
+    my $v = $make_call->(0);
+    is($v->{break}, 0, 'call 1: no escalation');
+    $v = $make_call->(1);
+    is($v->{break}, 0, 'call 2: no escalation');
+
+    # Call 3: guidance note.
+    $v = $make_call->(2);
+    ok(defined $v->{guidance}, 'call 3: guidance note');
+    is($v->{break}, 0, 'call 3: no break yet');
+
+    # Call 4: first escalation -> nudge, not a silent break.
+    $v = $make_call->(3);
+    is($v->{break}, 1, 'call 4: escalation fires');
+    is($v->{nudge}, 1, 'call 4: converted to nudge (budget 2)');
+    ok(defined $v->{nudge_text}, 'call 4: nudge text present');
+    like($v->{nudge_text}, qr/LOOP BREAK/, 'nudge text has the LOOP BREAK header');
+    like($v->{nudge_text}, qr/terminal_operations/, 'nudge text names the looping tool');
+
+    # Call 5: second escalation -> last nudge.
+    $v = $make_call->(4);
+    is($v->{nudge}, 1, 'call 5: second nudge (budget exhausted after this)');
+
+    # Call 6: budget gone -> real break with no nudge.
+    $v = $make_call->(5);
+    is($v->{break}, 1, 'call 6: real break');
+    ok(!$v->{nudge}, 'call 6: no nudge - budget exhausted');
+    is($v->{nudge_text}, undef, 'call 6: no nudge text');
+};
+
+subtest 'nudge budget restores when the window resets' => sub {
+    my $d = CLIO::Core::ToolLoopDetector->new(
+        guidance_threshold => 3,
+        break_threshold    => 4,
+        nudge_budget       => 2,
+    );
+
+    my $make_call = sub {
+        my ($i) = @_;
+        my $content = $GREP_RESULT_A . "\nlib/CLIO/Filler$i.pm:1:    description => 'x',";
+        return $d->record_call('terminal_operations',
+            { operation => 'exec', command => "grep -rn \"script\" lib/CLIO/ | head -10 #v$i" },
+            $content);
+    };
+
+    # Burn one nudge from the run.
+    $make_call->($_) for 0 .. 3;
+    my $v = $make_call->(4);
+    is($v->{nudge}, 1, 'first escalation is a nudge');
+    $v = $make_call->(5);
+    ok(!$v->{nudge}, 'second escalation is a real break');
+
+    # A state-changing call resets the window AND the ladder: the next run
+    # escalates to a nudge again instead of immediately breaking.
+    $d->record_call('apply_patch', { patch => '*** Update File: lib/X.pm' }, 'patched');
+    $make_call->($_) for 10 .. 13;
+    $v = $make_call->(14);
+    is($v->{nudge}, 1, 'fresh window restores nudge budget');
+
+    # reset() (called at turn start / on interact) does the same.
+    $d->reset();
+    $make_call->($_) for 20 .. 23;
+    $v = $make_call->(24);
+    is($v->{nudge}, 1, 'reset() restores nudge budget');
 };
 
 subtest 'state-changing call clears the window (edit-then-verify)' => sub {
