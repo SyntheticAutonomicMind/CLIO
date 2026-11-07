@@ -292,6 +292,60 @@ subtest 'interleaved target switches still escalate via window counting' => sub 
     is($verdict->{count}, 3, 'same-signature calls counted across the window');
 };
 
+subtest 'two interleaved similar-result signatures complete the ladder' => sub {
+    # The observed SAM session failure: the model alternated TWO different
+    # grep queries over the same docs, both returning near-identical
+    # results. Single-slot guidance bookkeeping was overwritten by the
+    # alternating partner on every call, so guidance re-fired forever
+    # (139 notes over ~270 calls) and the escalation ladder never fired.
+    # With per-signature tracking the ladder completes: guidance X,
+    # guidance Y, nudge X, nudge Y, hard break.
+    my $d = CLIO::Core::ToolLoopDetector->new();
+
+    my $x_query = 'Claude.*model|claude.*model|Anthropic.*model';
+    my $y_query = 'Claude|claude|Anthropic';
+
+    my $call = sub {
+        my ($q, $content) = @_;
+        return $d->record_call('file_operations',
+            { operation => 'grep_search', query => $q, directory => 'docs' },
+            $content);
+    };
+
+    # X1 Y1 X2 Y2: below every threshold.
+    my $v = $call->($x_query, '');
+    is($v->{count}, 1, 'X call 1 counted');
+    $v = $call->($y_query, 'match line');
+    is($v->{count}, 1, 'Y call 1 counted');
+    $v = $call->($x_query, '');
+    is($v->{count}, 2, 'X call 2 counted');
+    $v = $call->($y_query, 'match line');
+    is($v->{count}, 2, 'Y call 2 counted');
+    ok(!$v->{break} && !defined $v->{guidance}, 'calls 1-2 stay quiet');
+
+    # X3: guidance. Y3: guidance - a second, separate signature.
+    $v = $call->($x_query, '');
+    ok(defined $v->{guidance}, 'X call 3: guidance fires');
+    $v = $call->($y_query, 'match line');
+    ok(defined $v->{guidance}, 'Y call 3: guidance fires for the second signature');
+
+    # X4: escalation, NOT another guidance note. This is the exact point
+    # where the old single-slot code re-warned forever.
+    $v = $call->($x_query, '');
+    is($v->{break}, 1, 'X call 4: escalates despite interleaved partner');
+    ok(!defined $v->{guidance}, 'X call 4: no re-warn');
+    is($v->{nudge}, 1, 'X call 4: converted to nudge 1');
+
+    $v = $call->($y_query, 'match line');
+    is($v->{break}, 1, 'Y call 4: escalates');
+    is($v->{nudge}, 1, 'Y call 4: nudge 2 (budget exhausted)');
+
+    # X5: budget gone -> hard break. Ladder completes at 9 similar calls.
+    $v = $call->($x_query, '');
+    is($v->{break}, 1, 'X call 5: hard break');
+    ok(!$v->{nudge}, 'X call 5: no nudge left');
+};
+
 subtest 'git read-only commands are tracked' => sub {
     my $d = CLIO::Core::ToolLoopDetector->new();
 

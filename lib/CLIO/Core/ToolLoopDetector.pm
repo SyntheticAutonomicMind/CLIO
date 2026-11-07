@@ -57,7 +57,12 @@ one). A search that keeps producing new information never triggers.
     N = guidance_threshold (3)  -> inject a "stop searching" note into the
                                    tool result the model sees
     N = break_threshold (5), or any similar call after guidance fired for
-        the same signature -> escalation. While nudge budget remains, the
+        the same signature -> escalation. Guidance state is tracked per
+        signature: a model that interleaves two similar-result searches
+        gets escalated, not re-warned, and a window that alternates two
+        signatures still caps per-signature counts, so the count path
+        alone is unreachable there - the guidance path completes the
+        ladder. While nudge budget remains, the
         break is converted into a loop-break INSTRUCTION (nudge) that the
         orchestrator injects as a user message and the turn CONTINUES -
         an advisory note the model can ignore becomes a direct order it
@@ -148,7 +153,8 @@ sub new {
 
 =head2 reset
 
-Clears the sliding window and guidance state. Called by the orchestrator
+Clears the sliding window and per-signature guidance state. Called by
+the orchestrator
 at the start of every turn (loop tracking is per-turn, not per-session)
 and whenever the interact tool returns user input, which counts as a
 strategy change. The nudge budget is restored: a cleared window means a
@@ -163,8 +169,7 @@ sub reset {
     $self->{state} = {
         window         => [],
         call_index     => 0,
-        guidance_sig   => undef,
-        guidance_index => 0,
+        guidance_fired => {},    # sig => call_index of the guidance fire
         nudges_used    => 0,
     };
     return $self;
@@ -242,9 +247,13 @@ sub record_call {
         tracked => 1, count => $count, sig => $sig, guidance => undef, break => 0,
     } unless $best_match && $best_sim >= $self->{similarity_threshold};
 
-    my $guidance_active = defined $st->{guidance_sig}
-        && $st->{guidance_sig} eq $sig
-        && ($st->{call_index} - $st->{guidance_index}) <= $self->{window_size};
+    # Guidance is tracked per signature. The model may interleave two
+    # (or more) similar-result searches, and with single-slot bookkeeping
+    # each guidance fire was overwritten by the alternating partner, so
+    # the warning re-fired forever and escalation never became reachable.
+    my $fired = $st->{guidance_fired}{ $sig };
+    my $guidance_active = defined $fired
+        && ($st->{call_index} - $fired) <= $self->{window_size};
 
     if ($guidance_active || $count >= $self->{break_threshold}) {
         # Escalation. The advisory guidance note was either already active
@@ -265,8 +274,8 @@ sub record_call {
         return { tracked => 1, count => $count, sig => $sig, guidance => undef, break => 1 };
     }
     if ($count >= $self->{guidance_threshold}) {
-        $st->{guidance_sig}   = $sig;
-        $st->{guidance_index} = $st->{call_index};
+        $st->{guidance_fired}{ $sig } = $st->{call_index};
+        $self->_prune_guidance_state();
         return {
             tracked => 1, count => $count, sig => $sig, break => 0,
             guidance => $self->_guidance_text($tool_name, $sig, $count),
@@ -449,6 +458,24 @@ sub _tokenize {
     (my $norm = lc $text) =~ s/[^a-z0-9]+/ /g;
     my %set = map { $_ => 1 } grep { length } split /\s+/, $norm;
     return [sort keys %set];
+}
+
+=head2 _prune_guidance_state (Internal)
+
+Drop guidance-fired entries older than the staleness window. Inert by
+the guidance_active check anyway; pruning keeps the hash bounded.
+
+=cut
+
+sub _prune_guidance_state {
+    my ($self) = @_;
+    my $st     = $self->{state};
+    my $cutoff = $st->{call_index} - $self->{window_size};
+    for my $sig (keys %{ $st->{guidance_fired} }) {
+        delete $st->{guidance_fired}{$sig}
+            if $st->{guidance_fired}{$sig} < $cutoff;
+    }
+    return;
 }
 
 =head2 _guidance_text (Internal)
