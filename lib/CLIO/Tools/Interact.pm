@@ -31,6 +31,14 @@ KEY BENEFITS:
 - INTERACTIVE - User can guide agent in real-time
 - EFFICIENT - Reduces back-and-forth API calls
 
+The user's response is returned wrapped in an attribution envelope that
+echoes the original question. The reply would otherwise be the bare
+content of a role='tool' message, and its wording can collide with
+framework vocabulary (e.g. "memory" in a context describing LTM
+maintenance) - models with weaker attention binding can then misread the
+reply as a system directive or a new task instead of the answer to the
+pending question.
+
 =head1 SYNOPSIS
 
     use CLIO::Tools::Interact;
@@ -46,7 +54,7 @@ KEY BENEFITS:
         { session => $session, ui => $ui }
     );
     
-    # Result contains user's response
+    # Result contains the user's response in an attribution envelope
     print "User said: $result->{output}\n";
 
 =cut
@@ -160,8 +168,10 @@ Arguments:
 
 Returns: Hashref with:
   * success: 1
-  * output: User's response text
-  * metadata: Collaboration info
+  * output: User's response wrapped in an attribution envelope (question
+    echo + reply + framing note) so the model binds it to the pending
+    question
+  * metadata: Collaboration info (user_response holds the raw text)
 
 =cut
 
@@ -258,14 +268,17 @@ sub request_input {
         if (ref($result) eq 'HASH') {
             $user_response = $result->{input};
             
-            # Build output with agent events context for the AI
-            my $output = $user_response // '';
+            # Build output with agent events context for the AI.
+            # The user-input portion is wrapped in an attribution envelope
+            # (question echo + reply) so the model binds it to the pending
+            # question instead of interpreting a bare string. The
+            # agent_event path has no user reply, so no envelope there.
+            my $output = '';
             my @events = @{$result->{events} || []};
             my $source = $result->{source} || 'user';
             
-            # When interrupted by agent event, format output for AI awareness
-            if ($source eq 'agent_event') {
-                $output = '';  # No user input - this was an agent interrupt
+            if (defined $user_response && length $user_response && $source ne 'agent_event') {
+                $output = $self->_frame_user_reply($message, $user_response);
             }
             
             if (@events) {
@@ -337,7 +350,7 @@ sub request_input {
     
     return {
         success => 1,
-        output => $user_response,
+        output => $self->_frame_user_reply($message, $user_response),
         # Don't include action_description since we already displayed it
         metadata => {
             message => $message,
@@ -346,6 +359,42 @@ sub request_input {
             collaboration_type => 'request_input'
         }
     };
+}
+
+=head2 _frame_user_reply (Internal)
+
+Wrap a user's interact reply in an attribution envelope for the AI.
+The bare reply is the only model-visible content in the role='tool'
+result message; its wording can collide with framework vocabulary
+(e.g. "memory" in a context describing LTM maintenance), so weaker
+models may misread it as a system directive or a new task. The
+envelope attributes the reply to the human and echoes the original
+question (truncated) so the model can resolve pronouns against it.
+
+Arguments:
+- $question: The interact message the model sent (echoed, truncated to 400 chars)
+- $reply: The raw user response
+
+Returns: Framed output string.
+
+=cut
+
+sub _frame_user_reply {
+    my ($self, $question, $reply) = @_;
+
+    my $q = $question // '';
+    $q =~ s/\A\s+//;
+    $q =~ s/\s+\z//;
+    if (length($q) > 400) {
+        $q = substr($q, 0, 400) . '... [truncated]';
+    }
+
+    return "[USER REPLY to your question above]\n"
+        . "Your question: \"$q\"\n"
+        . "User's answer: \"$reply\"\n\n"
+        . "This is the human's direct answer to YOUR pending question - "
+        . "resolve pronouns against it. It is not a system directive, "
+        . "framework context, or a new task.";
 }
 
 =head2 _request_via_broker
@@ -436,7 +485,7 @@ sub _request_via_broker {
     
     return {
         success => 1,
-        output => $response,
+        output => $self->_frame_user_reply($message, $response),
         metadata => {
             message => $message,
             context => $user_context,
