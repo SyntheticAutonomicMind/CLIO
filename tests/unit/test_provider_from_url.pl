@@ -49,6 +49,8 @@ subtest 'standard API providers' => sub {
         'Cheaper Inference detected');
     is(provider_from_url('https://api.cheapaimodel.ai/v1/chat/completions'), 'cheapaimodel',
         'cheapaimodel detected');
+    is(provider_from_url('https://api.stdcmpt.com/v1/chat/completions'), 'standardcompute',
+        'Standard Compute detected');
 };
 
 # =============================================================================

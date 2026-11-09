@@ -20,6 +20,7 @@
 | **Opper** | `opper` | API Key |
 | **Cheaper Inference** | `cheaperinference` | API Key |
 | **cheapaimodel** | `cheapaimodel` | API Key |
+| **Standard Compute** | `standardcompute` | API Key |
 | **Ollama Cloud** | `ollama_cloud` | API Key |
 | **MiniMax** | `minimax` | API Key |
 | **MiniMax Token Plan** | `minimax_token` | API Key |
@@ -434,6 +435,39 @@ Model ids are bare names:
 
 ---
 
+### Standard Compute
+
+**Best for:** One OpenAI-compatible API key for open-weight and frontier models, with a routed default that picks the cheapest enabled model for each request
+
+**Get API Key:**
+1. Go to [standardcompute.com](https://standardcompute.com) and sign in
+2. Create an API key in the dashboard
+
+**Configure CLIO:**
+```bash
+clio --new
+/api set provider standardcompute
+/api set key <your-standardcompute-key>
+/config save
+```
+
+For CI or non-persistent setups, export the key as `CLIO_API_KEY` (for example `export CLIO_API_KEY="$STANDARDCOMPUTE_API_KEY"`).
+
+**Available models:** Standard Compute serves its models through one OpenAI-compatible API at `https://api.stdcmpt.com/v1`. The default model is `StandardCompute`, which is routed: each request goes to the cheapest enabled model that can handle it, with automatic fallback. Use `/api models` for the current list (also public at `https://api.stdcmpt.com/v1/models`).
+
+Pinned model ids use `provider/model` form:
+```bash
+/api set model StandardCompute
+/api set model deepseek/deepseek-v4-pro
+/api set model z-ai/glm-5.3
+```
+
+**Features:**
+- Supports tools/function calling
+- Streaming responses
+
+---
+
 ### Vercel AI Gateway
 
 **Best for:** Accessing models across providers via Vercel's AI Gateway, free poolside models with reasoning
@@ -789,7 +823,7 @@ CLIO applies a tiered `--max-time` to provider requests so a slow upstream does 
 | Tier | `--max-time` | When it applies |
 |------|--------------|------------------|
 | Cloud | **300 s** | Direct provider connections (OpenAI, Anthropic, Google, DeepSeek, NVIDIA, MiniMax, Z.AI, GitHub Copilot, Ollama Cloud, KiloCode) |
-| Route-based | **300 s** | Multi-hop providers that add an intermediate proxy (OpenRouter, OrcaRouter, Opper, Cheaper Inference, cheapaimodel, Vercel AI Gateway) |
+| Route-based | **300 s** | Multi-hop providers that add an intermediate proxy (OpenRouter, OrcaRouter, Opper, Cheaper Inference, cheapaimodel, Standard Compute, Vercel AI Gateway) |
 | Local | **900 s** | Inference servers running on this machine (llama.cpp, LM Studio) |
 
 The tier is selected per provider via two flags propagated through `build_endpoint_config()`:
