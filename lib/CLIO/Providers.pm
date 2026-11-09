@@ -35,7 +35,7 @@ Users can override any setting via /api commands, but these are the defaults.
 
 =head2 Roster
 
-The registry holds 21 providers. The display names below are what the
+The registry holds 22 providers. The display names below are what the
 registry keys map to; the key is listed first, since that is what users
 type.
 
@@ -55,6 +55,7 @@ type.
     hyper             Charm Hyper
     cheaperinference  Cheaper Inference
     cheapaimodel      cheapaimodel
+    standardcompute   Standard Compute
     minimax           MiniMax
     minimax_token     MiniMax Token Plan
     zai               Z.AI (Chat)
@@ -390,6 +391,27 @@ my %PROVIDERS = (
         # Model ids are bare names (e.g. deepseek-v4-1-flash, kimi-k3).
         # The live /v1/models list (needs the API key) is the source of
         # truth for the model list.
+        endpoint => {
+            path_suffix => '',
+            temperature_range => [0.0, 2.0],
+            supports_tools => 1,
+        },
+    },
+
+    standardcompute => {
+        name => 'Standard Compute',
+        api_base => 'https://api.stdcmpt.com/v1/chat/completions',
+        model => 'StandardCompute',
+        requires_auth => 'apikey',
+        supports_tools => 1,
+        supports_streaming => 1,
+        route_timeout => 1,  # Routes to upstream providers, extra latency from the intermediate hop
+        url_detection_patterns => [ qr{api\.stdcmpt\.com}i ],
+        # The default model id StandardCompute is routed: the router picks
+        # from the account's enabled models using its quality preference.
+        # Pinned ids use provider/model form (e.g.
+        # deepseek/deepseek-v4-pro, z-ai/glm-5.3). The public /v1/models
+        # list is the source of truth for the model list.
         endpoint => {
             path_suffix => '',
             temperature_range => [0.0, 2.0],
