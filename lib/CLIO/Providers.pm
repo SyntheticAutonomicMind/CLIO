@@ -35,7 +35,7 @@ Users can override any setting via /api commands, but these are the defaults.
 
 =head2 Roster
 
-The registry holds 21 providers. The display names below are what the
+The registry holds 22 providers. The display names below are what the
 registry keys map to; the key is listed first, since that is what users
 type.
 
@@ -407,9 +407,9 @@ my %PROVIDERS = (
         supports_streaming => 1,
         route_timeout => 1,  # Routes to upstream providers, extra latency from the intermediate hop
         url_detection_patterns => [ qr{api\.stdcmpt\.com}i ],
-        # The default model id StandardCompute is routed: each request goes
-        # to the cheapest enabled model that can handle it, with automatic
-        # fallback. Pinned ids use provider/model form (e.g.
+        # The default model id StandardCompute is routed: the router picks
+        # from the account's enabled models using its quality preference.
+        # Pinned ids use provider/model form (e.g.
         # deepseek/deepseek-v4-pro, z-ai/glm-5.3). The public /v1/models
         # list is the source of truth for the model list.
         endpoint => {

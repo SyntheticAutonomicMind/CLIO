@@ -437,7 +437,7 @@ Model ids are bare names:
 
 ### Standard Compute
 
-**Best for:** One OpenAI-compatible API key for open-weight and frontier models, with a routed default that picks the cheapest enabled model for each request
+**Best for:** One OpenAI-compatible API key for open-weight and frontier models, with a routed default that picks from your enabled models
 
 **Get API Key:**
 1. Go to [standardcompute.com](https://standardcompute.com) and sign in
@@ -453,13 +453,13 @@ clio --new
 
 For CI or non-persistent setups, export the key as `CLIO_API_KEY` (for example `export CLIO_API_KEY="$STANDARDCOMPUTE_API_KEY"`).
 
-**Available models:** Standard Compute serves its models through one OpenAI-compatible API at `https://api.stdcmpt.com/v1`. The default model is `StandardCompute`, which is routed: each request goes to the cheapest enabled model that can handle it, with automatic fallback. Use `/api models` for the current list (also public at `https://api.stdcmpt.com/v1/models`).
+**Available models:** Standard Compute serves its models through one OpenAI-compatible API at `https://api.stdcmpt.com/v1`. The default model is `StandardCompute`, which is routed: the router picks from the models enabled on your account using your quality preference. Use `/api models` for the current list (also public at `https://api.stdcmpt.com/v1/models`).
 
-Pinned model ids use `provider/model` form:
+Pinned model ids use `provider/model` form. Keep the `standardcompute/` prefix on those so CLIO does not read the first segment as a CLIO provider name:
 ```bash
 /api set model StandardCompute
-/api set model deepseek/deepseek-v4-pro
-/api set model z-ai/glm-5.3
+/api set model standardcompute/deepseek/deepseek-v4-pro
+/api set model standardcompute/z-ai/glm-5.3
 ```
 
 **Features:**
