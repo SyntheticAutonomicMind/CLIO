@@ -260,6 +260,16 @@
         "mode": "disabled"
       }
     },
+    "synap": {
+      "default_model": "gpt-oss-20b",
+      "max_context_tokens": 65536,
+      "max_output_tokens": 65536,
+      "supports_streaming": 1,
+      "supports_tools": 1,
+      "reasoning_schema": {
+        "mode": "disabled"
+      }
+    },
     "zai": {
       "default_model": "glm-5.1",
       "max_context_tokens": 128000,

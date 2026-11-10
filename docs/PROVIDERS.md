@@ -21,6 +21,7 @@
 | **Cheaper Inference** | `cheaperinference` | API Key |
 | **cheapaimodel** | `cheapaimodel` | API Key |
 | **Standard Compute** | `standardcompute` | API Key |
+| **Synap by Linkrra** | `synap` | API Key |
 | **Ollama Cloud** | `ollama_cloud` | API Key |
 | **MiniMax** | `minimax` | API Key |
 | **MiniMax Token Plan** | `minimax_token` | API Key |
@@ -465,6 +466,47 @@ Pinned model ids use `provider/model` form. Keep the `standardcompute/` prefix o
 **Features:**
 - Supports tools/function calling
 - Streaming responses
+
+---
+
+### Synap by Linkrra
+
+**Best for:** Open-weight coding and agent models on dedicated GPUs at per-million prices, with a keyless pay-per-call option
+
+**Get API Key:**
+1. Go to [synap402.com](https://synap402.com) and sign in
+2. Create a key in the account area
+
+**Configure CLIO:**
+```bash
+clio --new
+/api set provider synap
+/api set key <your-synap-key>
+/config save
+```
+
+**Available models:** `https://synap402.com/v1/models` is public - you can read the
+catalogue before you have a key - and it is the source of truth for the model list and
+for each model's context, output limit and supported parameters. Use `/api models` for
+the current list. The default model is `gpt-oss-20b` (65,536 context).
+
+Model ids are used exactly as published, and the list mixes two forms. Models served on
+Linkrra's own GPUs use bare ids; the rest are namespaced:
+```bash
+/api set model gpt-oss-20b
+/api set model qwen3-coder-30b
+/api set model qwen/qwen3-vl-30b-a3b-instruct
+/api set model meta/muse-glimmer-30b
+```
+`synap-v1` and `synap-v1-pro` are routers rather than fixed models: they resolve to a
+served model at request time and publish no capability metadata of their own, so pin a
+fixed id if you want a known context window.
+
+**Features:**
+- Supports tools/function calling
+- Streaming responses
+- A request with no API key answers **402** with an x402 payment challenge, not 401 - the
+  same endpoint can be paid per call in USDC instead of with a key
 
 ---
 

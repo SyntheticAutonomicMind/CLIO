@@ -357,7 +357,7 @@ Connect to external tool servers via the Model Context Protocol. See [MCP Integr
 
 ## 3. AI Providers
 
-CLIO supports 22 AI providers out of the box. Switch between them at any time - even mid-session.
+CLIO supports 23 AI providers out of the box. Switch between them at any time - even mid-session.
 
 | Provider | Type | Authentication |
 |----------|------|---------------|
