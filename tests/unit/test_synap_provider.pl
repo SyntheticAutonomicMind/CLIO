@@ -43,6 +43,7 @@ use CLIO::Compat::HTTP;
 # Mock HTTP client: capture the URL and return a fake /v1/models response
 # shaped like the live catalogue, including one bare and one namespaced id.
 my $captured_url;
+my $captured_headers;
 my $mock_response_body = '{"object":"list","data":['
     . '{"id":"gpt-oss-20b","object":"model","created":0,"owned_by":"linkrra",'
     . '"context_length":65536,"top_provider":{"context_length":65536,"max_completion_tokens":65536}},'
@@ -59,6 +60,7 @@ my $mock_response_body = '{"object":"list","data":['
     *CLIO::Compat::HTTP::get = sub {
         my ($self, $url, %opts) = @_;
         $captured_url = $url;
+        $captured_headers = $opts{headers};
         return bless {
             success         => 1,
             status          => 200,
@@ -180,5 +182,40 @@ is(scalar(@$models), 2, 'Both fake Synap models are parsed');
 is($models->[0]{id}, 'gpt-oss-20b', 'First model id is gpt-oss-20b');
 is($models->[1]{id}, 'qwen/qwen3-vl-30b-a3b-instruct',
    'A namespaced model id is preserved verbatim');
+
+# Public discovery must not require or invent a credential. Inference auth
+# remains unchanged, and non-public providers must still require their key.
+$captured_url = undef;
+$models = $cmd->_fetch_provider_models('synap', $provider_def, undef, 1);
+is(scalar(@$models), 2, 'Public Synap discovery works before key configuration');
+is($captured_url, 'https://synap402.com/v1/models', 'Public request reaches the correct URL');
+ok(!exists $captured_headers->{Authorization}, 'No empty or fabricated Authorization header');
+is($provider_def->{requires_auth}, 'apikey', 'Public discovery does not disable inference authentication');
+$captured_url = undef;
+my $private_provider = { %$provider_def, public_models => 0 };
+$models = $cmd->_fetch_provider_models('synap', $private_provider, undef, 1);
+is(scalar(@$models), 0, 'Private provider still requires a credential');
+ok(!defined $captured_url, 'Private provider without key makes no HTTP request');
+
+# MCM uses a separate transport and must also be able to read public metadata.
+require CLIO::Core::ModelCapabilitiesManager;
+{
+    no warnings 'redefine';
+    no warnings 'once';
+    local *CLIO::Core::ModelCapabilitiesManager::get_http = sub { bless {}, 'PublicModelsHTTP' };
+    my $mcm = bless {}, 'CLIO::Core::ModelCapabilitiesManager';
+    my $caps = $mcm->_fetch_openai_compatible_capabilities('synap', 'gpt-oss-20b');
+    is($caps->{context_window}, 65536, 'Public MCM reads real-shaped context metadata without a key');
+    ok(!exists $captured_headers->{Authorization}, 'Public MCM omits the Authorization header');
+}
+
+package PublicModelsHTTP;
+sub get {
+    my ($self, $url, %opts) = @_;
+    $captured_url = $url;
+    $captured_headers = $opts{headers};
+    return { success => 1, status => 200, content => $mock_response_body };
+}
+package main;
 
 done_testing();

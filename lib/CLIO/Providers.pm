@@ -425,6 +425,7 @@ my %PROVIDERS = (
         api_base => 'https://synap402.com/v1/chat/completions',
         model => 'gpt-oss-20b',
         requires_auth => 'apikey',
+        public_models => 1,  # Discovery is public; inference still requires auth/payment.
         supports_tools => 1,
         supports_streaming => 1,
         route_timeout => 1,  # Router ids and four upstream-served ids add an intermediate hop

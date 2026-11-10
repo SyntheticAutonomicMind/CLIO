@@ -701,6 +701,7 @@ if ($mode eq 'list_models') {
 
         my $api_key = $config->get_provider_key($provider_name);
         my $has_auth = $api_key
+            || ($provider_def->{public_models} && ($config->get('provider') || '') eq $provider_name)
             || $provider_name eq 'github_copilot'
             || $provider_name eq 'llama.cpp'
             || $provider_name eq 'lmstudio';
@@ -1827,11 +1828,11 @@ sub _fetch_models_for_provider {
         } elsif ($api_base =~ m{^(https?://[^/]+)}) {
             $models_url = "$1/v1/models";
         }
-        return [] unless $models_url && $api_key;
+        return [] unless $models_url && ($api_key || $provider_def->{public_models});
         eval {
             require CLIO::Compat::HTTP;
             my $ua = CLIO::Compat::HTTP->new(timeout => 15);
-            my %headers = ('Authorization' => "Bearer $api_key");
+            my %headers = $api_key ? ('Authorization' => "Bearer $api_key") : ();
             my $resp = $ua->get($models_url, headers => \%headers);
             if ($resp->is_success) {
                 my $data = CLIO::Util::JSON::decode_json($resp->decoded_content);
