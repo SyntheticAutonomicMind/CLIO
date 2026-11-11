@@ -1,7 +1,7 @@
 #!/usr/bin/env perl
 # Test: compute_prompt_budget in TokenEstimator produces correct values
-# across context/output tiers, and uses the model's actual output cap
-# (no hard cap) for the reserve.
+# across context/output tiers, and reserves the model's actual output cap,
+# up to the MAX_MODEL_OUTPUT_TOKENS ceiling.
 
 use strict;
 use warnings;
@@ -67,19 +67,47 @@ for my $tier (@tiers) {
 }
 
 # ============================================================================
-# No hard cap: reserve follows max_output_tokens exactly
+# Hard ceiling: the reserve follows max_output_tokens up to MAX_MODEL_OUTPUT_TOKENS
 # ============================================================================
-# A model with 256K output (future hypothetical) should reserve 256K, not
-# be clamped to 128K. The user explicitly said "the caps should be whatever
-# the model supports".
+# The reserve tracks the model's real output cap instead of a percentage of
+# context, but it stops at MAX_MODEL_OUTPUT_TOKENS. The ceiling guards against
+# capability metadata that is not an output cap at all: provider feeds have
+# been observed publishing a context length, or a tokenizer vocabulary size,
+# in the output field.
+#
+# Clamping down is the conservative direction. Reserving less than a model can
+# really emit only truncates an extreme response; reserving more takes room the
+# prompt needs and overflows the window.
 {
-    my $caps = {
+    my $cap = CLIO::Core::Defaults::MAX_MODEL_OUTPUT_TOKENS();
+
+    # At the ceiling: honoured exactly.
+    my $at_cap = compute_prompt_budget({
         max_context_window_tokens => 1048576,
-        max_output_tokens         => 262144,  # 256K output
-    };
-    my $budget = compute_prompt_budget($caps);
-    my $expected = 1048576 - 262144 - _expected_buffer(1048576);
-    is($budget, $expected, "1M/256K: no hard cap (256K reserve is honored)");
+        max_output_tokens         => $cap,
+    });
+    is($at_cap, 1048576 - $cap - _expected_buffer(1048576),
+        "1M with output at the ceiling ($cap): reserve honoured exactly");
+
+    # Above the ceiling: clamped, so the prompt keeps more room than a literal
+    # reading of the reported output would allow.
+    my $over = compute_prompt_budget({
+        max_context_window_tokens => 1048576,
+        max_output_tokens         => 262144,  # 256K reported
+    });
+    is($over, 1048576 - $cap - _expected_buffer(1048576),
+        "1M/256K reported: reserve clamped to the ceiling ($cap)");
+    cmp_ok($over, '>', 1048576 - 262144 - _expected_buffer(1048576),
+        'clamping leaves more prompt room than honouring the reported value');
+
+    # Metadata that is clearly not an output cap resolves the same way rather
+    # than being passed through.
+    my $absurd = compute_prompt_budget({
+        max_context_window_tokens => 1048576,
+        max_output_tokens         => 943717,
+    });
+    is($absurd, $at_cap,
+        'absurd output metadata resolves to the same budget as the ceiling');
 }
 
 # ============================================================================

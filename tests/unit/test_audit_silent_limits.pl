@@ -26,12 +26,12 @@ use File::Basename qw(dirname);
 use Cwd qw(abs_path);
 use File::Temp qw(tempdir);
 use File::Path qw(make_path);
-use JSON;
 
 my $repo_root = abs_path(dirname(dirname(dirname($0))));
 $repo_root = abs_path('.') unless -d "$repo_root/lib";
 unshift @INC, "$repo_root/lib";
 
+require CLIO::Util::JSON;
 require CLIO::Tools::FileOperations;
 require CLIO::Tools::MemoryOperations;
 require CLIO::Tools::WebOperations;
@@ -72,7 +72,7 @@ for my $i (0..4) {
     ] : [
         { role => 'user', content => "Just a normal message $i" },
     ];
-    my $json = encode_json({ history => $history, session_id => "session_${i}" });
+    my $json = CLIO::Util::JSON::encode_json({ history => $history, session_id => "session_${i}" });
     open my $fh, '>:encoding(UTF-8)', $path or die "Cannot write $path: $!";
     print $fh $json;
     close $fh;

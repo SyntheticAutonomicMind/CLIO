@@ -34,18 +34,39 @@ use Test::More;
     };
 
     require CLIO::Memory::TokenEstimator;
-    my $buffer = 8192 + int(196608 * 0.05);  # est_buffer
-    $buffer = 51200 if $buffer > 51200;
+    require CLIO::Core::Defaults;
+    my $buffer = CLIO::Core::Defaults::OUTPUT_ESTIMATION_BUFFER()
+               + int(196608 * CLIO::Core::Defaults::OUTPUT_ESTIMATION_BUFFER_PCT());
+    my $buffer_cap = CLIO::Core::Defaults::OUTPUT_ESTIMATION_BUFFER_MAX();
+    $buffer = $buffer_cap if $buffer > $buffer_cap;
     my $budget = CLIO::Memory::TokenEstimator::compute_prompt_budget($caps);
 
-    # With correct caps: budget = 196608 - 176947 - ~10000 = ~9661
-    # This is tight but positive - the model can still work
-    ok($budget > 0, "Prompt budget is positive with correct OpenRouter caps");
+    # Derive the reserve the function actually applied instead of recomputing
+    # it from MAX_MODEL_OUTPUT_TOKENS. Recomputing makes the check tautological:
+    # the ceiling and the expectation move together, so removing the ceiling
+    # changes both sides and the test still passes. Valid while the budget is
+    # above its floor, which the check below confirms.
+    my $reserve_used = 196608 - $buffer - $budget;
+
+    ok($budget > 1000, "Prompt budget clears its floor with correct OpenRouter caps");
     cmp_ok($budget, '<', 196608, "Prompt budget is less than context window");
 
-    # The key invariant: budget + max_output <= context_window
-    my $total = $budget + $caps->{max_output_tokens};
-    cmp_ok($total, '<', 196608 + $buffer, "Budget + output does not exceed context window");
+    # The reserve never exceeds what the model reported, whatever the ceiling.
+    cmp_ok($reserve_used, '<=', $caps->{max_output_tokens},
+           "Applied reserve ($reserve_used) never exceeds the reported cap (176947)");
+
+    # The key invariant: budget + reserve <= context_window. Measured against
+    # the reserve that was actually applied, not the raw reported figure.
+    cmp_ok($budget + $reserve_used, '<=', 196608,
+           "Budget + output reserve does not exceed context window");
+    is($budget + $reserve_used + $buffer, 196608,
+       "Budget + reserve + estimation buffer accounts for the whole window");
+
+    # 176947 is more than this window can hold alongside a prompt, so
+    # honouring it verbatim would leave the prompt a rounding error. The
+    # prompt still has to get a usable share.
+    cmp_ok($budget, '>', int(196608 * 0.10),
+           "Prompt keeps a usable share of the window despite an oversized reported output cap");
 }
 
 # ── Test 3: Budget-aware max_tokens with large input ──

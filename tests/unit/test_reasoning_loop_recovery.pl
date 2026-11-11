@@ -16,7 +16,8 @@ use Test::More;
 use CLIO::Core::APIManager;
 use CLIO::Compat::HTTP;
 use CLIO::Util::JSON qw(decode_json);
-use HTTP::Request;
+# HTTP::Request is provided as an alias by CLIO::Compat::HTTP; there is no
+# HTTP/Request.pm to load, so importing it here would abort the run.
 
 my $api = bless {
     config  => undef,
