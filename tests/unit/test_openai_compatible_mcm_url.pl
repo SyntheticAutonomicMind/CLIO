@@ -91,6 +91,11 @@ is(_derive_models_url('https://api.uberllm.dev/v1/chat/completions'),
    'https://api.uberllm.dev/v1/models',
    'uberllm: /v1/chat/completions -> /v1/models');
 
+# Test 3h: synap
+is(_derive_models_url('https://synap402.com/v1/chat/completions'),
+   'https://synap402.com/v1/models',
+   'synap: /v1/chat/completions -> /v1/models');
+
 # Test 4: ollama_cloud
 is(_derive_models_url('https://ollama.com/v1/chat/completions'),
    'https://ollama.com/v1/models',

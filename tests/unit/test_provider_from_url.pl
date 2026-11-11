@@ -51,6 +51,8 @@ subtest 'standard API providers' => sub {
         'cheapaimodel detected');
     is(provider_from_url('https://api.stdcmpt.com/v1/chat/completions'), 'standardcompute',
         'Standard Compute detected');
+    is(provider_from_url('https://synap402.com/v1/chat/completions'), 'synap',
+        'Synap detected');
     is(provider_from_url('https://api.uberllm.dev/v1/chat/completions'), 'uberllm',
         'UberLLM detected');
 };

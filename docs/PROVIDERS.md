@@ -6,34 +6,69 @@
 
 ## Quick Reference
 
-| Provider | Short Name | Auth Type |
-|----------|------------|-----------|
-| **GitHub Copilot** | `github_copilot` | OAuth |
-| **Anthropic** | `anthropic` | API Key |
-| **OpenAI** | `openai` | API Key |
-| **Google Gemini** | `google` | API Key |
-| **DeepSeek** | `deepseek` | API Key |
-| **Charm Hyper** | `hyper` | API Key |
-| **OpenRouter** | `openrouter` | API Key |
-| **OrcaRouter** | `orca` | API Key |
-| **KiloCode** | `kilo` | API Key |
-| **Opper** | `opper` | API Key |
-| **Cheaper Inference** | `cheaperinference` | API Key |
-| **cheapaimodel** | `cheapaimodel` | API Key |
-| **Standard Compute** | `standardcompute` | API Key |
-| **Synap by Linkrra** | `synap` | API Key |
-| **UberLLM** | `uberllm` | API Key |
-| **Ollama Cloud** | `ollama_cloud` | API Key |
-| **MiniMax** | `minimax` | API Key |
-| **MiniMax Token Plan** | `minimax_token` | API Key |
-| **Z.AI (Chat)** | `zai` | API Key |
-| **Z.AI (Coding)** | `zai_coding` | API Key |
-| **NVIDIA NIM** | `nvidia` | API Key |
-| **Vercel AI Gateway** | `vercel` | API Key |
-| **llama.cpp** | `llama.cpp` | None |
-| **LM Studio** | `lmstudio` | None |
+| Provider | Short Name | Auth Type | Routes |
+|----------|------------|-----------|--------|
+| **GitHub Copilot** | `github_copilot` | OAuth | Own |
+| **Anthropic** | `anthropic` | API Key | Own |
+| **OpenAI** | `openai` | API Key | Own |
+| **Google Gemini** | `google` | API Key | Own |
+| **DeepSeek** | `deepseek` | API Key | Own |
+| **Charm Hyper** | `hyper` | API Key | Gateway |
+| **OpenRouter** | `openrouter` | API Key | Gateway |
+| **OrcaRouter** | `orca` | API Key | Gateway |
+| **KiloCode** | `kilo` | API Key | Gateway |
+| **Opper** | `opper` | API Key | Gateway |
+| **Cheaper Inference** | `cheaperinference` | API Key | Gateway |
+| **cheapaimodel** | `cheapaimodel` | API Key | Gateway |
+| **Standard Compute** | `standardcompute` | API Key | Gateway |
+| **Synap by Linkrra** | `synap` | API Key | Gateway |
+| **UberLLM** | `uberllm` | API Key | Gateway |
+| **Ollama Cloud** | `ollama_cloud` | API Key | Own |
+| **MiniMax** | `minimax` | API Key | Own |
+| **MiniMax Token Plan** | `minimax_token` | API Key | Own |
+| **Z.AI (Chat)** | `zai` | API Key | Own |
+| **Z.AI (Coding)** | `zai_coding` | API Key | Own |
+| **NVIDIA NIM** | `nvidia` | API Key | Own |
+| **Vercel AI Gateway** | `vercel` | API Key | Gateway |
+| **llama.cpp** | `llama.cpp` | None | Local |
+| **LM Studio** | `lmstudio` | None | Local |
 
 Models change frequently. After configuring your provider, use `/api models` to see the current list of available models.
+
+---
+
+## Third-Party Gateways
+
+**Routes** above describes where the model runs:
+
+- **Own** - the provider serves models made by the lab that operates it. Your request goes to that lab.
+- **Local** - the model runs on your machine. Nothing leaves it.
+- **Gateway** - the provider forwards your request to models made by other labs.
+
+A gateway is a useful thing. It is also a second party in the path your data
+takes, so it is worth understanding before you point a coding agent at one.
+
+CLIO sends your prompts, your code, and your tool results to whichever provider
+you select. With a gateway, that content is processed by the gateway operator
+before it reaches the upstream lab, and the gateway's retention and handling
+policy applies alongside the upstream's. Which upstream actually serves a given
+request may be chosen by the gateway at request time rather than by you.
+
+CLIO flags gateways so this is visible rather than implicit:
+
+- `/api providers` marks each one with `[gateway]`
+- `/api provider <name>` describes the data path
+- `/api set provider <name>` shows the disclosure when you switch
+
+This is a description of architecture, not a verdict. Some gateways are large
+established companies and some are weeks old; the flag covers both because the
+data path is the same either way. Deciding which operators you are willing to
+have in that path is your call. Check the provider's own retention policy before
+using one for sensitive work, and prefer **Local** or a first-party provider if
+your policy requires that requests go only to the model's author.
+
+If you add a gateway as a custom provider alias, CLIO treats it as a gateway
+too - the path is the same regardless of what you named it.
 
 ---
 
@@ -509,6 +544,9 @@ fixed id if you want a known context window.
 - Streaming responses
 - A request with no API key answers **402** with an x402 payment challenge, not 401 - the
   same endpoint can be paid per call in USDC instead of with a key
+- **Gateway:** serves open-weight models made by other labs (see
+  [Third-Party Gateways](#third-party-gateways)). Retention and data handling are
+  published at [synap402.com/privacy](https://synap402.com/privacy)
 
 ---
 

@@ -16,6 +16,7 @@ our @EXPORT_OK = qw(
     is_local_inference exposes_props default_context_window
     capability_fetcher default_reasoning_mode
     quota_handler supports_cache_control
+    is_third_party_gateway
     validate_provider
 );
 
@@ -67,6 +68,22 @@ type.
 Anthropic, Google, and NVIDIA use native protocol adapters. Every other
 provider speaks the OpenAI-compatible or Copilot format.
 
+=head2 Third-party gateways
+
+Some providers are gateways: they route requests to models authored by
+other labs rather than serving models of their own. Those entries set
+C<third_party_gateway => 1> and C<is_third_party_gateway()> reports it.
+
+The flag is architectural, not a trust rating. It is set for every
+provider that stands between the user and the model's author, because
+in every such case the request contents are processed by the gateway
+operator first and that operator's retention policy applies alongside
+the upstream's. CLIO discloses this in the provider list, the provider
+detail view, and on switch, so selecting one is an informed choice.
+
+See docs/PROVIDERS.md for the user-facing note and CONTRIBUTING.md for
+the bar a new provider entry has to clear.
+
 tests/unit/test_provider_doc_count.pl asserts that the provider count
 claimed in README.md and docs/ matches the registry, so adding a provider
 without updating the documentation fails the suite.
@@ -93,6 +110,7 @@ without updating the documentation fails the suite.
 #   - supports_streaming: Whether provider supports streaming responses
 #   - chat_endpoint_suffix: Path to append to api_base for chat (if not already in api_base)
 #   - slow_api: Flag for local inference providers requiring longer HTTP timeouts (cloud: 300s, route-based: 300s, slow_api: 900s)
+#   - third_party_gateway: Flag for providers that route to models authored by other labs; CLIO discloses the data path to the user
 
 my %PROVIDERS = (
     github_copilot => {
@@ -100,6 +118,7 @@ my %PROVIDERS = (
         api_base => 'https://api.githubcopilot.com',
         model => 'claude-sonnet-4.6',  # Default fallback - copilot_models fetches dynamic list at startup
         requires_auth => 'copilot',
+        third_party_gateway => 0,
         supports_tools => 1,
         supports_streaming => 1,
         supports_reasoning => 1,  # Claude 4, GPT-5, o-series exposed via /chat/completions
@@ -132,6 +151,7 @@ my %PROVIDERS = (
         api_base => 'https://api.openai.com/v1/chat/completions',
         model => 'gpt-4.1',
         requires_auth => 'apikey',
+        third_party_gateway => 0,
         supports_tools => 1,
         supports_streaming => 1,
         supports_reasoning => 1,  # o-series and gpt-5 accept reasoning_effort
@@ -153,6 +173,7 @@ my %PROVIDERS = (
         api_base => 'https://api.deepseek.com/v1',
         model => 'deepseek-v4-pro',
         requires_auth => 'apikey',
+        third_party_gateway => 0,
         supports_tools => 1,
         supports_streaming => 1,
         supports_reasoning => 1,
@@ -192,6 +213,7 @@ my %PROVIDERS = (
         api_base => 'http://localhost:8080/v1/chat/completions',
         model => 'local-model',
         requires_auth => 'none',
+        third_party_gateway => 0,
         supports_tools => 1,
         supports_streaming => 1,
         slow_api => 1,  # Local inference is significantly slower than cloud APIs
@@ -228,6 +250,7 @@ my %PROVIDERS = (
         api_base => 'http://localhost:1234/v1/chat/completions',
         model => 'local-model',
         requires_auth => 'none',
+        third_party_gateway => 0,
         supports_tools => 1,
         supports_streaming => 1,
         slow_api => 1,  # Local inference is significantly slower than cloud APIs
@@ -249,6 +272,7 @@ my %PROVIDERS = (
         api_base => 'https://ollama.com/v1/chat/completions',
         model => 'gemma4:31b',
         requires_auth => 'apikey',
+        third_party_gateway => 0,
         supports_tools => 1,
         supports_streaming => 1,
         max_context_tokens => 128000,
@@ -265,6 +289,7 @@ my %PROVIDERS = (
         api_base => 'https://openrouter.ai/api/v1/chat/completions',
         model => 'meta-llama/llama-3.1-405b-instruct',
         requires_auth => 'apikey',
+        third_party_gateway => 1,
         supports_tools => 1,
         supports_streaming => 1,
         route_timeout => 1,  # Routes to upstream providers — extra latency from the intermediate hop
@@ -288,6 +313,7 @@ my %PROVIDERS = (
         api_base => 'https://ai-gateway.vercel.sh/v1',
         model => 'poolside/laguna-s-2.1',
         requires_auth => 'apikey',
+        third_party_gateway => 1,
         supports_tools => 1,
         supports_streaming => 1,
         supports_reasoning => 1,
@@ -309,6 +335,7 @@ my %PROVIDERS = (
         api_base => 'https://api.orcarouter.ai/v1/chat/completions',
         model => 'orcarouter/free',  # Auto-routing free model
         requires_auth => 'apikey',
+        third_party_gateway => 1,
         supports_tools => 1,
         supports_streaming => 1,
         supports_reasoning => 1,
@@ -330,6 +357,7 @@ my %PROVIDERS = (
         api_base => 'https://api.kilo.ai/api/gateway/chat/completions',
         model => 'kilo-auto/free',  # Auto-rotating free model
         requires_auth => 'apikey',
+        third_party_gateway => 1,
         supports_tools => 1,
         supports_streaming => 1,
         supports_reasoning => 1,
@@ -347,6 +375,7 @@ my %PROVIDERS = (
         api_base => 'https://api.opper.ai/v3/compat/chat/completions',
         model => 'claude-sonnet-4-6',
         requires_auth => 'apikey',
+        third_party_gateway => 1,
         supports_tools => 1,
         supports_streaming => 1,
         route_timeout => 1,  # Routes to upstream providers, extra latency from the intermediate hop
@@ -367,6 +396,7 @@ my %PROVIDERS = (
         api_base => 'https://api.cheaperinference.com/v1/chat/completions',
         model => 'gpt-5.4-mini',
         requires_auth => 'apikey',
+        third_party_gateway => 1,
         supports_tools => 1,
         supports_streaming => 1,
         route_timeout => 1,  # Routes to upstream providers, extra latency from the intermediate hop
@@ -386,6 +416,7 @@ my %PROVIDERS = (
         api_base => 'https://api.cheapaimodel.ai/v1/chat/completions',
         model => 'deepseek-v4-1-flash',
         requires_auth => 'apikey',
+        third_party_gateway => 1,
         supports_tools => 1,
         supports_streaming => 1,
         route_timeout => 1,  # Routes to upstream providers, extra latency from the intermediate hop
@@ -405,6 +436,7 @@ my %PROVIDERS = (
         api_base => 'https://api.stdcmpt.com/v1/chat/completions',
         model => 'StandardCompute',
         requires_auth => 'apikey',
+        third_party_gateway => 1,
         supports_tools => 1,
         supports_streaming => 1,
         route_timeout => 1,  # Routes to upstream providers, extra latency from the intermediate hop
@@ -427,6 +459,7 @@ my %PROVIDERS = (
         model => 'gpt-oss-20b',
         requires_auth => 'apikey',
         public_models => 1,  # Discovery is public; inference still requires auth/payment.
+        third_party_gateway => 1,  # Serves open-weight models authored by other labs (gpt-oss, Qwen, Gemma)
         supports_tools => 1,
         supports_streaming => 1,
         route_timeout => 1,  # Router ids and four upstream-served ids add an intermediate hop
@@ -454,6 +487,7 @@ my %PROVIDERS = (
         api_base => 'https://api.uberllm.dev/v1/chat/completions',
         model => 'deepseek/deepseek-v4-flash',
         requires_auth => 'apikey',
+        third_party_gateway => 1,
         supports_tools => 1,
         supports_streaming => 1,
         route_timeout => 1,  # Routes to upstream providers, extra latency from the intermediate hop
@@ -473,6 +507,7 @@ my %PROVIDERS = (
         api_base => 'https://generativelanguage.googleapis.com/v1beta',
         model => 'gemini-2.5-flash',
         requires_auth => 'apikey',
+        third_party_gateway => 0,
         supports_tools => 1,
         supports_streaming => 1,
         supports_reasoning => 1,
@@ -501,6 +536,7 @@ my %PROVIDERS = (
         api_base => 'https://hyper.charm.land/v1/chat/completions',
         model => 'deepseek-v4-pro',
         requires_auth => 'apikey',
+        third_party_gateway => 1,
         supports_tools => 1,
         supports_streaming => 1,
         supports_reasoning => 1,
@@ -520,6 +556,7 @@ my %PROVIDERS = (
         api_base => 'https://api.minimax.io/v1/chat/completions',
         model => 'MiniMax-M3',
         requires_auth => 'apikey',
+        third_party_gateway => 0,
         supports_tools => 1,
         supports_streaming => 1,
         supports_reasoning => 1,
@@ -562,6 +599,7 @@ my %PROVIDERS = (
         api_base => 'https://api.minimax.io/v1/chat/completions',
         model => 'MiniMax-M3',
         requires_auth => 'apikey',
+        third_party_gateway => 0,
         supports_tools => 1,
         supports_streaming => 1,
         supports_reasoning => 1,
@@ -590,6 +628,7 @@ my %PROVIDERS = (
         api_base => 'https://api.z.ai/api/paas/v4',
         model => 'glm-5.1',
         requires_auth => 'apikey',
+        third_party_gateway => 0,
         supports_tools => 1,
         supports_streaming => 1,
         supports_reasoning => 1,
@@ -618,6 +657,7 @@ my %PROVIDERS = (
         api_base => 'https://api.z.ai/api/coding/paas/v4',
         model => 'glm-5.1',
         requires_auth => 'apikey',
+        third_party_gateway => 0,
         supports_tools => 1,
         supports_streaming => 1,
         supports_reasoning => 1,
@@ -644,6 +684,7 @@ my %PROVIDERS = (
         api_base => 'https://api.anthropic.com/v1/messages',
         model => 'claude-sonnet-4-20250514',
         requires_auth => 'apikey',
+        third_party_gateway => 0,
         supports_tools => 1,
         supports_streaming => 1,
         supports_reasoning => 1,
@@ -688,6 +729,7 @@ my %PROVIDERS = (
         api_base => 'https://integrate.api.nvidia.com/v1',
         model => 'nvidia/nemotron-3-ultra-550b-a55b',
         requires_auth => 'apikey',
+        third_party_gateway => 0,
         native_api => 1,  # Has dedicated capability fetcher (static map + heuristics)
         supports_tools => 1,
         supports_streaming => 1,
@@ -1132,6 +1174,48 @@ sub exposes_props {
     my $p = get_provider($provider_name);
     return 0 unless $p;
     return $p->{exposes_props} ? 1 : 0;
+}
+
+=head2 is_third_party_gateway($provider_name)
+
+Returns 1 if the named provider is a gateway that routes requests to
+models authored by other parties, 0 otherwise.
+
+This flag describes architecture, not a trust judgement. It is set for
+every provider that sits between the user and the model's author,
+including large established ones. What the flag means for a user is the
+same in every case: the request, and whatever it contains, is processed
+by the gateway operator before it reaches the upstream lab, so the
+gateway's own retention and handling policy applies in addition to the
+upstream's. Which gateways a user is willing to accept is their call;
+the flag exists so the choice is informed rather than implicit.
+
+CLIO shows a disclosure wherever this returns 1: the provider list, the
+provider detail view, and when switching providers.
+
+Arguments:
+- $provider_name: provider key (custom aliases resolve to their base)
+
+Returns: 1 if the provider routes to third-party upstreams, 0 otherwise.
+
+=cut
+
+sub is_third_party_gateway {
+    my ($provider_name) = @_;
+    return 0 unless defined $provider_name;
+
+    # Custom aliases inherit the base provider's classification: an alias
+    # wrapping OpenRouter routes to upstreams exactly as OpenRouter does.
+    my $resolved = $provider_name;
+    if (!exists $PROVIDERS{$provider_name}) {
+        eval {
+            require CLIO::Core::Config;
+            $resolved = resolve_custom_provider($provider_name, CLIO::Core::Config->new());
+        };
+    }
+    my $p = $PROVIDERS{$resolved} || get_provider($resolved);
+    return 0 unless $p;
+    return $p->{third_party_gateway} ? 1 : 0;
 }
 
 =head2 default_context_window($provider_name)

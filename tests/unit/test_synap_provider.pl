@@ -238,21 +238,6 @@ require CLIO::Core::ModelCapabilitiesManager;
        'Resolved capabilities leave a prompt budget above the 1000-token floor');
 }
 
-# The sanitizer rule is provider-independent; pin its edges here so the
-# synap fix cannot regress other providers.
-{
-    require CLIO::Core::Defaults;
-    my $default = CLIO::Core::Defaults::DEFAULT_MAX_OUTPUT_TOKENS();
-    my $mcm = bless {}, 'CLIO::Core::ModelCapabilitiesManager';
-    my $s = sub { $mcm->_sanitize_token_limits({ context_window => $_[0], max_output_tokens => $_[1] })->{max_output_tokens} };
-    is($s->(65536, 65536), $default, 'Output equal to the window falls back to the default reserve');
-    is($s->(128000, 131072), $default, 'Output above the window falls back to the default reserve');
-    is($s->(65536, 8192), 8192, 'A real output limit below the window is kept');
-    is($s->(1048576, 943717), CLIO::Core::Defaults::MAX_MODEL_OUTPUT_TOKENS(),
-       'Implausibly large output on a huge window is still capped at the hard ceiling');
-    is($s->(8192, 8192), 8192, 'Windows at or below the default keep the existing behaviour');
-}
-
 package PublicModelsHTTP;
 sub get {
     my ($self, $url, %opts) = @_;

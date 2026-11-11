@@ -414,6 +414,12 @@ usable context).
 For 1M-context models with 16K output (NVIDIA Nemotron 3 Ultra, Llama
 4), the reserve is just 16K, leaving ~934K for prompt.
 
+The one exception: a reported reserve that fills the context window is
+treated as missing. Some providers publish their context length in the
+output field, which would leave the prompt nothing and collapse the
+budget to the floor. Those resolve to min(DEFAULT_MAX_OUTPUT_TOKENS,
+context_window / 2).
+
 Arguments:
     $caps - Hashref from ModelCapabilitiesManager::get_capabilities or
             APIManager::get_model_capabilities. Recognized keys:
@@ -467,6 +473,16 @@ sub compute_prompt_budget {
     $output_reserve = CLIO::Core::Defaults::DEFAULT_MAX_OUTPUT_TOKENS() if $output_reserve <= 0;
     $output_reserve = $output_cap if $output_reserve > $output_cap;
     $output_reserve = $context_window if $context_window < $output_reserve;
+    # A reserve filling the whole window is not a real output cap - it is a
+    # provider publishing its context length in the output field. Fall back
+    # to DEFAULT_MAX_OUTPUT_TOKENS, or half the window for models too small
+    # to hold that. Keeps the prompt budget above its 1000-token floor.
+    if ($output_reserve >= $context_window) {
+        my $fallback = int($context_window / 2);
+        $fallback = CLIO::Core::Defaults::DEFAULT_MAX_OUTPUT_TOKENS()
+            if $fallback > CLIO::Core::Defaults::DEFAULT_MAX_OUTPUT_TOKENS();
+        $output_reserve = $fallback;
+    }
 
     # Estimation buffer: constant + proportional, capped. Covers
     # token estimation error, per-message overhead not captured by the

@@ -119,10 +119,68 @@ The test suite has ~126 tests across unit, integration, and e2e categories. All 
 
 ### New Provider
 
-1. Add provider configuration in `lib/CLIO/Core/Providers.pm`
-2. Handle API differences in `lib/CLIO/Core/APIManager.pm`
-3. Add model capabilities
-4. Add tests
+CLIO does not gatekeep providers. A user can already point CLIO at any
+OpenAI-compatible endpoint today through a custom provider, so refusing a
+registry entry does not stop anyone from using the service. It only removes the
+discovery and the disclosure. What we do instead is hold every entry to the same
+bar, and make sure users can see what they are choosing.
+
+**Every provider is a data destination.** CLIO sends prompts, source code, and
+tool results to whichever provider is selected. Treat adding one as adding a
+data path, not as adding a row to a table.
+
+#### What a maintainer checks before merging
+
+1. **The endpoint works.** A maintainer hits `/v1/models` and one real
+   `chat/completions` request themselves. PR-description claims are not evidence.
+2. **Capability metadata is real.** The feed must report context and output
+   limits in fields CLIO reads. A provider that publishes its context length in
+   the output field produces a collapsed prompt budget, and a test that only
+   checks `provider-defaults.json` will not catch it - assert against resolved
+   capabilities, not the fallback file.
+3. **Published retention policy.** The provider states what it keeps and for how
+   long. If it cannot say, that goes in the docs so users can decide with their
+   eyes open.
+4. **Gateway classification is correct.** Set `third_party_gateway` explicitly.
+   `tests/unit/test_provider_gateway_disclosure.pl` fails if it is missing, and
+   fails if a gateway is classified as first-party.
+5. **Longevity is noted, not required.** Domain age, a status page, and an
+   operational track record are not merge blockers, but they belong in the review
+   so the risk is on the record. A provider that disappears leaves a dead entry
+   and broken configs behind.
+
+**Affiliated contributions are welcome and expected.** If you work for the
+provider you are adding, say so in the issue and the PR. Disclosed affiliation is
+not a problem; undisclosed affiliation is a reason to close.
+
+#### Mechanical checklist
+
+The registry lives in `lib/CLIO/Providers.pm` (not `lib/CLIO/Core/Providers.pm`).
+
+1. Add the entry to `%PROVIDERS` with `third_party_gateway` set explicitly
+2. Add `reasoning_schema` and context/output limits to
+   `lib/CLIO/Core/model-data/provider-defaults.json`
+3. Add a `model_id_format` entry to `lib/CLIO/Core/model-data/provider-mapping.json`
+4. Set `route_timeout => 1` if requests traverse an intermediate hop
+5. Set `url_detection_patterns` so a pasted base URL auto-detects the provider
+6. Update the provider count in README.md (2 places), AGENTS.md,
+   `docs/ARCHITECTURE.md` (2 places), `docs/DEVELOPER_DOCUMENTATION_GUIDE.md`,
+   `docs/FEATURES.md`, and `docs/USER_GUIDE.md`.
+   `tests/unit/test_provider_doc_count.pl` enforces this.
+7. Add the row and section to `docs/PROVIDERS.md`, including the **Routes** column
+8. Extend the matrices in `test_providers_flags.pl`,
+   `test_provider_timeout_tiers.pl`, `test_provider_from_url.pl`, and
+   `test_openai_compatible_mcm_url.pl`
+9. Add the provider to the gateway or first-party list in
+   `test_provider_gateway_disclosure.pl`
+10. Add `tests/unit/test_<provider>_provider.pl` modeled on
+    `tests/unit/test_standardcompute_provider.pl`
+
+Model ids of the form `vendor/model` collide with CLIO provider names:
+`_parse_model_provider` reads the first path segment as a provider. If your
+model ids start with a name that is also a CLIO provider, document that users
+must keep the provider prefix on hand-typed ids. Standard Compute hit this and
+fixed it in `197996b`.
 
 ## Pull Request Process
 

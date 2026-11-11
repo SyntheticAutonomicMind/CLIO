@@ -205,17 +205,14 @@ the prompt with almost no budget, causing aggressive conversation
 trimming.
 
 Rules:
-- max_output_tokens is clamped to MAX_MODEL_OUTPUT_TOKENS
+- max_output_tokens is clamped to min(MAX_MODEL_OUTPUT_TOKENS, context_window)
 - when max_output_tokens is unknown, the default is DEFAULT_MAX_OUTPUT_TOKENS
   (16384) rounded down to the context window - reserving the full context for
   output would starve the prompt budget of small models.
-- when max_output_tokens is equal to or larger than the context window, it is
-  replaced by that same default. Many OpenAI-compatible feeds publish
-  top_provider.max_completion_tokens == context_length (the most a single
-  completion can use if the prompt is tiny), and some providers publish an
-  output limit above the context. Clamping such a value to the context window
-  leaves it equal to the window, and compute_prompt_budget() then collapses
-  to its 1000-token floor, so the reserve has to be reduced, not capped.
+- when max_output_tokens is greater than or equal to the context window it
+  is reset to min(DEFAULT_MAX_OUTPUT_TOKENS, context_window / 2). A reserve
+  that fills the window leaves the prompt nothing, which collapses
+  compute_prompt_budget to its 1000-token floor.
 
 Do not call directly. Applied on every get_capabilities return path.
 
@@ -240,15 +237,20 @@ sub _sanitize_token_limits {
     $out_default = $effective_ctx if defined($effective_ctx) && $effective_ctx < $out_default;
     if (!defined $caps->{max_output_tokens} || $caps->{max_output_tokens} <= 0) {
         $caps->{max_output_tokens} = $out_default;
-    } elsif (defined $effective_ctx && $effective_ctx > 0
-             && $caps->{max_output_tokens} >= $effective_ctx) {
-        # An output reserve that fills the whole window leaves no room for
-        # the prompt. Capping it at the window is not enough (the value is
-        # unchanged when it already equals the window), so fall back to the
-        # same default used when the output limit is unknown.
-        $caps->{max_output_tokens} = $out_default;
     } elsif ($caps->{max_output_tokens} > $out_cap) {
         $caps->{max_output_tokens} = $out_cap;
+    } elsif (defined $effective_ctx && $caps->{max_output_tokens} >= $effective_ctx) {
+        # A reserve equal to the context window is not a real output cap -
+        # it is a provider publishing its context length in the output
+        # field. Reserving the whole window leaves the prompt nothing, so
+        # compute_prompt_budget floors at 1000 tokens, which is smaller
+        # than the system prompt and disables proactive trimming. Fall back
+        # to DEFAULT_MAX_OUTPUT_TOKENS, or half the window for models too
+        # small to hold that.
+        my $fallback = int($effective_ctx / 2);
+        $fallback = CLIO::Core::Defaults::DEFAULT_MAX_OUTPUT_TOKENS()
+            if $fallback > CLIO::Core::Defaults::DEFAULT_MAX_OUTPUT_TOKENS();
+        $caps->{max_output_tokens} = $fallback;
     }
 
     return $caps;
