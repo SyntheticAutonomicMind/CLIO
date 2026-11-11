@@ -270,6 +270,16 @@
         "mode": "disabled"
       }
     },
+    "uberllm": {
+      "default_model": "deepseek/deepseek-v4-flash",
+      "max_context_tokens": 200000,
+      "max_output_tokens": 32768,
+      "supports_streaming": 1,
+      "supports_tools": 1,
+      "reasoning_schema": {
+        "mode": "disabled"
+      }
+    },
     "zai": {
       "default_model": "glm-5.1",
       "max_context_tokens": 128000,
