@@ -187,8 +187,13 @@ SKIP: {
     # Call _kill_process_group via the safety-checked path. Should kill the child.
     $tool->_kill_process_group($pid);
 
-    my $waited = waitpid($pid, 0);
-    is($waited, $pid, "child was reaped after PGID-verified kill");
+    # _kill_process_group reaps the child itself while deciding whether to
+    # escalate from SIGTERM to SIGKILL, so ECHILD for the caller is the normal
+    # outcome. Non-blocking wait is deliberate: a blocking wait would sit out
+    # the child's own sleep and report success even if the kill had missed.
+    my $waited = waitpid($pid, POSIX::WNOHANG());
+    ok(($waited == $pid || $waited == -1) && kill(0, $pid) == 0,
+       "child was killed after PGID-verified kill (waitpid=$waited)");
 }
 
 done_testing();
