@@ -487,8 +487,9 @@ clio --new
 
 **Available models:** `https://synap402.com/v1/models` is public - you can read the
 catalogue before you have a key - and it is the source of truth for the model list and
-for each model's context, output limit and supported parameters. Use `/api models` for
-the current list. The default model is `gpt-oss-20b` (65,536 context).
+for each model's context, output limit and supported parameters. Once `synap` is the
+selected provider, `/api models` lists the same catalogue, with or without a key. The
+default model is `gpt-oss-20b` (65,536 context, 16,384 output reserve).
 
 Model ids are used exactly as published, and the list mixes two forms. Models served on
 Linkrra's own GPUs use bare ids; the rest are namespaced:

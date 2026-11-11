@@ -74,6 +74,7 @@ Conditional: `remote_execution`, `agent_operations`, `skill_operations`.
 | KiloCode | API Key | Auto-rotating free models |
 | Opper | API Key | Most recent addition |
 | Charm Hyper | API Key | HyperCharm gateway |
+| Synap by Linkrra | API Key | Open-weight models; keyless x402 pay-per-call |
 | SAM | API Key | Use your local SAM instance |
 
 Run `/api models` after setup to see current model availability. Full setup instructions in [docs/PROVIDERS.md](docs/PROVIDERS.md).

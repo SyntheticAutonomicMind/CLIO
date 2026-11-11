@@ -374,6 +374,7 @@ CLIO supports 23 AI providers out of the box. Switch between them at any time - 
 | **Cheaper Inference** | Cloud | API key |
 | **cheapaimodel** | Cloud | API key |
 | **Standard Compute** | Cloud | API key |
+| **Synap by Linkrra** | Cloud | API key or x402 pay-per-call |
 | **Ollama Cloud** | Cloud | API key |
 | **MiniMax** | Cloud | API key |
 | **MiniMax Token Plan** | Cloud | API key (usage-based) |

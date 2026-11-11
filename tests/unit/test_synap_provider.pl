@@ -140,7 +140,7 @@ ok(
 # ============================================================================
 SKIP: {
     my $defaults_path = "$FindBin::Bin/../../lib/CLIO/Core/model-data/provider-defaults.json";
-    skip 'provider-defaults.json not found', 3 unless -f $defaults_path;
+    skip 'provider-defaults.json not found', 5 unless -f $defaults_path;
 
     require CLIO::Util::JSON;
     my $raw = do {
@@ -158,6 +158,22 @@ SKIP: {
        'provider-defaults default_model matches the registry default');
     is($synap && $synap->{max_context_tokens}, 65536,
        'provider-defaults context matches the published gpt-oss-20b context');
+
+    # The output reserve must leave room for the prompt. When
+    # max_output_tokens equals the context window, compute_prompt_budget()
+    # floors at 1000 tokens, which is smaller than the system prompt, so
+    # proactive trimming stops working for every session on this provider.
+    ok($synap && defined $synap->{max_output_tokens}
+              && $synap->{max_output_tokens} < $synap->{max_context_tokens},
+       'provider-defaults output limit is strictly below the context window');
+
+    require CLIO::Memory::TokenEstimator;
+    my $budget = CLIO::Memory::TokenEstimator::compute_prompt_budget({
+        max_context_window_tokens => $synap->{max_context_tokens},
+        max_output_tokens         => $synap->{max_output_tokens},
+    });
+    cmp_ok($budget, '>', 1000,
+       'provider-defaults leave a prompt budget above the 1000-token floor');
 }
 
 # ============================================================================
