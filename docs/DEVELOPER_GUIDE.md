@@ -373,8 +373,10 @@ perl -I lib tests/unit/test_myfeature.pl
 # Run all tests for a component
 cd tests/unit && for t in test_<component>*.pl; do perl -I../../lib $t; done
 
-# Strict mode (catch uninitialized-value warnings)
-perl tests/run_strict_tests.pl
+# Strict mode: run the suite under -W, warnings attributed to file:line
+perl tests/run_strict_tests.pl              # 0 clean, 1 broken, 2 warnings
+perl tests/run_strict_tests.pl --verbose    # one line per test
+perl tests/run_strict_tests.pl --json       # machine-readable report
 
 # Manual testing
 ./clio --new
@@ -700,8 +702,10 @@ perl -I lib tests/unit/test_memory_operations.pl
 # Run all unit tests
 perl tests/run_all_tests.pl
 
-# Strict mode: catch uninitialized-value warnings across all tests
-perl tests/run_strict_tests.pl
+# Strict mode: run every unit test under -W, warnings attributed to file:line
+perl tests/run_strict_tests.pl              # 0 clean, 1 broken/hung/missing, 2 warnings
+perl tests/run_strict_tests.pl --baseline   # report only warnings new since baseline
+perl tests/run_strict_tests.pl tests/unit/test_memory_operations.pl  # one file
 ```
 
 **Integration tests** are in `tests/integration/` and exercise cross-module behavior (API error handling, session persistence, multi-agent flow).

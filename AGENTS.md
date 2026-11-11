@@ -262,7 +262,9 @@ cd tests/unit && for t in test_<component>*.pl; do perl -I../../lib $t; done
 
 **Test Requirements:** Syntax must pass, unit tests must exist, tests must pass (exit 0), complex features need e2e verification.
 
-**Strict mode warnings:** Use `perl tests/run_strict_tests.pl` to catch uninitialized-value warnings across all unit tests. CLIO-originated warnings fail the run; vendor warnings are informational only. Use `$SIG{__WARN__}` capture pattern in tests for suspected paths (see `test_command_handler.pl`).
+**Strict mode warnings:** `perl tests/run_strict_tests.pl` runs the unit suite under `-W` and attributes every warning to a file and line. Each test's stdout and stderr are captured and discarded unless that test needs reporting, so a clean run prints one verdict line instead of the suite's whole chatter, and findings stream out as they happen.
+
+Exit codes keep the two questions separate: `0` clean, `1` a test broke (non-zero exit, hung, or missing), `2` every test passed but CLIO-originated warnings were found. Vendor warnings are informational and never change the exit code. `--verbose` adds a line per test, `--full` stops truncating failure evidence, `--json` emits a machine-readable report, and `--baseline` records the current warning set to `tests/.strict-baseline.json` so later runs report only new warnings. Use `$SIG{__WARN__}` capture pattern in tests for suspected paths (see `test_command_handler.pl`).
 
 ---
 
