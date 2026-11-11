@@ -223,6 +223,19 @@ require CLIO::Core::ModelCapabilitiesManager;
     my $caps = $mcm->_fetch_openai_compatible_capabilities('synap', 'gpt-oss-20b');
     is($caps->{context_window}, 65536, 'Public MCM reads real-shaped context metadata without a key');
     ok(!exists $captured_headers->{Authorization}, 'Public MCM omits the Authorization header');
+
+    # The live feed publishes max_completion_tokens == context_length. This
+    # is the value that reaches the runtime for synap (provider-defaults.json
+    # is not consulted on this path), so assert on the resolved capabilities
+    # after the same sanitizer get_capabilities() applies on every return.
+    is($caps->{max_output_tokens}, 65536,
+       'Feed-shaped fetch reports an output limit equal to the context window');
+    $mcm->_sanitize_token_limits($caps);
+    cmp_ok($caps->{max_output_tokens}, '<', $caps->{context_window},
+       'Resolved output reserve is strictly below the context window');
+    require CLIO::Memory::TokenEstimator;
+    cmp_ok(CLIO::Memory::TokenEstimator::compute_prompt_budget($caps), '>', 1000,
+       'Resolved capabilities leave a prompt budget above the 1000-token floor');
 }
 
 package PublicModelsHTTP;

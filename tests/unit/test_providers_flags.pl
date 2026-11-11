@@ -32,7 +32,7 @@ use CLIO::Core::ModelDataLoader;
 
 # Each tier name + the providers that should belong to it.
 my @LOCAL_NAMES  = qw(llama.cpp lmstudio);
-my @CLOUD_NAMES  = qw(openai anthropic google minimax zai deepseek nvidia github_copilot openrouter ollama_cloud orca kilo hyper opper cheaperinference cheapaimodel standardcompute uberllm);
+my @CLOUD_NAMES  = qw(openai anthropic google minimax zai deepseek nvidia github_copilot openrouter ollama_cloud orca kilo hyper opper cheaperinference cheapaimodel standardcompute synap uberllm);
 
 # ============================================================================
 # Registry must declare the flags on every named local provider
@@ -85,7 +85,7 @@ for my $name (@LOCAL_NAMES) {
 for my $name (@CLOUD_NAMES) {
     # anthropic (200000), minimax (1000000), openrouter (200000),
     # cheaperinference (400000), cheapaimodel (500000),
-    # standardcompute (200000) and uberllm (200000) ship explicit
+    # standardcompute (200000), synap (65536) and uberllm (200000) ship explicit
     # max_context_tokens in provider-defaults.json, which override the
     # DEFAULT_CONTEXT_WINDOW (128000) fallback. Every other cloud provider
     # falls back to the constant.
@@ -95,6 +95,7 @@ for my $name (@CLOUD_NAMES) {
                 : ($name eq 'cheaperinference') ? 400000
                 : ($name eq 'cheapaimodel')     ? 500000
                 : ($name eq 'standardcompute')  ? 200000
+                : ($name eq 'synap')            ? 65536
                 : ($name eq 'uberllm')          ? 200000
                 :                                 DEFAULT_CONTEXT_WINDOW();
     is(default_context_window($name), $expected,
@@ -203,7 +204,7 @@ for my $name (@CLOUD_NAMES) {
 
     # Providers without a dedicated fetcher return undef so the caller
     # can fall back to the generic OpenAI-compatible path.
-    for my $name (qw(openai ollama_cloud openrouter orca kilo hyper opper cheaperinference cheapaimodel standardcompute uberllm)) {
+    for my $name (qw(openai ollama_cloud openrouter orca kilo hyper opper cheaperinference cheapaimodel standardcompute synap uberllm)) {
         is(capability_fetcher($name), undef,
             "$name has no dedicated fetcher -> undef (caller falls back)");
     }
