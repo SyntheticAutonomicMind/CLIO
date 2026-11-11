@@ -29,7 +29,7 @@ use CLIO::Providers qw(get_provider list_providers is_third_party_gateway);
 # the completeness test below catches a provider missing from all three.
 my @GATEWAYS = qw(
     openrouter orca kilo hyper opper vercel
-    cheaperinference cheapaimodel standardcompute uberllm
+    cheaperinference cheapaimodel standardcompute uberllm synap
 );
 
 # Providers that serve models of their own, or run locally on the user's

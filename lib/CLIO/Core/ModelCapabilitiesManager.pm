@@ -2908,7 +2908,7 @@ sub _fetch_openai_compatible_capabilities {
         $api_key = $ENV{CLIO_API_KEY};
     }
 
-    return undef unless $api_key;
+    return undef unless $api_key || $provider_def->{public_models};
 
     my $http = $self->get_http();
     my $models_url = "$models_api_base/models";
@@ -2916,7 +2916,7 @@ sub _fetch_openai_compatible_capabilities {
     
     my $resp = $http->get($models_url, 
         headers => { 
-            'Authorization' => "Bearer $api_key",
+            ($api_key ? ('Authorization' => "Bearer $api_key") : ()),
             'Accept' => 'application/json',
         }
     );

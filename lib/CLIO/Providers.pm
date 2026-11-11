@@ -58,6 +58,7 @@ type.
     cheapaimodel      cheapaimodel
     standardcompute   Standard Compute
     uberllm           UberLLM
+    synap             Synap by Linkrra
     minimax           MiniMax
     minimax_token     MiniMax Token Plan
     zai               Z.AI (Chat)
@@ -465,6 +466,35 @@ my %PROVIDERS = (
         # Model ids use provider/model form (e.g. deepseek/deepseek-v4-flash,
         # anthropic/claude-sonnet-4.6). The public /v1/models list is the
         # source of truth for the model list.
+        endpoint => {
+            path_suffix => '',
+            temperature_range => [0.0, 2.0],
+            supports_tools => 1,
+        },
+    },
+
+    synap => {
+        name => 'Synap by Linkrra',
+        api_base => 'https://synap402.com/v1/chat/completions',
+        model => 'gpt-oss-20b',
+        requires_auth => 'apikey',
+        third_party_gateway => 1,
+        public_models => 1,  # Discovery is public; inference still requires auth/payment.
+        supports_tools => 1,
+        supports_streaming => 1,
+        route_timeout => 1,  # Router ids and four upstream-served ids add an intermediate hop
+        url_detection_patterns => [ qr{synap402\.com}i, qr{pool\.linkrra\.com}i ],
+        # Model ids are used verbatim as published by /v1/models, and the
+        # list mixes both forms: bare ids for models served on Linkrra's
+        # own GPUs (gpt-oss-20b, qwen3-coder-30b) and namespaced ids for
+        # the rest (qwen/qwen3-vl-30b-a3b-instruct, meta/muse-glimmer-30b,
+        # deepseek/deepseek-v4-pro). synap-v1 and synap-v1-pro are routers,
+        # not fixed models. /v1/models is public - no key needed to read
+        # it - and is the source of truth for the model list.
+        #
+        # A request with no key answers 402 with an x402 payment challenge,
+        # not 401: the same endpoint can be paid per call in USDC instead
+        # of with an API key. Tests that assert 401 on this provider fail.
         endpoint => {
             path_suffix => '',
             temperature_range => [0.0, 2.0],

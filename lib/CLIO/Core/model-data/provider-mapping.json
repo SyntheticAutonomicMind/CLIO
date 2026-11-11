@@ -227,6 +227,10 @@
       "model_id_format": "provider/model",
       "models": []
     },
+    "synap": {
+      "model_id_format": "provider/model",
+      "models": []
+    },
     "orca": {
       "model_id_format": "provider/model",
       "models": []

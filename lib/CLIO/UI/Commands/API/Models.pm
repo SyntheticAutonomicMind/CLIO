@@ -162,6 +162,7 @@ sub handle_models {
 
         my $api_key = $self->{config}->get_provider_key($provider_name);
         my $has_auth = $api_key
+            || ($provider_def->{public_models} && ($self->{config}->get('provider') || '') eq $provider_name)
             || ($provider_def->{requires_auth} && $provider_def->{requires_auth} eq 'copilot')
             || ($provider_def->{requires_auth} && $provider_def->{requires_auth} eq 'none');
 
@@ -352,12 +353,12 @@ sub _fetch_provider_models {
             $models_url = "$1/v1/models";
         }
 
-        return [] unless $models_url && $api_key;
+        return [] unless $models_url && ($api_key || $provider_def->{public_models});
 
         eval {
             require CLIO::Compat::HTTP;
             my $ua = CLIO::Compat::HTTP->new(timeout => 30);
-            my %headers = ('Authorization' => "Bearer $api_key");
+            my %headers = $api_key ? ('Authorization' => "Bearer $api_key") : ();
             my $resp = $ua->get($models_url, headers => \%headers);
 
             if ($resp->is_success) {
