@@ -21,6 +21,7 @@
 | **Cheaper Inference** | `cheaperinference` | API Key |
 | **cheapaimodel** | `cheapaimodel` | API Key |
 | **Standard Compute** | `standardcompute` | API Key |
+| **UberLLM** | `uberllm` | API Key |
 | **Ollama Cloud** | `ollama_cloud` | API Key |
 | **MiniMax** | `minimax` | API Key |
 | **MiniMax Token Plan** | `minimax_token` | API Key |
@@ -468,6 +469,39 @@ Pinned model ids use `provider/model` form. Keep the `standardcompute/` prefix o
 
 ---
 
+### UberLLM
+
+**Best for:** One OpenAI-compatible API key for text models from many labs (DeepSeek, Claude, GPT, Gemini, Kimi, Qwen and others), usually below list price, prepaid with no monthly fee
+
+**Get API Key:**
+1. Go to [uberllm.dev/signup](https://uberllm.dev/signup) and create an account
+2. Create an API key in the dashboard
+
+**Configure CLIO:**
+```bash
+clio --new
+/api set provider uberllm
+/api set key <your-uberllm-key>
+/config save
+```
+
+For CI or non-persistent setups, export the key as `CLIO_API_KEY` (for example `export CLIO_API_KEY="$UBERLLM_API_KEY"`).
+
+**Available models:** UberLLM serves its models through one OpenAI-compatible API at `https://api.uberllm.dev/v1`. The default model is `deepseek/deepseek-v4-flash`. Use `/api models` for the current list (also public at `https://api.uberllm.dev/v1/models`); per-model prices are at [uberllm.dev/models](https://uberllm.dev/models).
+
+Model ids use `provider/model` form. Keep the `uberllm/` prefix on those so CLIO does not read the first segment as a CLIO provider name:
+```bash
+/api set model uberllm/deepseek/deepseek-v4-flash
+/api set model uberllm/anthropic/claude-sonnet-4.6
+/api set model uberllm/moonshotai/kimi-k2.6
+```
+
+**Features:**
+- Supports tools/function calling
+- Streaming responses
+
+---
+
 ### Vercel AI Gateway
 
 **Best for:** Accessing models across providers via Vercel's AI Gateway, free poolside models with reasoning
@@ -823,7 +857,7 @@ CLIO applies a tiered `--max-time` to provider requests so a slow upstream does 
 | Tier | `--max-time` | When it applies |
 |------|--------------|------------------|
 | Cloud | **300 s** | Direct provider connections (OpenAI, Anthropic, Google, DeepSeek, NVIDIA, MiniMax, Z.AI, GitHub Copilot, Ollama Cloud, KiloCode) |
-| Route-based | **300 s** | Multi-hop providers that add an intermediate proxy (OpenRouter, OrcaRouter, Opper, Cheaper Inference, cheapaimodel, Standard Compute, Vercel AI Gateway) |
+| Route-based | **300 s** | Multi-hop providers that add an intermediate proxy (OpenRouter, OrcaRouter, Opper, Cheaper Inference, cheapaimodel, Standard Compute, UberLLM, Vercel AI Gateway) |
 | Local | **900 s** | Inference servers running on this machine (llama.cpp, LM Studio) |
 
 The tier is selected per provider via two flags propagated through `build_endpoint_config()`:

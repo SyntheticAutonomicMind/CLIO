@@ -35,7 +35,7 @@ Users can override any setting via /api commands, but these are the defaults.
 
 =head2 Roster
 
-The registry holds 22 providers. The display names below are what the
+The registry holds 23 providers. The display names below are what the
 registry keys map to; the key is listed first, since that is what users
 type.
 
@@ -56,6 +56,7 @@ type.
     cheaperinference  Cheaper Inference
     cheapaimodel      cheapaimodel
     standardcompute   Standard Compute
+    uberllm           UberLLM
     minimax           MiniMax
     minimax_token     MiniMax Token Plan
     zai               Z.AI (Chat)
@@ -412,6 +413,25 @@ my %PROVIDERS = (
         # Pinned ids use provider/model form (e.g.
         # deepseek/deepseek-v4-pro, z-ai/glm-5.3). The public /v1/models
         # list is the source of truth for the model list.
+        endpoint => {
+            path_suffix => '',
+            temperature_range => [0.0, 2.0],
+            supports_tools => 1,
+        },
+    },
+
+    uberllm => {
+        name => 'UberLLM',
+        api_base => 'https://api.uberllm.dev/v1/chat/completions',
+        model => 'deepseek/deepseek-v4-flash',
+        requires_auth => 'apikey',
+        supports_tools => 1,
+        supports_streaming => 1,
+        route_timeout => 1,  # Routes to upstream providers, extra latency from the intermediate hop
+        url_detection_patterns => [ qr{api\.uberllm\.dev}i ],
+        # Model ids use provider/model form (e.g. deepseek/deepseek-v4-flash,
+        # anthropic/claude-sonnet-4.6). The public /v1/models list is the
+        # source of truth for the model list.
         endpoint => {
             path_suffix => '',
             temperature_range => [0.0, 2.0],
