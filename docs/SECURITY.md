@@ -16,6 +16,22 @@ prompt injection, data exfiltration, credential theft, and accidental system dam
 | **5. Web Security** | `WebOperations.pm` | Gate outbound HTTP requests |
 | **6. Sandbox Mode** | `--sandbox` flag | Project-scoped isolation |
 
+### What these layers do not cover
+
+These six layers defend against content arriving at, or being written by, the
+agent. None of them restrict where your data goes once you have chosen a
+provider. CLIO sends your prompts, your source code, and your tool results to
+the provider you select, and that is by design - it is how a hosted model works.
+
+If you select a gateway, a second operator sits in that path and forwards your
+requests to models authored by other labs. CLIO labels these providers in
+`/api providers`, `/api provider <name>`, and on switch, so the choice is
+visible. Review the provider's own retention policy before using one on
+sensitive work. Local inference (`llama.cpp`, `lmstudio`) keeps everything on
+your machine if that is a requirement.
+
+See [PROVIDERS.md](PROVIDERS.md#third-party-gateways) for the full breakdown.
+
 ---
 
 ## Layer 1: Invisible Character Filter

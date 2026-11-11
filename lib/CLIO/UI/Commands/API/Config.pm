@@ -2034,6 +2034,10 @@ sub _set_provider {
 
             $self->{session}->save();
             $self->display_system_message("Provider set to: $value (this session)");
+            $self->_gateway_disclosure(
+                $value,
+                (CLIO::Providers::get_provider($base_provider) || {})->{name}
+            );
         }
     } else {
         if ($self->{config}->set_provider($value)) {
@@ -2048,6 +2052,12 @@ sub _set_provider {
             } else {
                 $self->display_system_message("Switched to provider: $value (warning: failed to save)");
             }
+
+            # Disclose the data path at the moment the user commits to it.
+            $self->_gateway_disclosure(
+                $value,
+                (CLIO::Providers::get_provider($value) || {})->{name}
+            );
 
             # Clear any session-only provider/api_base/api_key overrides
             # so the new global values take effect immediately
@@ -2672,6 +2682,9 @@ sub display_providers {
     my @providers = CLIO::Providers::list_providers();
     my $current = $self->{config}->get('provider') || '';
 
+    $self->writeline("  " . $self->colorize('[gateway] routes to models made by other labs - see /api provider <name>', 'DIM'), markdown => 0);
+    $self->writeline("", markdown => 0);
+
     for my $name (@providers) {
         my $provider = CLIO::Providers::get_provider($name);
         next unless $provider;
@@ -2696,7 +2709,8 @@ sub display_providers {
 
         # Pad name first (plain text), then colorize, to avoid ANSI codes breaking alignment
         my $padded_name = sprintf("%-18s", $name);
-        $self->writeline("  " . $auth_status . $self->colorize($padded_name, 'USER') . " " . $self->colorize($auth_req, 'DIM') . $marker, markdown => 0);
+        my $gw_tag = $self->_gateway_tag($name);
+        $self->writeline("  " . $auth_status . $self->colorize($padded_name, 'USER') . " " . $self->colorize($auth_req, 'DIM') . $gw_tag . $marker, markdown => 0);
     }
 
     # Show custom provider aliases (if any)
@@ -2747,6 +2761,7 @@ sub _show_provider_details {
     $self->display_key_value("Auth", $auth_req, 16);
 
     $self->writeline("", markdown => 0);
+    $self->_gateway_disclosure($name, $provider->{name});
     $self->display_section_header("SETUP");
     $self->writeline("  " . $self->colorize("/api set provider $name", 'USER'), markdown => 0);
 
@@ -2779,6 +2794,37 @@ sub _format_auth_requirement {
     return 'OAuth (GitHub)' if $req eq 'copilot';
     return 'None'           if $req eq 'none';
     return 'API Key';  # default for unknown
+}
+
+# Disclosure for providers that forward requests to models authored by
+# other labs. The user's prompts, and any source code in them, are
+# processed by the gateway operator before reaching the upstream lab, so
+# the gateway's retention policy applies alongside the upstream's. The
+# flag is architectural rather than a trust rating, so the wording stays
+# neutral and states the mechanism instead of implying a verdict.
+sub _gateway_disclosure {
+    my ($self, $name, $display_name) = @_;
+
+    require CLIO::Providers;
+    return unless CLIO::Providers::is_third_party_gateway($name);
+
+    my $who = $display_name || $name;
+    $self->writeline($self->colorize("  Data path: gateway", 'WARNING'), markdown => 0);
+    $self->writeline($self->colorize("  $who forwards requests to models made by other labs.", 'DIM'), markdown => 0);
+    $self->writeline($self->colorize("  Your prompts and any code in them are processed by $who", 'DIM'), markdown => 0);
+    $self->writeline($self->colorize("  before reaching the upstream provider, and ${who}'s retention", 'DIM'), markdown => 0);
+    $self->writeline($self->colorize("  policy applies alongside the upstream's.", 'DIM'), markdown => 0);
+    $self->writeline("", markdown => 0);
+}
+
+# Short inline tag for the provider list, so gateways are distinguishable
+# at a glance without a wall of text per row.
+sub _gateway_tag {
+    my ($self, $name) = @_;
+
+    require CLIO::Providers;
+    return '' unless CLIO::Providers::is_third_party_gateway($name);
+    return ' ' . $self->colorize('[gateway]', 'WARNING');
 }
 
 sub handle_alias {
