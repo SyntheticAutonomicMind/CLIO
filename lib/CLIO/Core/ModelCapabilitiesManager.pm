@@ -205,10 +205,17 @@ the prompt with almost no budget, causing aggressive conversation
 trimming.
 
 Rules:
-- max_output_tokens is clamped to min(MAX_MODEL_OUTPUT_TOKENS, context_window)
+- max_output_tokens is clamped to MAX_MODEL_OUTPUT_TOKENS
 - when max_output_tokens is unknown, the default is DEFAULT_MAX_OUTPUT_TOKENS
   (16384) rounded down to the context window - reserving the full context for
   output would starve the prompt budget of small models.
+- when max_output_tokens is equal to or larger than the context window, it is
+  replaced by that same default. Many OpenAI-compatible feeds publish
+  top_provider.max_completion_tokens == context_length (the most a single
+  completion can use if the prompt is tiny), and some providers publish an
+  output limit above the context. Clamping such a value to the context window
+  leaves it equal to the window, and compute_prompt_budget() then collapses
+  to its 1000-token floor, so the reserve has to be reduced, not capped.
 
 Do not call directly. Applied on every get_capabilities return path.
 
@@ -233,10 +240,15 @@ sub _sanitize_token_limits {
     $out_default = $effective_ctx if defined($effective_ctx) && $effective_ctx < $out_default;
     if (!defined $caps->{max_output_tokens} || $caps->{max_output_tokens} <= 0) {
         $caps->{max_output_tokens} = $out_default;
+    } elsif (defined $effective_ctx && $effective_ctx > 0
+             && $caps->{max_output_tokens} >= $effective_ctx) {
+        # An output reserve that fills the whole window leaves no room for
+        # the prompt. Capping it at the window is not enough (the value is
+        # unchanged when it already equals the window), so fall back to the
+        # same default used when the output limit is unknown.
+        $caps->{max_output_tokens} = $out_default;
     } elsif ($caps->{max_output_tokens} > $out_cap) {
         $caps->{max_output_tokens} = $out_cap;
-    } elsif (defined $effective_ctx && $caps->{max_output_tokens} > $effective_ctx) {
-        $caps->{max_output_tokens} = $effective_ctx;
     }
 
     return $caps;
