@@ -2,6 +2,11 @@
 
 use strict;
 use warnings;
+
+# This script reports by printing PASS/FAIL. Record failures and exit non-zero,
+# otherwise the suite counts it as passing no matter what it printed.
+my $failed = 0;
+END { exit 1 if $failed }
 use lib 'lib';
 use CLIO::Util::TextSanitizer qw(sanitize_text);
 use JSON::PP qw(encode_json);
@@ -48,7 +53,7 @@ print "  JSON: $json\n";
 
 # Check if numbers became strings in JSON
 if ($json =~ /"temperature":"0\.2"/) {
-    print "\nERROR: Numbers became strings!\n";
+    print "\nERROR: Numbers became strings!\n";     $failed++;
 } elsif ($json =~ /"temperature":0\.2/) {
     print "\nSUCCESS: Numbers are still numbers!\n";
 } else {

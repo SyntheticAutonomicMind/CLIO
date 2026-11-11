@@ -9,7 +9,7 @@ use utf8;
 use Exporter 'import';
 use CLIO::Core::Logger qw(log_debug log_warning);
 
-our @EXPORT_OK = qw(analyze_command);
+our @EXPORT_OK = qw(analyze_command extract_write_targets);
 
 =head1 NAME
 
@@ -537,6 +537,129 @@ sub _unique_categories {
     return @result;
 }
 
+
+=head2 extract_write_targets($command)
+
+Return the paths a shell command syntactically appears to write.
+
+Arguments:
+- $command: the shell command string
+
+Returns: arrayref of path strings, as written (unexpanded). An empty arrayref
+when nothing is recognized.
+
+This is deliberately conservative. Determining what a shell command will touch
+requires execution, so a detector can only read the command's surface syntax:
+redirections, and the destination argument of the common writing utilities.
+Anything it cannot see - a path built inside a script, an `eval`, a program
+that opens files itself - is invisible to it. Treat the result as defence in
+depth that raises the cost of an accidental or opportunistic write outside the
+session directory, not as containment.
+
+Arguments that are shell variables, globs, or process substitutions are
+skipped because their value is unknown until the command runs. Stream
+pseudo-files are skipped because writing them does not touch the filesystem.
+
+=cut
+
+sub _record_write_target {
+    my ($targets, $candidate) = @_;
+
+    return unless defined $candidate;
+    $candidate =~ s/^\s+|\s+$//g;
+    $candidate =~ s/^["']//;
+    $candidate =~ s/["']$//;
+    return unless length $candidate;
+
+    # Nothing to check, or not knowable until the command runs.
+    return if $candidate eq '-';
+    return if $candidate =~ m{^[&<>|]};
+    # Shell variables, globs, and command substitution are unknowable until the
+    # command runs. The backtick is written as \x60: a bare one inside the class
+    # is the prematch special variable and would be interpolated rather than
+    # matched.
+    return if $candidate =~ /[\$\x60*?]/;
+    return if $candidate =~ m{^/dev/(?:null|stdout|stderr|tty|fd/.*)$};
+    return if $candidate =~ m{^/proc/};
+    return if $candidate =~ m{^(?:https?|ftp)://};
+
+    push @$targets, $candidate;
+    return;
+}
+
+sub extract_write_targets {
+    my ($command) = @_;
+    return [] unless defined $command && length $command;
+
+    my @targets;
+
+    # Redirections: ">" and ">>". ">&" duplicates a descriptor and "<" reads,
+    # so neither is a write target.
+    while ($command =~ /(?:\d*>>?|\>\|)\s*([^\s;&|<>]+)/g) {
+        my $redirect_target = $1;
+        _record_write_target(\@targets, $redirect_target);
+    }
+
+    # Split into simple commands on shell separators, then look at the head of
+    # each to decide which of its arguments are destinations.
+    for my $segment (split /\s*(?:&&|\|\||;|\|)\s*/, $command) {
+        my @args = grep { defined && length } ($segment =~ /"([^"]*)"|'([^']*)'|([^\s"']+)/g);
+        next unless @args;
+
+        # Skip leading environment assignments and wrappers.
+        shift @args while @args && $args[0] =~ /^\w+=/;
+        while (@args && $args[0] =~ m{^(?:sudo|doas|time|nice|nohup|command|env)$}) {
+            my $wrapper = shift @args;
+
+            # Some wrappers take an option value ("sudo -u root", "nice -n 5").
+            # Consume it too, otherwise the value looks like the command name.
+            my %takes_value;
+            %takes_value = map { $_ => 1 } qw(-u -g -p -C -h -r -t -U -n -c)
+                if $wrapper =~ /^(?:sudo|doas|nice)$/;
+
+            while (@args && $args[0] =~ /^-/) {
+                my $option = shift @args;
+                shift @args if $takes_value{$option} && @args;
+            }
+        }
+        next unless @args;
+
+        my $tool = $args[0];
+        $tool =~ s{.*/}{};   # /bin/rm -> rm
+
+        my @operands = grep { !/^-/ } @args[1 .. $#args];
+
+        if ($tool eq 'tee' || $tool eq 'install'
+            || $tool =~ m{^(?:rm|rmdir|unlink|truncate|touch|mkdir)$}) {
+            _record_write_target(\@targets, $_) for @operands;
+        }
+        elsif ($tool eq 'dd') {
+            for my $operand (@operands) {
+                _record_write_target(\@targets, $1) if $operand =~ /^of=(.+)$/;
+            }
+        }
+        elsif ($tool eq 'sed') {
+            # Only an in-place edit writes. The sed program always occupies the
+            # first operand - whether given positionally or after -e/-f (where
+            # -f names a script file to read, not write) - so drop it and treat
+            # the remainder as files.
+            if (grep { /^-[a-zA-Z]*i/ } @args) {
+                _record_write_target(\@targets, $_) for @operands[1 .. $#operands];
+            }
+        }
+        elsif ($tool =~ m{^(?:chmod|chown|chgrp)$}) {
+            # First operand is the mode or owner; the rest are paths.
+            _record_write_target(\@targets, $operands[$_]) for 1 .. $#operands;
+        }
+        elsif ($tool =~ m{^(?:cp|mv|ln|rsync|scp)$}) {
+            # Destination is the final operand (allows for "host:path").
+            _record_write_target(\@targets, $operands[-1]) if @operands;
+        }
+    }
+
+    my %seen;
+    return [ grep { !$seen{$_}++ } @targets ];
+}
 1;
 
 __END__

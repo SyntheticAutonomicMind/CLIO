@@ -82,6 +82,7 @@ our @EXPORT = qw(
     run_clio_with_session
     get_clio_path
     get_test_model
+    skip_unless_live_api
     test_passed
     test_failed
     get_test_results
@@ -99,6 +100,32 @@ environment variable.
 
 sub get_test_model {
     return $TEST_MODEL;
+}
+
+=head2 skip_unless_live_api
+
+Skip a test that needs a real provider, unless live API testing is explicitly
+enabled.
+
+Some suites drive the agent end to end and genuinely need a reachable model.
+Those cannot be satisfied by a mock, so they must be skipped rather than failed
+or left to hang. The gate is an explicit opt-in because the previous heuristic -
+"a config file exists" - meant the suite silently drove the developer's real
+account, and hung for minutes when that provider was slow or unreachable.
+
+Enable with:
+
+    CLIO_LIVE_API_TESTS=1 perl -Ilib tests/integration/some_test.pl
+
+Returns: nothing. Prints a skip notice and exits 0 when not enabled.
+
+=cut
+
+sub skip_unless_live_api {
+    return 1 if $ENV{CLIO_LIVE_API_TESTS};
+
+    print "SKIP: requires a live API provider - set CLIO_LIVE_API_TESTS=1 to run\n";
+    exit 0;
 }
 
 # Test result tracking

@@ -2,6 +2,11 @@
 
 use strict;
 use warnings;
+
+# This script reports by printing PASS/FAIL. Record failures and exit non-zero,
+# otherwise the suite counts it as passing no matter what it printed.
+my $failed = 0;
+END { exit 1 if $failed }
 use lib 'lib';
 
 # Disable buffering
@@ -29,7 +34,7 @@ print "  Length: " . length($truncated) . " bytes\n";
 if ($trunc_tokens <= 1100) {  # Allow some overhead
     print "  ✓ PASS: Within budget\n";
 } else {
-    print "  ✗ FAIL: Exceeded budget\n";
+    print "  ✗ FAIL: Exceeded budget\n";     $failed++;
 }
 
 print "\nDone!\n";

@@ -486,11 +486,13 @@ sub _register_default_tools {
             next;
         }
         # Pass session_dir for tools that need path authorization (FileOperations,
-        # ApplyPatch). The session_dir is the working directory from the session
-        # state, which is used by PathAuthorizer to determine if a path is inside
-        # the allowed workspace or requires user authorization.
+        # ApplyPatch, TerminalOperations). The session_dir is the working directory
+        # from the session state, which is used by PathAuthorizer to determine if a
+        # path is inside the allowed workspace or requires user authorization.
         my $tool_args = { debug => $self->{debug} };
-        if ($tool_def->{name} eq 'file_operations' || $tool_def->{name} eq 'apply_patch') {
+        if ($tool_def->{name} eq 'file_operations'
+            || $tool_def->{name} eq 'apply_patch'
+            || $tool_def->{name} eq 'terminal_operations') {
             my $session_dir = '';
             if ($self->{session} && $self->{session}->can('working_directory')) {
                 $session_dir = $self->{session}->working_directory || '';

@@ -20,6 +20,18 @@ use FindBin qw($RealBin);
 use lib "$RealBin/../../lib";
 use File::Temp qw(tempdir);
 use lib "$RealBin/../lib";
+
+# Requires a live API provider; see tests/lib/TestHelpers.pm for why this is
+# an explicit opt-in and not a "config file exists" check.
+BEGIN {
+    require File::Basename;
+    require File::Spec;
+    unshift @INC, File::Spec->catdir(File::Basename::dirname(__FILE__), '..', 'lib');
+    require TestHelpers;
+    # Must run before Test::More emits a plan, otherwise the plan is left
+    # unmet and the harness reports "No tests run".
+    TestHelpers::skip_unless_live_api();
+}
 use TestHelpers;
 use Time::HiRes qw(sleep);
 
@@ -40,7 +52,19 @@ print " Test dir: $test_dir\n\n";
 
 # Spawn sub-agent via CLIO command
 print " [1/4] Spawning sub-agent...\n";
-my $cmd = "$RealBin/../../clio --input '/subagent spawn \"$task\" --model " . get_test_model() . "' --exit 2>&1";
+
+# Single-quote the argument for the shell rather than embedding it in a
+# hand-built quoted string. The task above contains single quotes, which
+# terminated the outer quote and split the command, so the invocation never
+# reached /subagent at all.
+my $shell_quote = sub {
+    my ($s) = @_;
+    $s =~ s/'/'"'"'/g;
+    return "'$s'";
+};
+
+my $subagent_input = '/subagent spawn "' . $task . '" --model ' . get_test_model();
+my $cmd = "$RealBin/../../clio --input " . $shell_quote->($subagent_input) . ' --exit 2>&1';
 my $output = `$cmd`;
 my $exit_code = $? >> 8;
 

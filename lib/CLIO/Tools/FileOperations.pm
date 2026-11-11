@@ -501,7 +501,8 @@ sub _check_write_authorization {
     my ($self, $path, $operation, $context) = @_;
     
     # session object uses 'session_id' (or 'id' as fallback).
-    my $session_id = $context->{session}->{session_id} || $context->{session}->{id} || '';
+    my $session   = $context->{session} || {};
+    my $session_id = $session->{session_id} || $session->{id} || '';
     my $working_dir = $self->{session_dir} || '';
     
     # If no session directory configured, allow (backwards compatibility)
@@ -509,12 +510,24 @@ sub _check_write_authorization {
     
     my $authorizer = $self->_get_path_authorizer();
     
-    my $result = $authorizer->checkPathAuthorization(
+    # authorize_or_prompt offers the user the chance to approve the write.
+    # Checking alone made this a dead end: the denial instructions pointed at
+    # an approval path that did not exist for file paths.
+    my $result = $authorizer->authorize_or_prompt(
         path => $path,
         working_directory => $working_dir,
         conversation_id => $session_id,
         operation => "file_operations.$operation",
         is_user_initiated => 0,
+        prompt => sub {
+            my %details = @_;
+            return CLIO::Security::PathAuthorizer::prompt_for_path_authorization(
+                %details,
+                ui            => $context->{ui},
+                broker_client => $context->{broker_client},
+                spinner       => $context->{spinner},
+            );
+        },
     );
     
     return $result;
@@ -2074,7 +2087,7 @@ sub write_file {
         return $self->error_result(
             "Authorization required: $auth_result->{reason}\n\n" .
             "This operation requires user permission because the path is outside the session directory.\n" .
-            "Use interact tool to request authorization."
+            "No interactive channel was available to approve this write, so it was refused. Ask the user to run CLIO interactively, or write inside the session directory."
         );
     } elsif ($auth_result->{status} eq 'denied') {
         return $self->error_result("Authorization denied: $auth_result->{reason}");
@@ -2229,7 +2242,7 @@ sub replace_string {
         return $self->error_result(
             "Authorization required: $auth_result->{reason}\n\n" .
             "This operation requires user permission because the path is outside the session directory.\n" .
-            "Use interact tool to request authorization."
+            "No interactive channel was available to approve this write, so it was refused. Ask the user to run CLIO interactively, or write inside the session directory."
         );
     } elsif ($auth_result->{status} eq 'denied') {
         return $self->error_result("Authorization denied: $auth_result->{reason}");
@@ -2476,7 +2489,7 @@ sub insert_at_line {
         return $self->error_result(
             "Authorization required: $auth_result->{reason}\n\n" .
             "This operation requires user permission because the path is outside the session directory.\n" .
-            "Use interact tool to request authorization."
+            "No interactive channel was available to approve this write, so it was refused. Ask the user to run CLIO interactively, or write inside the session directory."
         );
     } elsif ($auth_result->{status} eq 'denied') {
         return $self->error_result("Authorization denied: $auth_result->{reason}");
@@ -2556,7 +2569,7 @@ sub delete_file {
     if ($auth_result->{status} eq 'requires_authorization') {
         return $self->error_result(
             "Authorization required: $auth_result->{reason}\n\n" .
-            "Use interact tool to request authorization."
+            "No interactive channel was available to approve this write, so it was refused. Ask the user to run CLIO interactively, or write inside the session directory."
         );
     } elsif ($auth_result->{status} eq 'denied') {
         return $self->error_result("Authorization denied: $auth_result->{reason}");
@@ -2640,7 +2653,7 @@ sub rename_file {
         my $reason = $auth_old->{status} eq 'requires_authorization' ? $auth_old->{reason} : $auth_new->{reason};
         return $self->error_result(
             "Authorization required: $reason\n\n" .
-            "Use interact tool to request authorization."
+            "No interactive channel was available to approve this write, so it was refused. Ask the user to run CLIO interactively, or write inside the session directory."
         );
     }
     
@@ -2704,7 +2717,7 @@ sub create_directory {
     if ($auth_result->{status} eq 'requires_authorization') {
         return $self->error_result(
             "Authorization required: $auth_result->{reason}\n\n" .
-            "Use interact tool to request authorization."
+            "No interactive channel was available to approve this write, so it was refused. Ask the user to run CLIO interactively, or write inside the session directory."
         );
     } elsif ($auth_result->{status} eq 'denied') {
         return $self->error_result("Authorization denied: $auth_result->{reason}");

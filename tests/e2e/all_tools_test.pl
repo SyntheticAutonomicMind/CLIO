@@ -31,6 +31,16 @@ use feature 'say';
 use Test::More;
 use FindBin qw($RealBin);
 use lib "$RealBin/lib";
+
+# Requires a live API provider; see tests/lib/TestHelpers.pm for why this is
+# an explicit opt-in and not a "config file exists" check.
+BEGIN {
+    require File::Basename;
+    require File::Spec;
+    unshift @INC, File::Spec->catdir(File::Basename::dirname(__FILE__), '..', 'lib');
+    require TestHelpers;
+    TestHelpers::skip_unless_live_api();
+}
 use File::Temp qw(tempdir tempfile);
 use File::Spec;
 use Cwd 'abs_path';

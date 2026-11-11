@@ -3690,9 +3690,17 @@ sub _prepare_api_request {
     }
 
     if (!$self->{api_key}) {
+        # A missing credential is permanent: no retry, backoff, or provider
+        # rotation produces a key that was never configured. With neither
+        # retryable nor error_type set, this fell through to the generic
+        # retry path and consumed the entire session error budget (12
+        # attempts) before finally reporting, which then told the user to
+        # start a new session because the counter was exhausted.
         return { error_result => {
             success => 0,
-            error => "Missing API key. Please configure a provider with /api provider <name> or set key with /api key <value>"
+            error => "Missing API key. Please configure a provider with /api provider <name> or set key with /api key <value>",
+            retryable => 0,
+            error_type => 'auth_failed'
         }};
     }
 

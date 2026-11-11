@@ -186,12 +186,23 @@ sub _check_write_authorization {
 
     my $authorizer = $self->_get_path_authorizer();
 
-    my $result = $authorizer->checkPathAuthorization(
+    # authorize_or_prompt offers the user the chance to approve the write.
+    # Checking alone made this a dead end for paths outside the session.
+    my $result = $authorizer->authorize_or_prompt(
         path => $path,
         working_directory => $working_dir,
         conversation_id => $session->{session_id} || $session->{id} || '',
         operation => 'apply_patch.apply',
         is_user_initiated => 0,
+        prompt => sub {
+            my %details = @_;
+            return CLIO::Security::PathAuthorizer::prompt_for_path_authorization(
+                %details,
+                ui            => $context->{ui},
+                broker_client => $context->{broker_client},
+                spinner       => $context->{spinner},
+            );
+        },
     );
 
     return $result;
@@ -381,7 +392,7 @@ sub _do_apply {
                 my $reason = $auth->{reason} || 'authorization required';
                 return $self->error_result(
                     "Permission denied: $reason\n\n" .
-                    "Use interact tool to request authorization.",
+                    "No interactive channel was available to approve this write, so it was refused. Ask the user to run CLIO interactively, or write inside the session directory.",
                     action_description => "apply_patch denied by authorization: $hunk->{path}",
                 );
             }

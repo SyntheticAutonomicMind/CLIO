@@ -19,6 +19,18 @@ This test demonstrates the full Phase 2 capabilities:
 use strict;
 use warnings;
 use lib './lib';
+
+# Requires a live API provider; see tests/lib/TestHelpers.pm for why this is
+# an explicit opt-in and not a "config file exists" check.
+BEGIN {
+    require File::Basename;
+    require File::Spec;
+    unshift @INC, File::Spec->catdir(File::Basename::dirname(__FILE__), '..', 'lib');
+    require TestHelpers;
+    # Must run before Test::More emits a plan, otherwise the plan is left
+    # unmet and the harness reports "No tests run".
+    TestHelpers::skip_unless_live_api();
+}
 use Test::More tests => 18;
 use CLIO::Coordination::Broker;
 use CLIO::Coordination::Client;

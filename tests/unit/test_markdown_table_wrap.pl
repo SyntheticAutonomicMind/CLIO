@@ -2,6 +2,11 @@
 
 use strict;
 use warnings;
+
+# This script reports by printing PASS/FAIL. Record failures and exit non-zero,
+# otherwise the suite counts it as passing no matter what it printed.
+my $failed = 0;
+END { exit 1 if $failed }
 use lib 'lib';
 
 use CLIO::UI::Markdown;
@@ -96,7 +101,7 @@ for my $line (@lines) {
 print "Max line width: $max_width\n";
 print "Terminal width: 40\n";
 print "Oversized lines: $oversized\n";
-print $oversized == 0 ? "PASS - All lines fit within terminal width\n\n" : "FAIL - Some lines exceed terminal width\n\n";
+print $oversized == 0 ? "PASS - All lines fit within terminal width\n\n" : do { $failed++; "FAIL - Some lines exceed terminal width\n\n" };
 
 # Test 4: _wrap_text method directly
 print "=" x 70, "\n";
@@ -169,7 +174,7 @@ $clean7 =~ s/\e\[[0-9;]*m//g;
 my $sep_count = () = $clean7 =~ /\x{251c}/g;
 print "Separator lines: $sep_count\n";
 print "Expected: 2 (one after header, one after first wrapped data row)\n";
-print ($sep_count == 2 ? "PASS - Separators only between distinct rows\n\n" : "FAIL - Wrong number of separators\n\n");
+print ($sep_count == 2 ? "PASS - Separators only between distinct rows\n\n" : do { $failed++; "FAIL - Wrong number of separators\n\n" });
 
 # Test 8: Tables where the natural header width exceeds the terminal.
 # Tables whose natural header width exceeds the terminal. They should
@@ -208,7 +213,7 @@ for my $line (split /\n/, $clean8) {
 }
 print "Max line width: $max8 (terminal: 80)\n";
 print "Oversized lines: $over8\n";
-print ($over8 == 0 ? "PASS - All lines fit within terminal width\n\n" : "FAIL - Some lines exceed terminal width\n\n");
+print ($over8 == 0 ? "PASS - All lines fit within terminal width\n\n" : do { $failed++; "FAIL - Some lines exceed terminal width\n\n" });
 
 # Test 9: Regression test for the 5-char overage bug where proportional
 # distribution + integer rounding could push the total content width
@@ -246,7 +251,7 @@ for my $line (split /\n/, $clean9) {
 }
 print "Max line width: $max9 (terminal: 40)\n";
 print "Oversized lines: $over9\n";
-print ($over9 == 0 ? "PASS - No line exceeds terminal width\n\n" : "FAIL - Table overflows terminal\n\n");
+print ($over9 == 0 ? "PASS - No line exceeds terminal width\n\n" : do { $failed++; "FAIL - Table overflows terminal\n\n" });
 
 # Test 10: Tables with links - visual length must account for " -> URL" expansion
 print "=" x 70, "\n";
@@ -281,7 +286,7 @@ for my $line (split /\n/, $clean10) {
 }
 print "Max line width: $max10 (terminal: 60)\n";
 print "Oversized lines: $over10\n";
-print ($over10 == 0 ? "PASS - Links fit within terminal width\n\n" : "FAIL - Links overflow terminal\n\n");
+print ($over10 == 0 ? "PASS - Links fit within terminal width\n\n" : do { $failed++; "FAIL - Links overflow terminal\n\n" });
 
 # Test 11: Tables with images - visual length must account for " -> URL" expansion
 print "=" x 70, "\n";
@@ -316,7 +321,7 @@ for my $line (split /\n/, $clean11) {
 }
 print "Max line width: $max11 (terminal: 50)\n";
 print "Oversized lines: $over11\n";
-print ($over11 == 0 ? "PASS - Images fit within terminal width\n\n" : "FAIL - Images overflow terminal\n\n");
+print ($over11 == 0 ? "PASS - Images fit within terminal width\n\n" : do { $failed++; "FAIL - Images overflow terminal\n\n" });
 
 # Test 12: Mixed markdown in table cells (bold + link)
 print "=" x 70, "\n";
@@ -351,6 +356,6 @@ for my $line (split /\n/, $clean12) {
 }
 print "Max line width: $max12 (terminal: 60)\n";
 print "Oversized lines: $over12\n";
-print ($over12 == 0 ? "PASS - Mixed markdown fits within terminal width\n\n" : "FAIL - Mixed markdown overflows terminal\n\n");
+print ($over12 == 0 ? "PASS - Mixed markdown fits within terminal width\n\n" : do { $failed++; "FAIL - Mixed markdown overflows terminal\n\n" });
 
 print "All tests completed.\n";

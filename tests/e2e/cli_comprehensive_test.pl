@@ -25,6 +25,17 @@ use strict;
 use warnings;
 use lib 'lib';
 use lib 'tests/lib';
+
+# Requires a live API provider; see tests/lib/TestHelpers.pm for why this is
+# an explicit opt-in and not a "config file exists" check.
+BEGIN {
+    require File::Basename;
+    require File::Spec;
+    unshift @INC, File::Spec->catdir(File::Basename::dirname(__FILE__), '..', 'lib');
+    require TestHelpers;
+    # Must run before Test::More emits a plan.
+    TestHelpers::skip_unless_live_api();
+}
 use TestHelpers qw(assert_true assert_contains assert_equals);
 use File::Temp qw(tempdir);
 use File::Spec;

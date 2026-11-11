@@ -17,6 +17,17 @@ use TestHelpers;
 my $TEST_MODEL = get_test_model();
 use lib "$FindBin::Bin/../lib";
 
+# Requires a live API provider; see tests/lib/TestHelpers.pm for why this is
+# an explicit opt-in and not a "config file exists" check.
+BEGIN {
+    require File::Basename;
+    require File::Spec;
+    unshift @INC, File::Spec->catdir(File::Basename::dirname(__FILE__), '..', 'lib');
+    require TestHelpers;
+    # Must run before Test::More emits a plan.
+    TestHelpers::skip_unless_live_api();
+}
+
 print "=== Multi-Agent Real-World Test ===\n\n";
 
 # Clean up from previous tests

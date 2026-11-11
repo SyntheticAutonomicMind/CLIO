@@ -14,7 +14,7 @@ use Cwd 'getcwd';
 use POSIX qw(WNOHANG);
 use Time::HiRes ();
 use CLIO::Core::Logger qw(log_debug log_warning log_error);
-use CLIO::Security::CommandAnalyzer qw(analyze_command);
+use CLIO::Security::CommandAnalyzer qw(analyze_command extract_write_targets);
 
 =head1 NAME
 
@@ -766,6 +766,61 @@ sub _resume_clio_input {
     }
 }
 
+=head2 _enforce_write_paths
+
+Check the filesystem destinations a shell command names against path
+authorization.
+
+Returns: an error result when a write target is refused, undef when every
+recognized destination is allowed.
+
+=cut
+
+sub _enforce_write_paths {
+    my ($self, $command, $context) = @_;
+
+    my $targets = extract_write_targets($command);
+    return undef unless @$targets;
+
+    require CLIO::Security::PathAuthorizer;
+    $self->{path_authorizer} ||= CLIO::Security::PathAuthorizer->new(debug => $self->{debug});
+    my $authorizer = $self->{path_authorizer};
+
+    my $session    = ($context && $context->{session}) ? $context->{session} : {};
+    my $session_id = $session->{session_id} || $session->{id} || '';
+
+    for my $target (@$targets) {
+        my $result = $authorizer->authorize_or_prompt(
+            path              => $target,
+            working_directory => $self->{session_dir},
+            conversation_id   => $session_id,
+            operation         => 'terminal_operations.write',
+            is_user_initiated => 0,
+            prompt            => sub {
+                my %details = @_;
+                return CLIO::Security::PathAuthorizer::prompt_for_path_authorization(
+                    %details,
+                    ui            => $context->{ui},
+                    broker_client => $context->{broker_client},
+                    spinner       => $context->{spinner},
+                );
+            },
+        );
+
+        next if $result->{status} eq 'allowed';
+
+        my $reason = $result->{reason} || 'path is outside the session directory';
+        log_debug('TermOps', "DENIED command write target '$target': $reason");
+        return $self->error_result(
+            "Command denied: it writes to '$target', outside the session directory.\n\n" .
+            "Reason: $reason\n" .
+            "Run the command with a destination inside the session directory."
+        );
+    }
+
+    return undef;
+}
+
 sub validate_command {
     my ($self, $params, $context) = @_;
 
@@ -783,6 +838,17 @@ sub validate_command {
         sandbox        => $sandbox,
         security_level => $security_level,
     );
+
+    # Path containment for shell writes, at the level whose contract is to be
+    # tight. file_operations and apply_patch enforce the session directory, but
+    # an arbitrary command could route around them ("echo x > /etc/y"), so the
+    # file guard alone did not bound where a command could write. The extractor
+    # reads only the command's surface syntax and cannot see a path a script
+    # builds internally, so this narrows the gap rather than closing it.
+    if ($security_level eq 'strict' && $self->{session_dir}) {
+        my $path_denial = $self->_enforce_write_paths($command, $context);
+        return $path_denial if $path_denial;
+    }
 
     # Dry-run safety: when the command is critical-risk AND we don't have a real
     # interactive TTY (no -t STDIN), deny it without prompting. The prompt path

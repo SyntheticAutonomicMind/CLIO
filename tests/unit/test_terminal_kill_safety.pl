@@ -197,6 +197,11 @@ subtest 'Parent survives concurrent terminal_operations' => sub {
     my $tool = CLIO::Tools::TerminalOperations->new();
     my $parent_pid = $$;
 
+    # Compare before and after rather than asserting the machine is idle. The
+    # previous check grepped the whole process table for "sleep 2", so any
+    # unrelated sleep on the system failed this test - including one left by a
+    # concurrently running test.
+    my %before_sleeps = map { $_ => 1 } _sleep2_pids();
     my $r1 = $tool->execute_command({
         command => q{(sleep 2) | head -1},
         timeout => 30,
@@ -209,9 +214,15 @@ subtest 'Parent survives concurrent terminal_operations' => sub {
     ok(kill(0, $parent_pid), 'parent survived concurrent ops');
     ok($r1->{success} && $r2->{success}, 'both commands succeeded');
 
-    my $orphans = `ps -eo pid,command 2>/dev/null | grep -E 'sleep 2\\b' | grep -v grep`;
-    is($orphans, '', 'no orphan processes from concurrent runs');
+    my @leaked = grep { !$before_sleeps{$_} } _sleep2_pids();
+    is_deeply(\@leaked, [], 'no orphan processes from concurrent runs');
 };
+
+# PIDs of processes whose command line contains "sleep 2".
+sub _sleep2_pids {
+    my $out = `ps -eo pid,command 2>/dev/null | grep -E 'sleep 2\\b' | grep -v grep`;
+    return map { (split ' ', $_, 2)[0] } grep { /\S/ } split /\n/, ($out // '');
+}
 
 # ─────────────────────────────────────────────────────────────
 # Test 6: Parent survives with grandchild processes.

@@ -2,6 +2,11 @@
 
 use strict;
 use warnings;
+
+# This script reports by printing PASS/FAIL. Record failures and exit non-zero,
+# otherwise the suite counts it as passing no matter what it printed.
+my $failed = 0;
+END { exit 1 if $failed }
 use lib './lib';
 
 # Test the new helper methods
@@ -25,7 +30,7 @@ my $threshold = $chat->_get_pagination_threshold();
 print "  Terminal height: 24\n";
 print "  Threshold: $threshold\n";
 print "  Expected: 22 (24 - 2)\n";
-print "  Result: " . ($threshold == 22 ? "PASS" : "FAIL") . "\n\n";
+print "  Result: " . ($threshold == 22 ? "PASS" : do { $failed++; "FAIL" }) . "\n\n";
 
 # Test 2: _count_visual_lines with various inputs
 print "Test 2: _count_visual_lines\n";
@@ -43,7 +48,7 @@ my @test_cases = (
 
 foreach my $test (@test_cases) {
     my $count = $chat->_count_visual_lines($test->{text});
-    my $result = $count == $test->{expected} ? "PASS" : "FAIL";
+    my $result = $count == $test->{expected} ? "PASS" : do { $failed++; "FAIL" };
     my $text_repr = defined $test->{text} ? "\"$test->{text}\"" : "undef";
     print "  $test->{desc}: $text_repr\n";
     print "    Count: $count, Expected: $test->{expected} - $result\n";
@@ -71,7 +76,7 @@ print "  With line_count=20, threshold=22: " . ($result ? "FAIL (triggered)" : "
 
 $pager->line_count(22);  # At threshold
 $result = $chat->_should_pagination_trigger();
-print "  With line_count=22, threshold=22: " . ($result ? "PASS (triggered)" : "FAIL (not triggered)") . "\n";
+print "  With line_count=22, threshold=22: " . ($result ? "PASS (triggered)" : do { $failed++; "FAIL (not triggered)" }) . "\n";
 
 print "\nAll basic tests completed!\n";
 

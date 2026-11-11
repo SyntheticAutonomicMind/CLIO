@@ -6,6 +6,14 @@ use utf8;
 use FindBin;
 use lib "$FindBin::Bin/../../lib";
 
+# Force config isolation. This test compares a key built from
+# ModelCapabilitiesManager's config against one built from a fresh Config.
+# ModelCapabilitiesManager constructs its Config from library code, which is
+# not a test, so without this it reads the developer's real ~/.clio/config.json
+# and the two sides disagree whenever that file carries a provider api_base.
+# CLIO_TEST makes every Config instance in this process use a private tempdir.
+BEGIN { $ENV{CLIO_TEST} = 1 }
+
 # Regression: MCM cache key was "${provider}:${model}" - a flat
 # namespace that did not invalidate on /api set base changes. When
 # the user changed the api_base for a provider, the old cache entry

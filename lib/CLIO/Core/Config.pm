@@ -16,6 +16,7 @@ use CLIO::Security::SecretRedactor qw(DEFAULT_REDACT_LEVEL);
 use Storable qw(dclone);
 use File::Path qw(make_path);
 use File::Spec;
+use Cwd qw(realpath);
 
 =head1 NAME
 
@@ -241,9 +242,13 @@ sub _get_config_path {
 =head2 _config_in_test_mode (Internal)
 
 True when this Config instance is being constructed from a test: either the
-CLIO_TEST environment variable is set, or the caller's source file lives under
-a tests/ directory. Used to auto-isolate config writes so tests can never
+CLIO_TEST environment variable is set, or the entry script lives under a
+tests/ directory. Used to auto-isolate config writes so tests can never
 pollute the real ~/.clio.
+
+The production entry point is never treated as a test, no matter where it is
+installed, so a checkout reached through a directory named C{tests} keeps its
+configuration instead of silently loading an empty one.
 
 =cut
 
@@ -258,6 +263,20 @@ sub _config_in_test_mode {
     # matching the raw string made isolation depend on how the path was
     # typed, so `perl -Ilib tests/unit/x.pl` wrote to the real ~/.clio.
     my $path = eval { File::Spec->rel2abs($caller_file) } || $caller_file;
+
+    # Collapse ".." as well as make the path absolute. Resolving the string is
+    # what makes `perl ../../clio`, run from tests/integration, name the
+    # production script rather than a file under tests/.
+    $path = realpath($path) || $path;
+
+    # The production entry point is not a test wherever it sits. Without this,
+    # a checkout installed under a path containing a "tests" component
+    # (~/tests/CLIO, a CI workspace at /build/tests/CLIO) counted as a test:
+    # configuration came from an empty tempdir and every write was discarded,
+    # with nothing on screen to say so.
+    my (undef, undef, $entry_name) = File::Spec->splitpath($path);
+    return 0 if $entry_name eq 'clio';
+
     return 1 if $path =~ m{(?:^|/)tests/};
     return 0;
 }
@@ -528,6 +547,22 @@ sub save {
     # real ~/.clio if the tempdir resolution ever fails. This is the last
     # line of defense behind the test-mode isolation in new().
     return 1 unless $self->{persist};
+
+    # TEST-RUNNER GUARD: a persist => 1 Config created from library code during
+    # a test run is not covered by the test-mode check above, because the caller
+    # is a module rather than a test file. Those instances resolve to the real
+    # ~/.clio and can rewrite the developer's config - which is how fixture
+    # api_bases (http://192.0.2.1:9090/... from the test suite) ended up in a
+    # real config file. Reading the real config is legitimate; writing it from a
+    # test is always a leak. Tests that need persistence use --config or an
+    # overridden HOME, so their config_dir differs from the real one.
+    if ($ENV{CLIO_TEST_RUNNER_INVOKED} && $ENV{HOME}) {
+        my $real_config_dir = File::Spec->catdir($ENV{HOME}, '.clio');
+        if (File::Spec->rel2abs($self->{config_dir}) eq File::Spec->rel2abs($real_config_dir)) {
+            log_debug('Config', "Refusing to persist to the real config from a test process: $self->{config_dir}");
+            return 1;
+        }
+    }
 
     # Ensure config directory exists with secure permissions
     unless (-d $self->{config_dir}) {

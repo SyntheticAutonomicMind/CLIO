@@ -203,4 +203,28 @@ sub request_url_authorization {
     );
 }
 
+=head2 request_path_authorization($path, $details, $context)
+
+Convenience method for FileOperations and ApplyPatch - formats a request to
+write outside the session directory.
+
+Returns: Hashref with approved and grant_type.
+
+=cut
+
+sub request_path_authorization {
+    my ($self, $path, $details, $context) = @_;
+    
+    return $self->request_authorization(
+        category    => 'file_write_outside_session',
+        description => $path,
+        risk_level  => 'standard',
+        flags       => [{
+            category    => 'path_access',
+            severity    => 'standard',
+            description => $details->{reason} || "Write outside the session directory: $path",
+        }],
+    );
+}
+
 1;

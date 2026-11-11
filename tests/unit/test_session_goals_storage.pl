@@ -10,6 +10,11 @@
 
 use strict;
 use warnings;
+
+# This script reports by printing PASS/FAIL. Record failures and exit non-zero,
+# otherwise the suite counts it as passing no matter what it printed.
+my $failed = 0;
+END { exit 1 if $failed }
 use utf8;
 
 use CLIO::Session::State;
@@ -30,7 +35,7 @@ sub make_state {
     if (ref($goals) eq 'ARRAY' && scalar(@$goals) == 0) {
         print "ok 1 - new state has empty session_goals arrayref\n";
     } else {
-        print "not ok 1 - new state session_goals not empty arrayref\n";
+        print "not ok 1 - new state session_goals not empty arrayref\n";         $failed++;
     }
 }
 
@@ -47,7 +52,7 @@ sub make_state {
     if (scalar(@$retrieved) == 2 && $retrieved->[0]{title} eq 'Test goal') {
         print "ok 2 - set_session_goals + session_goals roundtrip works\n";
     } else {
-        print "not ok 2 - set/get roundtrip failed\n";
+        print "not ok 2 - set/get roundtrip failed\n";         $failed++;
     }
 }
 
@@ -63,7 +68,7 @@ sub make_state {
     if (ref($a) eq 'ARRAY' && ref($b) eq 'ARRAY' && scalar(@$a) == scalar(@$b)) {
         print "ok 3 - session_goals and get_session_goals are equivalent\n";
     } else {
-        print "not ok 3 - session_goals and get_session_goals differ\n";
+        print "not ok 3 - session_goals and get_session_goals differ\n";         $failed++;
     }
 }
 
@@ -77,7 +82,7 @@ sub make_state {
     if (ref($goals) eq 'ARRAY' && scalar(@$goals) == 0) {
         print "ok 4 - set_session_goals(undef) clears goals\n";
     } else {
-        print "not ok 4 - set_session_goals(undef) didn't clear\n";
+        print "not ok 4 - set_session_goals(undef) didn't clear\n";         $failed++;
     }
 }
 
@@ -96,7 +101,7 @@ sub make_state {
         && $loaded_data->{session_goals}[0]{title} eq 'Important goal') {
         print "ok 5 - session_goals survive JSON serialization\n";
     } else {
-        print "not ok 5 - session_goals did not survive serialization\n";
+        print "not ok 5 - session_goals did not survive serialization\n";         $failed++;
     }
 }
 

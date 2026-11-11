@@ -1,192 +1,122 @@
 #!/usr/bin/env perl
+# SPDX-License-Identifier: GPL-3.0-only
+# SPDX-FileCopyrightText: Copyright (c) 2026 Andrew Wyatt (Fewtarius)
 
 =head1 NAME
 
-api_error_handling_test.pl - Comprehensive API error handling tests
+api_error_handling_test.pl - API error classification tests
 
 =head1 DESCRIPTION
 
-Tests CLIO's handling of various API error conditions:
-- 429 Rate Limiting
-- 401 Authentication Errors
-- 500 Server Errors  
-- Network Timeouts
-- Connection Failures
-- Retry Logic
-- Error Message Display
+Verifies how CLIO classifies API errors, because the classification decides
+whether an error is retried, whether model routing treats it as actionable, and
+whether the session error budget is spent on it.
 
-This test suite would have caught the rate limit bug the user encountered.
+This suite is hermetic: it needs no network access and no configured API key.
+Everything is exercised through in-process calls with synthetic responses.
+
+The regression it guards: an unconfigured API key used to be reported as a bare
+error with neither C<retryable> nor C<error_type> set, so it fell through to the
+generic retry path and was attempted repeatedly before finally surfacing. Each
+attempt also incremented the session error counter, so the eventual message told
+the user to start a new session because the budget was exhausted.
 
 =cut
 
 use strict;
 use warnings;
+use utf8;
 use FindBin;
 use lib "$FindBin::Bin/../../lib";
-use lib "$FindBin::Bin/../lib";
-use TestHelpers qw(assert_true assert_equals assert_contains);
-use CLIO::Core::APIManager;
+use Test::More;
 use CLIO::Core::Config;
-use CLIO::Util::JSON qw(encode_json decode_json);
+use CLIO::Core::APIManager;
+use CLIO::Core::API::ErrorHandler;
 
-my $tests_run = 0;
-my $tests_passed = 0;
-
-print "=" x 80 . "\n";
-print "API Error Handling Test Suite\n";
-print "=" x 80 . "\n\n";
-
-# Mock configuration
-my $config = CLIO::Core::Config->new();
-
-# Test 1: Rate Limit (429) Error Handling
+# ── Missing credential is permanent ──────────────────────────────────────────
 {
-    print "Test 1: Rate limit (429) error handling\n";
-    print "-" x 80 . "\n";
-    
-    my $api_manager = CLIO::Core::APIManager->new(
-        config => $config,
-        debug => 0,
+    my $config = CLIO::Core::Config->new();
+    $config->set('provider', 'openai', 0);
+    # Test-mode Config points at an empty temp directory, so provider defaults
+    # are not derived from a file. Set the endpoint explicitly to keep this
+    # hermetic and to let APIManager construct.
+    $config->set('api_base', 'https://api.openai.com/v1/chat/completions', 0);
+    $config->set('model',    'openai/gpt-4.1', 0);
+
+    my $api = CLIO::Core::APIManager->new(config => $config, debug => 0);
+    $api->{api_key} = undef;
+
+    my $result = eval { $api->send_request(messages => [{ role => 'user', content => 'hi' }]) };
+    is($@, '', 'send_request does not die without an API key');
+    is(ref $result, 'HASH', 'a structured error is returned');
+
+    is($result->{success}, 0, 'the result reports failure');
+    is($result->{retryable}, 0,
+        'a missing API key is not retryable - no retry can produce a key');
+    is($result->{error_type}, 'auth_failed',
+        'a missing API key is classified as auth_failed');
+
+    like($result->{error}, qr/API key/i,
+        'the message tells the user what is missing');
+    like($result->{error}, qr{/api},
+        'the message names the command that fixes it');
+}
+
+# ── Routing treats account-level failures as non-actionable ─────────────────
+# Cycling to another model cannot conjure a credential or a balance, so these
+# must not consume routing attempts.
+{
+    my @account_level = (
+        ['auth_failed',         'auth_failed'],
+        ['billing_error',       'billing_error'],
+        ['model_not_found',     'model_not_found'],
+        ['account_disabled',    'account_disabled'],
+        ['region_unavailable',  'region_unavailable'],
+        ['token_limit_exceeded','token_limit_exceeded'],
+        ['user_interrupt',      'user_interrupt'],
     );
-    
-    $tests_run++;
-    
-    print "  ✓ Test documents expected 429 behavior\n";
-    print "    - Sets rate_limit_until to current time + Retry-After seconds\n";
-    print "    - Returns helpful error message\n";
-    print "    - Next request should wait before sending\n";
-    print "    - Shows countdown to user\n\n";
-    
-    $tests_passed++;
+
+    for my $case (@account_level) {
+        my ($type, $label) = @$case;
+        ok(CLIO::Core::API::ErrorHandler::_routing_should_skip({ error_type => $type }),
+            "routing is skipped for $label");
+    }
 }
 
-# Test 2: Error Message Propagation
+# ── Transient conditions stay routable ──────────────────────────────────────
+# A different provider may well answer when one is rate limited or degraded.
 {
-    print "Test 2: Error message propagation to user\n";
-    print "-" x 80 . "\n";
-    
-    $tests_run++;
-    
-    # Document expected behavior
-    print "  ✓ Test documents error message flow\n";
-    print "    - API error → APIManager returns error\n";
-    print "    - WorkflowOrchestrator includes error in final_response\n";
-    print "    - Chat.pm displays actual error, not generic message\n";
-    print "    - User sees: \"Rate limit exceeded...\" not \"No response\"\n\n";
-    
-    $tests_passed++;
+    for my $type (qw(rate_limit server_error connection_error timeout provider_unavailable)) {
+        ok(!CLIO::Core::API::ErrorHandler::_routing_should_skip({ error_type => $type }),
+            "routing is still attempted for $type");
+    }
 }
 
-# Test 3: Automatic Retry After Wait Period
+# ── An unknown error is not silently treated as non-actionable ──────────────
 {
-    print "Test 3: Automatic retry after rate limit wait\n";
-    print "-" x 80 . "\n";
-    
-    $tests_run++;
-    
-    print "  ✓ Test documents retry behavior\n";
-    print "    - If rate_limit_until > now, wait before request\n";
-    print "    - Show countdown: 'Retrying in Xs...'\n";
-    print "    - After wait, send request normally\n";
-    print "    - No manual intervention required\n\n";
-    
-    $tests_passed++;
+    ok(!CLIO::Core::API::ErrorHandler::_routing_should_skip({ error_type => 'something_new' }),
+        'an unrecognized error type does not skip routing');
+    ok(!CLIO::Core::API::ErrorHandler::_routing_should_skip({}),
+        'an error with no type does not skip routing');
 }
 
-# Test 4: 401 Authentication Error
+# ── Weekly and monthly caps are account-level regardless of error type ──────
 {
-    print "Test 4: Authentication (401) error handling\n";
-    print "-" x 80 . "\n";
-    
-    $tests_run++;
-    
-    print "  ✓ Test documents 401 error handling\n";
-    print "    - Returns clear \"Authentication failed\" message\n";
-    print "    - Suggests checking API key\n";
-    print "    - Does NOT retry (auth won't succeed without fix)\n\n";
-    
-    $tests_passed++;
+    ok(CLIO::Core::API::ErrorHandler::_routing_should_skip({
+            error_type      => 'rate_limit',
+            rate_limit_code => 'user_weekly_rate_limited',
+        }),
+        'a weekly usage cap skips routing');
+    ok(CLIO::Core::API::ErrorHandler::_routing_should_skip({
+            error_type      => 'rate_limit',
+            rate_limit_code => 'user_monthly_rate_limited',
+        }),
+        'a monthly usage cap skips routing');
+    ok(!CLIO::Core::API::ErrorHandler::_routing_should_skip({
+            error_type      => 'rate_limit',
+            rate_limit_code => 'per_minute',
+        }),
+        'an ordinary per-minute limit stays routable');
 }
 
-# Test 5: 500 Server Error with Retry
-{
-    print "Test 5: Server error (500) with retry\n";
-    print "-" x 80 . "\n";
-    
-    $tests_run++;
-    
-    print "  ✓ Test documents 500 error behavior\n";
-    print "    - Could be temporary server issue\n";
-    print "    - Should retry with exponential backoff\n";
-    print "    - Max 3 retries before giving up\n";
-    print "    - Shows retry attempts to user\n\n";
-    
-    $tests_passed++;
-}
-
-# Test 6: Network Timeout
-{
-    print "Test 6: Network timeout handling\n";
-    print "-" x 80 . "\n";
-    
-    $tests_run++;
-    
-    print "  ✓ Test documents timeout behavior\n";
-    print "    - Default timeout: 30 seconds\n";
-    print "    - If exceeded, return timeout error\n";
-    print "    - Suggest checking network connection\n";
-    print "    - Allow user to retry manually\n\n";
-    
-    $tests_passed++;
-}
-
-# Test 7: Streaming Errors
-{
-    print "Test 7: Streaming API error handling\n";
-    print "-" x 80 . "\n";
-    
-    $tests_run++;
-    
-    print "  ✓ Test documents streaming error behavior\n";
-    print "    - If stream breaks mid-response, save what we got\n";
-    print "    - Show partial response to user\n";
-    print "    - Indicate stream was interrupted\n";
-    print "    - Allow continuation in next turn\n\n";
-    
-    $tests_passed++;
-}
-
-# Test 8: Error Message Clarity
-{
-    print "Test 8: Error message user experience\n";
-    print "-" x 80 . "\n";
-    
-    $tests_run++;
-    
-    print "  ✓ Test documents error UX requirements\n";
-    print "    - Show actual error, not \"No response received\"\n";
-    print "    - Include retry time for rate limits\n";
-    print "    - Provide actionable guidance (check key, wait, etc)\n";
-    print "    - Link to relevant documentation\n\n";
-    
-    $tests_passed++;
-}
-
-# Summary
-print "=" x 80 . "\n";
-print "TEST SUMMARY\n";
-print "=" x 80 . "\n";
-print "Total tests: $tests_run\n";
-print "Passed:      $tests_passed\n";
-print "Failed:      " . ($tests_run - $tests_passed) . "\n";
-print "=" x 80 . "\n\n";
-
-if ($tests_passed == $tests_run) {
-    print "✅ ALL TESTS PASSED (Documentation)\n\n";
-    print "NOTE: These are documentation tests that describe expected behavior.\n";
-    print "Next step: Implement actual mocking framework to test real error handling.\n\n";
-    exit 0;
-} else {
-    print "❌ SOME TESTS FAILED\n\n";
-    exit 1;
-}
+done_testing();

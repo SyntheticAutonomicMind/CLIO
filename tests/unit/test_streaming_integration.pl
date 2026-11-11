@@ -2,6 +2,11 @@
 
 use strict;
 use warnings;
+
+# This script reports by printing PASS/FAIL. Record failures and exit non-zero,
+# otherwise the suite counts it as passing no matter what it printed.
+my $failed = 0;
+END { exit 1 if $failed }
 use lib './lib';
 
 # Integration test for streaming + pagination compatibility
@@ -81,7 +86,7 @@ my $line_count = $chat->_count_visual_lines($long_text);
 print "Generated 30 lines of text\n";
 print "Counted lines: $line_count\n";
 print "Expected: 30\n";
-print "Result: " . ($line_count == 30 ? "PASS" : "FAIL") . "\n\n";
+print "Result: " . ($line_count == 30 ? "PASS" : do { $failed++; "FAIL" }) . "\n\n";
 
 my @pagination_points = ();
 my $lines_so_far = 0;

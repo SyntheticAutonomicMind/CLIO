@@ -2,6 +2,11 @@
 
 use strict;
 use warnings;
+
+# This script reports by printing PASS/FAIL. Record failures and exit non-zero,
+# otherwise the suite counts it as passing no matter what it printed.
+my $failed = 0;
+END { exit 1 if $failed }
 use lib 'lib';
 use CLIO::Core::ToolExecutor;
 use CLIO::Tools::Registry;
@@ -32,7 +37,7 @@ if ($result->{success} || $result->{error} !~ /Unknown tool/) {
     print "✓ grep_search was aliased successfully!\n";
     print "  Operation used: " . ($result->{operation} || 'grep_search') . "\n";
 } else {
-    print "✗ FAILED: grep_search not aliased\n";
+    print "✗ FAILED: grep_search not aliased\n";     $failed++;
     print "  Error: $result->{error}\n";
 }
 
@@ -48,7 +53,7 @@ $result = decode_json($result_json);
 if ($result->{success} || $result->{error} !~ /Unknown tool/) {
     print "✓ file_operations works normally!\n";
 } else {
-    print "✗ FAILED: file_operations broken\n";
+    print "✗ FAILED: file_operations broken\n";     $failed++;
     print "  Error: $result->{error}\n";
 }
 

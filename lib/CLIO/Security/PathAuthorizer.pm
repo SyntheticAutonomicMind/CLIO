@@ -44,15 +44,23 @@ their designated workspace but must ask permission for operations outside that s
 
 =cut
 
+# Grants are shared across instances on purpose. file_operations and
+# apply_patch each build their own authorizer, so instance-local storage meant a
+# grant approved through one tool was invisible to the other, and nothing
+# outside those instances could enumerate or revoke them. One process is one
+# session, so a package-scoped store is the right scope.
+our %SHARED_GRANTS;
+our %SHARED_AUTO_APPROVE;
+
 sub new {
     my ($class, %opts) = @_;
     
     my $self = {
         debug => $opts{debug} || 0,
-        # Grant storage: { conversation_id => { operation => grant } }
-        grants => {},
+        # Grant storage: { conversation_id => { "<operation>|<path>" => grant } }
+        grants => \%SHARED_GRANTS,
         # Auto-approve conversations (bypasses all security)
-        auto_approve_conversations => {},
+        auto_approve_conversations => \%SHARED_AUTO_APPROVE,
     };
     
     return bless $self, $class;
@@ -136,7 +144,7 @@ sub checkPathAuthorization {
     }
     
     # Path is outside working directory - check if authorized
-    if ($conversation_id && $self->isAuthorized($conversation_id, $operation)) {
+    if ($conversation_id && $self->isAuthorized($conversation_id, $operation, $normalized_path)) {
         log_debug('PathAuthorizer', "Operation allowed - previously authorized");
         return {
             status => 'allowed',
@@ -168,56 +176,91 @@ Returns: Fully resolved absolute path
 
 sub resolvePath {
     my ($self, $path, $working_directory) = @_;
-    
+
     # Expand tilde first
     $path = expand_tilde($path);
-    
+
     # If relative path with working directory, resolve first
     if ($working_directory && $path !~ m{^/}) {
         $working_directory = expand_tilde($working_directory);
         $path = File::Spec->rel2abs($path, $working_directory);
     }
-    
-    # Now we have an absolute path - normalize it
-    # For existing paths, use realpath to resolve symlinks
+
+    # Collapse "." and ".." lexically before consulting the filesystem.
+    # realpath() only succeeds on paths that exist, and the paths this guard
+    # most needs to judge are create and write targets that do not exist yet.
+    # Unnormalized, "<session>/tmp/../../etc/passwd" came back verbatim: still
+    # carrying the session prefix, so the containment test passed, while the
+    # operating system resolved the write outside the session.
+    $path = _normalize_components($path);
+
+    # Existing path: realpath resolves symlinks as well as the lexical form.
     my $resolved = realpath($path);
-    if ($resolved) {
-        return $resolved;
-    }
-    
-    # Path doesn't exist yet - find the deepest existing parent
-    # and normalize based on that
-    my $current = $path;
-    my @non_existent_parts;
-    
-    while (!-e $current) {
-        my ($volume, $directories, $file) = File::Spec->splitpath($current, 1);  # 1 = is directory
-        
-        # If no file part, the last dir component becomes the file
-        my @dirs = File::Spec->splitdir($directories);
-        my $last_part = pop @dirs;
-        unshift @non_existent_parts, $last_part if $last_part;
-        
-        # Reconstruct parent path
-        $current = File::Spec->catpath($volume, File::Spec->catdir(@dirs), '');
-        
-        # Safety check - don't go above root
-        last if $current eq '/' || $current eq '';
-    }
-    
-    # Now $current is the deepest existing parent
-    if (-e $current) {
-        my $normalized_base = realpath($current);
-        if ($normalized_base && @non_existent_parts) {
-            # Reconstruct full path with normalized base
-            return File::Spec->catfile($normalized_base, @non_existent_parts);
-        } elsif ($normalized_base) {
-            return $normalized_base;
+    return $resolved if $resolved;
+
+    # Path does not exist yet: resolve the deepest existing ancestor and
+    # re-attach the remaining components, which are already normalized so
+    # none of them can be "..".
+    my ($volume, $directories, undef) = File::Spec->splitpath($path, 1);
+    my @components = grep { length } File::Spec->splitdir($directories);
+    my $root = length $volume ? File::Spec->catdir($volume) : '/';
+
+    my @tail;
+    while (1) {
+        my $candidate = @components
+            ? File::Spec->catpath($volume, File::Spec->catdir(@components), '')
+            : $root;
+        if (-e $candidate) {
+            my $base = realpath($candidate) || $candidate;
+            return @tail ? File::Spec->catfile($base, @tail) : $base;
         }
+        last unless @components;
+        unshift @tail, pop @components;
     }
-    
-    # Fallback - return original path
+
+    # Nothing on the path exists, not even the root.
     return $path;
+}
+
+=head2 _normalize_components (Internal)
+
+Collapse C{.} and C{..} in a path without touching the filesystem.
+
+L<File::Spec/canonpath> declines to collapse C{..} because that is only sound
+once symlinks are known. For a containment check the lexical reading is the
+correct one: C{..} is resolved against the directory tree, and a path that
+walks above the session directory has to be judged by where it lands rather
+than by the string that was typed. A C{..} with nothing left to cancel stays
+at the root, matching POSIX.
+
+Do not call directly.
+
+=cut
+
+sub _normalize_components {
+    my ($path) = @_;
+    return $path unless defined $path && length $path;
+
+    my ($volume, $directories, undef) = File::Spec->splitpath($path, 1);
+    my @parts = grep { length } File::Spec->splitdir($directories);
+    my $absolute = ($path =~ m{^/}) || length($volume) > 1;
+
+    my @out;
+    for my $part (@parts) {
+        next if $part eq '.';
+        if ($part eq '..') {
+            if (@out && $out[-1] ne '..') {
+                pop @out;
+            }
+            push @out, $part unless $absolute;
+            next;
+        }
+        push @out, $part;
+    }
+
+    return @out
+        ? File::Spec->catpath($volume, File::Spec->catdir(@out), '')
+        : (length $volume ? File::Spec->catdir($volume) : '/');
 }
 
 =head2 grantAuthorization
@@ -232,18 +275,39 @@ Arguments:
 =cut
 
 sub grantAuthorization {
-    my ($self, $conversation_id, $operation, $one_time_use) = @_;
+    my ($self, $conversation_id, $operation, $one_time_use, $path) = @_;
+    
+    return unless $conversation_id && $operation;
     
     $one_time_use //= 1;  # Default to one-time use
     
     $self->{grants}->{$conversation_id} ||= {};
-    $self->{grants}->{$conversation_id}->{$operation} = {
+    $self->{grants}->{$conversation_id}->{$self->_grant_key($operation, $path)} = {
         granted_at => time(),
         one_time_use => $one_time_use,
         consumed => 0,
+        path => $path,
     };
     
-    log_debug('PathAuthorizer', "Authorization granted: conversation=$conversation_id, operation=$operation, oneTime=$one_time_use");
+    log_debug('PathAuthorizer', "Authorization granted: conversation=$conversation_id, operation=$operation, path=" . ($path // '*') . ", oneTime=$one_time_use");
+}
+
+=head2 _grant_key (Internal)
+
+Build the storage key for one grant.
+
+A grant is scoped to an operation and, when a path is supplied, to that single
+resolved path. Approving one write outside the session directory must not
+unlock every other path for the rest of the conversation. A grant recorded
+without a path matches any path, which is what bulk approvals rely on.
+
+Do not call directly.
+
+=cut
+
+sub _grant_key {
+    my ($self, $operation, $path) = @_;
+    return $operation . '|' . ((defined $path && length $path) ? $path : '*');
 }
 
 =head2 isAuthorized
@@ -259,22 +323,31 @@ Returns: True if authorized, false otherwise
 =cut
 
 sub isAuthorized {
-    my ($self, $conversation_id, $operation) = @_;
+    my ($self, $conversation_id, $operation, $path) = @_;
     
     return 0 unless $conversation_id;
     return 0 unless $self->{grants}->{$conversation_id};
     
-    my $grant = $self->{grants}->{$conversation_id}->{$operation};
-    return 0 unless $grant;
-    return 0 if $grant->{consumed};
+    # An exact-path grant is consumed before a wildcard grant for the same
+    # operation is considered.
+    my @candidates = (defined $path && length $path) ? ($path, undef) : (undef);
     
-    # Consume if one-time use
-    if ($grant->{one_time_use}) {
-        $grant->{consumed} = 1;
-        log_debug('PathAuthorizer', "Authorization consumed: conversation=$conversation_id, operation=$operation");
+    for my $candidate (@candidates) {
+        my $key = $self->_grant_key($operation, $candidate);
+        my $grant = $self->{grants}->{$conversation_id}->{$key};
+        next unless $grant;
+        next if $grant->{consumed};
+        
+        # Consume if one-time use
+        if ($grant->{one_time_use}) {
+            $grant->{consumed} = 1;
+            log_debug('PathAuthorizer', "Authorization consumed: conversation=$conversation_id, operation=$operation, path=" . ($candidate // '*'));
+        }
+        
+        return 1;
     }
     
-    return 1;
+    return 0;
 }
 
 =head2 revokeAuthorization
@@ -288,14 +361,27 @@ Arguments:
 =cut
 
 sub revokeAuthorization {
-    my ($self, $conversation_id, $operation) = @_;
+    my ($self, $conversation_id, $operation, $path) = @_;
     
     return unless $conversation_id;
     return unless $self->{grants}->{$conversation_id};
     
-    delete $self->{grants}->{$conversation_id}->{$operation};
+    if (defined $path && length $path) {
+        # Revoke only the grant for this exact path.
+        delete $self->{grants}->{$conversation_id}->{$self->_grant_key($operation, $path)};
+    }
+    else {
+        # No path given: revoke the operation outright, whichever paths it was
+        # granted for. Grants are keyed "<operation>|<path>", so the prefix
+        # identifies every variant of this operation.
+        my $prefix = $operation . '|';
+        for my $key (keys %{$self->{grants}->{$conversation_id}}) {
+            delete $self->{grants}->{$conversation_id}->{$key}
+                if index($key, $prefix) == 0;
+        }
+    }
     
-    log_debug('PathAuthorizer', "Authorization revoked: conversation=$conversation_id, operation=$operation");
+    log_debug('PathAuthorizer', "Authorization revoked: conversation=$conversation_id, operation=$operation, path=" . ($path // '*'));
 }
 
 =head2 revokeAllForConversation
@@ -360,6 +446,217 @@ sub isAutoApproveEnabled {
     
     return 0 unless $conversation_id;
     return $self->{auto_approve_conversations}->{$conversation_id} ? 1 : 0;
+}
+
+=head2 authorize_or_prompt
+
+Check authorization, and when a path needs approval, offer the user the chance
+to grant it before reporting a failure.
+
+Without this the guard was a dead end: every denial told the caller to obtain
+authorization through a mechanism that never granted paths, so writes outside
+the session directory could not be approved at all.
+
+Arguments: the same as checkPathAuthorization, plus
+- prompt: coderef invoked as C<$prompt->(%details)> when approval is needed.
+  It must return 'once', 'session', or 'deny'. Omit it to get the plain
+  checkPathAuthorization behaviour.
+
+Returns: the checkPathAuthorization status hashref, with C<granted> set to
+'once' or 'session' when the user approved this call.
+
+=cut
+
+sub authorize_or_prompt {
+    my ($self, %args) = @_;
+    
+    my $prompt = $args{prompt};
+    
+    my $result = $self->checkPathAuthorization(%args);
+    return $result unless $result->{status} eq 'requires_authorization';
+    return $result unless $prompt;
+    
+    my $normalized_path = $self->resolvePath($args{path}, $args{working_directory});
+    my $conversation_id = $args{conversation_id};
+    my $operation       = $args{operation};
+    
+    my $decision = eval {
+        $prompt->(
+            path      => $normalized_path,
+            operation => $operation,
+            reason    => $result->{reason},
+        );
+    } || 'deny';
+    
+    if ($decision eq 'session') {
+        # Session-wide approval: stored with no path so it covers any later
+        # target for this operation, which is what the user asked for.
+        $self->grantAuthorization($conversation_id, $operation, 0, undef);
+        log_debug('PathAuthorizer', "User approved session-wide: operation=$operation");
+        return {
+            status  => 'allowed',
+            reason  => 'User approved this operation for the rest of the session',
+            granted => 'session',
+        };
+    }
+    
+    if ($decision eq 'once') {
+        # Nothing is stored: this approval covers only the write in flight.
+        # Recording a one-time grant here would leave it available for the
+        # next write, so "once" would quietly authorise two operations.
+        log_debug('PathAuthorizer', "User approved once: operation=$operation, path=$normalized_path");
+        return {
+            status  => 'allowed',
+            reason  => 'User approved this operation once',
+            granted => 'once',
+        };
+    }
+    
+    return {
+        status => 'denied',
+        reason => "User denied access to '$normalized_path'",
+    };
+}
+
+=head2 prompt_for_path_authorization(%args)
+
+Ask the user to approve writing outside the session directory.
+
+Arguments:
+- path: resolved path awaiting approval
+- reason: why approval is required
+- ui: interactive UI object (optional)
+- broker_client: broker client for headless sub-agents (optional)
+
+Returns: 'once', 'session', or 'deny'.
+
+This lives here rather than in the calling tools because both file_operations
+and apply_patch need the identical prompt, and duplicating it is how the two
+drifted apart in the first place.
+
+=cut
+
+sub prompt_for_path_authorization {
+    my (%args) = @_;
+    
+    my $path          = $args{path} || '(unknown path)';
+    my $reason        = $args{reason} || 'Path is outside the session directory';
+    my $ui            = $args{ui};
+    my $broker_client = $args{broker_client};
+    
+    # Interactive prompt
+    if ($ui && $ui->can('colorize')) {
+        my $spinner = $args{spinner};
+        $spinner->stop() if $spinner && $spinner->can('stop');
+        
+        my $theme_mgr = $ui->{theme_mgr};
+        my $options   = '(o)nce | (s)ession | (n)o deny';
+        
+        if ($theme_mgr && $theme_mgr->can('get_security_prompt')) {
+            my ($prompt_line, $input_line) = $theme_mgr->get_security_prompt(
+                $path,
+                [{ category => 'path_access', severity => 'standard', description => $reason }],
+                $options,
+            );
+            print "\n$prompt_line\n$input_line";
+        } else {
+            print "\n* Security | $path\n  $reason\n  $options: ";
+        }
+        
+        # Chat.pm's 1-second timer calls ReadKey(-1) and consumes keystrokes
+        # before <STDIN> can read them, so suspend it and drain any buffered
+        # cbreak input first.
+        my $saved_alrm       = $SIG{ALRM};
+        my $remaining_alarm  = alarm(0);
+        
+        require CLIO::Compat::Terminal;
+        while (defined(eval { CLIO::Compat::Terminal::ReadKey(-1) })) { }
+        CLIO::Compat::Terminal::ReadMode(0);
+        
+        my $response = <STDIN>;
+        chomp($response) if defined $response;
+        $response = lc($response || 'n');
+        
+        CLIO::Compat::Terminal::ReadMode(1);
+        $SIG{ALRM} = $saved_alrm || 'DEFAULT';
+        alarm($remaining_alarm) if $remaining_alarm;
+        
+        $spinner->start() if $spinner && $spinner->can('start');
+        
+        return 'once'    if $response =~ /^(?:o|once|y|yes)$/;
+        return 'session' if $response =~ /^(?:s|session|a|all|allow)$/;
+        return 'deny';
+    }
+    
+    # No TTY: relay the request through the broker for headless sub-agents.
+    if ($broker_client) {
+        log_debug('PathAuthorizer', "No TTY - relaying path authorization through broker");
+        require CLIO::Security::AuthorizationRelay;
+        my $relay = CLIO::Security::AuthorizationRelay->new(broker_client => $broker_client);
+        if ($relay->available()) {
+            my $result = $relay->request_path_authorization($path, { reason => $reason });
+            return 'deny' unless $result->{approved};
+            return $result->{grant_type} eq 'session' ? 'session' : 'once';
+        }
+    }
+    
+    log_debug('PathAuthorizer', "No interactive channel - denying path authorization for $path");
+    return 'deny';
+}
+
+=head2 list_path_grants
+
+Return every active grant, for display.
+
+Returns: arrayref of hashrefs with conversation_id, operation, path, session.
+
+=cut
+
+sub list_path_grants {
+    my @grants;
+    
+    for my $conversation_id (sort keys %SHARED_GRANTS) {
+        my $by_key = $SHARED_GRANTS{$conversation_id} || {};
+        for my $key (sort keys %$by_key) {
+            my $grant = $by_key->{$key};
+            next if $grant->{consumed};
+            my ($operation, $path) = split /\|/, $key, 2;
+            push @grants, {
+                conversation_id => $conversation_id,
+                operation       => $operation,
+                path            => ($path && $path ne '*') ? $path : undef,
+                session         => $grant->{one_time_use} ? 0 : 1,
+            };
+        }
+    }
+    
+    return \@grants;
+}
+
+=head2 reset_path_grants
+
+Clear every path grant and every auto-approve flag.
+
+Called by C</security reset> alongside the other grant resets so one command
+restores interactive prompting for all categories.
+
+Returns: number of grants cleared.
+
+=cut
+
+sub reset_path_grants {
+    my $count = 0;
+    
+    for my $conversation_id (keys %SHARED_GRANTS) {
+        $count += scalar keys %{$SHARED_GRANTS{$conversation_id} || {}};
+    }
+    
+    %SHARED_GRANTS = ();
+    %SHARED_AUTO_APPROVE = ();
+    
+    log_debug('PathAuthorizer', "All path grants reset, count=$count");
+    
+    return $count;
 }
 
 1;

@@ -625,31 +625,31 @@ sub _log_tool_operation {
     # redaction to prevent secrets from accumulating on disk.  This is a
     # one-way ratchet: the AI-facing redaction level may be relaxed for
     # workflow convenience, but logs are always maximally redacted.
-    my $ai_redact_level = $self->_get_redact_level();
-    # Override to 'strict' for log persistence — logs outlive the AI context
-    # and must always be maximally redacted regardless of AI-facing level.
-    my $redact_level = ($ai_redact_level eq 'off') ? 'off' : 'strict';
-    if ($redact_level ne 'off') {
-        # Redact parameters regardless of ref type: HASH (tool args),
-        # ARRAY (list-style args), SCALAR (string ref), or scalar string.
-        # Previously only HASH refs were redacted, leaving ARRAY and
-        # SCALAR ref parameters unprotected.
-        if (exists $entry->{parameters} && defined $entry->{parameters}) {
-            if (ref($entry->{parameters})) {
-                $entry->{parameters} = redact_any($entry->{parameters}, level => $redact_level);
-            } else {
-                $entry->{parameters} = redact($entry->{parameters}, level => $redact_level);
-            }
+    #
+    # redact_level governs the AI-facing context only. It does not reach this
+    # path, including redact_level=off: choosing to show yourself your own keys
+    # is not a decision to write them into a log file that outlives the session.
+    my $redact_level = 'strict';
+
+    # Redact parameters regardless of ref type: HASH (tool args),
+    # ARRAY (list-style args), SCALAR (string ref), or scalar string.
+    # Previously only HASH refs were redacted, leaving ARRAY and
+    # SCALAR ref parameters unprotected.
+    if (exists $entry->{parameters} && defined $entry->{parameters}) {
+        if (ref($entry->{parameters})) {
+            $entry->{parameters} = redact_any($entry->{parameters}, level => $redact_level);
+        } else {
+            $entry->{parameters} = redact($entry->{parameters}, level => $redact_level);
         }
-        # Also redact scalar string fields, and any ref-valued fields
-        # via redact_any (handles HASH/ARRAY/SCALAR refs in output, etc.)
-        for my $field (qw(output sent_to_ai error)) {
-            if (exists $entry->{$field} && defined $entry->{$field}) {
-                if (ref($entry->{$field})) {
-                    $entry->{$field} = redact_any($entry->{$field}, level => $redact_level);
-                } else {
-                    $entry->{$field} = redact($entry->{$field}, level => $redact_level);
-                }
+    }
+    # Also redact scalar string fields, and any ref-valued fields
+    # via redact_any (handles HASH/ARRAY/SCALAR refs in output, etc.)
+    for my $field (qw(output sent_to_ai error)) {
+        if (exists $entry->{$field} && defined $entry->{$field}) {
+            if (ref($entry->{$field})) {
+                $entry->{$field} = redact_any($entry->{$field}, level => $redact_level);
+            } else {
+                $entry->{$field} = redact($entry->{$field}, level => $redact_level);
             }
         }
     }

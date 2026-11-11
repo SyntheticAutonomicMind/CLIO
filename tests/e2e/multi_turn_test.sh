@@ -1,5 +1,12 @@
 #!/bin/bash
 
+# Requires a live API provider. The previous behaviour ran against whatever
+# account the developer had configured and could hang for minutes.
+if [ "${CLIO_LIVE_API_TESTS:-0}" != "1" ]; then
+    echo "SKIP: requires a live API provider - set CLIO_LIVE_API_TESTS=1 to run"
+    exit 0
+fi
+
 # Test multi-turn conversation with tool usage
 SESSION_ID=$(./clio --new --input "hello" --exit 2>&1 | grep "Session:" | awk '{print $2}')
 

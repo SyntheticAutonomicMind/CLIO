@@ -234,11 +234,13 @@ sub handle_security_command {
         require CLIO::Tools::TerminalOperations;
         require CLIO::Tools::FileOperations;
         require CLIO::Tools::WebOperations;
+        require CLIO::Security::PathAuthorizer;
 
         CLIO::Tools::TerminalOperations::reset_session_grants();
         CLIO::Tools::FileOperations::reset_script_session_grants();
         CLIO::Tools::FileOperations::reset_overwrite_session_grants();
         CLIO::Tools::WebOperations::reset_url_session_grants();
+        CLIO::Security::PathAuthorizer::reset_path_grants();
 
         $self->display_command_header("SECURITY GRANTS RESET");
         $self->display_success_message("All session-level security grants cleared.");
@@ -246,6 +248,7 @@ sub handle_security_command {
         $self->display_key_value("Cleared", "Script creation grants");
         $self->display_key_value("Cleared", "File overwrite grants");
         $self->display_key_value("Cleared", "Web fetch grants");
+        $self->display_key_value("Cleared", "Path authorization grants");
         $self->writeline("", markdown => 0);
         return;
     }
@@ -256,17 +259,23 @@ sub handle_security_command {
     require CLIO::Tools::TerminalOperations;
     require CLIO::Tools::FileOperations;
     require CLIO::Tools::WebOperations;
+    require CLIO::Security::PathAuthorizer;
 
     my %term = %{$CLIO::Tools::TerminalOperations::_session_grants};
     my %script = %{$CLIO::Tools::FileOperations::_script_write_grants};
     my %overwrite = %{$CLIO::Tools::FileOperations::_overwrite_session_grants};
     my %url = %{$CLIO::Tools::WebOperations::_url_session_grants};
+    my $path_grants = CLIO::Security::PathAuthorizer::list_path_grants();
 
     my @all_cats;
     push @all_cats, map { "command: $_" } keys %term;
     push @all_cats, map { "script: $_" } keys %script;
     push @all_cats, map { "overwrite: $_" } keys %overwrite;
     push @all_cats, map { "web: $_" } keys %url;
+    for my $grant (@$path_grants) {
+        my $scope = $grant->{path} || 'any path';
+        push @all_cats, "path: $grant->{operation} ($scope)";
+    }
 
     if (@all_cats) {
         $self->display_key_value("Active grants", scalar(@all_cats) . " session grant(s)");

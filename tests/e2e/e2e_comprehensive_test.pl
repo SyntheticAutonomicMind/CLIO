@@ -24,6 +24,16 @@ Requires: API key configured (uses real API calls)
 use strict;
 use warnings;
 use FindBin;
+
+# Requires a live API provider; see tests/lib/TestHelpers.pm for why this is
+# an explicit opt-in and not a "config file exists" check.
+BEGIN {
+    require File::Basename;
+    require File::Spec;
+    unshift @INC, File::Spec->catdir(File::Basename::dirname(__FILE__), '..', 'lib');
+    require TestHelpers;
+    TestHelpers::skip_unless_live_api();
+}
 use File::Temp qw(tempdir);
 use Time::HiRes qw(time sleep);
 

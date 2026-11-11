@@ -5,6 +5,14 @@
 # Don't exit on error - we want to run all tests
 #set -e
 
+# This suite drives the agent end to end, so it needs a real provider. Require
+# an explicit opt-in: the previous behaviour ran against whatever account the
+# developer had configured, and hung for minutes when that provider stalled.
+if [ "${CLIO_LIVE_API_TESTS:-0}" != "1" ]; then
+    echo "SKIP: requires a live API provider - set CLIO_LIVE_API_TESTS=1 to run"
+    exit 0
+fi
+
 CLIO="./clio"
 TEST_LOG="/tmp/clio_comprehensive_test.log"
 PASSED=0

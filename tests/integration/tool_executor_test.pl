@@ -20,6 +20,7 @@ use lib "$FindBin::Bin/../../lib";
 use feature 'say';
 use JSON::PP qw(encode_json decode_json);
 use File::Temp qw(tempdir);
+use File::Spec;
 use Cwd qw(getcwd);
 
 # Test infrastructure
@@ -59,6 +60,15 @@ say "";
 # Setup test environment
 my $test_dir = tempdir(CLEANUP => 1);
 my $cwd = getcwd();
+
+# Isolate CLIO's config and data directories. MemoryOperations only accepts a
+# memory_dir inside the project or config directory, so the test needs a
+# sandbox rather than an arbitrary temp path. PathResolver honors CLIO_HOME.
+use File::Path qw(make_path);
+my $clio_home = tempdir(CLEANUP => 1);
+$ENV{CLIO_HOME} = $clio_home;
+my $memory_dir = File::Spec->catdir($clio_home, 'memory');
+make_path($memory_dir);
 
 say "Test directory: $test_dir";
 say "";
@@ -339,7 +349,7 @@ test "MemoryOperations: store", sub {
                 operation => 'store',
                 key => 'test_key',
                 content => 'test value',
-                memory_dir => "$test_dir/memory",
+                memory_dir => $memory_dir,
             })
         }
     };
@@ -358,7 +368,7 @@ test "MemoryOperations: retrieve", sub {
             arguments => encode_json({
                 operation => 'retrieve',
                 key => 'test_key',
-                memory_dir => "$test_dir/memory",
+                memory_dir => $memory_dir,
             })
         }
     };
@@ -378,7 +388,7 @@ test "MemoryOperations: search", sub {
             arguments => encode_json({
                 operation => 'search',
                 query => 'test',
-                memory_dir => "$test_dir/memory",
+                memory_dir => $memory_dir,
             })
         }
     };

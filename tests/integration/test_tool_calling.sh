@@ -1,4 +1,11 @@
 #!/usr/bin/env bash
+
+# Requires a live API provider. The previous behaviour ran against whatever
+# account the developer had configured and could hang for minutes.
+if [ "${CLIO_LIVE_API_TESTS:-0}" != "1" ]; then
+    echo "SKIP: requires a live API provider - set CLIO_LIVE_API_TESTS=1 to run"
+    exit 0
+fi
 # End-to-end tool calling test
 # Tests both correct and malformed tool calls in OpenAI and Anthropic formats
 # This test discovered the TodoStore undef status bugs
