@@ -10,8 +10,10 @@ use utf8;
 binmode(STDOUT, ':encoding(UTF-8)');
 binmode(STDERR, ':encoding(UTF-8)');
 use parent 'CLIO::Tools::Tool';
+use CLIO::Util::ShellSyntax qw(check_shell_syntax);
 use Cwd 'getcwd';
-use POSIX qw(WNOHANG);
+use POSIX qw(WNOHANG dup2);
+use File::Temp ();
 use Time::HiRes ();
 use CLIO::Core::Logger qw(log_debug log_warning log_error);
 use CLIO::Security::CommandAnalyzer qw(analyze_command extract_write_targets);
@@ -44,6 +46,14 @@ Operations (REQUIRED 'operation' parameter; 'command' parameter required for bot
 Behavior: Commands run in captured mode by default (output to file, no pty).
 Use passthrough=true for interactive TTY access. Multiplexer panes used when available.
 Timeout is idle: command killed after N seconds with no output. Default idle timeout is 300s (5min). Active commands run until hard ceiling (10min).
+
+Feeding input: prefer the 'stdin' parameter over writing a heredoc. It carries no
+terminator line, needs no quoting, and is the reliable way to pass multi-line
+content to a program.
+
+Pre-flight: every command is parsed with 'sh -n' before running. If the shell
+cannot parse it, the call is rejected with the syntax error and a hint, and
+nothing executes.
 
 QUICK EXAMPLE:
 {"operation": "exec", "command": "ls -la"}
@@ -147,6 +157,10 @@ sub get_additional_parameters {
             type => "string",
             description => "[OPTIONAL] Working directory for command. Defaults to current session working directory or '.'.",
         },
+        stdin => {
+            type => "string",
+            description => "[OPTIONAL] Text to feed to the command's standard input. Use this instead of writing a heredoc: no terminator line, no quoting, and no literal newlines needed inside the command string. Example: command 'tr a-z A-Z' with stdin 'hello'.",
+        },
     };
 }
 
@@ -202,6 +216,16 @@ sub execute_command {
         $session = $context->{ui}->{session};
     }
     
+    # Stage the stdin payload as a file so the child can read it from a real
+    # descriptor. This is what removes the agent's need to build a heredoc,
+    # the most common source of malformed multi-line commands.
+    my $stdin_file;
+    if (defined $params->{stdin} && length $params->{stdin}) {
+        my ($path, $err) = _write_stdin_file($params->{stdin});
+        return $self->error_result("Cannot stage stdin content: $err") if $err;
+        $stdin_file = $path;
+    }
+
     my $original_cwd = getcwd();
     my $changed_dir = ($working_dir ne '.');
     chdir $working_dir if $changed_dir;
@@ -210,9 +234,9 @@ sub execute_command {
         my $start_time = Time::HiRes::time();
 
         if ($passthrough) {
-            $result = $self->_execute_passthrough($command, $timeout, $display_cmd, $working_dir, $session);
+            $result = $self->_execute_passthrough($command, $timeout, $display_cmd, $working_dir, $session, $stdin_file);
         } else {
-            $result = $self->_execute_captured($command, $timeout, $display_cmd, $working_dir, $session);
+            $result = $self->_execute_captured($command, $timeout, $display_cmd, $working_dir, $session, $stdin_file);
         }
         
         # Append [exit:N | Xms] footer to output so agent develops cost intuition
@@ -231,6 +255,7 @@ sub execute_command {
     };
     
     chdir $original_cwd if $changed_dir;
+    unlink $stdin_file if $stdin_file && -f $stdin_file;
 
     if ($@) {
         return $self->error_result("Command execution failed: " . $self->_clean_eval_error($@));
@@ -255,8 +280,44 @@ sub _find_windows_bash {
     return undef;
 }
 
+=head2 _windows_exec_string (Internal)
+
+Build the command line passed to system() on Windows.
+
+The log redirect sits outside the quoted command string, so unlike the Unix
+captured path it never touches the command's own final line.
+
+Arguments: $command, $log_file, $stdin_file (optional)
+Returns: command line string
+
+=cut
+
+sub _windows_exec_string {
+    my ($command, $log_file, $stdin_file) = @_;
+
+    my $escaped_log = $log_file;
+    $escaped_log =~ s/"/\\"/g;
+
+    my $stdin_redir = '';
+    if ($stdin_file) {
+        my $escaped_stdin = $stdin_file;
+        $escaped_stdin =~ s/"/\\"/g;
+        $stdin_redir = qq{ < "$escaped_stdin"};
+    }
+
+    my $bash = _find_windows_bash();
+    if ($bash) {
+        # Use bash -c for POSIX command support
+        my $escaped_command = $command;
+        $escaped_command =~ s/'/'\\''/g;
+        return qq{"$bash" -c '$escaped_command'$stdin_redir > "$escaped_log" 2>&1};
+    }
+
+    return qq{cmd.exe /C "$command"$stdin_redir > "$escaped_log" 2>&1};
+}
+
 sub _execute_captured {
-    my ($self, $command, $timeout, $display_cmd, $working_dir, $session) = @_;
+    my ($self, $command, $timeout, $display_cmd, $working_dir, $session, $stdin_file) = @_;
     
     my $log_file;
     if ($^O eq 'MSWin32') {
@@ -274,18 +335,7 @@ sub _execute_captured {
     if ($^O eq 'MSWin32') {
         # Windows: prefer bash (Git for Windows) for POSIX compatibility,
         # fall back to cmd.exe
-        my $escaped_log = $log_file;
-        $escaped_log =~ s/"/\\"/g;
-        my $cmd;
-        my $bash = _find_windows_bash();
-        if ($bash) {
-            # Use bash -c for POSIX command support
-            my $escaped_command = $command;
-            $escaped_command =~ s/'/'\\''/g;
-            $cmd = qq{"$bash" -c '$escaped_command' > "$escaped_log" 2>&1};
-        } else {
-            $cmd = qq{cmd.exe /C "$command" > "$escaped_log" 2>&1};
-        }
+        my $cmd = _windows_exec_string($command, $log_file, $stdin_file);
         eval {
             local $SIG{ALRM} = sub { die "alarm\n" };
             alarm($timeout) if $timeout;
@@ -319,9 +369,29 @@ sub _execute_captured {
             POSIX::setpgid(0, 0);
             # Detach from parent's STDIN to prevent child from competing
             # for terminal input (causes hangs when child also reads TTY)
-            open(STDIN, '<', '/dev/null') or POSIX::_exit(126);
-            my $escaped_log = _shell_escape($log_file);
-            exec("/bin/sh", "-c", "($command) > $escaped_log 2>&1")
+            if ($stdin_file) {
+                open(STDIN, '<', $stdin_file) or POSIX::_exit(126);
+            } else {
+                open(STDIN, '<', '/dev/null') or POSIX::_exit(126);
+            }
+
+            # Attach the log with dup2 instead of wrapping the command in a
+            # shell redirect. The previous form was "($command) > $log 2>&1",
+            # which appends ") > $log 2>&1" to whatever the command's final
+            # line happens to be. That silently corrupts any command ending in
+            # a heredoc terminator, because the terminator is no longer alone
+            # on its line and the heredoc runs to end of input, and any command
+            # ending in a comment, because the redirect falls inside the
+            # comment. Both failed with a shell syntax error the agent could
+            # not attribute to anything, and the log file was never created, so
+            # the agent received no output at all. Redirecting the descriptors
+            # here leaves the command byte-for-byte as written.
+            open(my $logfh, '>', $log_file) or POSIX::_exit(126);
+            POSIX::dup2(fileno($logfh), 1) or POSIX::_exit(126);
+            POSIX::dup2(fileno($logfh), 2) or POSIX::_exit(126);
+            close $logfh if fileno($logfh) > 2;
+
+            exec("/bin/sh", "-c", $command)
                 or POSIX::_exit(127);  # exec failed
         }
         
@@ -446,7 +516,7 @@ interfere with the command.
 =cut
 
 sub _execute_passthrough {
-    my ($self, $command, $timeout, $display_cmd, $working_dir, $session) = @_;
+    my ($self, $command, $timeout, $display_cmd, $working_dir, $session, $stdin_file) = @_;
     
     my $log_file;
     if ($^O eq 'MSWin32') {
@@ -484,18 +554,7 @@ sub _execute_passthrough {
     if ($^O eq 'MSWin32') {
         # Windows: prefer bash (Git for Windows) for POSIX compatibility,
         # fall back to cmd.exe
-        my $escaped_log = $log_file;
-        $escaped_log =~ s/"/\\"/g;
-        my $cmd;
-        my $bash = _find_windows_bash();
-        if ($bash) {
-            # Use bash -c for POSIX command support
-            my $escaped_command = $command;
-            $escaped_command =~ s/'/'\\''/g;
-            $cmd = qq{"$bash" -c '$escaped_command' > "$escaped_log" 2>&1};
-        } else {
-            $cmd = qq{cmd.exe /C "$command" > "$escaped_log" 2>&1};
-        }
+        my $cmd = _windows_exec_string($command, $log_file, $stdin_file);
         eval {
             local $SIG{ALRM} = sub { die "alarm\n" };
             alarm($timeout) if $timeout;
@@ -522,9 +581,20 @@ sub _execute_passthrough {
         if ($child_pid == 0) {
             # Child: create new process group for clean cleanup
             POSIX::setpgid(0, 0);
-            # Exec the command with tee for output capture
-            my $escaped_log = _shell_escape($log_file);
-            exec("/bin/sh", "-c", "$command 2>&1 | tee $escaped_log")
+            if ($stdin_file) {
+                open(STDIN, '<', $stdin_file) or POSIX::_exit(126);
+            }
+            # Exec the command with tee for output capture.
+            #
+            # The command is grouped with { } and the closing brace is placed
+            # on its own line. Appending " 2>&1 | tee $log" directly to the
+            # command glued it onto the command's last line, which broke
+            # heredocs (the terminator is no longer alone, so the text
+            # "EOF 2>&1 | tee /tmp/..." got fed to the child program as input)
+            # and trailing comments (the pipeline was commented out, so nothing
+            # reached the log). A newline before the brace keeps both intact.
+            my $wrapped = _passthrough_wrap($command, $log_file);
+            exec("/bin/sh", "-c", $wrapped)
                 or POSIX::_exit(127);
         }
         
@@ -827,6 +897,20 @@ sub validate_command {
     my $command = $params->{command};
 
  return $self->error_result("Missing required parameter: command") unless $command;
+
+    # Parse the command with the same shell that would run it, before anything
+    # else happens. A command the shell cannot parse would fail on execution
+    # anyway, so checking here costs a few milliseconds, produces a much better
+    # diagnostic than the shell's raw message, runs no side effects, and keeps
+    # the user from being prompted to approve a command that could never have
+    # worked.
+    if (my $syntax = check_shell_syntax($command)) {
+        log_debug('TermOps', "Rejecting command with invalid shell syntax: $syntax->{error}");
+        my $msg = "Command rejected: the shell could not parse it. Nothing was executed.\n\n"
+                . "Syntax error: $syntax->{error}";
+        $msg .= "\n\nHint: $syntax->{hint}" if $syntax->{hint};
+        return $self->error_result($msg);
+    }
 
     # Get security settings from config
     my $config = ($context && $context->{config}) ? $context->{config} : undef;
@@ -1170,6 +1254,60 @@ sub _shell_escape {
     my ($str) = @_;
     $str =~ s/'/'\\''/g;
     return "'$str'";
+}
+
+=head2 _passthrough_wrap (Internal)
+
+Wrap a command so its output reaches both the terminal and a log file.
+
+The command is grouped with braces and the closing brace sits on its own
+line. Appending the pipeline straight onto the command glued it to the
+command's final line, which broke heredocs - the terminator stops being
+alone, so "EOF 2>&1 | tee /tmp/..." gets fed to the child program as input -
+and trailing comments, where the pipeline was commented out and nothing
+reached the log.
+
+Arguments: $command, $log_file
+Returns: command string suitable for sh -c
+
+=cut
+
+sub _passthrough_wrap {
+    my ($command, $log_file) = @_;
+    my $escaped_log = _shell_escape($log_file);
+    return "{ $command\n} 2>&1 | tee $escaped_log";
+}
+
+=head2 _write_stdin_file (Internal)
+
+Stage text for the command's standard input into a temporary file.
+
+Arguments: $content (required) - the text to feed
+Returns: ($path, $error) - exactly one is defined
+
+=cut
+
+sub _write_stdin_file {
+    my ($content) = @_;
+
+    my ($fh, $path) = File::Temp::tempfile('clio_stdin_XXXXXX', TMPDIR => 1);
+    unless ($fh) {
+        return (undef, "tempfile: $!");
+    }
+    # Encode only when the scalar carries the UTF-8 flag. A payload that
+    # arrived as raw bytes must be written through untouched, or it would be
+    # encoded a second time.
+    my $raw = $content;
+    utf8::encode($raw) if utf8::is_utf8($raw);
+    unless (print {$fh} $raw) {
+        my $err = $!;
+        close $fh;
+        unlink $path;
+        return (undef, "write: $err");
+    }
+    close $fh or unlink $path;
+
+    return ($path, undef);
 }
 
 =head2 _reset_terminal_state_light
