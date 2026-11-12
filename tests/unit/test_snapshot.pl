@@ -38,6 +38,10 @@ close $fh;
 
 my $vault = CLIO::Session::FileVault->new(
     work_tree => $tmpdir,
+    # Isolate storage. work_tree only scopes the relative paths stored inside
+    # the vault; without vault_dir this test would read and prune the real
+    # project vault under ~/.clio/projects/<uuid>/vault/.
+    vault_dir => File::Spec->catdir($tmpdir, '.vault'),
     debug => 0,
 );
 
@@ -218,6 +222,81 @@ open $fh, '<', $subfile;
 $content = do { local $/; <$fh> };
 close $fh;
 ok($content =~ /deep content/, "Subdirectory file restored");
+
+# Test 12: Turn IDs are unique across FileVault instances that share a vault.
+# Regression: IDs came from a per-instance counter while the vault is shared
+# project-wide, so a second instance (or a sub-agent) reissued turn_0001 and
+# overwrote the manifest the first instance had already written.
+print "\n=== Test: Turn ID Uniqueness Across Instances ===\n";
+my $shared_vault_dir = File::Spec->catdir($tmpdir, '.shared_vault');
+my $vault_a = CLIO::Session::FileVault->new(
+    work_tree => $tmpdir, vault_dir => $shared_vault_dir, debug => 0);
+my $vault_b = CLIO::Session::FileVault->new(
+    work_tree => $tmpdir, vault_dir => $shared_vault_dir, debug => 0);
+my $id_a = $vault_a->start_turn("instance A");
+my $id_b = $vault_b->start_turn("instance B");
+ok($id_a ne $id_b, "Two instances get distinct turn IDs");
+ok($vault_a->has_turn($id_a) && $vault_b->has_turn($id_b),
+   "Both turns survive on disk");
+
+my $fileA = File::Spec->catfile($tmpdir, 'instance_a.txt');
+open $fh, '>', $fileA; print $fh "A original\n"; close $fh;
+$vault_a->capture_before($fileA, $id_a);
+open $fh, '>', $fileA; print $fh "A modified\n"; close $fh;
+
+$result = $vault_b->undo_turn($id_b);
+ok($result->{success}, "Instance B undo of its own turn succeeds");
+open $fh, '<', $fileA; my $after_b = do { local $/; <$fh> }; close $fh;
+ok($after_b =~ /A modified/, "Instance B undo did not touch instance A's file");
+
+$result = $vault_a->undo_turn($id_a);
+ok($result->{success} && $result->{reverted} == 1, "Instance A undo reverts its own file");
+open $fh, '<', $fileA; my $after_a = do { local $/; <$fh> }; close $fh;
+ok($after_a =~ /A original/, "Instance A file restored to its original content");
+
+# Test 13: A live turn is never pruned, even when the vault is already full.
+# Regression: pruning deleted the numerically-oldest turn with no exclusion for
+# the turn just created, so a fresh instance starting against a full vault
+# removed its own turn and the session silently lost undo.
+print "\n=== Test: Live Turn Survives Pruning At Capacity ===\n";
+my $full_vault_dir = File::Spec->catdir($tmpdir, '.full_vault');
+make_path($full_vault_dir);
+my $max_turns = CLIO::Session::FileVault::MAX_TURNS();
+for my $i (1 .. $max_turns) {
+    my $dir = File::Spec->catdir($full_vault_dir, sprintf('turn_%04d', $i));
+    make_path($dir);
+    my $old = time() - 100000 + $i;
+    utime $old, $old, $dir;
+}
+
+my $vault_c = CLIO::Session::FileVault->new(
+    work_tree => $tmpdir, vault_dir => $full_vault_dir, debug => 0);
+my $id_c = $vault_c->start_turn("created at capacity");
+ok(-d File::Spec->catdir($full_vault_dir, $id_c),
+   "Live turn survives pruning of an already-full vault");
+ok($vault_c->has_turn($id_c), "Live turn is reported by has_turn");
+
+my $fileC = File::Spec->catfile($tmpdir, 'at_capacity.txt');
+open $fh, '>', $fileC; print $fh "capacity original\n"; close $fh;
+ok($vault_c->capture_before($fileC, $id_c),
+   "Capture succeeds on a turn created against a full vault");
+open $fh, '>', $fileC; print $fh "capacity modified\n"; close $fh;
+
+my $changes_c = $vault_c->changed_files($id_c);
+ok($changes_c && scalar(@{$changes_c->{files} || []}) == 1,
+   "changed_files sees the file captured at capacity");
+
+$result = $vault_c->undo_turn($id_c);
+ok($result->{success} && $result->{reverted} == 1,
+   "Undo works on a turn created against a full vault");
+open $fh, '<', $fileC; my $after_c = do { local $/; <$fh> }; close $fh;
+ok($after_c =~ /capacity original/, "File restored after undo at capacity");
+
+opendir(my $vdh, $full_vault_dir);
+my @remaining = grep { /^turn_\d+$/ } readdir($vdh);
+closedir $vdh;
+ok(scalar(@remaining) <= $max_turns,
+   "Vault stays bounded (limit $max_turns, has " . scalar(@remaining) . ")");
 
 # Summary
 print "\n=== Results ===\n";

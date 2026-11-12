@@ -35,10 +35,22 @@ content is backed up to ~/.clio/projects/<uuid>/vault/<turn_id>/. Only the FIRST
 per turn is kept - subsequent modifications to the same file in the same turn
 don't overwrite the original pre-turn state.
 
+Turn IDs are unique across the whole vault, not just within one FileVault
+instance, because the project vault is shared by every session and sub-agent
+operating on the same project. See L</_next_turn_id>.
+
 =head1 SYNOPSIS
 
     my $vault = CLIO::Session::FileVault->new(
         work_tree => '/path/to/project',
+    );
+
+    # Isolated storage (tests, or tooling working on an unrelated tree).
+    # work_tree only scopes the relative paths stored inside the vault; it
+    # does NOT redirect where the vault lives. Pass vault_dir for that.
+    my $isolated = CLIO::Session::FileVault->new(
+        work_tree => $tmpdir,
+        vault_dir => "$tmpdir/.vault",
     );
 
     # Start a new turn
@@ -78,22 +90,36 @@ sub new {
 
     my $work_tree = $args{work_tree} || getcwd();
 
-    # Vault is stored in the project data directory (~/.clio/projects/<uuid>/vault/)
-    # to keep file backups out of the project tree.
-    my $vault_dir;
-    eval {
-        require CLIO::Util::PathResolver;
-        $vault_dir = CLIO::Util::PathResolver::get_project_vault_dir();
-    };
-    # Fallback for environments where PathResolver can't resolve (e.g. tests
-    # without init) - keeps the old project-local path as a safety net.
-    $vault_dir = File::Spec->catdir($work_tree, '.clio', 'vault') unless $vault_dir;
+    # Storage location, most specific first: an explicit vault_dir always wins,
+    # then the project data directory (~/.clio/projects/<uuid>/vault/) that
+    # keeps backups out of the project tree, then a project-local fallback for
+    # environments where PathResolver cannot resolve.
+    #
+    # vault_dir matters because the project vault is shared by every session
+    # and sub-agent in the same project. Callers that need isolation (tests,
+    # tooling operating on an unrelated tree) must pass it explicitly -
+    # work_tree alone does not isolate storage, it only scopes the relative
+    # paths stored inside the vault.
+    my $vault_dir = $args{vault_dir};
+    unless ($vault_dir) {
+        eval {
+            require CLIO::Util::PathResolver;
+            $vault_dir = CLIO::Util::PathResolver::get_project_vault_dir();
+        };
+        $vault_dir = File::Spec->catdir($work_tree, '.clio', 'vault') unless $vault_dir;
+    }
 
     my $self = {
-        work_tree  => $work_tree,
-        vault_dir  => $vault_dir,
-        debug      => $args{debug} || 0,
+        work_tree => $work_tree,
+        vault_dir => $vault_dir,
+        debug     => $args{debug} || 0,
+        # Sequence counter used only to disambiguate turns created by this
+        # process within the same clock tick. Turn IDs are not derived from it
+        # alone, so a new instance cannot reissue an ID another session wrote.
         turn_count => 0,
+        # Turns this instance created and has not removed. Pruning skips them so
+        # a session can always undo its own work; see _prune_old_turns.
+        owned_turns => {},
         # Track which files have been captured this turn to avoid overwriting
         # the original backup when the same file is modified multiple times
         _captured  => {},  # { turn_id => { relative_path => 1 } }
@@ -129,19 +155,18 @@ Begin a new turn, creating a turn directory in the vault.
 Arguments:
 - $user_input: The user's prompt text (for reference in the manifest)
 
-Returns: Turn ID string (e.g., "turn_0001")
+Returns: Turn ID string: "turn_" + 10-digit epoch + 6-digit sequence, e.g.
+C<turn_1762936800000001> for the first turn of the second 1762936800.
 
 =cut
 
 sub start_turn {
     my ($self, $user_input) = @_;
 
-    $self->{turn_count}++;
-    my $turn_id = sprintf("turn_%04d", $self->{turn_count});
+    my $turn_id = $self->_next_turn_id();
 
-    my $turn_dir = File::Spec->catdir($self->{vault_dir}, $turn_id);
-    make_path($turn_dir, { mode => 0700 });
-
+    # _next_turn_id already created the turn directory atomically.
+    my $turn_dir  = File::Spec->catdir($self->{vault_dir}, $turn_id);
     my $files_dir = File::Spec->catdir($turn_dir, 'files');
     make_path($files_dir, { mode => 0700 });
 
@@ -157,11 +182,13 @@ sub start_turn {
 
     # Reset per-turn capture tracking
     $self->{_captured}{$turn_id} = {};
+    $self->{owned_turns}{$turn_id} = 1;
 
     log_debug('FileVault', "Started turn: $turn_id");
 
-    # Prune old turns if we exceed the limit
-    $self->_prune_old_turns();
+    # Prune old turns if we exceed the limit. The turn just started is passed
+    # explicitly so pruning can never delete the caller's own live turn.
+    $self->_prune_old_turns($turn_id);
 
     return $turn_id;
 }
@@ -756,6 +783,7 @@ sub remove_turn {
     if (-d $turn_dir) {
         remove_tree($turn_dir);
         delete $self->{_captured}{$turn_id};
+        delete $self->{owned_turns}{$turn_id};
         log_debug('FileVault', "Removed turn: $turn_id");
         return 1;
     }
@@ -939,28 +967,108 @@ sub _cleanup_empty_dirs {
     }
 }
 
-=head2 _prune_old_turns
+=head2 _next_turn_id (Internal)
 
-Remove oldest turns if we exceed MAX_TURNS.
+Allocate a turn ID that is unique within the vault and atomically claim the
+turn directory for it. Do not call directly; this is internal to start_turn().
+
+The format is C<turn_EEEEEEEEEENNNNNN>: a 10-digit epoch followed by a 6-digit
+per-process sequence. Both fields are fixed width, so lexical order equals
+numeric order equals chronological order, which get_turn_history() and
+_prune_old_turns() rely on.
+
+Uniqueness comes from the epoch rather than the counter. A counter on its own
+restarts at one for every FileVault instance, but the vault is shared across
+every session and sub-agent in the project, so a new instance would reissue
+turn_0001 and overwrite a manifest another session had already written.
+Claiming the directory with mkdir() closes the remaining race: two processes
+landing on the same tick cannot both claim the same ID, and the loser retries
+with the next sequence number.
+
+Returns: Turn ID string.
+
+=cut
+
+sub _next_turn_id {
+    my ($self) = @_;
+
+    my $vault_dir = $self->{vault_dir};
+    croak "Vault directory does not exist: $vault_dir" unless -d $vault_dir;
+
+    # Bounded so a persistent failure (permissions, full disk) surfaces as an
+    # error instead of spinning.
+    for (1 .. 50) {
+        $self->{turn_count}++;
+        my $turn_id  = sprintf('turn_%10d%06d', time(), $self->{turn_count});
+        my $turn_dir = File::Spec->catdir($vault_dir, $turn_id);
+        next if -e $turn_dir;
+        next unless mkdir($turn_dir, 0700);
+        return $turn_id;
+    }
+
+    croak "Unable to allocate a unique turn ID in $vault_dir";
+}
+
+=head2 _prune_old_turns($current_turn_id) (Internal)
+
+Bound vault growth by removing turns once the count exceeds MAX_TURNS.
+Do not call directly; this is internal to start_turn().
+
+Removal order is oldest first, by directory mtime with ID order as the
+tiebreak. Two classes are protected: the turn currently being started, and any
+turn this instance created and has not yet removed. Protecting the live turn is
+not cosmetic - a fresh instance whose vault is already at the limit would
+otherwise delete the turn it created in the same call, silently destroying the
+session's undo capability.
+
+If protecting owned turns still leaves the vault over the limit, the oldest
+owned turns are pruned too (still excluding the current turn) so a long-running
+session cannot grow the vault without bound.
+
+Arguments:
+- $current_turn_id: Turn ID that must never be removed (optional).
 
 =cut
 
 sub _prune_old_turns {
-    my ($self) = @_;
+    my ($self, $current_turn_id) = @_;
 
     my $vault_dir = $self->{vault_dir};
     return unless -d $vault_dir;
 
     opendir my $dh, $vault_dir or return;
-    my @turns = sort grep { /^turn_\d+$/ } readdir($dh);
+    my @turns = grep { /^turn_\d+$/ } readdir($dh);
     closedir $dh;
 
-    while (@turns > MAX_TURNS) {
-        my $oldest = shift @turns;
-        my $turn_dir = File::Spec->catdir($vault_dir, $oldest);
-        remove_tree($turn_dir);
-        delete $self->{_captured}{$oldest};
-        log_debug('FileVault', "Pruned old turn: $oldest");
+    return if @turns <= MAX_TURNS;
+
+    my @ordered = sort {
+        ($a->[1] <=> $b->[1]) || ($a->[0] cmp $b->[0])
+    } map {
+        my $id = $_;
+        my $mtime = (stat(File::Spec->catdir($vault_dir, $id)))[9] // 0;
+        [ $id, $mtime ];
+    } @turns;
+
+    my $count = scalar @ordered;
+
+    # Pass 0 removes turns owned by other instances; pass 1 falls back to this
+    # instance's own turns, oldest first, if the limit is still exceeded.
+    for my $pass (0, 1) {
+        for my $entry (@ordered) {
+            last if $count <= MAX_TURNS;
+            my $id    = $entry->[0];
+            my $owned = $self->{owned_turns}{$id} ? 1 : 0;
+            next if defined $current_turn_id && $id eq $current_turn_id;
+            next if $pass == 0 && $owned;
+            next if $pass == 1 && !$owned;
+
+            remove_tree(File::Spec->catdir($vault_dir, $id));
+            delete $self->{_captured}{$id};
+            delete $self->{owned_turns}{$id};
+            $count--;
+            log_debug('FileVault', "Pruned old turn: $id");
+        }
     }
 }
 
