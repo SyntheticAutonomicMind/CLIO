@@ -469,8 +469,8 @@ sub _normalize_todo_array {
 
     return unless $params && ref($params) eq 'HASH';
 
-    # Already have the canonical key with an array - nothing to do.
-    return if $params->{$canonical} && ref($params->{$canonical}) eq 'ARRAY';
+    # Already have the canonical key with a non-empty array - nothing to do.
+    return if $params->{$canonical} && ref($params->{$canonical}) eq 'ARRAY' && @{$params->{$canonical}};
 
     # All array field names this tool uses, plus the generic names the
     # model reaches for when it doesn't know the right one. Order is
@@ -479,19 +479,71 @@ sub _normalize_todo_array {
     my @candidates = qw(todoList newTodos todoUpdates todos items content updates);
 
     for my $key (@candidates) {
-        next if $key eq $canonical;
         next unless exists $params->{$key};
         my $val = $params->{$key};
-        # Only move array refs (the actual todo/update lists). Never
-        # move a scalar 'content' that happens to be a string - that
-        # would be the terminal_operations 'content' parameter leaking
-        # in, not a todo array.
-        next unless ref($val) eq 'ARRAY' && @$val;
-        $params->{$canonical} = $val;
-        delete $params->{$key};
-        log_debug('TodoList', "Silently normalized '$key' -> '$canonical' (array of " . scalar(@$val) . " items)");
-        return;
+
+        # Case 1: already an array ref with items - move it if it's
+        # not the canonical key (canonical was absent or empty above).
+        if (ref($val) eq 'ARRAY' && @$val) {
+            if ($key ne $canonical) {
+                $params->{$canonical} = $val;
+                delete $params->{$key};
+                log_debug('TodoList', "Silently normalized '$key' -> '$canonical' (array of " . scalar(@$val) . " items)");
+            }
+            return;
+        }
+
+        # Case 2: a JSON-encoded string that decodes to an array.
+        # Local models (llama.cpp, ollama, etc.) sometimes serialize
+        # array parameters as escaped JSON strings instead of native
+        # arrays, e.g. "todoList": "[{\"title\":\"...\",...}]".
+        # Without coercion this produces "'todoList' must be an array"
+        # which the model cannot learn from -- it just retries the same
+        # string form. Decode silently and move on.
+        if (!ref($val) && defined $val && length($val) && $val =~ /^\s*[\[{]/) {
+            my $decoded = _safe_decode_array($val);
+            if ($decoded && ref($decoded) eq 'ARRAY' && @$decoded) {
+                $params->{$canonical} = $decoded;
+                delete $params->{$key} if $key ne $canonical;
+                log_debug('TodoList', "Silently decoded JSON string '$key' -> '$canonical' (array of " . scalar(@$decoded) . " items)");
+                return;
+            }
+        }
     }
+}
+
+# =head2 _safe_decode_array (Internal)
+#
+# Attempt to decode a JSON string into an array reference. Returns the
+# array ref on success, or undef if the string is not valid JSON or does
+# not decode to an array.
+#
+# Arguments:
+#     $json_str - String that may contain a JSON array
+#
+# Returns:
+#     Array reference on success, undef on failure
+#
+# =cut
+
+sub _safe_decode_array {
+    my ($json_str) = @_;
+    return undef unless defined $json_str && !ref($json_str) && length($json_str);
+
+    # Quick structural check: must start with [ or { and end with ] or }
+    my $trimmed = $json_str;
+    $trimmed =~ s/^\s+//;
+    $trimmed =~ s/\s+$//;
+    return undef unless $trimmed =~ /^[\[{].*[\]}]$/s;
+
+    # Try JSON::XS / Cpanel::JSON::XS / JSON::PP via CLIO::Util::JSON
+    my $decoded = eval {
+        require CLIO::Util::JSON;
+        CLIO::Util::JSON::decode_json($trimmed);
+    };
+    return undef if $@;
+    return undef unless ref($decoded) eq 'ARRAY';
+    return $decoded;
 }
 
 sub handle_write {
