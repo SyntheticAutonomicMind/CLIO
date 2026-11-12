@@ -1132,7 +1132,6 @@ sub _repo_sync {
             my $status = $result->{updated} ? "updated" : "no changes";
             $self->display_success_message("'$name': $status, $result->{skill_count} skills");
             
-            # Reload repository skills
             $sm->reload_repository_skills();
         } else {
             $self->display_error_message($result->{error});
@@ -1165,7 +1164,6 @@ sub _repo_sync {
         $self->writeline($self->colorize("Total: ", 'LABEL') . 
             $self->colorize($total_skills, 'DATA') . " skills across all repos", markdown => 0);
         
-        # Reload repository skills
         $sm->reload_repository_skills();
     }
 }

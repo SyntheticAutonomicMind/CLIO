@@ -160,7 +160,6 @@ sub build_request {
     # Resolve the effective model for this request (may differ from instance default)
     my $effective_model = $options->{model} // $self->{model};
     
-    # Separate system prompt from messages
     my ($system_prompt, $conversation) = $self->_separate_system_prompt($messages);
     
     # Convert messages to Anthropic format

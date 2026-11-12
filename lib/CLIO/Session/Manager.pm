@@ -244,7 +244,6 @@ sub create {
 sub load {
     my ($class, $session_id, %args) = @_;
     
-    # Try to acquire session lock
     my $lock = CLIO::Session::Lock->acquire($session_id, force => 1);
     
     unless ($lock) {

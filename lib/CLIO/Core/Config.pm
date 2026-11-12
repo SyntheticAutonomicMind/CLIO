@@ -170,7 +170,7 @@ use constant DEFAULT_CONFIG => {
     # Auto-create skills at session end for substantial completed work.
     # When enabled, the system prompt includes instructions for the agent to
     # create a reusable skill when it completes significant, reusable tasks.
-    # Disable with /skills autocreate off or --no-autoskill flag.
+    # Disable with /skills autocreate off.
     auto_create_skills => 1,
     # Tool filtering (persistent version of --enable/--disable flags)
     enabled_tools => '',    # Comma-separated allowlist of tools (empty = all)
@@ -764,9 +764,10 @@ sub set {
     return 1;
 }
 
-=head2 clear_model_scoped($key)
+=head2 clear_model_scoped($key, $skip_model)
 
-Remove a model-scoped key from EVERY model_configs entry.
+Remove a model-scoped key from every model_configs entry, optionally
+leaving one model untouched.
 
 Use this when the user signals a true reset (e.g. /api set X off) so that
 no stale per-model shadow can resurrect the old value on the next load.
@@ -776,7 +777,12 @@ callers that genuinely want a per-model override to the default value
 should use set(), not clear_model_scoped().
 
 Arguments:
-    $key - A model-scoped key name (sampling_*, cap_*, force_*, show_thinking, etc.)
+    $key        - A model-scoped key name (sampling_*, cap_*, force_*,
+                  show_thinking, etc.)
+    $skip_model - Optional model id to preserve. Callers that just ran
+                  set($key, $value) pass the active model so the entry
+                  set() wrote is not scrubbed by the same call. Omit it
+                  to clear every entry.
 
 Returns: number of model_configs entries the key was removed from
 

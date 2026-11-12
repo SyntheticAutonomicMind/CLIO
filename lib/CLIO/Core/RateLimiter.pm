@@ -316,7 +316,6 @@ sub update_from_headers {
         }
     }
     
-    # Calculate adaptive delay
     $rl_state{adaptive_delay} = $self->_calculate_adaptive_delay($provider, \%rl_state);
     
     # Store state

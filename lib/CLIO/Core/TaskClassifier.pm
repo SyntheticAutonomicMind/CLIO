@@ -387,7 +387,6 @@ sub _classify_llm {
 
     return undef unless ref($response) eq 'HASH' && $response->{success};
 
-    # Extract content from the response
     my $content = _extract_response_content($response);
     return undef unless $content && length($content);
 

@@ -68,13 +68,12 @@ The projection is deterministic given the same inputs.
     use CLIO::Core::ContextBuilder;
 
     my $projection = CLIO::Core::ContextBuilder::build_projection(
-        history       => $session->get_conversation_history(),
-        user_input    => $user_input,
-        active_task   => $active_task_text,       # scalar (optional)
-        active_todos  => \@active_todos,          # arrayref (optional)
-        ltm           => \@ltm_entries,           # arrayref of {confidence, content, type}
-        unresolved    => \@unresolved_strings,    # arrayref (optional)
-        budget_tokens => 8000,                    # soft budget for the history portion
+        history      => $session->get_conversation_history(),
+        user_input   => $user_input,
+        active_task  => $active_task_text,       # scalar (optional)
+        active_todos => \@active_todos,          # arrayref (optional)
+        ltm          => \@ltm_entries,           # arrayref of {confidence, content, type}
+        unresolved   => \@unresolved_strings,    # arrayref (optional)
     );
 
     # The projection's anchor + turns can be pushed directly into the
@@ -142,7 +141,12 @@ Arguments:
 - unresolved: Arrayref of strings describing unresolved state (optional).
 - session: Session object (optional; used for anchor fallback via YaRN).
 - context_window: Model context window in tokens (optional; used to
- scale the compressed tail budget). Defaults to 128K.
+  scale the compressed tail budget). Defaults to 128K.
+- context_files: Arrayref of file paths to render into the userContext
+  block (optional).
+- context_files_block: Pre-rendered context-files string (optional). Use
+  this instead of C<context_files> when the caller already has the disk
+  content, e.g. C</context add files>.
 
 Returns a hashref:
    {

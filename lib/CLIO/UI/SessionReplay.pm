@@ -386,7 +386,6 @@ sub _render_assistant_message {
             $$first_tool_ref = 0;
         }
 
-        # Render the tool call
         $self->_render_tool_call(
             $tool_name, $tool_display_name, $tool_operation,
             $tool_args, $suppress_display, $tool_changed,

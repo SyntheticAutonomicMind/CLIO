@@ -225,12 +225,10 @@ sub poll_for_token {
                 next;  # Will wait at top of loop
             }
             elsif ($error eq 'expired_token') {
-                # Device code expired
                 log_debug('GitHubAuth', "Device code expired");
                 croak "Device code expired. Please try again.";
             }
             elsif ($error eq 'access_denied') {
-                # User denied authorization
                 log_debug('GitHubAuth', "User denied authorization");
                 croak "Authorization denied by user";
             }

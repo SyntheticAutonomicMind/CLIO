@@ -275,7 +275,6 @@ sub get_model_billing {
         }
     }
 
-    # Model not found in API response
     log_debug('GitHubCopilotModelsAPI', "Model $model_id not found in API response");
 
     return {is_premium => 0, multiplier => 0, category => undef, vendor => undef};

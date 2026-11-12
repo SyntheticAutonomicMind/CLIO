@@ -79,7 +79,6 @@ sub acquire {
         if (open $fh, '>', $lock_file) {
             # Try to get exclusive lock
             if (flock($fh, LOCK_EX | LOCK_NB)) {
-                # Lock acquired successfully
                 log_debug('SessionLock', "Lock acquired successfully");
                 
                 # Write lock metadata

@@ -250,7 +250,6 @@ sub resolve {
                 next;
             }
             
-            # Estimate tokens for this content
             my $tokens = CLIO::Memory::TokenEstimator::estimate_tokens($result->{content} || '');
             $result->{estimated_tokens} = $tokens;
             
@@ -679,7 +678,6 @@ Returns:
 sub resolve_terminal_selection {
     my ($self) = @_;
     
-    # Check session for terminal selection
     my $selection = $self->{session}->{terminal_selection} || '';
     
     if ($selection) {

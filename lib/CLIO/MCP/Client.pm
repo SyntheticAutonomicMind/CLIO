@@ -263,7 +263,6 @@ sub _initialize {
         log_debug('MCP', "Server instructions: $result->{instructions}");
     }
     
-    # Send initialized notification
     $self->{transport}->send_notification('notifications/initialized', {});
     
     return 1;

@@ -86,7 +86,6 @@ sub build_request {
     
     my $model = $options->{model} // $self->{model};
     
-    # Separate system prompt from messages
     my ($system_prompt, $conversation) = $self->_separate_system_prompt($messages);
     
     # Convert messages to Google format (contents array)
@@ -334,7 +333,6 @@ sub parse_stream_event {
                 next PART;
             }
 
-            # Function call part
             if ($part->{functionCall}) {
                 my $fc = $part->{functionCall};
                 my $id = $fc->{id} // "call_" . (++$self->{_tool_call_counter}) . "_" . time();

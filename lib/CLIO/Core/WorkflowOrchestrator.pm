@@ -146,7 +146,6 @@ sub new {
     require CLIO::Tools::Registry;
     $self->{tool_registry} = CLIO::Tools::Registry->new(debug => $args{debug});
     
-    # Register default tools
     $self->_register_default_tools();
     
     # Initialize tool executor (Task 4)

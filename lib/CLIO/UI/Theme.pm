@@ -897,7 +897,6 @@ sub get_security_prompt {
         target => $target,
     });
 
-    # Render the input line
     my $input_line = $self->render('security_prompt_input', {
         options => $options,
     });

@@ -134,7 +134,6 @@ sub request_authorization {
         return { approved => 0, grant_type => 'denied', reason => $response->{message} };
     }
     
-    # Unexpected response type
     log_debug('AuthRelay', "Unexpected response type: $response->{type}");
     return { approved => 0, grant_type => 'denied', reason => 'unexpected response' };
 }

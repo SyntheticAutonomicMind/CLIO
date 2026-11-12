@@ -147,7 +147,6 @@ sub extract {
         return $self->_extract_json_blocks($content);
     }
     
-    # No tool calls detected
     log_debug('ToolCallExtractor', "No tool calls detected");
     return {
         tool_calls => [],

@@ -680,7 +680,6 @@ sub _check_sandbox {
     # Resolve project directory to absolute path
     $project_dir = abs_path($project_dir) || $project_dir;
     
-    # Expand tilde in path
     $path = expand_tilde($path);
     
     # Resolve path to absolute - handle relative paths
@@ -2210,7 +2209,6 @@ sub write_file {
         );
     };
 
-    # Release lock if acquired
     $self->_release_file_lock($path, $context) if $lock_acquired;
 
     if ($@) {
@@ -2305,7 +2303,6 @@ sub replace_string {
         );
     };
     
-    # Release lock if acquired
     $self->_release_file_lock($path, $context) if $lock_acquired;
     
     if ($@) {
@@ -2539,7 +2536,6 @@ sub insert_at_line {
         );
     };
     
-    # Release lock if acquired
     $self->_release_file_lock($path, $context) if $lock_acquired;
     
     if ($@) {
@@ -2615,7 +2611,6 @@ sub delete_file {
         );
     };
     
-    # Release lock if acquired
     $self->_release_file_lock($path, $context) if $lock_acquired;
     
     if ($@) {
@@ -2688,7 +2683,6 @@ sub rename_file {
         );
     };
     
-    # Release lock if acquired
     $self->_release_file_lock($old_path, $context) if $lock_acquired;
     
     if ($@) {

@@ -4946,7 +4946,6 @@ sub _process_chat_completions_delta {
     my $content_delta    = undef;
     my $tool_calls_delta = undef;
 
-    # Stateful marker in delta
     if ($delta->{stateful_marker}) {
         my $iteration = ($ss->{opts} && $ss->{opts}{tool_call_iteration}) || 1;
         $self->{response_handler}->store_stateful_marker($delta->{stateful_marker}, $ss->{model}, $iteration);
@@ -5029,7 +5028,6 @@ sub _process_chat_completions_delta {
         }
     }
 
-    # Tool calls delta
     $tool_calls_delta = $delta->{tool_calls} if $delta->{tool_calls} && ref($delta->{tool_calls}) eq 'ARRAY';
 
     return ($content_delta, $tool_calls_delta);

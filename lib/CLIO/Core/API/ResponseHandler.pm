@@ -195,7 +195,6 @@ sub _get_rate_limit_user_message {
         return "Sorry, the upstream model provider is currently experiencing high demand. Please try again.";
     }
 
-    # User global rate limit
     if ($code =~ /user_global_rate_limited/i) {
         return "You've hit your global rate limit. Please upgrade your plan or wait before making more requests.";
     }
@@ -263,7 +262,6 @@ sub _get_quota_exceeded_user_message {
         return "You've exhausted your AI Credits. To continue working, switch to Auto mode.";
     }
 
-    # Overage limit reached
     if ($code eq 'overage_limit_reached') {
         return "You cannot accrue additional AI Credits at this time. Please contact GitHub Support if you need assistance.";
     }
