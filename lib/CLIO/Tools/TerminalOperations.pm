@@ -316,17 +316,69 @@ sub _windows_exec_string {
     return qq{cmd.exe /C "$command"$stdin_redir > "$escaped_log" 2>&1};
 }
 
+# Private per-process directory for command capture files. Created on first
+# use; see _capture_dir.
+my $CAPTURE_DIR;
+
+=head2 _capture_dir (Internal)
+
+Private directory holding this process's command capture files. Do not call
+directly; this is internal to the execution paths.
+
+Created once per process with mode 0700 and removed at exit. Capture files must
+not sit directly in a world-writable /tmp under a name derived from the PID:
+any process able to guess the path can pre-create it, swap it, or delete it
+while a command is still running.
+
+Returns: Absolute path to the directory.
+
+=cut
+
+sub _capture_dir {
+    my ($self) = @_;
+
+    return $CAPTURE_DIR if defined $CAPTURE_DIR && -d $CAPTURE_DIR;
+
+    my $dir = File::Temp::tempdir('clio-term-XXXXXXXX', TMPDIR => 1, CLEANUP => 1);
+    chmod 0700, $dir;
+    $CAPTURE_DIR = $dir;
+    return $CAPTURE_DIR;
+}
+
+=head2 _new_capture_file($kind) (Internal)
+
+Allocate a capture file unique to one command execution. Do not call directly;
+this is internal to the execution paths.
+
+Previously every execution in a process shared one path,
+C</tmp/clio_terminal_$$.log>. C<$$> is constant for the process and identical
+across threads, so concurrent executions - the orchestrator classifies tool
+calls as parallel and runs them together - unlinked each other's file
+mid-flight. The victim kept writing to the detached inode while its parent read
+an empty or absent file and reported success with no output at all.
+
+Arguments:
+- $kind: Prefix naming the execution mode ('out' captured, 'pt' passthrough) so the two never share a name.
+
+Returns: Absolute path to a new empty file.
+
+=cut
+
+sub _new_capture_file {
+    my ($self, $kind) = @_;
+
+    my ($fh, $path) = File::Temp::tempfile("${kind}-XXXXXXXX",
+                                           DIR => _capture_dir(), UNLINK => 0);
+    # Bind and close. Discarding a File::Temp handle into undef leaves its
+    # descriptor open.
+    close $fh;
+    return $path;
+}
+
 sub _execute_captured {
     my ($self, $command, $timeout, $display_cmd, $working_dir, $session, $stdin_file) = @_;
     
-    my $log_file;
-    if ($^O eq 'MSWin32') {
-        my $tmp = $ENV{TEMP} || $ENV{TMP} || 'C:\\Temp';
-        $log_file = "$tmp\\clio_terminal_$$.log";
-    } else {
-        $log_file = "/tmp/clio_terminal_$$.log";
-    }
-    unlink $log_file if -f $log_file;
+    my $log_file = $self->_new_capture_file('out');
     
     my $exit_code;
     my $interrupted = 0;
@@ -479,8 +531,15 @@ sub _execute_captured {
     }
     } # end Unix fork path
     
-    # Read captured output
+    # Read captured output. The size is taken first so a lost capture file can
+    # be told apart from a command that genuinely printed nothing.
+    my $captured_bytes = -s $log_file || 0;
     my $output = $self->_read_and_cleanup_log($log_file);
+    if (!length($output)) {
+        log_debug('TerminalOps', "No output captured: bytes_at_read=$captured_bytes"
+            . " exit=" . (defined $exit_code ? $exit_code : 'undef')
+            . ($captured_bytes > 0 ? " (data present but decoded empty)" : ""));
+    }
     
     # Build expanded_content for inline display (show output under the command)
     my @expanded;
@@ -518,14 +577,9 @@ interfere with the command.
 sub _execute_passthrough {
     my ($self, $command, $timeout, $display_cmd, $working_dir, $session, $stdin_file) = @_;
     
-    my $log_file;
-    if ($^O eq 'MSWin32') {
-        my $tmp = $ENV{TEMP} || $ENV{TMP} || 'C:\\Temp';
-        $log_file = "$tmp\\clio_terminal_pt_$$.log";
-    } else {
-        $log_file = "/tmp/clio_terminal_$$.log";
-    }
-    unlink $log_file if -f $log_file;
+    # 'pt' keeps passthrough capture distinct from captured-mode capture; the
+    # Unix branch previously reused the captured-mode name exactly.
+    my $log_file = $self->_new_capture_file('pt');
     
     # Suspend CLIO's terminal input handling so the command owns the TTY
     $self->_suspend_clio_input();

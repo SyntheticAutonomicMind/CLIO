@@ -44,13 +44,17 @@ sub _pgid_of {
     return undef;
 }
 
-# Cleanup: kill any leftover test processes
+# Cleanup: kill leftover processes this file spawns.
+#
+# Patterns here must match only what this file starts. The previous version ran
+# `pkill -f 'sleep 1'`, which also matched every unrelated "sleep 1x" process on
+# the machine, and `unlink glob "/tmp/clio_terminal_*.log"`, which deleted the
+# capture file of every CLIO process - including the one running this suite.
+# That victim reported success with the right exit code and no output at all.
+# Anything execute_command spawned is already reaped with its own process group.
 sub _cleanup {
-    system("pkill -f 'sleep 1' 2>/dev/null");
-    system("pkill -f 'sleep 10' 2>/dev/null");
-    system("pkill -f 'while true' 2>/dev/null");
+    system("pkill -f 'while true; do sleep 1; done' 2>/dev/null");
     unlink glob "/tmp/clio_test_killsafety_*.log";
-    unlink glob "/tmp/clio_terminal_*.log";
 }
 
 # ─────────────────────────────────────────────────────────────
