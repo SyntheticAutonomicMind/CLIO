@@ -233,8 +233,14 @@ sub slurp {
 sub run_one_test {
     my ($abs) = @_;
 
-    my (undef, $out_path) = tempfile('strict-out-XXXXXX', TMPDIR => 1, SUFFIX => '.log', UNLINK => 1);
-    my (undef, $err_path) = tempfile('strict-err-XXXXXX', TMPDIR => 1, SUFFIX => '.log', UNLINK => 1);
+    # Keep the handles and close them. Discarding a File::Temp handle into
+    # undef leaves its descriptor open, which cost two fds per test and killed
+    # the runner with "Too many open files" partway through a full run at the
+    # default macOS soft limit of 256. UNLINK cleanup still happens at exit.
+    my ($out_fh, $out_path) = tempfile('strict-out-XXXXXX', TMPDIR => 1, SUFFIX => '.log', UNLINK => 1);
+    my ($err_fh, $err_path) = tempfile('strict-err-XXXXXX', TMPDIR => 1, SUFFIX => '.log', UNLINK => 1);
+    close $out_fh;
+    close $err_fh;
 
     my @cmd = ($^X, '-I', "$repo_root/lib", '-I', "$repo_root/tests/lib");
     push @cmd, '-W';
