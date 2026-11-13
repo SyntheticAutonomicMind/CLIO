@@ -91,7 +91,7 @@ my %must_require_something = (
     replace_string => 1,
     insert_at_line => 1,
     commit         => 1,
-    store          => 1,
+    memory_store   => 1,
 );
 
 my %by_name = map { $_->{function}{name} => $_->{function} } @$definitions;

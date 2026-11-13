@@ -1,68 +1,74 @@
 #!/usr/bin/perl
+# SPDX-License-Identifier: GPL-3.0-only
+# SPDX-FileCopyrightText: Copyright (c) 2026 Andrew Wyatt (Fewtarius)
+
 use strict;
 use warnings;
 use utf8;
 use lib './lib';
-
-# Regression: every natural-language alias added on 2026-08-26 must route
-# to the right tool+operation. The aliases were added because the audit
-# found that agents commonly try these names instead of the canonical ones
-# (e.g. "run" instead of "exec", "forget" instead of "delete"). If any
-# alias stops resolving, the agent will hit the unknown-operation error
-# path again.
-
-use CLIO::Tools::Registry;
 use Test::More;
+use CLIO::Tools::Registry;
+use CLIO::Tools::FileOperations;
+use CLIO::Tools::TerminalOperations;
+use CLIO::Tools::MemoryOperations;
+use CLIO::Tools::Interact;
+use CLIO::Tools::VersionControl;
+use CLIO::Tools::WebOperations;
+use CLIO::Tools::TodoList;
+use CLIO::Tools::CodeIntelligence;
+use CLIO::Tools::ApplyPatch;
+
+# The registry used to expose a static table of natural-language aliases
+# (run, bash, get, save, delete, ...) that were never emitted to the model.
+# A model could call one and reach a different tool than the word implied.
+# Only emitted callables are resolvable now. These aliases must not resolve.
 
 my $registry = CLIO::Tools::Registry->new();
-
-# Each case: [alias_name, expected_tool, expected_operation]
-my @cases = (
-    # terminal_operations natural-language verbs
-    ['run',  'terminal_operations', 'exec'],
-    ['bash', 'terminal_operations', 'exec'],
-    ['cmd',  'terminal_operations', 'exec'],
-
-    # memory_operations natural-language verbs
-    ['get',    'memory_operations', 'retrieve'],
-    ['save',   'memory_operations', 'store'],
-    ['forget', 'memory_operations', 'delete'],
-
-    # web_operations natural-language verbs
-    ['curl',   'web_operations', 'fetch_url'],
-    ['wget',   'web_operations', 'fetch_url'],
-    ['http',   'web_operations', 'fetch_url'],
-    ['google', 'web_operations', 'search_web'],
-
-    # interact natural-language verbs
-    ['ask_user', 'interact', 'request_input'],
-    ['confirm',  'interact', 'request_input'],
-    ['question', 'interact', 'request_input'],
-
-    # Existing aliases - regression guard
-    ['exec',    'terminal_operations', 'exec'],
-    ['shell',   'terminal_operations', 'exec'],
-    ['store',   'memory_operations',   'store'],
-    ['retrieve','memory_operations',   'retrieve'],
-    ['delete',  'memory_operations',   'delete'],
-    ['search',  'memory_operations',   'search'],
-    ['ask',     'interact',            'request_input'],
-    ['collab',  'interact',            'request_input'],
-    ['git',     'version_control',     'status'],
-    ['status',  'version_control',     'status'],
-    ['todo',    'todo_operations',     'write'],
-    ['todos',   'todo_operations',     'read'],
-    ['spawn',   'agent_operations',    'spawn'],
-);
-
-for my $case (@cases) {
-    my ($alias, $expected_tool, $expected_op) = @$case;
-    my $info = $registry->get_alias_info($alias);
-    ok($info, "alias '$alias' is registered");
-    if ($info) {
-        is($info->{tool},      $expected_tool, "alias '$alias' -> tool '$expected_tool'");
-        is($info->{operation}, $expected_op,    "alias '$alias' -> operation '$expected_op'");
-    }
+for my $class (qw(FileOperations TerminalOperations MemoryOperations Interact
+                  VersionControl WebOperations TodoList CodeIntelligence ApplyPatch)) {
+    my $module = "CLIO::Tools::$class";
+    $registry->register_tool($module->new(debug => 0));
 }
 
+my @retired = qw(
+    run bash cmd exec shell
+    get save forget store retrieve
+    curl wget http google
+    ask ask_user confirm question collab
+    git todo todos spawn patch
+    read write add update delete list search
+    append_file create_file
+);
+
+my $resolved = 0;
+for my $name (@retired) {
+    my $info = $registry->get_alias_info($name);
+    ok(!$info, "retired alias '$name' no longer resolves") or $resolved++;
+}
+
+# Emitted names must still resolve to the right tool.
+my @expected = (
+    ['read_file',      'file_operations'],
+    ['write_file',     'file_operations'],
+    ['delete_file',    'file_operations'],
+    ['grep_search',    'file_operations'],
+    ['memory_delete',  'memory_operations'],
+    ['memory_store',   'memory_operations'],
+    ['memory_search',  'memory_operations'],
+    ['todo_read',      'todo_operations'],
+    ['todo_write',     'todo_operations'],
+    ['list_usages',    'code_intelligence'],
+    ['search_history', 'code_intelligence'],
+    ['commit',         'version_control'],
+    ['fetch_url',      'web_operations'],
+);
+
+for my $case (@expected) {
+    my ($name, $tool) = @$case;
+    my $info = $registry->get_alias_info($name);
+    ok($info, "emitted name '$name' resolves");
+    is($info->{tool}, $tool, "  '$name' -> $tool") if $info;
+}
+
+is($resolved, 0, 'no retired alias resolves');
 done_testing();

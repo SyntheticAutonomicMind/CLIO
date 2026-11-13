@@ -39,16 +39,16 @@ my %by_name = map { $_->{function}{name} => $_->{function} }
 
 # Callable name => [parameters that must be present, parameters that must be required]
 my %expectations = (
-    store     => { present => [qw(key content)], required => [qw(key content)] },
-    retrieve  => { present => [qw(key)], required => [qw(key)] },
-    search    => { present => [qw(query)], required => [qw(query)] },
+    memory_store     => { present => [qw(key content)], required => [qw(key content)] },
+    memory_retrieve  => { present => [qw(key)], required => [qw(key)] },
+    memory_search    => { present => [qw(query)], required => [qw(query)] },
     fetch_url => { present => [qw(url timeout)], required => [qw(url)] },
     search_web => { present => [qw(query max_results timeout)], required => [qw(query)] },
     list_usages => { present => [qw(symbol_name file_paths)], required => [qw(symbol_name)] },
-    load      => { present => [qw(name)], required => [qw(name)] },
-    write     => { present => [qw(todoList)], required => [qw(todoList)] },
-    update    => { present => [qw(todoUpdates)], required => [qw(todoUpdates)] },
-    add       => { present => [qw(newTodos)], required => [qw(newTodos)] },
+    skill_load => { present => [qw(name)], required => [qw(name)] },
+    todo_write     => { present => [qw(todoList)], required => [qw(todoList)] },
+    todo_update    => { present => [qw(todoUpdates)], required => [qw(todoUpdates)] },
+    todo_add       => { present => [qw(newTodos)], required => [qw(newTodos)] },
 );
 
 for my $callable (sort keys %expectations) {

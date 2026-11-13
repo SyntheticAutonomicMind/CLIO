@@ -2654,6 +2654,10 @@ sub _prepare_tool_round {
 
     for my $tool_call (@{$api_response->{tool_calls}}) {
         my $tool_name = $tool_call->{function}->{name} || 'unknown';
+        # Preserve the name the model emitted. ToolExecutor uses it for the
+        # strict surface check after this loop rewrites an emitted alias to
+        # its canonical tool name.
+        $tool_call->{_emitted_name} = $tool_name;
 
         # Resolve tool aliases
         # Must start as undef (NOT {}) so the unless() guard below fires

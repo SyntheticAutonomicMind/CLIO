@@ -129,6 +129,11 @@ sub execute_tool {
     
     my $tool_name = $tool_call->{function}->{name};
     my $arguments_json = $tool_call->{function}->{arguments};
+
+    # Phase 3 records the name the model actually emitted before rewriting
+    # an alias to its canonical tool. Use that name for the surface check;
+    # a direct caller has no marker and the function name is the emitted one.
+    my $declared_name = $tool_call->{_emitted_name} // $tool_name;
     
     # Defensive: some servers (e.g., llama.cpp) send arguments as a parsed
     # JSON object instead of a string.  Re-encode to a string if needed.
@@ -199,6 +204,41 @@ sub execute_tool {
     my $tool_registry = $self->{tool_registry};
     unless ($tool_registry) {
         return $self->_error_result("Tool registry not available");
+    }
+
+    # Strict surface check. The registry publishes a fixed set of callable
+    # names; a name outside that set was never sent to the model. Accepting it
+    # (as the canonical tool name or a hidden alias) lets a model call
+    # something it was never given and still reach a real operation, which is
+    # how "file_operations" and "delete" silently became file reads and memory
+    # deletes. MCP and plugin tools are appended to the API definitions by
+    # WorkflowOrchestrator and carry their own prefixes.
+    # A canonical tool name is accepted only when the caller also states an
+    # operation the tool implements. That is the text-based tool-call format
+    # local models emit ("[file_operations read_file]"); the operation is
+    # explicit, so this is not a guess. A canonical name without an operation
+    # (the old "infer from {path}" path) is still rejected.
+    my $canonical_with_operation = 0;
+    if (!$tool_registry->is_emitted_name($declared_name)
+        && $arguments && ref($arguments) eq 'HASH'
+        && defined $arguments->{operation} && length $arguments->{operation}
+        && exists $tool_registry->{tools}{$declared_name}) {
+        my $candidate = $tool_registry->{tools}{$declared_name};
+        $canonical_with_operation = 1
+            if $candidate->validate_operation($arguments->{operation});
+    }
+
+    if (defined $declared_name
+        && $declared_name !~ /^(?:mcp_|plugin_)/
+        && !$tool_registry->is_emitted_name($declared_name)
+        && !$canonical_with_operation) {
+        log_debug('ToolExecutor',
+            "Rejecting non-emitted tool name '$declared_name'");
+        return $self->_error_result(
+            "Unknown tool: $declared_name (this name is not part of the current tool set). "
+            . "Use one of the callable names from the tool definitions. "
+            . "A canonical tool name is accepted only with an explicit operation it implements."
+        );
     }
     
     # Fallback alias resolution. Phase 3 in _prepare_tool_round
@@ -296,43 +336,21 @@ sub execute_tool {
     
     my $tool = $tool_registry->get_tool($tool_name);
     unless ($tool) {
-        # Fallback: tool_name might be an operation alias (e.g. "read"
-        # instead of "file_operations" + operation="read_file"). Some
-        # execution layers extract the operation name and use it as the
-        # tool name. The Registry alias table only covers tool-level aliases
-        # (like "read_file" -> file_operations), not per-tool operation aliases
-        # (like "read" -> read_file in FileOperations.operation_aliases).
-        # Scan all registered tools for a matching operation.
-        my $resolved_op = $tool_name;
-        if (my $all_tools = $tool_registry->get_all_tools()) {
-            for my $candidate (@$all_tools) {
-                if ($candidate->validate_operation($tool_name)) {
-                    $tool = $candidate;
-                    $tool_name = $candidate->{name};
-                    $arguments->{operation} //= $resolved_op;
-                    log_debug('ToolExecutor',
-                        "Resolved operation alias '$resolved_op' as tool '$tool_name'");
-                    last;
-                }
-            }
-        }
-        unless ($tool) {
-            # Log unknown tool error
-            $self->_log_tool_operation({
-                tool_call_id => $tool_call_id,
-                tool_name => $original_tool_name,
-                operation => 'unknown',
-                parameters => $arguments,
-                output => {},
-                action_description => "Unknown tool: $tool_name",
-                sent_to_ai => "ERROR: Unknown tool: $tool_name",
-                success => 0,
-                error => "Unknown tool: $tool_name",
-                execution_time_ms => int((time() - $start_time) * 1000)
-            });
+        # Log unknown tool error
+        $self->_log_tool_operation({
+            tool_call_id => $tool_call_id,
+            tool_name => $original_tool_name,
+            operation => 'unknown',
+            parameters => $arguments,
+            output => {},
+            action_description => "Unknown tool: $tool_name",
+            sent_to_ai => "ERROR: Unknown tool: $tool_name",
+            success => 0,
+            error => "Unknown tool: $tool_name",
+            execution_time_ms => int((time() - $start_time) * 1000)
+        });
 
-            return $self->_error_result("Unknown tool: $tool_name");
-        }
+        return $self->_error_result("Unknown tool: $tool_name");
     }
     
     # Execute tool with operation from arguments
@@ -408,10 +426,39 @@ sub execute_tool {
     if ($result->{success}) {
         # Success - return output WITH action_description for UI display
         my $output = $result->{output};
+        my $output_was_structured =
+            (ref($output) eq 'HASH' || ref($output) eq 'ARRAY') ? 1 : 0;
         
         # Convert complex types to JSON
         if (ref($output) eq 'HASH' || ref($output) eq 'ARRAY') {
             $output = encode_json($output);
+        }
+
+        # Merge structured result fields into the payload the model receives.
+        # Tools return a human-readable summary plus data (usages, commits,
+        # files, messages, ...). Only `output` is forwarded to the model, so
+        # dropping those fields turned list_usages into "Found 16 usages" with
+        # no locations and search_history into a commit count with no commits.
+        # Append them as JSON so the data reaches the model and passes through
+        # ToolResultStore truncation with the rest of the output.
+        my %extra;
+        for my $key (keys %$result) {
+            next if $key =~ /\A(?:success|output|error|action_description|expanded_content|metadata|tool_name)\z/;
+            # Only structured payloads and totals carry information the
+            # summary line does not. Scalars like path or lines_read would
+            # just repeat the action description.
+            next unless ref($result->{$key}) || $key =~ /\A(?:count|total)\z/;
+            $extra{$key} = $result->{$key};
+        }
+        if (%extra && !$output_was_structured) {
+            my $extra_json = eval { encode_json(\%extra) };
+            if (defined $extra_json && length $extra_json) {
+                if (defined $output && length $output) {
+                    $output .= "\n\n" . $extra_json;
+                } else {
+                    $output = $extra_json;
+                }
+            }
         }
         
         # === SECURITY: Redact secrets and PII from tool output ===

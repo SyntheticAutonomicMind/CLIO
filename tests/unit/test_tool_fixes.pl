@@ -1,6 +1,6 @@
 #!/usr/bin/env perl
 # Test fixes for tool infrastructure issues from the previous session:
-# 1. ToolExecutor operation-alias fallback (e.g. "read" as tool name)
+# 1. ToolExecutor rejects invalid tool names; emitted names still work
 # 2. ApplyPatch _find_chunk_position_fuzzy retry-from-start
 # 3. ApplyPatch error message formatting (period + space)
 # 4. ReplaceString improved error diagnostics
@@ -60,11 +60,11 @@ my $executor = CLIO::Core::ToolExecutor->new(
 );
 
 # ═══════════════════════════════════════════════════════════════
-# Test 1: ToolExecutor resolves operation alias "read" as tool name
-# This simulates an execution layer that extracts the operation name
-# and uses it as the tool name (e.g. "read" instead of "file_operations")
+# Test 1: a bare operation alias such as "read" is not a tool name
+# Only emitted callables are accepted. "read" used to be silently
+# resolved to file_operations (or todo read, depending on the layer).
 # ═══════════════════════════════════════════════════════════════
-print "\n=== Test 1: Operation alias 'read' as tool name ===\n";
+print "\n=== Test 1: bare operation alias 'read' is rejected ===\n";
 
 my $test_file_1 = File::Spec->catfile($tmpdir, 'alias_test.txt');
 open my $fh, '>', $test_file_1 or die $!;
@@ -82,18 +82,18 @@ my $tool_call = {
 my $result_json = $executor->execute_tool($tool_call, 'test_alias_1');
 my $result = eval { decode_json($result_json) };
 
-ok($result && $result->{success}, "Tool name 'read' resolves to file_operations");
-ok($result->{output} && $result->{output} =~ /hello alias/, "Correct file content returned");
+ok($result && !$result->{success}, "Tool name 'read' is rejected");
+ok($result->{error} && $result->{error} =~ /Unknown tool/, "Error names the unknown tool");
 
 # ═══════════════════════════════════════════════════════════════
-# Test 2: ToolExecutor resolves operation alias "write" as tool name
+# Test 2: the emitted name "write_file" works without an operation field
 # ═══════════════════════════════════════════════════════════════
-print "\n=== Test 2: Operation alias 'write' as tool name ===\n";
+print "\n=== Test 2: emitted name 'write_file' ===\n";
 
 my $test_file_2 = File::Spec->catfile($tmpdir, 'alias_write.txt');
 $tool_call = {
     function => {
-        name       => 'write',
+        name       => 'write_file',
         arguments  => encode_json({ path => $test_file_2, content => 'alias write test' })
     }
 };
@@ -101,8 +101,8 @@ $tool_call = {
 $result_json = $executor->execute_tool($tool_call, 'test_alias_2');
 $result = eval { decode_json($result_json) };
 
-ok($result && $result->{success}, "Tool name 'write' resolves to file_operations");
-ok(-f $test_file_2, "File was created via alias");
+ok($result && $result->{success}, "Tool name 'write_file' succeeds");
+ok(-f $test_file_2, "File was created");
 if (-f $test_file_2) {
     open $fh, '<', $test_file_2;
     my $content = do { local $/; <$fh> };

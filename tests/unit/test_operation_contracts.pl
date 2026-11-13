@@ -150,7 +150,7 @@ my %must_be_required = (
     insert_at_line       => ['path', 'line', 'content'],
     multi_replace_string => ['replacements'],
     commit               => ['message'],
-    spawn                => ['task'],
+    agent_spawn          => ['task'],
 );
 
 my %definition_by_name = map { $_->{function}{name} => $_->{function} } @$definitions;
@@ -170,7 +170,10 @@ my @dispatch_problems;
 
 for my $callable (sort keys %must_be_required) {
     my $alias = $registry->get_alias_info($callable);
-    push @dispatch_problems, $callable unless $alias && $alias->{operation} eq $callable;
+    my $resolved = $alias
+        ? $registry->get_operation_callable($alias->{tool}, $alias->{operation})
+        : undef;
+    push @dispatch_problems, $callable unless defined $resolved && $resolved eq $callable;
 }
 
 is_deeply(\@dispatch_problems, [], 'per-operation callables dispatch by name');

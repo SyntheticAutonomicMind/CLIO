@@ -82,6 +82,7 @@ QUICK EXAMPLE:
 {"operation": "request_input", "message": "Which approach should I use?"}
 },
         supported_operations => [qw(request_input)],
+        single_operation => 'request_input',
         
         # Execution control - MUST block and be interactive
         requires_blocking => 1,  # Workflow MUST wait for user response
@@ -127,7 +128,9 @@ sub get_tool_definition {
     my ($self) = @_;
 
     my $def = $self->SUPER::get_tool_definition();
-    $def->{parameters}{required} = ["operation", "message"];
+    $def->{parameters}{required} = ["message"];
+    # Single-operation tool: there is no operation field on the wire.
+    delete $def->{parameters}{properties}{operation};
     return $def;
 }
 

@@ -381,11 +381,14 @@ sub _fetch_commits {
         push @cmd_parts, '-n', int($max_commits);
     }
     
-    my $cmd = join(' ', map { quotemeta($_) } @cmd_parts) . " 2>$NULLDEV";
-    
-    log_debug('CodeIntelligence', "Running: $cmd");
-    
-    my $output = `$cmd`;
+    log_debug('CodeIntelligence', "Running: " . join(' ', @cmd_parts));
+
+    # List-form exec: user-supplied --author/--since values are single argv
+    # elements, so a value containing spaces or shell metacharacters cannot
+    # change the command.
+    open my $log_fh, '-|', @cmd_parts or return ();
+    my $output = do { local $/; <$log_fh> };
+    close $log_fh;
     return () unless $output;
     
     # Parse commits (split by null byte)
@@ -477,9 +480,13 @@ Get list of files changed in a commit.
 
 sub _get_files_changed {
     my ($self, $hash) = @_;
-    
-    my $cmd = "git show --name-only --format='' " . quotemeta($hash) . " 2>$NULLDEV";
-    my $output = `$cmd`;
+
+    # $hash comes from git log output, but use list-form exec anyway so a
+    # malformed hash can never become shell syntax.
+    open my $fh, '-|', 'git', 'show', '--name-only', '--format=', $hash
+        or return [];
+    my $output = do { local $/; <$fh> };
+    close $fh;
     
     return [] unless $output;
     
@@ -549,12 +556,27 @@ sub list_usages {
 
     my @usages = ();
 
-    # Try git grep first (much faster if in a git repo)
+    # git grep only searches tracked files. When the caller names a path
+    # explicitly, honour it: an untracked or gitignored file the model was
+    # told to inspect must still be searched. Partition the paths and use
+    # the direct file walker for anything git would skip.
+    my (@git_paths, @direct_paths);
     if ($self->_has_git_grep()) {
-        @usages = $self->_git_grep_search($symbol_name, $file_paths, $context_lines, $context);
+        for my $path (@$file_paths) {
+            if ($self->_path_has_tracked_files($path)) {
+                push @git_paths, $path;
+            } else {
+                push @direct_paths, $path;
+            }
+        }
     } else {
-        @usages = $self->_file_grep_search($symbol_name, $file_paths, $context_lines, $context);
+        @direct_paths = @$file_paths;
     }
+
+    @usages = $self->_git_grep_search($symbol_name, \@git_paths, $context_lines, $context)
+        if @git_paths;
+    push @usages, $self->_file_grep_search($symbol_name, \@direct_paths, $context_lines, $context)
+        if @direct_paths;
     
     my $count = scalar(@usages);
     
@@ -597,21 +619,45 @@ sub _has_git_grep {
     return $result && $result =~ /true/;
 }
 
+=head2 _path_has_tracked_files
+
+Check whether a path contains at least one file tracked by git.
+
+An explicit path that git does not track (untracked or gitignored) must be
+searched directly. git grep would silently skip it.
+
+Arguments: $path - file or directory path
+Returns: Boolean
+
+=cut
+
+sub _path_has_tracked_files {
+    my ($self, $path) = @_;
+
+    return 0 unless defined $path && length $path;
+
+    open my $fh, '-|', 'git', 'ls-files', '--', $path or return 0;
+    my $line = <$fh>;
+    close $fh;
+
+    return (defined $line && length $line) ? 1 : 0;
+}
+
 sub _git_grep_search {
     my ($self, $symbol, $paths, $context, $ext_context) = @_;
 
     my @results = ();
 
-    # Build git grep command
-    my $context_flag = $context > 0 ? "-C$context" : "";
-    my $paths_str = join(' ', map { quotemeta($_) } @$paths);
+    # List-form exec: no shell, so a symbol or path containing spaces,
+    # quotes, backticks, or $(...) is one argv element and cannot inject.
+    # -w asks git for whole-word matches; -F keeps the symbol literal.
+    my @cmd = ('git', 'grep', '-n');
+    push @cmd, "-C$context" if $context > 0;
+    push @cmd, '-w', '-F', $symbol, '--', @$paths;
 
-    # Use git grep with line numbers and file names
-    my $cmd = "git grep -n $context_flag -F " . quotemeta($symbol) . " -- $paths_str 2>$NULLDEV";
+    log_debug('CodeIntelligence', "Running: " . join(' ', @cmd));
 
-    log_debug('CodeIntelligence', "Running: $cmd");
-
-    open my $fh, '-|', $cmd or return @results;
+    open my $fh, '-|', @cmd or return @results;
 
     my $current_file = '';
     my @context_before = ();
@@ -718,7 +764,10 @@ sub _file_grep_search {
         close $fh;
         
         for my $i (0 .. $#lines) {
-            if ($lines[$i] =~ /\Q$symbol\E/) {
+            # Whole-word match: a symbol search for "new" must not return
+            # "newline" or "renew". The boundaries are on word characters so
+            # sigils and namespace separators still match.
+            if ($lines[$i] =~ /(?<!\w)\Q$symbol\E(?!\w)/) {
                 my $line_num = $i + 1;
                 chomp $lines[$i];
                 

@@ -57,6 +57,7 @@ sub new {
         name => 'apply_patch',
         description => 'Apply a patch to create, modify, or delete files using a lightweight diff format.',
         supported_operations => [qw(apply)],
+        single_operation => 'apply',
         %opts,
     );
     
@@ -224,7 +225,9 @@ sub get_tool_definition {
     # rather than relying on the execute() override to auto-inject it.
     my $def = $self->SUPER::get_tool_definition();
 
-    $def->{parameters}{required} = ["operation", "patch"];
+    $def->{parameters}{required} = ["patch"];
+    # Single-operation tool: there is no operation field on the wire.
+    delete $def->{parameters}{properties}{operation};
     $def->{description} = 'Apply a patch to create, modify, or delete files. Uses a lightweight diff format that is more efficient than full file rewrites. Each patch can contain multiple file operations. Prefer this over file_operations write_file/replace_string for multi-file changes.';
     $def->{parameters}{properties}{patch} = {
         type => 'string',

@@ -63,7 +63,7 @@ sub new {
     my %known = map { $_ => 1 } qw(
         name description supported_operations operation_aliases
         debug requires_blocking requires_serial is_interactive
-        default_operation
+        single_operation
     );
     for my $key (sort keys %opts) {
         unless ($known{$key}) {
@@ -75,14 +75,10 @@ sub new {
         name => $opts{name},
         description => $opts{description},
         supported_operations => $opts{supported_operations},
-        # operation_aliases is the silent natural-language alias set
-        # (e.g. "create" -> write_file, "read" -> read_file, "mkdir" ->
-        # create_directory). Subclasses declare it in their supported_operations
-        # hash but the base class MUST also store it on the instance,
-        # otherwise validate_operation and _infer_operation_from_params
-        # can't see the aliases and tools fail with "Unknown operation"
-        # for every alias name. The field is also folded into the dispatch
-        # hash below so aliases route correctly.
+        # operation_aliases lets a tool accept a natural-language operation
+        # name at dispatch (e.g. "mkdir" -> create_directory). These are not
+        # emitted callables; they only matter when a caller already chose
+        # the tool and supplies the operation explicitly.
         operation_aliases => $opts{operation_aliases} || [],
         debug => $opts{debug} || 0,
 
@@ -90,11 +86,10 @@ sub new {
         requires_blocking => $opts{requires_blocking} || 0,  # Tool must wait for completion before workflow continues
         requires_serial => $opts{requires_serial} || 0,      # Tool executes one-at-a-time (but doesn't block workflow)
         is_interactive => $opts{is_interactive} || 0,        # Tool needs terminal I/O by default (can be overridden per-call)
-        # default_operation: when the model omits 'operation' and it can't
-        # be inferred from params, silently default to this. Prevents
-        # error-loop deaths for tools where one operation is overwhelmingly
-        # the common case (e.g. terminal_operations -> exec).
-        default_operation => $opts{default_operation},
+        # single_operation: the one operation this tool runs when it
+        # publishes a tool-level (consolidated) callable with no operation
+        # field. Explicit, not inferred.
+        single_operation => $opts{single_operation},
     }, $class;
 }
 
@@ -121,50 +116,16 @@ sub execute {
     # the targeted "you forgot the operation field" guidance instead of
     # falling through to the generic "missing required parameter" branch.
     my $operation = $params->{operation};
-    unless ($operation) {
-        # Silent remediation: some models forget the 'operation' field
-        # and instead use the operation name as a parameter key (e.g.,
-        # {"read_file": true, "path": "..."} instead of
-        # {"operation": "read_file", "path": "..."}). If exactly one
-        # parameter key matches a known operation name or alias, silently
-        # extract it as the operation and remove the key from params.
-        # This mirrors the existing alias-resolution pattern in
-        # Registry._operation_aliases() — the model is never informed.
-        $operation = $self->_infer_operation_from_params($params);
-        if ($operation) {
-            log_debug("Tool:$self->{name}",
-                "Silently inferred operation '$operation' from parameter key");
-            delete $params->{$operation};
-            $params->{operation} = $operation;
-        }
-    }
-
-    # Auto-select single operation when 'operation' is missing.
-    # Some tools expose exactly one supported operation. When the model
-    # forgets to send 'operation', silently default to that single
-    # operation instead of erroring. This eliminates an entire class of
-    # avoidable tool-call failures for single-op tools. The model is
-    # never informed — it just sees a successful result.
-    unless ($operation) {
-        my $ops = $self->{supported_operations} || [];
-        if (@$ops == 1) {
-            $operation = $ops->[0];
+    # A tool that exposes exactly one operation may declare it as
+    # single_operation. That is an explicit interface, not a guess: the
+    # emitted schema carries no operation field, so there is nothing to
+    # infer. Multi-operation tools must be told which operation to run.
+    unless (defined $operation && length $operation) {
+        if ($self->{single_operation}) {
+            $operation = $self->{single_operation};
             $params->{operation} = $operation;
             log_debug("Tool:$self->{name}",
-                "Auto-selected single available operation '$operation'");
-        }
-    }
-
-    # Fall back to default_operation when 'operation' is still missing.
-    # This is the common case where models forget the field for tools
-    # with multiple operations (e.g. terminal_operations with exec/validate).
-    # The model is never informed — it just sees a successful result.
-    unless ($operation) {
-        if ($self->{default_operation} && $self->validate_operation($self->{default_operation})) {
-            $operation = $self->{default_operation};
-            $params->{operation} = $operation;
-            log_debug("Tool:$self->{name}",
-                "Applied default_operation '$operation' (operation field was missing)");
+                "Using declared single_operation '$operation'");
         }
     }
 
@@ -299,63 +260,6 @@ sub _suggest_operation {
     return undef;
 }
 
-=head2 _infer_operation_from_params (Internal)
-
-Silent remediation for when the 'operation' parameter is missing.
-
-Some models forget the 'operation' field and instead use the operation
-name as a parameter key (e.g., {"read_file": true, "path": "..."}
-instead of {"operation": "read_file", "path": "..."}). This method
-scans the parameter keys for any that match a known operation name or
-alias. If exactly one key matches, the model likely intended that as
-the operation.
-
-This is a _silent_ remediation — the model is never informed. It mirrors
-the alias-resolution pattern in Registry._operation_aliases().
-
-Arguments:
-- $params: Hashref of parameters
-
-Returns: Operation name string if exactly one key matches, undef if
-         zero or more than one key matches (ambiguous).
-
-=cut
-
-sub _infer_operation_from_params {
-    my ($self, $params) = @_;
-
-    return undef unless $params && ref($params) eq 'HASH';
-
-    # Build the set of valid operation names (canonical + aliases).
-    # validate_operation() caches this in _supported_ops_hash, but we
-    # initialise it here in case validate_operation hasn't run yet.
-    unless ($self->{_supported_ops_hash}) {
-        my @all = (@{$self->{supported_operations} || []},
-                   @{$self->{operation_aliases} || []});
-        # Mirror validate_operation: also accept aliases that are declared
-        # only in the dispatch_table. Without this, an alias reachable via
-        # dispatch_table (but not in supported_operations/operation_aliases)
-        # could not be silently inferred from a parameter key, even though
-        # validate_operation would accept it as a valid operation.
-        my $table = $self->dispatch_table();
-        if ($table && ref($table) eq 'HASH') {
-            push @all, keys %$table;
-        }
-        $self->{_supported_ops_hash} = { map { $_ => 1 } @all };
-    }
-
-    # Scan parameter keys for matches against known operations
-    my @matching_keys = grep { exists $self->{_supported_ops_hash}{$_} }
-                        keys %$params;
-
-    # Only infer when exactly one key matches — no ambiguity.
-    # 0 matches: no inference possible
-    # >1 matches: ambiguous, don't guess — let the error handler take over
-    return $matching_keys[0] if @matching_keys == 1;
-
-    return undef;
-}
-
 sub validate_operation {
     my ($self, $operation) = @_;
 
@@ -451,6 +355,7 @@ sub operation_error {
     my ($self, $message) = @_;
 
     my $operations = join("\n  - ", @{$self->{supported_operations}});
+    my $first_operation = $self->{supported_operations}[0] // 'operation';
 
     # Use the canonical "Missing required parameter: <name>" form whenever
     # the message looks like a parameter-missing case. This guarantees
@@ -471,7 +376,7 @@ Available operations for '$self->{name}':
 Example usage:
 {
   "tool": "$self->{name}",
-  "operation": "$self->{supported_operations}[0]",
+  "operation": "$first_operation",
   ... other parameters depending on operation
 }
 

@@ -50,17 +50,17 @@ for my $alias (qw(run execute shell)) {
     ok($r->{success}, "validate alias 'check' dispatches and succeeds");
 }
 
-# --- param-key inference: exec as parameter key ---
-# The model sometimes passes {"exec": "ls"} instead of {"operation": "exec", ...}
+# --- operation as a parameter key is rejected ---
+# The old code guessed the operation from a parameter key. It must now
+# return a precise error so the caller can correct the call.
 {
     my $r = $term->execute({ exec => 'echo hi', command => 'echo hi' }, $ctx);
-    ok($r->{success}, "param-key inference: exec as parameter key silently inferred");
+    ok(!$r->{success}, "param-key operation 'exec' is rejected");
 }
 
-# --- param-key inference: run as parameter key ---
 {
     my $r = $term->execute({ run => 1, command => 'echo from_run' }, $ctx);
-    ok($r->{success}, "param-key inference: run as parameter key silently inferred");
+    ok(!$r->{success}, "param-key operation 'run' is rejected");
 }
 
 # --- Unknown operation still errors ---

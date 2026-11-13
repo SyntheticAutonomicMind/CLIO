@@ -11,6 +11,17 @@ binmode(STDERR, ':encoding(UTF-8)');
 use Carp qw(croak confess);
 use CLIO::Core::Logger qw(log_debug log_warning);
 
+# Operation names that are too generic to publish as a bare top-level tool
+# name. "read", "write", and "delete" mean different things to different
+# tools, and a model that means "delete the file" must not silently reach
+# "delete the memory key". Every operation in this set is namespaced:
+# todo_read, memory_delete, and so on.
+my %GENERIC_OPERATIONS = map { $_ => 1 } qw(
+    read write add update delete list search store retrieve get save forget
+    create load unload history kill killall send broadcast report wait
+    acknowledge inbox spawn
+);
+
 =head1 NAME
 
 CLIO::Tools::Registry - Tool registration and lookup system
@@ -92,118 +103,11 @@ sub register_tool {
     $self->{_definitions_cache} = undef;
     $self->{_operation_name_map} = undef;
     $self->{_derived_aliases} = undef;
+    $self->{_emitted_names_cache} = undef;
     
     log_debug('Registry', "Registered tool: $name");
     
     return 1;
-}
-
-=head2 _get_operation_aliases
-
-Return the single canonical alias table mapping alias tool-names to their
-parent tool + default operation. This is the SINGLE SOURCE OF TRUTH — both
-get_tool() and get_alias_info() read from this lazily-initialised, cached
-hashref so they can never drift out of sync (the previous design had two
-copies that diverged: get_tool was missing ask_user/confirm/question).
-
-Note: this table only maps ALIAS TOOL NAMES to their canonical parent tool.
-It does NOT cover operation-level aliases inside a tool (e.g. FileOperations'
-'read' -> 'read_file'); those live in the tool's own operation_aliases field
-+ dispatch_table and are resolved by Tool.pm.
-
-=cut
-
-sub _get_operation_aliases {
-    my ($self) = @_;
-
-    return $self->{_operation_aliases_cache} if $self->{_operation_aliases_cache};
-
-    my %aliases = (
-        # file_operations aliases — canonical op names used as tool names
-        'file_search'       => { tool => 'file_operations', operation => 'file_search' },
-        'list_dir'          => { tool => 'file_operations', operation => 'list_dir' },
-        'read_file'         => { tool => 'file_operations', operation => 'read_file' },
-        'write_file'        => { tool => 'file_operations', operation => 'write_file' },
-        'create_file'       => { tool => 'file_operations', operation => 'write_file' },
-        'delete_file'       => { tool => 'file_operations', operation => 'delete_file' },
-        'grep_search'       => { tool => 'file_operations', operation => 'grep_search' },
-        'semantic_search'   => { tool => 'file_operations', operation => 'semantic_search' },
-        'file_exists'       => { tool => 'file_operations', operation => 'file_exists' },
-        'get_file_info'     => { tool => 'file_operations', operation => 'get_file_info' },
-        'rename_file'       => { tool => 'file_operations', operation => 'rename_file' },
-        # append_file routes to write_file with append=1 injected into call args.
-        'append_file'       => { tool => 'file_operations', operation => 'write_file', append => 1 },
-        'replace_string'    => { tool => 'file_operations', operation => 'replace_string' },
-        'multi_replace_string' => { tool => 'file_operations', operation => 'multi_replace_string' },
-        'insert_at_line'    => { tool => 'file_operations', operation => 'insert_at_line' },
-        'create_directory'  => { tool => 'file_operations', operation => 'create_directory' },
-        'get_errors'        => { tool => 'file_operations', operation => 'get_errors' },
-        'read_tool_result'  => { tool => 'file_operations', operation => 'read_tool_result' },
-
-        # version_control aliases
-        'git'               => { tool => 'version_control', operation => 'status' },
-        'status'            => { tool => 'version_control', operation => 'status' },
-        'log'               => { tool => 'version_control', operation => 'log' },
-        'diff'              => { tool => 'version_control', operation => 'diff' },
-        'commit'            => { tool => 'version_control', operation => 'commit' },
-        'push'              => { tool => 'version_control', operation => 'push' },
-        'pull'              => { tool => 'version_control', operation => 'pull' },
-        'branch'            => { tool => 'version_control', operation => 'branch' },
-        'stash'             => { tool => 'version_control', operation => 'stash' },
-
-        # terminal_operations aliases — natural-language verbs for "run a shell command"
-        'shell'             => { tool => 'terminal_operations', operation => 'exec' },
-        'exec'              => { tool => 'terminal_operations', operation => 'exec' },
-        'run'               => { tool => 'terminal_operations', operation => 'exec' },
-        'bash'              => { tool => 'terminal_operations', operation => 'exec' },
-        'cmd'               => { tool => 'terminal_operations', operation => 'exec' },
-
-        # memory_operations aliases
-        'store'             => { tool => 'memory_operations', operation => 'store' },
-        'retrieve'          => { tool => 'memory_operations', operation => 'retrieve' },
-        'search'            => { tool => 'memory_operations', operation => 'search' },
-        'recall_sessions'   => { tool => 'memory_operations', operation => 'recall_sessions' },
-        'list'              => { tool => 'memory_operations', operation => 'list' },
-        'delete'            => { tool => 'memory_operations', operation => 'delete' },
-        'get'               => { tool => 'memory_operations', operation => 'retrieve' },
-        'save'              => { tool => 'memory_operations', operation => 'store' },
-        'forget'            => { tool => 'memory_operations', operation => 'delete' },
-
-        # web_operations aliases
-        'search_web'        => { tool => 'web_operations', operation => 'search_web' },
-        'fetch_url'         => { tool => 'web_operations', operation => 'fetch_url' },
-        'curl'              => { tool => 'web_operations', operation => 'fetch_url' },
-        'wget'              => { tool => 'web_operations', operation => 'fetch_url' },
-        'http'              => { tool => 'web_operations', operation => 'fetch_url' },
-        'google'            => { tool => 'web_operations', operation => 'search_web' },
-
-        # todo_operations aliases
-        'todo'              => { tool => 'todo_operations', operation => 'write' },
-        'todos'             => { tool => 'todo_operations', operation => 'read' },
-
-        # code_intelligence aliases
-        'list_usages'       => { tool => 'code_intelligence', operation => 'list_usages' },
-        'search_history'    => { tool => 'code_intelligence', operation => 'search_history' },
-
-        # interact aliases
-        'ask'               => { tool => 'interact', operation => 'request_input' },
-        'collab'            => { tool => 'interact', operation => 'request_input' },
-        'interact'          => { tool => 'interact', operation => 'request_input' },
-        'ask_user'          => { tool => 'interact', operation => 'request_input' },
-        'confirm'           => { tool => 'interact', operation => 'request_input' },
-        'question'          => { tool => 'interact', operation => 'request_input' },
-
-        # agent_operations aliases
-        'spawn'             => { tool => 'agent_operations', operation => 'spawn' },
-        'agents'            => { tool => 'agent_operations', operation => 'list' },
-        'inbox'             => { tool => 'agent_operations', operation => 'inbox' },
-
-        # apply_patch alias
-        'patch'             => { tool => 'apply_patch', operation => 'patch' },
-    );
-
-    $self->{_operation_aliases_cache} = \%aliases;
-    return \%aliases;
 }
 
 =head2 _operation_name_map
@@ -217,11 +121,15 @@ and agent_operations have C<status>. A name that does not resolve is worse
 than the consolidated schema it replaces - the model calls it and gets
 "tool not found".
 
-Resolution order for a contested name:
+Resolution order:
 
-1. The incumbent static alias entry keeps the bare name.
-2. Otherwise the first tool in registration order keeps it.
-3. Every other claimant gets C<< <namespace>_<operation> >>.
+1. A generic name (C<read>, C<write>, C<delete>, C<list>, C<search>, ...)
+   is always namespaced, even when only one tool claims it. The bare word
+   means different things to different tools.
+2. A non-generic name with one claimant keeps the bare name.
+3. For a contested non-generic name, the first tool in registration order
+   keeps the bare name and every other claimant gets
+   C<< <namespace>_<operation> >>.
 
 Returns: Hashref of tool name => { operation => callable name }
 
@@ -232,7 +140,6 @@ sub _operation_name_map {
 
     return $self->{_operation_name_map} if $self->{_operation_name_map};
 
-    my $static = $self->_get_operation_aliases();
     my (%claimants, %claims);
 
     for my $tool_name (@{ $self->{tool_order} }) {
@@ -249,24 +156,22 @@ sub _operation_name_map {
     my %map;
     for my $op (sort keys %claimants) {
         my @tools = @{ $claimants{$op} };
+        my $generic = $GENERIC_OPERATIONS{$op};
 
-        my $incumbent = $static->{$op} ? $static->{$op}{tool} : undef;
-        $incumbent = undef if $incumbent && !$claims{$incumbent}{$op};
-
-        if (@tools == 1) {
-            my $only = $tools[0];
-            $map{$only}{$op} =
-                (!$incumbent || $incumbent eq $only)
-                    ? $op
-                    : $self->_namespaced_operation($only, $op);
+        # A generic name is never published bare, even when only one tool
+        # claims it. A non-generic name with a single claimant keeps the
+        # bare name for readability (read_file, commit, diff).
+        if (@tools == 1 && !$generic) {
+            $map{ $tools[0] }{$op} = $op;
             next;
         }
 
-        $incumbent ||= $tools[0];
+        my $incumbent = $tools[0];
         for my $tool_name (@tools) {
-            $map{$tool_name}{$op} = $tool_name eq $incumbent
-                ? $op
-                : $self->_namespaced_operation($tool_name, $op);
+            $map{$tool_name}{$op} =
+                (!$generic && $tool_name eq $incumbent)
+                    ? $op
+                    : $self->_namespaced_operation($tool_name, $op);
         }
     }
 
@@ -395,9 +300,11 @@ Returns: Hashref with { tool => '...', operation => '...' } or undef
 sub get_alias_info {
     my ($self, $name) = @_;
 
-    my $static = $self->_get_operation_aliases()->{$name};
-    return $static if $static;
-
+    # Only names the registry actually emits are resolvable. The old static
+    # table advertised names that were never sent to the model (read, write,
+    # delete, patch, shell, ...), so a model could call a tool that did not
+    # exist and still get a result from a different tool. An emitted name is
+    # resolvable by construction; anything else is not an alias.
     return $self->_derived_aliases()->{$name};
 }
 
@@ -423,6 +330,51 @@ sub has_tool {
     }
 
     return 0;
+}
+
+=head2 get_emitted_names
+
+Return the set of callable names the registry actually publishes to the
+model, as a hashref of name => 1.
+
+Dispatch uses this to reject names that were never on the wire. A canonical
+tool name such as C<file_operations> is a real registered tool, but it is not
+emitted when the tool publishes per-operation definitions - accepting it would
+let a model call a name it was never given and reach a guessed operation.
+
+Returns: Hashref of emitted callable name => 1
+
+=cut
+
+sub get_emitted_names {
+    my ($self) = @_;
+
+    return $self->{_emitted_names_cache} if $self->{_emitted_names_cache};
+
+    my %names;
+    for my $definition (@{ $self->get_tool_definitions() }) {
+        my $name = $definition->{function}{name};
+        $names{$name} = 1 if defined $name && length $name;
+    }
+
+    $self->{_emitted_names_cache} = \%names;
+    return \%names;
+}
+
+=head2 is_emitted_name
+
+Check whether a name is advertised to the model.
+
+Arguments: $name - callable name from a tool call
+Returns: Boolean
+
+=cut
+
+sub is_emitted_name {
+    my ($self, $name) = @_;
+
+    return 0 unless defined $name && length $name;
+    return $self->get_emitted_names()->{$name} ? 1 : 0;
 }
 
 =head2 get_all_tools

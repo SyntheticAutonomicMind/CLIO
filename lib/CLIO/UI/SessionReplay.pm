@@ -356,12 +356,9 @@ sub _render_assistant_message {
         }
         my $tool_operation = ($tool_args && $tool_args->{operation}) ? $tool_args->{operation} : '';
 
-        # Infer missing operation (mirrors Tool.pm's default_operation +
-        # _infer_operation_from_params). Sessions saved before operation
-        # inference was stored in tool args will have operation missing,
-        # but the model's intent is recoverable from the params.
+        # Display-only fallback for sessions saved before the operation
+        # field was stored in tool args. This never dispatches a tool.
         if (!$tool_operation && $tool_name eq 'terminal_operations') {
-            # terminal_operations has default_operation => 'exec'
             if ($tool_args->{command}) {
                 $tool_operation = 'exec';
             } elsif ($tool_args->{pattern}) {

@@ -2,262 +2,67 @@
 # SPDX-License-Identifier: GPL-3.0-only
 # SPDX-FileCopyrightText: Copyright (c) 2026 Andrew Wyatt (Fewtarius)
 #
-# Test: Silent operation inference in Tool.pm::execute()
+# Test: missing operation handling.
 #
-# When a model forgets the 'operation' parameter and instead uses the
-# operation name as a parameter key (e.g., {"read_file": true, "path": "..."}
-# instead of {"operation": "read_file", "path": "..."}), the Tool base class
-# should silently infer the operation from the single matching parameter key.
-#
-# This test verifies:
-#   1. Single key match is inferred and the key is removed from params
-#   2. No match falls through to the existing "Missing 'operation' parameter" error
-#   3. Multiple matches (ambiguous) falls through to the error
-#   4. Normal calls with operation present are unaffected
-#   5. Works with operation_aliases (short aliases like "read")
-#   6. Works across multiple tool types (not just file_operations)
+# The base class no longer infers an operation from parameter keys or from
+# the shape of the parameters. A multi-operation tool must be told which
+# operation to run; a single-operation tool declares its operation and may
+# omit the field because its emitted schema has no operation property.
 
 use strict;
 use warnings;
 use utf8;
-use FindBin qw($RealBin);
+use lib './lib';
 use File::Temp qw(tempdir);
-use Cwd qw(abs_path);
-use File::Basename qw(dirname);
 use Test::More;
 
-binmode(STDOUT, ':encoding(UTF-8)');
-binmode(STDERR, ':encoding(UTF-8)');
-
-my $repo_root = abs_path(dirname(dirname(dirname($0))));
-$repo_root = abs_path('.') unless -d "$repo_root/lib";
-unshift @INC, "$repo_root/lib";
-
-require CLIO::Tools::FileOperations;
-require CLIO::Tools::TerminalOperations;
-require CLIO::Tools::VersionControl;
-require CLIO::Tools::MemoryOperations;
-
-plan(tests => 26);
+use CLIO::Tools::FileOperations;
+use CLIO::Tools::TerminalOperations;
+use CLIO::Tools::VersionControl;
+use CLIO::Tools::MemoryOperations;
+use CLIO::Tools::ApplyPatch;
 
 my $tmp = tempdir(CLEANUP => 1);
-my $ctx = { session => { id => 'op-inference-test' } };
+my $file = "$tmp/sample.txt";
+open my $fh, '>:encoding(UTF-8)', $file or die $!;
+print $fh "hello\n";
+close $fh;
 
-# Readable fixture for the alias cases below. FileOperations confines reads
-# to session_dir, so pointing these at the source tree made them fail once
-# path authorization was tightened.
-{
-    open my $fh, '>:encoding(UTF-8)', "$tmp/infer_read.txt" or die $!;
-    print $fh "inference fixture\n";
-    close $fh;
+my $ctx = {};
+
+# Multi-operation tools: missing operation is an error, never a guess.
+for my $case (
+    [ 'file_operations',     CLIO::Tools::FileOperations->new(debug => 0, session_dir => $tmp), { path => $file } ],
+    [ 'terminal_operations', CLIO::Tools::TerminalOperations->new(debug => 0),                    { command => 'echo hi' } ],
+    [ 'version_control',     CLIO::Tools::VersionControl->new(debug => 0),                        { limit => 5 } ],
+    [ 'memory_operations',   CLIO::Tools::MemoryOperations->new(debug => 0),                      { key => 'k' } ],
+) {
+    my ($name, $tool, $params) = @$case;
+    my $r = $tool->execute($params, $ctx);
+    ok(!$r->{success}, "$name: missing operation is an error");
+    like($r->{error}, qr/Missing 'operation' parameter/, "$name: error names the missing operation");
 }
 
-# ================================================================
-# _infer_operation_from_params helper: returns the right operation
-# ================================================================
-
+# Operation-name-as-parameter-key is not inferred.
 my $fo = CLIO::Tools::FileOperations->new(debug => 0, session_dir => $tmp);
+my $r = $fo->execute({ read_file => 1, path => $file }, $ctx);
+ok(!$r->{success}, 'operation sent as a parameter key is rejected');
 
-# Single key match: infers the operation name
-{
-    my $params = { read_file => 1, path => 'foo' };
-    my $inferred = $fo->_infer_operation_from_params($params);
-    is($inferred, 'read_file', "inferred operation is 'read_file'");
-}
+# Explicit operation still works.
+my $ok = $fo->execute({ operation => 'read_file', path => $file }, $ctx);
+ok($ok->{success}, 'explicit operation succeeds');
+like($ok->{output}, qr/hello/, 'explicit operation returns content');
 
-# Parameter-combination inference: {path, content} without old_string/line
-# is inferred as 'write_file' (the FileOperations override's heuristic).
-{
-    my $params = { path => 'foo', content => 'bar' };
-    my $inferred = $fo->_infer_operation_from_params($params);
-    is($inferred, 'write_file', "parameter-combination {path,content} infers 'write_file'");
-}
+# Single-operation tool: declared operation, no operation field required.
+my $patch = CLIO::Tools::ApplyPatch->new(debug => 0);
+my $patch_text = "*** Begin Patch\n*** Add File: $tmp/added.txt\n+one\n*** End Patch\n";
+my $pr = $patch->execute({ patch => $patch_text }, $ctx);
+ok($pr->{success}, 'single_operation tool runs without an operation field');
+ok(-e "$tmp/added.txt", 'single_operation tool performed its work');
 
-# No matching keys and no parameter-combination match: returns undef
-{
-    my $params = { read_file => 1, list_dir => 1 };
-    my $inferred = $fo->_infer_operation_from_params($params);
-    ok(!defined $inferred, "multiple matching keys returns undef (ambiguous)");
-}
+# Unknown operation on a multi-operation tool is rejected.
+my $bad2 = $fo->execute({ operation => 'frobnicate', path => $file }, $ctx);
+ok(!$bad2->{success}, 'unknown operation is rejected');
+like($bad2->{error}, qr/Unknown operation/, 'unknown operation error is explicit');
 
-# Alias match: infers the alias
-{
-    my $params = { read => 1, path => 'foo' };
-    my $inferred = $fo->_infer_operation_from_params($params);
-    is($inferred, 'read', "inferred operation from alias key 'read' is 'read'");
-}
-
-# Empty/non-hash params: returns undef
-{
-    my $inferred = $fo->_infer_operation_from_params(undef);
-    ok(!defined $inferred, "undef params returns undef");
-}
-
-# ================================================================
-# Full execute() flow: single key match is inferred + key deleted
-# ================================================================
-
-# Model sends {"read_file": true, "path": "..."}
-{
-    my $test_file = "$tmp/test1.txt";
-    open my $fh, '>:encoding(UTF-8)', $test_file or die $!;
-    print $fh "hello world\n";
-    close $fh;
-
-    my $r = $fo->execute({ read_file => 1, path => $test_file }, $ctx);
-    ok($r->{success}, "execute: single-key match 'read_file' is inferred and succeeds");
-}
-
-# Verify the operation key was deleted from params (internal detail,
-# tested via execute side-effect: if the key weren't deleted, handlers
-# that iterate over params might behave differently)
-{
-    my $test_file = "$tmp/test_alias.txt";
-    open my $fh, '>:encoding(UTF-8)', $test_file or die $!;
-    print $fh "alias content\n";
-    close $fh;
-
-    my $r = $fo->execute({ read => 1, path => $test_file }, $ctx);
-    ok($r->{success}, "execute: alias key 'read' is inferred and succeeds");
-}
-
-# {"write_file": true, "path": "...", "content": "..."}
-{
-    my $test_file = "$tmp/test2.txt";
-    my $r = $fo->execute({
-        write_file => 1,
-        path => $test_file,
-        content => "test content\n",
-    }, $ctx);
-    ok($r->{success}, "execute: single-key match 'write_file' is inferred and succeeds");
-}
-
-# {"list_dir": true, "path": "..."}
-{
-    my $r = $fo->execute({ list_dir => 1, path => $tmp }, $ctx);
-    ok($r->{success}, "execute: single-key match 'list_dir' is inferred and succeeds");
-}
-
-# ================================================================
-# No match: falls through to default_operation (read_file for FO)
-# then handler-level error
-# ================================================================
-
-{
-    my $r = $fo->execute({ path => '/some/file.txt' }, $ctx);
-    ok(!$r->{success}, "execute: no matching key returns failure");
-    like($r->{error}, qr/File not found/, "execute: no-match falls through to default_operation, error is handler-level (file not found), not missing-operation");
-}
-
-{
-    my $r = $fo->execute({ foo => 1, bar => 2 }, $ctx);
-    ok(!$r->{success}, "execute: unrelated params return failure");
-    unlike($r->{error}, qr/Missing 'operation' parameter/,
-        "execute: unrelated params falls through to default_operation");
-    like($r->{error}, qr/Missing required parameter: path/,
-        "execute: default_operation read_file reports its own required-param error");
-}
-
-# ================================================================
-# Multiple matches (ambiguous): falls through to default_operation
-# ================================================================
-
-{
-    my $r = $fo->execute({
-        read_file => 1,
-        list_dir => 1,
-        path => $tmp,
-    }, $ctx);
-    ok(!$r->{success}, "execute: multiple matching keys returns failure");
-    unlike($r->{error}, qr/Missing 'operation' parameter/,
-        "execute: ambiguous match falls through to default_operation");
-    like($r->{error}, qr/File not found/,
-        "execute: default_operation read_file reports file-not-found (path is a dir)");
-}
-
-# ================================================================
-# Normal calls (operation present) unaffected
-# ================================================================
-
-{
-    my $test_file = "$tmp/test_normal.txt";
-    open my $fh, '>:encoding(UTF-8)', $test_file or die $!;
-    print $fh "normal content\n";
-    close $fh;
-
-    my $r = $fo->execute({ operation => 'read_file', path => $test_file }, $ctx);
-    ok($r->{success}, "execute: normal read_file with explicit operation succeeds");
-}
-
-# operation='read' (alias as explicit value) still works
-{
-    my $r = $fo->execute({ operation => 'read', path => "$tmp/infer_read.txt" }, $ctx);
-    ok($r->{success}, "execute: operation='read' (alias) still works normally");
-}
-
-# Explicit operation takes priority over matching key in params
-{
-    my $test_file = "$tmp/test_prio.txt";
-    open my $fh, '>:encoding(UTF-8)', $test_file or die $!;
-    print $fh "priority content\n";
-    close $fh;
-
-    my $r = $fo->execute({
-        operation => 'read_file',
-        read_file => 1,
-        path => $test_file,
-    }, $ctx);
-    ok($r->{success}, "execute: explicit operation takes priority over matching param key");
-}
-
-# ================================================================
-# Empty/undef operation with matching key: remediation kicks in
-# ================================================================
-
-{
-    my $r = $fo->execute({
-        operation => '',
-        read_file => 1,
-        path => "$tmp/infer_read.txt",
-    }, $ctx);
-    ok($r->{success}, "execute: empty-string operation overridden by matching key inference");
-}
-
-{
-    my $r = $fo->execute({
-        operation => undef,
-        list_dir => 1,
-        path => $tmp,
-    }, $ctx);
-    ok($r->{success}, "execute: undef operation overridden by matching key inference");
-}
-
-# ================================================================
-# Cross-tool inference
-# ================================================================
-
-my $to = CLIO::Tools::TerminalOperations->new(debug => 0);
-{
-    my $r = $to->execute({ exec => 1, command => 'echo cross_tool_test' }, $ctx);
-    ok($r->{success}, "TerminalOperations: key 'exec' inferred and succeeds");
-}
-
-my $vc = CLIO::Tools::VersionControl->new(debug => 0);
-{
-    my $r = $vc->execute({ status => 1, repository_path => '.' }, $ctx);
-    ok($r->{success}, "VersionControl: key 'status' inferred and succeeds");
-}
-
-# ================================================================
-# Inferred operation without required params: handler-level error
-# (not "Missing 'operation' parameter")
-# ================================================================
-
-{
-    my $r = $fo->execute({ read_file => 1 }, $ctx);
-    ok(!$r->{success}, "execute: inferred operation without required params gets handler-level error");
-    unlike($r->{error}, qr/Missing 'operation' parameter/,
-        "execute: error is NOT about missing operation (it was inferred)");
-}
-
-1;
+done_testing();

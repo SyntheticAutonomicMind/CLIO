@@ -167,9 +167,7 @@ familiar English form still dispatches correctly.
             read_result create write append replace edit bulk_replace
             insert_line insert delete remove rename mv make_directory mkdir
             create_file append_file
-        )],
-        default_operation => 'read_file',
-        %opts,
+        )],        %opts,
     );
     
     # Store session directory for authorization checks
@@ -489,68 +487,6 @@ sub dispatch_table {
 
 #
 
-=head2 _infer_operation_from_params (Internal)
-
-Override of Tool.pm base method. Adds context-aware inference for
-FileOperations: when the model omits the C<operation> field but provides
-a combination of parameters that uniquely identifies one operation,
-silently infer the operation.
-
-This is critical for resilience: LLMs frequently forget C<operation>
-when emitting parallel file_operations calls. The parent method only
-scans parameter *keys* for operation-name matches (e.g.
-C<< {"read_file": true} >>); this override adds parameter *combination*
-heuristics so common patterns are auto-recovered:
-
-  - {toolCallId}                       -> read_tool_result
-  - {old_path, new_path}               -> rename_file
-  - {replacements}                     -> multi_replace_string
-  - {line, content}                    -> insert_at_line
-  - {old_string, new_string}           -> replace_string
-  - {content} (no old_string, no line) -> write_file
-  - {query, pattern}                   -> grep_search
-  - {query, scope}                     -> semantic_search
-  - {pattern} (no query)               -> file_search
-  - {start_line} or {end_line}         -> read_file
-
-For ambiguous cases (e.g. C<path> alone could be read_file,
-file_exists, or get_file_info), this method returns C<undef> and
-relies on C<default_operation> (set to C<read_file>) as fallback.
-
-The model is never informed - it just sees a successful result.
-
-=cut
-
-sub _infer_operation_from_params {
-    my ($self, $params) = @_;
-
-    # First try the parent's key-matching logic (e.g., model used
-    # {"read_file": true, "path": "..."} instead of an operation field).
-    my $op = $self->SUPER::_infer_operation_from_params($params);
-    return $op if $op;
-
-    return undef unless $params && ref($params) eq 'HASH';
-
-    my %p = %$params;
-
-    # Unambiguous parameter combinations (checked in order of specificity).
-    # Only infer when exactly one operation matches the given parameters.
-    return 'read_tool_result'  if exists $p{toolCallId};
-    return 'rename_file'       if exists $p{old_path} && exists $p{new_path};
-    return 'multi_replace_string' if exists $p{replacements};
-    return 'insert_at_line'    if exists $p{line} && exists $p{content};
-    return 'replace_string'    if exists $p{old_string} && exists $p{new_string};
-    return 'write_file'       if exists $p{content} && !exists $p{old_string} && !exists $p{line};
-    return 'grep_search'      if exists $p{query} && exists $p{pattern};
-    return 'semantic_search'  if exists $p{query} && exists $p{scope};
-    return 'file_search'      if exists $p{pattern} && !exists $p{query};
-    return 'read_file'       if exists $p{start_line} || exists $p{end_line};
-
-    # Ambiguous case: {path} alone could be read_file, file_exists,
-    # or get_file_info. Let default_operation (read_file) handle it.
-    return undef;
-}
-
 # AUTHORIZATION HELPERS
 #
 
@@ -824,8 +760,19 @@ sub read_file {
     my $sandbox_check = $self->_check_sandbox($path, $context);
     return $self->error_result($sandbox_check->{error}) unless $sandbox_check->{allowed};
 
+    if (-d $path) {
+        return $self->error_result(
+            "Path is a directory: $path. Use list_dir to enumerate its contents."
+        );
+    }
     return $self->error_result("File not found: $path") unless -f $path;
     return $self->error_result("File not readable: $path") unless -r $path;
+
+    if (defined $end_line && $end_line < $start_line) {
+        return $self->error_result(
+            "Invalid line range: start_line=$start_line is greater than end_line=$end_line."
+        );
+    }
 
     # Interrupt check before reading. read_file can take a long time on
     # large files, so give the user a chance to cancel before we burn I/O.
@@ -1175,6 +1122,13 @@ sub get_errors {
     }
 
     my $total = scalar(@paths);
+
+    # A single path that could not be checked is an error result, not an
+    # empty success. Returning [] for a missing file reads as "no errors".
+    if ($total == 1 && exists $per_file{ $paths[0] } && !$per_file{ $paths[0] }{success}) {
+        return $self->error_result($per_file{ $paths[0] }{error});
+    }
+
     my $action_desc = $total == 1
         ? sprintf("checking syntax of %s (%s)", $paths[0], $per_file{$paths[0]}{error_count} ? "$per_file{$paths[0]}{error_count} errors" : "no errors")
         : sprintf("checking syntax of %d files (%d with errors)", $total, $total_with_errors);
@@ -1479,25 +1433,8 @@ sub grep_search {
    my $query = $params->{query};
    my $pattern = $params->{pattern} || '**/*';
 
-    # Silent remediation: if 'query' is missing but 'pattern' was provided,
-    # the model likely confused 'pattern' (a file glob filter) with 'query'
-    # (the search text). Remap pattern -> query silently. Safe because query
-    # is required for grep_search — if it is absent and pattern is present, the
-    # model intended pattern as the search text.
-    # Heuristic: only remap when 'pattern' does NOT look like a pure file glob.
-    # File globs use * ? [ ] but never | (regex alternation). If pattern
-    # contains | or lacks all glob metacharacters, it is a search term.
-    if ((!defined $query || !length($query)) && exists $params->{pattern}
-        && defined $params->{pattern} && length($params->{pattern})) {
-        my $p = $params->{pattern};
-        my $looks_like_glob = ($p =~ /[*?\[\]]/ && $p !~ /[|]/);
-        if (!$looks_like_glob) {
-            $query = $p;
-            $pattern = '**/*';
-            delete $params->{pattern};
-            log_debug('FileOp', "grep_search: silently remapped pattern->query (model confusion): $p");
-        }
-    }
+    return $self->error_result("Missing required parameter: query")
+        unless defined $query && length $query;
 
    my $is_regex = $params->{is_regex} || 0;
    my $max_results = $params->{max_results} || 50;  # Prevent runaway searches
@@ -1772,21 +1709,6 @@ sub semantic_search {
     my $query = $params->{query};
     my $scope = $params->{scope} || '.';
     my $top_k = $params->{max_results} || 20;
-
-    # Silent remediation: if 'query' is missing but 'pattern' was provided,
-    # the model likely confused 'pattern' (file glob) with 'query' (search
-    # text). Remap pattern -> query silently. See grep_search for the full
-    # heuristic rationale.
-    if ((!defined $query || !length($query)) && exists $params->{pattern}
-        && defined $params->{pattern} && length($params->{pattern})) {
-        my $p = $params->{pattern};
-        my $looks_like_glob = ($p =~ /[*?\[\]]/ && $p !~ /[|]/);
-        if (!$looks_like_glob) {
-            $query = $p;
-            delete $params->{pattern};
-            log_debug('FileOp', "semantic_search: silently remapped pattern->query (model confusion): $p");
-        }
-    }
 
     return $self->error_result("Missing required parameter: query") unless $query;
     
@@ -2604,6 +2526,11 @@ sub insert_at_line {
         open my $fh, '<:utf8', $path or croak "Cannot read $path: $!";
         my @lines = <$fh>;
         close $fh;
+
+        my $line_count = scalar(@lines);
+        if ($line_number > $line_count + 1) {
+            croak "Line number out of range: $path has $line_count line(s); valid range is 1.." . ($line_count + 1);
+        }
         
         # Ensure content ends with newline if it doesn't already
         $content .= "\n" unless $content =~ /\n$/;

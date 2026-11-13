@@ -21,7 +21,37 @@ CLIO provides comprehensive tooling across multiple categories. Every tool opera
 10. [remote_execution](#remote_execution) - 7 operations
 11. [apply_patch](#apply_patch) - 1 operation
 
-> **CRITICAL:** All tools use a unified `operation` parameter. Do NOT call individual operation names as separate tools (e.g., `git_status` is NOT valid). Always use the parent tool with `operation: "action"`.
+## Calling convention
+
+Each operation is published to the model as its own callable name. Call the
+name, and pass that operation's parameters at the top level. There is no
+`operation` field on a per-operation callable:
+
+```json
+{"name": "read_file", "parameters": {"path": "README.md"}}
+{"name": "todo_write", "parameters": {"todoList": [...]}}
+{"name": "memory_store", "parameters": {"key": "k", "content": "v"}}
+```
+
+Operation names that would be ambiguous on their own are namespaced:
+`read` -> `todo_read`, `write` -> `todo_write`, `delete` -> `memory_delete`,
+`search` -> `memory_search`, `list` -> `memory_list`, `store` -> `memory_store`.
+File operations already carry a domain prefix (`read_file`, `write_file`,
+`delete_file`, `grep_search`).
+
+`interact` and `apply_patch` are single-callable and take no operation field.
+`terminal_operations` keeps the field because it has two operations (`exec`
+and `validate`).
+
+For text-based tool-call formats emitted by local models, the canonical tool
+name with an explicit operation is also accepted:
+
+```json
+{"name": "file_operations", "arguments": "{\"operation\": \"read_file\", \"path\": \"README.md\"}"}
+```
+
+The operation must be explicit. A canonical tool name without an operation is
+rejected; it is never inferred from the shape of the parameters.
 
 ---
 
@@ -29,7 +59,7 @@ CLIO provides comprehensive tooling across multiple categories. Every tool opera
 
 **Tool:** `file_operations`
 
-**Required Parameter:** `operation` (string)
+**Callable surface:** each operation below is emitted as its own tool name. The parent tool name with an explicit `operation` is also accepted.
 
 ### Search Operations
 
@@ -181,7 +211,7 @@ Search a single file:
 
 **Tool:** `version_control`
 
-**Required Parameter:** `operation` (string)
+**Callable surface:** each operation below is emitted as its own tool name. The parent tool name with an explicit `operation` is also accepted.
 
 | Operation | Description | Required Parameters |
 |-----------|-------------|---------------------|
@@ -214,7 +244,7 @@ Search a single file:
 
 **Tool:** `terminal_operations`
 
-**Required Parameter:** `operation` (string)
+**Callable surface:** each operation below is emitted as its own tool name. The parent tool name with an explicit `operation` is also accepted.
 
 | Operation | Description | Required Parameters |
 |-----------|-------------|---------------------|
@@ -239,7 +269,7 @@ Search a single file:
 
 **Tool:** `memory_operations`
 
-**Required Parameter:** `operation` (string)
+**Callable surface:** each operation below is emitted as its own tool name. The parent tool name with an explicit `operation` is also accepted.
 
 | Operation | Description | Required Parameters |
 |-----------|-------------|---------------------|
@@ -263,7 +293,7 @@ Search a single file:
 
 **Tool:** `todo_operations`
 
-**Required Parameter:** `operation` (string)
+**Callable surface:** each operation below is emitted as its own tool name. The parent tool name with an explicit `operation` is also accepted.
 
 | Operation | Description | Required Parameters |
 |-----------|-------------|---------------------|
@@ -278,7 +308,7 @@ Search a single file:
 
 **Tool:** `web_operations`
 
-**Required Parameter:** `operation` (string)
+**Callable surface:** each operation below is emitted as its own tool name. The parent tool name with an explicit `operation` is also accepted.
 
 | Operation | Description | Required Parameters |
 |-----------|-------------|---------------------|
@@ -291,7 +321,7 @@ Search a single file:
 
 **Tool:** `code_intelligence`
 
-**Required Parameter:** `operation` (string)
+**Callable surface:** each operation below is emitted as its own tool name. The parent tool name with an explicit `operation` is also accepted.
 
 | Operation | Description | Required Parameters |
 |-----------|-------------|---------------------|
@@ -304,7 +334,7 @@ Search a single file:
 
 **Tool:** `interact`
 
-**Required Parameter:** `operation` (string)
+**Callable surface:** each operation below is emitted as its own tool name. The parent tool name with an explicit `operation` is also accepted.
 
 | Operation | Description | Required Parameters |
 |-----------|-------------|---------------------|
@@ -316,7 +346,7 @@ Search a single file:
 
 **Tool:** `agent_operations`
 
-**Required Parameter:** `operation` (string)
+**Callable surface:** each operation below is emitted as its own tool name. The parent tool name with an explicit `operation` is also accepted.
 
 | Operation | Description | Required Parameters |
 |-----------|-------------|---------------------|
@@ -338,7 +368,7 @@ Search a single file:
 
 **Tool:** `remote_execution`
 
-**Required Parameter:** `operation` (string)
+**Callable surface:** each operation below is emitted as its own tool name. The parent tool name with an explicit `operation` is also accepted.
 
 | Operation | Description | Required Parameters |
 |-----------|-------------|---------------------|
@@ -356,7 +386,7 @@ Search a single file:
 
 **Tool:** `apply_patch`
 
-**Required Parameter:** `operation` (string)
+**Callable surface:** each operation below is emitted as its own tool name. The parent tool name with an explicit `operation` is also accepted.
 
 **Parameters:**
 - `patch` (string, **required**) - Patch text in format:

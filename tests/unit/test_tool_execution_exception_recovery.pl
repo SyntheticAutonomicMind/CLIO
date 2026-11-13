@@ -292,7 +292,7 @@ $r = $fo->read_file({
     path => '/tmp',  # A directory, not a file
 }, {});
 is($r->{success}, 0, 'fo.read_file on directory: success=0');
-like($r->{error}, qr/File not found|not a regular file/i,
+like($r->{error}, qr/File not found|not a regular file|is a directory/i,
     'fo.read_file on directory: clean error message');
 
 # Test: read_file with non-existent path

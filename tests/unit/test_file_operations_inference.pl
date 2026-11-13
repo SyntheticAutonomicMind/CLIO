@@ -5,43 +5,41 @@
 use strict;
 use warnings;
 use lib './lib';
-use Test::More tests => 14;
-
+use Test::More tests => 8;
+use File::Temp qw(tempdir);
 use CLIO::Tools::FileOperations;
 
-my $tool = CLIO::Tools::FileOperations->new(debug => 0);
+# The old silent-inference contract guessed an operation from the shape of
+# the parameters, so {path} became read_file and {content} became write_file.
+# That made a wrong call look successful. The contract now: a multi-operation
+# tool must be told which operation to run.
 
-# Test 1-2: default_operation is set and is read_file
-ok(defined $tool->{default_operation}, 'default_operation is set');
-is($tool->{default_operation}, 'read_file', 'default_operation is read_file');
+my $dir = tempdir(CLEANUP => 1);
+my $file = "$dir/sample.txt";
+open my $fh, '>:encoding(UTF-8)', $file or die $!;
+print $fh "alpha\nbeta\n";
+close $fh;
 
-# Tests 3-12: Context-aware inference for unambiguous parameter combinations
-my @cases = (
-    [{ toolCallId => 'call_123' },                          'read_tool_result'],
-    [{ old_path => '/a', new_path => '/b' },                'rename_file'],
-    [{ replacements => [] },                                'multi_replace_string'],
-    [{ line => 5, content => 'test' },                      'insert_at_line'],
-    [{ old_string => 'old', new_string => 'new' },          'replace_string'],
-    [{ content => 'hello' },                                'write_file'],
-    [{ query => 'pat', pattern => '*.pm' },                'grep_search'],
-    [{ query => 'terms', scope => '.' },                    'semantic_search'],
-    [{ pattern => '*.pm' },                                'file_search'],
-    [{ path => '/tmp/test', start_line => 1 },              'read_file'],
-);
+my $tool = CLIO::Tools::FileOperations->new(debug => 0, session_dir => $dir);
 
-for my $i (0 .. $#cases) {
-    my ($params, $expected) = @{$cases[$i]};
-    my $inferred = $tool->_infer_operation_from_params($params);
-    is($inferred, $expected,
-        "inference: " . join(',', map { "$_=$params->{$_}" } sort keys %$params) . " -> $expected")
-        or diag("  got: $inferred // undef");
-}
+ok(!$tool->can('_infer_operation_from_params'),
+    'parameter-shape inference method is gone');
+ok(!defined $tool->{default_operation},
+    'no default_operation fallback');
 
-# Test: write_file inference should NOT fire when old_string is present
-my $r1 = $tool->_infer_operation_from_params({ content => 'h', old_string => 'o', new_string => 'n' });
-is($r1, 'replace_string', 'content+old_string+new_string -> replace_string, not write_file');
+my $r1 = $tool->execute({ path => $file }, {});
+ok(!$r1->{success}, 'path-only call is an error, not a silent read');
+like($r1->{error}, qr/Missing 'operation' parameter/,
+    'error names the missing operation');
 
-# Test: path-only is ambiguous -> undef (default_operation handles it later)
-my $r2 = $tool->_infer_operation_from_params({ path => '/tmp/test' });
-ok(!defined($r2), 'path-only is ambiguous -> undef (falls through to default_operation)');
+my $r2 = $tool->execute({ path => $file }, {});
+ok(!$r2->{success}, 'repeated path-only call stays an error');
 
+my $r3 = $tool->execute({ operation => 'read_file', path => $file }, {});
+ok($r3->{success}, 'explicit read_file succeeds');
+like($r3->{output}, qr/alpha/, 'explicit read_file returns content');
+
+my $r4 = $tool->execute({ operation => 'grep_search', path => $dir }, {});
+ok(!$r4->{success}, 'grep_search without query is an error');
+
+done_testing();

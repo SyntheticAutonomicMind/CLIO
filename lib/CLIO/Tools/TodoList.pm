@@ -598,10 +598,7 @@ sub handle_write {
     # Silent normalization: the model frequently sends the todo array
     # under the wrong key (e.g. 'newTodos' or 'content' instead of
     # 'todoList'). Rather than failing, accept the array under any of
-    # the known field names and move it to the canonical key. This
-    # mirrors the silent-remediation pattern already used in
-    # Tool::execute (_infer_operation_from_params) and
-    # ToolExecutor::_normalize_dual_json_params.
+    # the known field names and move it to the canonical key.
     $self->_normalize_todo_array($params, 'todoList');
 
    unless ($params->{todoList}) {
