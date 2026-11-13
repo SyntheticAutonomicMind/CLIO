@@ -88,6 +88,10 @@ sub register_tool {
     unless (grep { $_ eq $name } @{$self->{tool_order}}) {
         push @{$self->{tool_order}}, $name;
     }
+
+    $self->{_definitions_cache} = undef;
+    $self->{_operation_name_map} = undef;
+    $self->{_derived_aliases} = undef;
     
     log_debug('Registry', "Registered tool: $name");
     
@@ -130,6 +134,7 @@ sub _get_operation_aliases {
         # append_file routes to write_file with append=1 injected into call args.
         'append_file'       => { tool => 'file_operations', operation => 'write_file', append => 1 },
         'replace_string'    => { tool => 'file_operations', operation => 'replace_string' },
+        'multi_replace_string' => { tool => 'file_operations', operation => 'multi_replace_string' },
         'insert_at_line'    => { tool => 'file_operations', operation => 'insert_at_line' },
         'create_directory'  => { tool => 'file_operations', operation => 'create_directory' },
         'get_errors'        => { tool => 'file_operations', operation => 'get_errors' },
@@ -201,6 +206,144 @@ sub _get_operation_aliases {
     return \%aliases;
 }
 
+=head2 _operation_name_map
+
+Compute the callable name for every operation of every registered tool.
+
+Publishing one definition per operation means the emitted names have to be
+globally unique, but operations are only unique within a tool: both
+memory_operations and skill_operations have C<list>, and both version_control
+and agent_operations have C<status>. A name that does not resolve is worse
+than the consolidated schema it replaces - the model calls it and gets
+"tool not found".
+
+Resolution order for a contested name:
+
+1. The incumbent static alias entry keeps the bare name.
+2. Otherwise the first tool in registration order keeps it.
+3. Every other claimant gets C<< <namespace>_<operation> >>.
+
+Returns: Hashref of tool name => { operation => callable name }
+
+=cut
+
+sub _operation_name_map {
+    my ($self) = @_;
+
+    return $self->{_operation_name_map} if $self->{_operation_name_map};
+
+    my $static = $self->_get_operation_aliases();
+    my (%claimants, %claims);
+
+    for my $tool_name (@{ $self->{tool_order} }) {
+        my $tool = $self->{tools}{$tool_name};
+        my $contract = eval { $tool->operation_contract() };
+        next unless $contract && ref($contract) eq 'HASH' && keys %$contract;
+
+        for my $op (sort keys %$contract) {
+            $claims{$tool_name}{$op} = 1;
+            push @{ $claimants{$op} }, $tool_name;
+        }
+    }
+
+    my %map;
+    for my $op (sort keys %claimants) {
+        my @tools = @{ $claimants{$op} };
+
+        my $incumbent = $static->{$op} ? $static->{$op}{tool} : undef;
+        $incumbent = undef if $incumbent && !$claims{$incumbent}{$op};
+
+        if (@tools == 1) {
+            my $only = $tools[0];
+            $map{$only}{$op} =
+                (!$incumbent || $incumbent eq $only)
+                    ? $op
+                    : $self->_namespaced_operation($only, $op);
+            next;
+        }
+
+        $incumbent ||= $tools[0];
+        for my $tool_name (@tools) {
+            $map{$tool_name}{$op} = $tool_name eq $incumbent
+                ? $op
+                : $self->_namespaced_operation($tool_name, $op);
+        }
+    }
+
+    $self->{_operation_name_map} = \%map;
+    return \%map;
+}
+
+=head2 _namespaced_operation (Internal)
+
+Prefix an operation name with its tool namespace for collision resolution.
+
+=cut
+
+=head2 get_operation_callable
+
+Return the emitted callable name for one (tool, operation) pair.
+
+Collisions are resolved once in _operation_name_map - two tools both exposing
+a "list" operation leave one bare and prefix the other. Anything that
+describes callable names, such as the system prompt, must read from the same
+table or it will advertise a name the registry never emits.
+
+Arguments: $tool_name - canonical tool name, $operation - operation name
+Returns: The callable name, or undef when the tool publishes no such operation
+
+=cut
+
+sub get_operation_callable {
+    my ($self, $tool_name, $operation) = @_;
+
+    return undef unless defined $tool_name && defined $operation;
+
+    my $map = $self->_operation_name_map();
+    return $map->{$tool_name}{$operation};
+}
+
+sub _namespaced_operation {
+    my ($self, $tool_name, $op) = @_;
+
+    my $namespace = $tool_name;
+    $namespace =~ s/_operations$//;
+
+    return "${namespace}_${op}";
+}
+
+=head2 _derived_aliases (Internal)
+
+Alias entries derived from the live operation contracts.
+
+The static table below is hand-maintained and had already drifted: it lacked
+multi_replace_string while that name was being emitted as a callable, so the
+model could call a tool the registry could not resolve. Deriving from the
+contracts means an emitted name is resolvable by construction.
+
+Returns: Hashref of callable name => { tool, operation }
+
+=cut
+
+sub _derived_aliases {
+    my ($self) = @_;
+
+    return $self->{_derived_aliases} if $self->{_derived_aliases};
+
+    my $map = $self->_operation_name_map();
+    my %derived;
+
+    for my $tool_name (sort keys %$map) {
+        for my $op (sort keys %{ $map->{$tool_name} }) {
+            my $callable = $map->{$tool_name}{$op};
+            $derived{$callable} ||= { tool => $tool_name, operation => $op };
+        }
+    }
+
+    $self->{_derived_aliases} = \%derived;
+    return \%derived;
+}
+
 =head2 get_tool
 
 Get a tool instance by name. Supports aliasing for common mistakes.
@@ -219,9 +362,8 @@ Returns: Tool instance, or undef if not found (after alias resolution)
 sub get_tool {
     my ($self, $name) = @_;
 
-    my $aliases = $self->_get_operation_aliases();
-    if (exists $aliases->{$name}) {
-        my $alias = $aliases->{$name};
+    my $alias = $self->get_alias_info($name);
+    if ($alias) {
         log_debug('Registry', "Resolving alias '$name' -> '$alias->{tool}' with operation='$alias->{operation}'");
         $name = $alias->{tool};
     }
@@ -252,7 +394,11 @@ Returns: Hashref with { tool => '...', operation => '...' } or undef
 
 sub get_alias_info {
     my ($self, $name) = @_;
-    return $self->_get_operation_aliases()->{$name};
+
+    my $static = $self->_get_operation_aliases()->{$name};
+    return $static if $static;
+
+    return $self->_derived_aliases()->{$name};
 }
 
 =head2 has_tool
@@ -271,9 +417,9 @@ sub has_tool {
 
     return 1 if exists $self->{tools}{$name};
 
-    my $aliases = $self->_get_operation_aliases();
-    if (exists $aliases->{$name}) {
-        return exists $self->{tools}{$aliases->{$name}{tool}};
+    my $alias = $self->get_alias_info($name);
+    if ($alias) {
+        return exists $self->{tools}{$alias->{tool}};
     }
 
     return 0;
@@ -303,6 +449,33 @@ Returns: Arrayref of tool definition hashrefs in OpenAI format
 
 =cut
 
+=head2 get_definition
+
+Return the emitted definition for a tool name or operation callable.
+
+Callers that need to explain a failed call must use the definition the model
+was shown. get_tool_definition() on the module returns the consolidated
+schema, which lists every parameter of every operation and so describes the
+wrong command when the failed call was a per-operation name.
+
+Arguments: $name - canonical tool name or operation callable
+Returns: Hashref of { name, description, parameters }, or undef
+
+=cut
+
+sub get_definition {
+    my ($self, $name) = @_;
+
+    return undef unless defined $name && length $name;
+
+    for my $definition (@{ $self->get_tool_definitions() }) {
+        return $definition->{function}
+            if $definition->{function}{name} eq $name;
+    }
+
+    return undef;
+}
+
 sub get_tool_definitions {
     my ($self) = @_;
     
@@ -310,15 +483,31 @@ sub get_tool_definitions {
     return $self->{_definitions_cache} if $self->{_definitions_cache};
     
     my @definitions;
-    
+
+    my $name_map = $self->_operation_name_map();
+    my %per_operation;
+
     for my $name (@{$self->{tool_order}}) {
         my $tool = $self->{tools}{$name};
-        
-        # Get definition from tool
-        my $tool_def = $tool->get_tool_definition();
-        
-        # Convert to OpenAI function calling format
-        my $definition = {
+        next unless $tool->can('get_operation_tool_definitions');
+
+        my $operations = $tool->get_operation_tool_definitions();
+        next unless $operations && ref($operations) eq 'HASH';
+
+        $per_operation{$name} = $operations;
+    }
+
+    # The consolidated definition can only declare `required => ["operation"]`.
+    # When a tool publishes per-operation definitions, that flat schema is a
+    # second, contradictory description of the same commands - and the one a
+    # model is likelier to reach for, because it is cheaper to satisfy. Ship
+    # the truthful surface only.
+    for my $name (@{$self->{tool_order}}) {
+        next if $per_operation{$name};
+
+        my $tool_def = $self->{tools}{$name}->get_tool_definition();
+
+        push @definitions, {
             type => 'function',
             function => {
                 name => $tool_def->{name},
@@ -326,10 +515,43 @@ sub get_tool_definitions {
                 parameters => $tool_def->{parameters},
             },
         };
-        
-        push @definitions, $definition;
     }
-    
+
+    for my $name (sort keys %per_operation) {
+        my $operations = $per_operation{$name};
+
+        for my $op (sort keys %$operations) {
+            my $spec = $operations->{$op};
+            my $callable = $name_map->{$name}{$op} || $op;
+
+            my %parameters = (
+                type       => 'object',
+                properties => ($spec->{properties} || {}),
+                required   => ($spec->{required} || []),
+            );
+            $parameters{anyOf} = $spec->{anyOf} if $spec->{anyOf};
+
+            push @definitions, {
+                type => 'function',
+                function => {
+                    name => $callable,
+                    description => $spec->{description},
+                    parameters => \%parameters,
+                },
+            };
+        }
+    }
+
+    # An emitted name that does not resolve is a dead end for the caller.
+    # Fail loudly at build time instead of at dispatch time.
+    for my $definition (@definitions) {
+        my $callable = $definition->{function}{name};
+        next if exists $self->{tools}{$callable};
+        next if $self->get_alias_info($callable);
+
+        log_warning('Registry', "Tool definition '$callable' does not resolve to any tool");
+    }
+
     log_debug('Registry', "Generated " . scalar(@definitions) . " tool definitions");
     
     # Cache for subsequent calls

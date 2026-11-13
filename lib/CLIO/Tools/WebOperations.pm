@@ -90,6 +90,42 @@ Define parameters for web_operations in JSON schema sent to AI.
 
 =cut
 
+=head2 operation_contract
+
+Per-operation parameter contract. See CLIO::Tools::Tool::operation_contract.
+
+Returns: Hashref of operation => { required => [...], properties => [...] }
+
+=cut
+
+sub operation_contract {
+    my ($self) = @_;
+
+    return {
+        fetch_url  => { required => [qw(url)],
+                        properties => [qw(url timeout)] },
+        search_web => { required => [qw(query)],
+                        properties => [qw(query max_results timeout)] },
+    };
+}
+
+=head2 operation_summaries
+
+One-line summary per operation for the per-operation definitions.
+
+Returns: Hashref of operation => summary
+
+=cut
+
+sub operation_summaries {
+    my ($self) = @_;
+
+    return {
+        fetch_url  => 'Fetch content from a URL',
+        search_web => 'Search the web and return ranked results',
+    };
+}
+
 sub get_additional_parameters {
     my ($self) = @_;
     

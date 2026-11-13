@@ -15,7 +15,13 @@ use strict;
 use warnings;
 use utf8;
 use FindBin qw($RealBin);
+use Cwd qw(abs_path);
 use lib "$RealBin/../../lib";
+
+# `file => 'clio'` is resolved relative to the repository root, not the
+# process working directory. Hard-coding '.', which is tests/unit when the
+# suite runs, made this assertion fail on any checkout layout.
+my $repo_root = abs_path("$RealBin/../..");
 
 binmode(STDOUT, ':encoding(UTF-8)');
 binmode(STDERR, ':encoding(UTF-8)');
@@ -103,7 +109,7 @@ print "--- version_control diff file validation ---\n";
 
 # Existing file: works as before
 {
-    my $r = $vc->diff({ repository_path => '.', file => 'clio' });
+    my $r = $vc->diff({ repository_path => $repo_root, file => 'clio' });
     is($r->{success}, 1, 'diff on existing file succeeds');
 }
 

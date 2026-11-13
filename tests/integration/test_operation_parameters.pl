@@ -1,75 +1,85 @@
 #!/usr/bin/env perl
 
-# Integration test: Verify that tool schemas include all necessary parameters
-# and that the AI can see what parameters each operation needs
+# SPDX-License-Identifier: GPL-3.0-only
+# SPDX-FileCopyrightText: Copyright (c) 2026 Andrew Wyatt (Fewtarius)
+
+# Integration test: each operation carries its own parameters and its own
+# required list.
+#
+# The previous version of this test asserted that the consolidated
+# memory_operations definition contained key and content. That was true and
+# useless: the schema still declared required => ["operation"], so a model
+# could satisfy every declared requirement while omitting content. These
+# assertions check the machine-readable contract, which is the one models obey.
 
 use strict;
 use warnings;
+use utf8;
 use lib 'lib';
-use JSON::PP qw(encode_json decode_json);
+use Test::More;
 use CLIO::Tools::Registry;
-use CLIO::Tools::MemoryOperations;
-use CLIO::Tools::WebOperations;
-use CLIO::Tools::CodeIntelligence;
 
-print "Testing operation-specific parameter visibility...\n\n";
+my @MODULES = qw(
+    CLIO::Tools::MemoryOperations
+    CLIO::Tools::WebOperations
+    CLIO::Tools::CodeIntelligence
+    CLIO::Tools::SkillOperations
+    CLIO::Tools::TodoList
+);
 
 my $registry = CLIO::Tools::Registry->new(debug => 0);
-$registry->register_tool(CLIO::Tools::MemoryOperations->new());
-$registry->register_tool(CLIO::Tools::WebOperations->new());
-$registry->register_tool(CLIO::Tools::CodeIntelligence->new());
 
-my $definitions = $registry->get_tool_definitions();
-
-# Test 1: memory_operations should have 'key' and 'content' parameters
-print "Test 1: memory_operations has 'key' and 'content' parameters\n";
-my ($memory_def) = grep { $_->{function}{name} eq 'memory_operations' } @$definitions;
-if ($memory_def && 
-    exists $memory_def->{function}{parameters}{properties}{key} &&
-    exists $memory_def->{function}{parameters}{properties}{content}) {
-    print "  [OK] memory_operations has key and content\n";
-} else {
-    print "  [FAIL] memory_operations missing key or content\n";
-    exit 1;
+for my $module (@MODULES) {
+    eval "require $module; 1" or BAIL_OUT("cannot load $module: $@");
+    $registry->register_tool($module->new());
 }
 
-# Test 2: web_operations should have 'url' and 'query' parameters  
-print "\nTest 2: web_operations has 'url' and 'query' parameters\n";
-my ($web_def) = grep { $_->{function}{name} eq 'web_operations' } @$definitions;
-if ($web_def &&
-    exists $web_def->{function}{parameters}{properties}{url} &&
-    exists $web_def->{function}{parameters}{properties}{query}) {
-    print "  [OK] web_operations has url and query\n";
-} else {
-    print "  [FAIL] web_operations missing url or query\n";
-    exit 1;
-}
+my %by_name = map { $_->{function}{name} => $_->{function} }
+             @{ $registry->get_tool_definitions() };
 
-# Test 3: code_intelligence should have 'symbol_name' parameter
-print "\nTest 3: code_intelligence has 'symbol_name' parameter\n";
-my ($code_def) = grep { $_->{function}{name} eq 'code_intelligence' } @$definitions;
-if ($code_def &&
-    exists $code_def->{function}{parameters}{properties}{symbol_name}) {
-    print "  [OK] code_intelligence has symbol_name\n";
-} else {
-    print "  [FAIL] code_intelligence missing symbol_name\n";
-    exit 1;
-}
+# Callable name => [parameters that must be present, parameters that must be required]
+my %expectations = (
+    store     => { present => [qw(key content)], required => [qw(key content)] },
+    retrieve  => { present => [qw(key)], required => [qw(key)] },
+    search    => { present => [qw(query)], required => [qw(query)] },
+    fetch_url => { present => [qw(url timeout)], required => [qw(url)] },
+    search_web => { present => [qw(query max_results timeout)], required => [qw(query)] },
+    list_usages => { present => [qw(symbol_name file_paths)], required => [qw(symbol_name)] },
+    load      => { present => [qw(name)], required => [qw(name)] },
+    write     => { present => [qw(todoList)], required => [qw(todoList)] },
+    update    => { present => [qw(todoUpdates)], required => [qw(todoUpdates)] },
+    add       => { present => [qw(newTodos)], required => [qw(newTodos)] },
+);
 
-# Test 4: All tools should have 'operation' as required
-print "\nTest 4: All tools have 'operation' as required parameter\n";
-my $all_have_operation = 1;
-for my $def (@$definitions) {
-    my $name = $def->{function}{name};
-    my $required = $def->{function}{parameters}{required} || [];
-    if (!grep { $_ eq 'operation' } @$required) {
-        print "  [FAIL] $name doesn't have operation as required\n";
-        $all_have_operation = 0;
+for my $callable (sort keys %expectations) {
+    my $function = $by_name{$callable};
+    ok($function, "$callable is emitted") or next;
+
+    my $properties = $function->{parameters}{properties} || {};
+    my %required = map { $_ => 1 } @{ $function->{parameters}{required} || [] };
+    my $expect = $expectations{$callable};
+
+    for my $param (@{ $expect->{present} }) {
+        ok(exists $properties->{$param}, "$callable exposes '$param'");
+    }
+
+    for my $param (@{ $expect->{required} }) {
+        ok($required{$param}, "$callable declares '$param' required");
     }
 }
-if ($all_have_operation) {
-    print "  [OK] All tools have operation as required\n";
+
+# A per-operation definition must not carry the operation selector: it has
+# nowhere to put it, and accepting one would let write's todoList requirements
+# leak onto update.
+for my $callable (sort keys %expectations) {
+    next unless $by_name{$callable};
+    ok(!exists $by_name{$callable}{parameters}{properties}{operation},
+        "$callable does not declare an operation parameter");
 }
 
-print "\n[OK] All tests passed! Schemas are complete and correct.\n";
-exit 0;
+# The consolidated definitions are replaced, not supplemented.
+for my $name (qw(memory_operations web_operations code_intelligence todo_operations)) {
+    ok(!exists $by_name{$name}, "$name consolidated definition is not emitted");
+}
+
+done_testing();

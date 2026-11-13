@@ -397,8 +397,18 @@ sub diff {
 
     # When a file is specified, validate it exists. Git diff returns empty
     # output for missing paths, leaving callers with no clue why.
-    if ($file && !-f $file) {
-        return $self->error_result("File not found: $file");
+    #
+    # The path is relative to the repository, not to the process working
+    # directory: the git command below runs inside $repo_path via _in_repo,
+    # so checking -f against cwd rejected every valid relative path whenever
+    # the caller was somewhere else in the tree.
+    if ($file) {
+        my $resolved = File::Spec->file_name_is_absolute($file)
+            ? $file
+            : File::Spec->catfile($repo_path, $file);
+        unless (-f $resolved) {
+            return $self->error_result("File not found: $file");
+        }
     }
     my $result;
     
@@ -1125,6 +1135,73 @@ NOTE: Descriptions are minimal - detailed docs are in tool's main description.
 Returns: Hashref of parameter definitions
 
 =cut
+
+=head2 operation_contract
+
+Per-operation parameter contract. See CLIO::Tools::Tool::operation_contract.
+
+branch/tag/worktree take a sub_action that fans out to several verbs; only
+sub_action itself is unconditional, and the handler reports the follow-on
+parameter it needs (name, or worktree_path) for the specific action.
+
+Returns: Hashref of operation => { required => [...], properties => [...] }
+
+=cut
+
+sub operation_contract {
+    my ($self) = @_;
+
+    return {
+        status   => { required => [],
+                      properties => [qw(repository_path)] },
+        log      => { required => [],
+                      properties => [qw(repository_path limit)] },
+        diff     => { required => [],
+                      properties => [qw(repository_path file ref1 ref2)] },
+        commit   => { required => [qw(message)],
+                      properties => [qw(message repository_path auto_stage)] },
+        push     => { required => [],
+                      properties => [qw(repository_path remote branch)] },
+        pull     => { required => [],
+                      properties => [qw(repository_path remote branch)] },
+        branch   => { required => [qw(sub_action)],
+                      properties => [qw(sub_action name repository_path)] },
+        stash    => { required => [],
+                      properties => [qw(sub_action index message repository_path)] },
+        tag      => { required => [qw(sub_action)],
+                      properties => [qw(sub_action name message repository_path)] },
+        blame    => { required => [qw(file)],
+                      properties => [qw(file repository_path start_line max_lines)] },
+        worktree => { required => [qw(sub_action)],
+                      properties => [qw(sub_action worktree_path branch create_branch force repository_path)] },
+    };
+}
+
+=head2 operation_summaries
+
+One-line summary per operation for the per-operation definitions.
+
+Returns: Hashref of operation => summary
+
+=cut
+
+sub operation_summaries {
+    my ($self) = @_;
+
+    return {
+        status   => 'Show repository status and changed files',
+        log      => 'Show commit history',
+        diff     => 'Show differences between commits, branches, or working tree',
+        commit   => 'Create a commit from staged files',
+        push     => 'Push commits to a remote',
+        pull     => 'Pull changes from a remote',
+        branch   => 'List, create, switch, or delete branches',
+        stash    => 'Save, list, apply, or drop stashes',
+        tag      => 'List, create, or delete tags',
+        blame    => 'Annotate a file with the commits that last touched each line',
+        worktree => 'List, add, remove, prune, merge, or open a PR from a worktree',
+    };
+}
 
 sub get_additional_parameters {
     my ($self) = @_;

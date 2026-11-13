@@ -175,6 +175,96 @@ sub schema {
     };
 }
 
+=head2 get_additional_parameters
+
+Expose the parameters from schema(). schema() was the only declaration of
+this tool's parameters and nothing called it, so the wire carried a schema
+with operation and no parameters at all - a caller could not discover task,
+agent_id, or message, and the handler rejected every spawn.
+
+operation is stripped because get_tool_definition() publishes it from
+supported_operations with the same enum.
+
+Returns: Hashref of parameter name => definition
+
+=cut
+
+sub get_additional_parameters {
+    my ($self) = @_;
+
+    my $schema = $self->schema() || {};
+    my %properties = %{ $schema->{properties} || {} };
+    delete $properties{operation};
+
+    return \%properties;
+}
+
+=head2 operation_contract
+
+Per-operation parameter contract. See CLIO::Tools::Tool::operation_contract.
+
+Returns: Hashref of operation => { required => [...], properties => [...] }
+
+=cut
+
+sub operation_contract {
+    my ($self) = @_;
+
+    return {
+        spawn       => { required => [qw(task)],
+                         properties => [qw(task model persistent working_dir skills)] },
+        list        => { required => [],
+                         properties => [] },
+        status      => { required => [qw(agent_id)],
+                         properties => [qw(agent_id)] },
+        wait        => { required => [qw(agent_id)],
+                         properties => [qw(agent_id timeout poll_interval)] },
+        kill        => { required => [qw(agent_id)],
+                         properties => [qw(agent_id)] },
+        killall     => { required => [],
+                         properties => [] },
+        inbox       => { required => [],
+                         properties => [] },
+        acknowledge => { required => [qw(agent_id)],
+                         properties => [qw(agent_id message_ids)] },
+        history     => { required => [],
+                         properties => [] },
+        send        => { required => [qw(agent_id message)],
+                         properties => [qw(agent_id message)] },
+        broadcast   => { required => [qw(message)],
+                         properties => [qw(message)] },
+        report      => { required => [qw(agent_id)],
+                         properties => [qw(agent_id)] },
+    };
+}
+
+=head2 operation_summaries
+
+One-line summary per operation for the per-operation definitions.
+
+Returns: Hashref of operation => summary
+
+=cut
+
+sub operation_summaries {
+    my ($self) = @_;
+
+    return {
+        spawn       => 'Start a sub-agent on a task',
+        list        => 'List running sub-agents',
+        status      => 'Report one sub-agent status',
+        wait        => 'Block until a sub-agent finishes or the timeout expires',
+        kill        => 'Stop one sub-agent',
+        killall     => 'Stop every sub-agent',
+        inbox       => 'Read messages waiting for this agent',
+        acknowledge => 'Mark inbox messages as read',
+        history     => 'Show message history for this agent',
+        send        => 'Send a message to one sub-agent',
+        broadcast   => 'Send a message to every sub-agent',
+        report      => 'Send a status report to the coordinator',
+    };
+}
+
 sub before_route {
     my ($self, $operation, $params, $context) = @_;
     

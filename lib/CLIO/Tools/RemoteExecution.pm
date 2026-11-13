@@ -280,7 +280,7 @@ sub execute_remote {
     
     # Model is required - must come from params, context, or device config
     unless ($model) {
-        return $self->error_result("Missing required parameter: model. Specify a model or run from a session with a configured model.");
+        return $self->error_result("No model available: pass 'model' explicitly, or run from a session with a configured model.");
     }
     
     # Auto-populate API provider from current session
@@ -577,8 +577,12 @@ sub execute_parallel {
     my $api_base = $params->{api_base};
     
     # Validate required params
-    unless ($targets && $command) {
-        return $self->error_result("Missing required parameters: targets, task_description");
+    unless ($targets) {
+        return $self->error_result("Missing required parameter: targets");
+    }
+    unless ($command) {
+        return $self->error_result(
+            "Missing required parameter: task_description (or 'command', which is accepted as the same thing)");
     }
     
     # Auto-populate model from current session if not specified
@@ -592,7 +596,7 @@ sub execute_parallel {
     
     # Model is required - must come from params, context, or device config
     unless ($model) {
-        return $self->error_result("Missing required parameter: model. Specify a model or run from a session with a configured model.");
+        return $self->error_result("No model available: pass 'model' explicitly, or run from a session with a configured model.");
     }
     
     # Auto-populate API provider from current session (same logic as execute_remote)
@@ -1860,6 +1864,65 @@ NOTE: Descriptions are minimal - detailed docs are in tool's main description.
 
 =cut
 
+=head2 operation_contract
+
+Per-operation parameter contract. See CLIO::Tools::Tool::operation_contract.
+
+execute_remote accepts task_description as the published name for the task;
+the handler also honours "command" as an internal alias, which is not
+advertised.
+
+Returns: Hashref of operation => { required => [...], properties => [...] }
+
+=cut
+
+sub operation_contract {
+    my ($self) = @_;
+
+    return {
+        # task_description and command are interchangeable at the handler;
+        # publishing only one made the other look invalid.
+        execute_remote   => { required => [qw(host)],
+                              any_of   => [[qw(task_description)], [qw(command)]],
+                              properties => [qw(host task_description command model api_provider api_key api_base working_dir ssh_key ssh_port timeout output_files cleanup)] },
+        execute_parallel => { required => [qw(targets)],
+                              any_of   => [[qw(task_description)], [qw(command)]],
+                              properties => [qw(targets task_description command model api_provider api_key api_base timeout)] },
+        prepare_remote   => { required => [qw(host)],
+                              properties => [qw(host ssh_key ssh_port install_dir clio_source)] },
+        cleanup_remote   => { required => [qw(host)],
+                              properties => [qw(host ssh_key ssh_port)] },
+        check_remote     => { required => [qw(host)],
+                              properties => [qw(host ssh_key ssh_port)] },
+        transfer_files   => { required => [qw(host files)],
+                              properties => [qw(host files ssh_key ssh_port working_dir)] },
+        retrieve_files   => { required => [qw(host files)],
+                              properties => [qw(host files ssh_key ssh_port working_dir)] },
+    };
+}
+
+=head2 operation_summaries
+
+One-line summary per operation for the per-operation definitions.
+
+Returns: Hashref of operation => summary
+
+=cut
+
+sub operation_summaries {
+    my ($self) = @_;
+
+    return {
+        execute_remote   => 'Run a CLIO task on one remote system over SSH',
+        execute_parallel => 'Run a CLIO task on several devices at once',
+        prepare_remote   => 'Stage CLIO on a remote host without executing',
+        cleanup_remote   => 'Remove the staged CLIO from a remote host',
+        check_remote     => 'Verify SSH connectivity and remote requirements',
+        transfer_files   => 'Copy files to a remote host',
+        retrieve_files   => 'Fetch files from a remote host',
+    };
+}
+
 sub get_additional_parameters {
     my ($self) = @_;
     
@@ -1871,6 +1934,10 @@ sub get_additional_parameters {
         task_description => {
             type => "string",
             description => "[REQUIRED for execute_remote, execute_parallel] Natural language task description for remote CLIO (e.g., 'check disk space', 'run tests').",
+        },
+        command => {
+            type => "string",
+            description => "[REQUIRED for execute_remote, execute_parallel] Accepted as a synonym for task_description.",
         },
         model => {
             type => "string",
@@ -1912,6 +1979,14 @@ sub get_additional_parameters {
         working_dir => {
             type => "string",
             description => "[OPTIONAL] Remote working dir (default: /tmp).",
+        },
+        install_dir => {
+            type => "string",
+            description => "[OPTIONAL for prepare_remote] Directory on the remote host to stage CLIO into. Default: a temp directory.",
+        },
+        clio_source => {
+            type => "string",
+            description => "[OPTIONAL for prepare_remote] Path to the local CLIO tree to copy. Default: the running installation.",
         },
         targets => {
             type => "array",

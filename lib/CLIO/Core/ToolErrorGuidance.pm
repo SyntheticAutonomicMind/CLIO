@@ -368,14 +368,32 @@ sub _get_category_guidance {
                              "These are DIFFERENT parameters. Put your search text in 'query'.";
             }
 
+            # Name the missing field and stop. The general checklist that used
+            # to follow sent the model after todo-list mistakes it had not made,
+            # and told it to add an 'operation' field to per-operation tools
+            # that do not take one - the correction taught the next failure.
+            my $required_note = '';
+            if ($tool_def && ref($tool_def->{parameters}{properties}) eq 'HASH') {
+                my $props = $tool_def->{parameters}{properties};
+                my $has_array_items = grep {
+                    ($props->{$_}{type} || '') eq 'array'
+                        && $props->{$_}{items}
+                        && ref($props->{$_}{items}) eq 'HASH'
+                        && $props->{$_}{items}{properties}
+                } sort keys %$props;
+
+                $required_note = "REQUIRED: Include every field the schema marks required"
+                    . ($has_array_items ? ", plus the required fields inside each array item" : "")
+                    . ".\n";
+
+                unless (exists $props->{operation}) {
+                    $required_note .= "This tool takes no 'operation' field - its name already selects the action.\n";
+                }
+            }
+
             return "WHAT WENT WRONG: You didn't include the required field(s): $params_str\n" .
-                   "HOW TO FIX: Include ALL required fields in your tool call.\n" .
-                   "REQUIRED: Every field marked 'required' in the schema MUST be included, including fields inside array items (like todoList items, newTodos items, etc.).\n" .
-                   "COMMON MISTAKES:\n" .
-                   "  - Omitting 'description' in todo items - it is REQUIRED, not optional\n" .
-                   "  - Sending todo update content in the 'todoList' field - the 'update' operation needs 'todoUpdates' (NOT 'todoList')\n" .
-                   "  - Sending new todo content in 'newTodos' for a 'write' - the 'write' operation needs 'todoList'\n" .
-                   "  - Forgetting to specify an 'operation' at all (the most common mistake)" .
+                   "HOW TO FIX: Add the missing field(s) and call again.\n" .
+                   $required_note .
                    $swap_hint;
         },
         
@@ -638,7 +656,16 @@ sub _format_schema_help {
         foreach my $param_name (@param_names) {
             next unless exists $props->{$param_name};
             my $param = $props->{$param_name};
-            my $req_marker = $required_map{$param_name} ? ' [REQUIRED]' : ' [optional]';
+            # A field reported as missing is required for this call whatever
+            # the flat schema says. The consolidated schema carries a single
+            # `required: ["operation"]` array that cannot express
+            # operation-specific requirements, so trusting it here printed
+            # "content [optional]" directly beneath "Missing required
+            # parameter: content" - guidance that contradicted the error it
+            # was meant to repair.
+            my $is_required = $required_map{$param_name}
+                || ($trimmed && $focus{$param_name});
+            my $req_marker = $is_required ? ' [REQUIRED]' : ' [optional]';
             
             push @help, "";
             push @help, "  $param_name$req_marker";

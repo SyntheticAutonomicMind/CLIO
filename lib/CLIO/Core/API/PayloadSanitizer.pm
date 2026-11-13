@@ -68,9 +68,15 @@ sub sanitize_payload {
         # and convert to plain Perl boolean values for correct serialization.
         my $class = blessed($data);
         if ($class && $JSON_BOOLEAN_CLASS{$class}) {
-            # JSON::PP::Boolean, JSON::XS::Boolean, Cpanel::JSON::XS::Boolean
-            # all overload bool/num context: true -> 1, false -> 0
-            return $data ? 1 : 0;
+            # Re-wrap as a JSON boolean rather than collapsing to 1/0.
+            # Collapsing silently rewrites the value's type: a schema
+            # property such as `append => { default => false }` reached the
+            # provider as `default: 0`, an integer where the schema declares
+            # a boolean. JSON::PP::Boolean is recognised as a boolean by
+            # JSON::PP, JSON::XS, and Cpanel::JSON::XS alike, so re-wrapping
+            # keeps both the meaning and the wire type intact.
+            require JSON::PP;
+            return $data ? JSON::PP::true() : JSON::PP::false();
         }
 
         # Unknown blessed ref: pass through unchanged. The caller

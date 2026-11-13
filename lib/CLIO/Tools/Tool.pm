@@ -7,7 +7,7 @@ use strict;
 use warnings;
 use utf8;
 use Carp qw(croak confess);
-use CLIO::Core::Logger qw(log_debug);
+use CLIO::Core::Logger qw(log_debug log_warning);
 
 =head1 NAME
 
@@ -560,6 +560,185 @@ sub get_tool_definition {
             required => ["operation"],
         },
     };
+}
+
+=head2 get_operation_tool_definitions
+
+Override this to expose each operation as its own function definition.
+
+The consolidated definition from get_tool_definition() carries a single
+flat C<required =E<gt> ["operation"]> array, because JSON Schema cannot
+express "content is required when operation is write_file". Models read
+the machine-readable contract, honour it, and omit the operation-specific
+fields that the handler later demands - then the error guidance repeats
+the same claim. Publishing one definition per operation lets each
+definition carry an honest C<required> list.
+
+Dispatch is unchanged. Registry maps every returned operation name back to
+this tool through the alias table, so the executor still resolves the name
+to (tool, operation) before invoking the handler.
+
+Returns: Hashref of operation_name => { description, properties, required },
+or an empty list when the tool does not opt in.
+
+=cut
+
+sub get_operation_tool_definitions {
+    my ($self) = @_;
+    my $contract = $self->operation_contract() || {};
+    return unless keys %$contract;
+
+    return $self->build_operation_definitions($contract, $self->operation_summaries());
+}
+
+=head2 operation_contract
+
+Per-operation parameter contract. Subclasses return a hashref of:
+
+    operation_name => {
+        required   => [ parameter names the handler cannot run without ],
+        properties => [ every parameter this operation reads ],
+    }
+
+Property definitions are not repeated here. build_operation_definitions()
+copies them from the consolidated schema produced by get_tool_definition(),
+so a type or description is written once.
+
+Returns: Hashref (default: empty, which disables per-operation definitions)
+
+=cut
+
+sub operation_contract {
+    my ($self) = @_;
+    return {};
+}
+
+=head2 operation_summaries
+
+One-line, parameter-free description per operation, keyed by operation name.
+Parameter documentation lives in the property descriptions; repeating it here
+is what made the consolidated descriptions 3 KB long.
+
+Returns: Hashref of operation name => summary string (default: empty)
+
+=cut
+
+sub operation_summaries {
+    my ($self) = @_;
+    return {};
+}
+
+=head2 build_operation_definitions
+
+Expand a contract table into per-operation definitions.
+
+Every parameter definition is copied from the consolidated schema, the
+operation property is narrowed to a single-value enum, and required lists the
+fields the handler actually demands. A parameter named in the contract but
+absent from the consolidated schema is a programming error: it is logged and
+left out rather than shipped as an untyped property.
+
+A listed parameter that has a C<_json> twin in the consolidated schema (the
+dual-JSON pattern) gets the twin added as an optional property, so the
+escaping-free path survives the split.
+
+A contract entry may also declare C<any_of> - a list of alternative required
+sets, for operations that accept one of several parameter names. The probe
+that compares handlers against contracts found two: get_errors takes C<path>
+or C<paths>, execute_parallel takes C<task_description> or C<command>. Saying
+nothing is required was true and useless - the model omitted both.
+
+Arguments:
+- $contract: hashref described in operation_contract()
+- $summaries: hashref described in operation_summaries()
+
+Returns: Hashref of operation name => { description, properties, required, anyOf? }
+
+=cut
+
+sub build_operation_definitions {
+    my ($self, $contract, $summaries) = @_;
+
+    $summaries ||= {};
+    my $consolidated = $self->get_tool_definition() || {};
+    my $base = $consolidated->{parameters}{properties} || {};
+
+    my %definitions;
+    for my $op (sort keys %{ $contract || {} }) {
+        my $spec = $contract->{$op} || {};
+        my @required = @{ $spec->{required} || [] };
+        my @params   = @{ $spec->{properties} || [] };
+
+        # No operation property. The callable name already selected the
+        # operation, ToolExecutor injects it from the alias table, and the
+        # system prompt tells the model these tools take no operation field.
+        # Publishing a one-value enum contradicted all three.
+        my %properties;
+
+        my @unknown;
+        for my $param (@params) {
+            if (exists $base->{$param}) {
+                $properties{$param} = $base->{$param};
+            }
+            else {
+                push @unknown, $param;
+                next;
+            }
+
+            my $twin = "${param}_json";
+            $properties{$twin} = $base->{$twin}
+                if exists $base->{$twin} && !exists $properties{$twin};
+        }
+
+        for my $param (@required) {
+            push @unknown, $param unless exists $properties{$param};
+        }
+
+        if (@unknown) {
+            log_warning('Tool',
+                "$self->{name} operation '$op' names parameters missing from the consolidated schema: "
+                . join(', ', @unknown));
+        }
+
+        my $text = $summaries->{$op} || "Perform the $op operation.";
+        $text .= ' Required: ' . join(', ', @required) . '.' if @required;
+
+        my $definition = {
+            description => $text,
+            properties  => \%properties,
+            required    => [@required],
+        };
+
+        if ($spec->{any_of}) {
+            $definition->{anyOf} = [
+                map { { required => [@$_] } } @{ $spec->{any_of} }
+            ];
+        }
+
+        $definitions{$op} = $definition;
+    }
+
+    return \%definitions;
+}
+
+=head2 operation_namespace
+
+Short prefix used to disambiguate operation names that more than one tool
+claims (memory_operations and skill_operations both have a C<list>).
+
+Registry resolves collisions; this only supplies the prefix.
+
+Returns: Namespace string derived from the tool name
+
+=cut
+
+sub operation_namespace {
+    my ($self) = @_;
+
+    my $name = $self->{name} || '';
+    $name =~ s/_operations$//;
+
+    return $name;
 }
 
 =head2 get_additional_parameters

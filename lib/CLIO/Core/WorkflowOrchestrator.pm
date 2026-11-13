@@ -1992,11 +1992,16 @@ sub _execute_tool_round {
                     my $error_prefix = $tool_operation ? "$tool_operation: " : '';
                     $action_detail = $error_prefix . $self->{formatter}->format_error($error_msg);
 
-                    # Enhanced error with schema guidance
-                    my $tool_obj = $self->{tool_registry}->get_tool($tool_name);
-                    my $tool_def = undef;
-                    if ($tool_obj && $tool_obj->can('get_tool_definition')) {
-                        $tool_def = $tool_obj->get_tool_definition();
+                    # Enhanced error with schema guidance. Use the definition
+                    # the model was actually shown: for a per-operation
+                    # callable that is the narrow one, not the consolidated
+                    # schema listing every parameter of every operation.
+                    my $tool_def = $self->{tool_registry}->get_definition($tool_name);
+                    if (!$tool_def) {
+                        my $tool_obj = $self->{tool_registry}->get_tool($tool_name);
+                        if ($tool_obj && $tool_obj->can('get_tool_definition')) {
+                            $tool_def = $tool_obj->get_tool_definition();
+                        }
                     }
 
                     my $attempted_params = {};

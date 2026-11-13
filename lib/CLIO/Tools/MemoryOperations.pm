@@ -94,6 +94,78 @@ NOTE: Descriptions are minimal - detailed docs are in tool's main description.
 
 =cut
 
+=head2 operation_contract
+
+Per-operation parameter contract. See CLIO::Tools::Tool::operation_contract.
+
+memory_dir is deliberately absent: handlers default it from PathResolver and
+it is not meant to be model-supplied.
+
+Returns: Hashref of operation => { required => [...], properties => [...] }
+
+=cut
+
+sub operation_contract {
+    my ($self) = @_;
+
+    return {
+        store            => { required => [qw(key content)],
+                              properties => [qw(key content)] },
+        retrieve         => { required => [qw(key)],
+                              properties => [qw(key)] },
+        search           => { required => [qw(query)],
+                              properties => [qw(query)] },
+        list             => { required => [],
+                              properties => [] },
+        delete           => { required => [qw(key)],
+                              properties => [qw(key)] },
+        recall_sessions  => { required => [qw(query)],
+                              properties => [qw(query max_sessions max_results)] },
+        add_discovery    => { required => [qw(fact)],
+                              properties => [qw(fact confidence)] },
+        add_solution     => { required => [qw(error solution)],
+                              properties => [qw(error solution examples)] },
+        add_pattern      => { required => [qw(pattern)],
+                              properties => [qw(pattern confidence examples)] },
+        add_corroboration => { required => [qw(search_text)],
+                              properties => [qw(search_text source_agent source_session entry_type)] },
+        update_ltm       => { required => [qw(search_text replacement)],
+                              properties => [qw(search_text replacement entry_type)] },
+        prune_ltm        => { required => [],
+                              properties => [qw(max_age_days min_confidence max_discoveries max_solutions max_patterns)] },
+        ltm_stats        => { required => [],
+                              properties => [] },
+    };
+}
+
+=head2 operation_summaries
+
+One-line summary per operation for the per-operation definitions.
+
+Returns: Hashref of operation => summary
+
+=cut
+
+sub operation_summaries {
+    my ($self) = @_;
+
+    return {
+        store             => 'Save a value under a key in session memory',
+        retrieve          => 'Read one key from session memory',
+        search            => 'Search session memory by query',
+        list              => 'List every key in session memory',
+        delete            => 'Remove one key from session memory',
+        recall_sessions   => 'Search previous sessions for matching messages',
+        add_discovery     => 'Record a fact in long-term memory',
+        add_solution      => 'Record an error and its solution in long-term memory',
+        add_pattern       => 'Record a reusable pattern in long-term memory',
+        add_corroboration => 'Corroborate an existing long-term memory entry',
+        update_ltm        => 'Replace the text of an existing long-term memory entry',
+        prune_ltm         => 'Drop old or low-confidence long-term memory entries',
+        ltm_stats         => 'Report long-term memory entry counts by type',
+    };
+}
+
 sub get_additional_parameters {
     my ($self) = @_;
     

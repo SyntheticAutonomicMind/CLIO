@@ -157,6 +157,42 @@ Define parameters for code_intelligence in JSON schema sent to AI.
 
 =cut
 
+=head2 operation_contract
+
+Per-operation parameter contract. See CLIO::Tools::Tool::operation_contract.
+
+Returns: Hashref of operation => { required => [...], properties => [...] }
+
+=cut
+
+sub operation_contract {
+    my ($self) = @_;
+
+    return {
+        list_usages    => { required => [qw(symbol_name)],
+                            properties => [qw(symbol_name file_paths context_lines)] },
+        search_history => { required => [qw(query)],
+                            properties => [qw(query max_results since author max_commits)] },
+    };
+}
+
+=head2 operation_summaries
+
+One-line summary per operation for the per-operation definitions.
+
+Returns: Hashref of operation => summary
+
+=cut
+
+sub operation_summaries {
+    my ($self) = @_;
+
+    return {
+        list_usages    => 'Find every reference to a symbol',
+        search_history => 'Search git history for commits matching a query',
+    };
+}
+
 sub get_additional_parameters {
     my ($self) = @_;
     

@@ -288,7 +288,39 @@ sub generate_tools_section {
         log_debug('PromptBuilder', 'Tools filtered by allowlist: ' . join(', ', sort keys %enabled));
     }
     
-    my $tool_count = scalar(@$tools);
+    # The list must match the wire exactly. A tool that publishes
+    # per-operation definitions is replaced on the wire by those definitions,
+    # so its consolidated name is not callable and must not be advertised -
+    # "If a tool is listed here, you can use it" would be false for it.
+    my @tool_entries;
+    for my $tool (@$tools) {
+        my $operations;
+        if ($tool->can('get_operation_tool_definitions')) {
+            $operations = $tool->get_operation_tool_definitions();
+        }
+
+        if ($operations && ref($operations) eq 'HASH' && keys %$operations) {
+            my $summaries = $tool->can('operation_summaries')
+                ? ($tool->operation_summaries() || {})
+                : {};
+            for my $op (sort keys %$operations) {
+                # Colliding operation names are prefixed by the registry, so
+                # the prompt must ask it rather than assume the bare op name.
+                my $callable = $self->{tool_registry}
+                    ? ($self->{tool_registry}->get_operation_callable($tool->{name}, $op) || $op)
+                    : $op;
+                push @tool_entries, {
+                    name    => $callable,
+                    summary => $summaries->{$op} || $operations->{$op}{description},
+                };
+            }
+            next;
+        }
+
+        push @tool_entries, { name => $tool->{name}, summary => undef };
+    }
+
+    my $tool_count = scalar(@tool_entries);
 
     log_debug('PromptBuilder', "Generating tools section for $tool_count tools");
 
@@ -296,8 +328,8 @@ sub generate_tools_section {
     $section .= "You have access to exactly $tool_count function calling tools. ";
     $section .= "When users ask \"what tools do you have?\", list ALL $tool_count tools by name:\n\n";
 
-    # Tool summaries - use generic descriptions, NOT operation names
-    # This prevents MiniMax from trying to call operations as standalone tools
+    # Summaries for the consolidated tools. Per-operation entries carry their
+    # own description, which already names the required parameters.
     my %tool_summaries = (
         file_operations => "File read/write/search operations",
         version_control => "Git version control operations",
@@ -313,9 +345,9 @@ sub generate_tools_section {
     );
 
     my $num = 1;
-    for my $tool (@$tools) {
-        my $name = $tool->{name};
-        my $summary = $tool_summaries{$name} || "Tool for $name";
+    for my $entry (@tool_entries) {
+        my $name = $entry->{name};
+        my $summary = $tool_summaries{$name} || $entry->{summary} || "Tool for $name";
         $section .= "$num. **$name** - $summary\n";
         $num++;
     }
@@ -325,21 +357,24 @@ sub generate_tools_section {
 
     # Add concise tool calling guide - focus on the key pattern, not exhaustive examples
     $section .= "## **HOW TO CALL TOOLS**\n\n";
-    $section .= "Most tools use an **operation parameter** to select the action. ";
-    $section .= "Call the tool by name and pass `operation` as a parameter:\n\n";
+    $section .= "Every name in the list above is one function. Most of them are a single operation, ";
+    $section .= "so pass that operation's parameters at the top level of `parameters` - there is no ";
+    $section .= "`operation` field:\n\n";
     $section .= "```json\n";
-    $section .= "{\"name\": \"file_operations\", \"parameters\": {\"operation\": \"grep_search\", \"query\": \"...\"}}\n";
-    $section .= "{\"name\": \"version_control\", \"parameters\": {\"operation\": \"status\"}}\n";
+    $section .= "{\"name\": \"grep_search\", \"parameters\": {\"query\": \"...\"}}\n";
+    $section .= "{\"name\": \"write_file\", \"parameters\": {\"path\": \"...\", \"content\": \"...\"}}\n";
+    $section .= "{\"name\": \"replace_string\", \"parameters\": {\"path\": \"...\", \"old_string\": \"...\", \"new_string\": \"...\"}}\n";
     $section .= "{\"name\": \"apply_patch\", \"parameters\": {\"patch\": \"...\"}}\n";
     $section .= "```\n\n";
-    $section .= "Do NOT call operations as standalone tools (e.g., `grep_search` is NOT a tool name - use `file_operations` with `operation: \"grep_search\"`).\n\n";
+    $section .= "The schema for each name states which parameters are required. Read it before calling: ";
+    $section .= "any field it marks required must be present or the call fails.\n\n";
 
-    # Prominent callout: operation is ALWAYS required
-    $section .= "## **[WARN] Operation is ALWAYS Required**\n\n";
-    $section .= "Every tool call to a multi-operation tool (file_operations, version_control, ";
-    $section .= "terminal_operations, memory_operations, web_operations, todo_operations, ";
-    $section .= "code_intelligence, agent_operations, etc.) MUST include `\"operation\": \"<value>\"`. ";
-    $section .= "You cannot omit this field. If you forget it, the tool call fails.\n\n";
+    # Prominent callout: operation is required only where it is declared
+    $section .= "## **[WARN] Operation is Required Only Where the Schema Declares It**\n\n";
+    $section .= "A few tools are defined as one function with an `operation` parameter that selects the ";
+    $section .= "action - `terminal_operations` is the common one. For those, `\"operation\"` is required. ";
+    $section .= "Per-operation tools such as `write_file`, `replace_string`, or `status` take no operation ";
+    $section .= "field at all.\n\n";
 
     # JSON formatting instruction
     $section .= "## **JSON FORMAT**\n\n";

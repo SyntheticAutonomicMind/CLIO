@@ -109,6 +109,45 @@ Add parameters for load (name) and create (name, description, content, scope).
 
 =cut
 
+=head2 operation_contract
+
+Per-operation parameter contract. See CLIO::Tools::Tool::operation_contract.
+
+Returns: Hashref of operation => { required => [...], properties => [...] }
+
+=cut
+
+sub operation_contract {
+    my ($self) = @_;
+
+    return {
+        list   => { required => [],
+                    properties => [] },
+        load   => { required => [qw(name)],
+                    properties => [qw(name)] },
+        create => { required => [qw(name description content)],
+                    properties => [qw(name description content scope)] },
+    };
+}
+
+=head2 operation_summaries
+
+One-line summary per operation for the per-operation definitions.
+
+Returns: Hashref of operation => summary
+
+=cut
+
+sub operation_summaries {
+    my ($self) = @_;
+
+    return {
+        list   => 'Return the catalog of installed skills',
+        load   => 'Return the full prompt template for one skill',
+        create => 'Write a new freeform skill to .clio/skills or ~/.clio/skills',
+    };
+}
+
 sub get_additional_parameters {
     my ($self) = @_;
     return {

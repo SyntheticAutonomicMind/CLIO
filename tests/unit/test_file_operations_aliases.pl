@@ -53,17 +53,28 @@ my $tmp = tempdir(CLEANUP => 1);
 my $tool = CLIO::Tools::FileOperations->new(debug => 0, session_dir => $tmp);
 my $ctx = { session => { id => 'alias-test' } };
 
+# The tool is constructed with session_dir => $tmp, and path authorization
+# confines reads to that directory. Fixtures therefore live inside $tmp;
+# earlier versions of this test read files out of the source tree and started
+# failing (success=0, no error) once the authorization gaps were closed.
+{
+    open my $fh, '>:encoding(UTF-8)', "$tmp/read_alias.txt" or die $!;
+    print $fh "alpha\nbeta\n";
+    close $fh;
+}
+
 # Each case: { name => $alias, params => \%params, check => \&check }
 # A leading underscore in name means "setup only, no invocation".
 my @cases = (
-    { name => 'read', params => { operation => 'read', path => "$repo_root/lib/CLIO/Tools/FileOperations.pm" },
+    { name => 'read', params => { operation => 'read', path => "$tmp/read_alias.txt" },
         check => sub { $_[0]->{success} && length($_[0]->{output} // '') > 0 } },
-    { name => 'list_directory', params => { operation => 'list_directory', path => "$repo_root/lib/CLIO" },
-        check => sub { $_[0]->{success} && ref($_[0]->{output}) eq 'ARRAY' } },
+    { name => 'list_directory', params => { operation => 'list_directory', path => $tmp },
+        check => sub { $_[0]->{success} && ref($_[0]->{output}) eq 'ARRAY'
+                       && @{ $_[0]->{output} } > 0 } },
 
-    { name => 'exists', params => { operation => 'exists', path => "$repo_root/lib/CLIO/Tools/FileOperations.pm" },
+    { name => 'exists', params => { operation => 'exists', path => "$tmp/read_alias.txt" },
         check => sub { $_[0]->{success} } },
-    { name => 'stat_file', params => { operation => 'stat_file', path => "$repo_root/lib/CLIO/Tools/FileOperations.pm" },
+    { name => 'stat_file', params => { operation => 'stat_file', path => "$tmp/read_alias.txt" },
         check => sub { $_[0]->{success} && ref($_[0]->{output}) eq 'HASH' && $_[0]->{output}{size} } },
 
     { name => 'find_files', params => { operation => 'find_files', pattern => 'FileOperations.pm' },

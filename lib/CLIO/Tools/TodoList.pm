@@ -156,6 +156,52 @@ sub _session_id {
     return $context->{session}{session_id} || $context->{session_id} || 'default';
 }
 
+=head2 operation_contract
+
+Per-operation parameter contract. See CLIO::Tools::Tool::operation_contract.
+
+Each of write/update/add takes a differently named array. Sending the wrong
+one is the most common failure here, so the names are stated per operation
+instead of being flattened into one schema that requires none of them.
+
+Returns: Hashref of operation => { required => [...], properties => [...] }
+
+=cut
+
+sub operation_contract {
+    my ($self) = @_;
+
+    return {
+        read   => { required => [],
+                    properties => [] },
+        write  => { required => [qw(todoList)],
+                    properties => [qw(todoList)] },
+        update => { required => [qw(todoUpdates)],
+                    properties => [qw(todoUpdates)] },
+        add    => { required => [qw(newTodos)],
+                    properties => [qw(newTodos)] },
+    };
+}
+
+=head2 operation_summaries
+
+One-line summary per operation for the per-operation definitions.
+
+Returns: Hashref of operation => summary
+
+=cut
+
+sub operation_summaries {
+    my ($self) = @_;
+
+    return {
+        read   => 'Read the current todo list',
+        write  => 'Replace the entire todo list with todoList',
+        update => 'Change existing todos with todoUpdates',
+        add    => 'Append new todos with newTodos',
+    };
+}
+
 sub get_additional_parameters {
     my ($self) = @_;
     

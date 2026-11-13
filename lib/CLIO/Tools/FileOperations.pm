@@ -199,6 +199,97 @@ sub get_tool_definition {
     return $self->SUPER::get_tool_definition();
 }
 
+=head2 operation_contract
+
+Per-operation parameter contract: which properties each operation accepts
+and which of them it cannot run without.
+
+This is the single source of truth for the per-operation schemas. The
+consolidated schema cannot publish it because JSON Schema has no way to say
+"content is required only when operation is write_file", so the flat
+definition declares C<required =E<gt> ["operation"]> and the handler
+enforces the rest. That gap let models send {operation, path} and then fail
+on a missing content/old_string/new_string/line, with recovery guidance
+that described the omitted field as optional.
+
+Returns: Hashref of operation => { required => [...], properties => [...] }
+
+=cut
+
+sub operation_contract {
+    my ($self) = @_;
+
+    return {
+        read_file            => { required => [qw(path)],
+                                  properties => [qw(path start_line end_line)] },
+        list_dir             => { required => [qw(path)],
+                                  properties => [qw(path recursive)] },
+        file_exists          => { required => [qw(path)],
+                                  properties => [qw(path)] },
+        get_file_info        => { required => [qw(path)],
+                                  properties => [qw(path)] },
+        # Either name satisfies it, so neither is individually required.
+        get_errors           => { required => [],
+                                  any_of   => [[qw(path)], [qw(paths)]],
+                                  properties => [qw(path paths)] },
+        file_search          => { required => [qw(pattern)],
+                                  properties => [qw(pattern directory max_results)] },
+        grep_search          => { required => [qw(query)],
+                                  properties => [qw(query pattern directory is_regex max_results max_files)] },
+        semantic_search      => { required => [qw(query)],
+                                  properties => [qw(query scope)] },
+        read_tool_result     => { required => [qw(toolCallId)],
+                                  properties => [qw(toolCallId offset length)] },
+        write_file           => { required => [qw(path content)],
+                                  properties => [qw(path content append)] },
+        replace_string       => { required => [qw(path old_string new_string)],
+                                  properties => [qw(path old_string new_string)] },
+        multi_replace_string => { required => [qw(replacements)],
+                                  properties => [qw(replacements)] },
+        insert_at_line       => { required => [qw(path line content)],
+                                  properties => [qw(path line content)] },
+        delete_file          => { required => [qw(path)],
+                                  properties => [qw(path recursive)] },
+        rename_file          => { required => [qw(old_path new_path)],
+                                  properties => [qw(old_path new_path)] },
+        create_directory     => { required => [qw(path)],
+                                  properties => [qw(path)] },
+    };
+}
+
+=head2 operation_summaries
+
+One-line summaries for the per-operation definitions. Parameter documentation
+lives in the property descriptions, which build_operation_definitions()
+copies from the consolidated schema.
+
+Returns: Hashref of operation name => summary
+
+=cut
+
+sub operation_summaries {
+    my ($self) = @_;
+
+    return {
+        read_file            => 'Read file content with optional line range',
+        list_dir             => 'List directory contents',
+        file_exists          => 'Check whether a file or directory exists',
+        get_file_info        => 'Get file metadata (size, type, modified time)',
+        get_errors           => 'Get compilation or lint errors for a file (Perl)',
+        file_search          => 'Find files matching a glob pattern',
+        grep_search          => 'Search file contents with a regex',
+        semantic_search      => 'Hybrid keyword and symbol search across the codebase',
+        read_tool_result     => 'Read a persisted large tool result in chunks',
+        write_file           => 'Write content to a file, creating it or overwriting it',
+        replace_string       => 'Find and replace text in a file',
+        multi_replace_string => 'Batch find-and-replace across multiple files',
+        insert_at_line       => 'Insert content at a specific line number',
+        delete_file          => 'Delete a file or directory',
+        rename_file          => 'Rename or move a file',
+        create_directory     => 'Create a directory, including parents',
+    };
+}
+
 =head2 get_additional_parameters
 
 Define ALL parameters for ALL file operations in the JSON schema.
@@ -1045,7 +1136,10 @@ sub get_errors {
         @paths = ($params->{path});
     }
 
-return $self->error_result("Missing required parameter: paths") unless @paths;
+    unless (@paths) {
+        return $self->error_result(
+            "Missing required parameter: path (or 'paths' for several files)");
+    }
 
     # Sandbox check: get_errors runs perl -c on files, which can leak file
     # contents and existence info. Enforce sandbox containment.

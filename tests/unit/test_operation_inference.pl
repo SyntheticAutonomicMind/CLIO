@@ -43,6 +43,15 @@ plan(tests => 26);
 my $tmp = tempdir(CLEANUP => 1);
 my $ctx = { session => { id => 'op-inference-test' } };
 
+# Readable fixture for the alias cases below. FileOperations confines reads
+# to session_dir, so pointing these at the source tree made them fail once
+# path authorization was tightened.
+{
+    open my $fh, '>:encoding(UTF-8)', "$tmp/infer_read.txt" or die $!;
+    print $fh "inference fixture\n";
+    close $fh;
+}
+
 # ================================================================
 # _infer_operation_from_params helper: returns the right operation
 # ================================================================
@@ -182,7 +191,7 @@ my $fo = CLIO::Tools::FileOperations->new(debug => 0, session_dir => $tmp);
 
 # operation='read' (alias as explicit value) still works
 {
-    my $r = $fo->execute({ operation => 'read', path => "$repo_root/lib/CLIO/Tools/FileOperations.pm" }, $ctx);
+    my $r = $fo->execute({ operation => 'read', path => "$tmp/infer_read.txt" }, $ctx);
     ok($r->{success}, "execute: operation='read' (alias) still works normally");
 }
 
@@ -209,7 +218,7 @@ my $fo = CLIO::Tools::FileOperations->new(debug => 0, session_dir => $tmp);
     my $r = $fo->execute({
         operation => '',
         read_file => 1,
-        path => "$repo_root/lib/CLIO/Tools/FileOperations.pm",
+        path => "$tmp/infer_read.txt",
     }, $ctx);
     ok($r->{success}, "execute: empty-string operation overridden by matching key inference");
 }
