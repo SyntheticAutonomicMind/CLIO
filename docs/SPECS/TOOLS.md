@@ -59,7 +59,11 @@ rejected; it is never inferred from the shape of the parameters.
 
 **Tool:** `file_operations`
 
-**Callable surface:** each operation below is emitted as its own tool name. The parent tool name with an explicit `operation` is also accepted.
+**Callable surface:** each operation below is emitted as its own tool name.
+`file_operations` itself is not callable - calling it returns
+"Unknown tool". The grouping name survives only inside text-format tool
+calls that CLIO parses (`[file_operations read_file]`), which the
+extractor normalizes to the real callable before dispatch.
 
 ### Search Operations
 
@@ -85,11 +89,21 @@ Search a single file:
 
 #### file_search
 
-**Description:** Find files matching a glob pattern.
+**Description:** Find files matching a glob pattern. Accepts either a file or a directory as the search target - when a file is given, the pattern is matched against that file alone.
 
 **Parameters:**
 - `pattern` (string, **required**) - Glob pattern (e.g., `**/*.pm`, `src/**/*.c`)
-- `directory` (string, optional) - Base directory (default: current directory)
+- `directory` (string, optional) - File or directory to search (default: current directory). When a file path is given, only that file is matched.
+
+**Example Call:**
+```json
+{"name": "file_search", "parameters": {"pattern": "**/*.pm", "directory": "lib"}}
+```
+
+Check whether a known file matches a pattern:
+```json
+{"name": "file_search", "parameters": {"pattern": "**/Scanner.pm", "directory": "lib/CLIO/Code/Scanner.pm"}}
+```
 
 #### semantic_search
 
@@ -112,7 +126,7 @@ Search a single file:
 
 #### read_file
 
-**Description:** Read contents of a file with optional line range.
+**Description:** Read contents of a file with optional line range. The path must be a file; a directory returns "Path is a directory, not a file".
 
 **Parameters:**
 - `path` (string, **required**) - File path to read
@@ -121,7 +135,7 @@ Search a single file:
 
 #### list_dir
 
-**Description:** List contents of a directory.
+**Description:** List contents of a directory. The path must be a directory; a file path returns "Path is a file, not a directory".
 
 **Parameters:**
 - `path` (string, **required**) - Directory path to list

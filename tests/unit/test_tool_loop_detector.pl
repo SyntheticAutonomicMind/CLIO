@@ -435,4 +435,75 @@ subtest 'validate operation and empty command are handled' => sub {
     is($verdict->{tracked}, 0, 'empty command treated as state-changing (not tracked)');
 };
 
+# The wire surface publishes one callable per operation (file_search,
+# grep_search, list_usages), so the dispatcher hands the detector the
+# emitted name - never the grouping name. Every case above drives
+# terminal_operations (a real single callable) or the grouping form, so a
+# regression that only breaks emitted callables would slip through. The
+# field log that motivated this test showed the same file_search call
+# issued 13 times without escalation.
+subtest 'emitted callables are tracked like grouping names' => sub {
+    my $field_result = '{"path":"lib/CLIO/Code/Scanner.pm","type":"file","size":7167}';
+
+    my @cases = (
+        [ 'file_search',    { pattern => '**/Scanner.pm', directory => 'lib/CLIO/Code' } ],
+        [ 'grep_search',    { query => 'sub is_code_language', directory => 'lib/CLIO/Code' } ],
+        [ 'list_usages',    { symbol_name => 'is_code_language' } ],
+        [ 'read_file',      { path => 'lib/CLIO/Code/Scanner.pm' } ],
+        [ 'file_exists',    { path => 'lib/CLIO/Code/Scanner.pm' } ],
+    );
+
+    for my $case (@cases) {
+        my ($tool, $args) = @$case;
+        my $d = CLIO::Core::ToolLoopDetector->new();
+
+        my $first = $d->record_call($tool, $args, $field_result);
+        is($first->{tracked}, 1, "$tool is tracked as read-only");
+        is($first->{break}, 0, "$tool: no break on first call");
+
+        my $broke_at;
+        for my $i (2 .. 13) {
+            my $v = $d->record_call($tool, $args, $field_result);
+            $broke_at = $i if !$broke_at && $v->{break};
+        }
+
+        ok(defined $broke_at,
+            "$tool: repeated identical call escalates (broke at iteration " .
+            (defined $broke_at ? $broke_at : 'never') . ")");
+        cmp_ok($broke_at // 99, '<=', 6,
+            "$tool: escalation arrives early, not after a dozen attempts");
+    }
+};
+
+# The read-only classification is resolved through the registry, so the
+# emitted callable and the grouping form must classify identically and
+# escalate at the same point. Signatures differ by design (they encode
+# the dispatched name); classification is the shared contract.
+subtest 'grouping and emitted forms agree' => sub {
+    my $result = '{"path":"lib/CLIO/Code/Scanner.pm","type":"file","size":7167}';
+
+    my @forms = (
+        [ 'file_search',     { pattern => '**/Scanner.pm', directory => 'lib/CLIO/Code' } ],
+        [ 'file_operations', { operation => 'file_search',
+                               pattern => '**/Scanner.pm', directory => 'lib/CLIO/Code' } ],
+    );
+
+    my %broke_at;
+    for my $form (@forms) {
+        my ($tool, $args) = @$form;
+        my $d = CLIO::Core::ToolLoopDetector->new();
+
+        for my $i (1 .. 13) {
+            my $v = $d->record_call($tool, $args, $result);
+            is($v->{tracked}, 1, "$tool form: call $i tracked as read-only") if $i == 1;
+            if ($v->{break} && !$broke_at{$tool}) {
+                $broke_at{$tool} = $i;
+            }
+        }
+    }
+
+    is($broke_at{file_search}, $broke_at{file_operations},
+        'both forms escalate at the same iteration');
+};
+
 done_testing();
