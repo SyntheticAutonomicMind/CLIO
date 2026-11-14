@@ -185,6 +185,14 @@ sub _categorize_error {
     # Operation-needs-parameter form: "'update' operation requires 'todoUpdates' parameter"
     return 'missing_required' if $error =~ /['"`]?(\w+)['"`]?\s+operation\s+requires\s+['"`]?(\w+)['"`]?\s+parameter/i;
 
+    # Path exists but is the wrong kind: a file where a directory is
+    # required, or a directory where a file is required. This is NOT
+    # "not found" - the path is right there. Reporting it as missing sends
+    # the caller hunting for a path it already has, so it gets its own
+    # category with advice that is a correction, not a search.
+    return 'path_kind_mismatch'
+        if $error =~ /(?:path|file|directory)\s+is\s+a\s+(?:file|directory)\s*,?\s*not\s+a\s+(?:file|directory)/i;
+
     # Working directory / path-doesn't-exist forms. The agent often tries
     # to write a file under a directory that doesn't exist yet, or calls
     # a tool from the wrong cwd. Both surface as "Working directory does
@@ -567,11 +575,25 @@ sub _get_category_guidance {
                    "HOW TO FIX: This tool requires an interactive terminal. Check that CLIO is running with terminal UI enabled.";
         },
 
+        path_kind_mismatch => sub {
+            return "WHAT WENT WRONG: The path exists, but it is not the kind this operation needs - " .
+                   "a file where a directory is required, or a directory where a file is required.\n" .
+                   "HOW TO FIX: The path is correct. Do not hunt for a different path and do not " .
+                   "retry the same call - read the error text, which states what the path is and " .
+                   "which operations accept it.\n" .
+                   "  - file_search and list_dir need a DIRECTORY. To read a file, use read_file. " .
+                   "To search one file's contents, use grep_search with directory set to that file.\n" .
+                   "  - read_file, replace_string, insert_at_line, and get_errors need a FILE. " .
+                   "To see what a directory holds, use list_dir.";
+        },
+
         directory_not_found => sub {
             return "WHAT WENT WRONG: The directory you're trying to access doesn't exist.\n" .
-                   "HOW TO FIX: Check the path is correct. If you meant to pass a FILE path (where a " .
-                   "directory was expected), note that grep_search now accepts file paths directly — " .
-                   "pass the file as 'path' or 'directory' and it will search just that file. " .
+                   "HOW TO FIX: Check the path is correct. Confirm before guessing: " .
+                   "file_exists on the path tells you whether it exists and what kind it is. " .
+                   "If the path is a FILE rather than a directory, file_search and grep_search " .
+                   "both accept a file path directly - pass it as 'directory' (or 'path') and " .
+                   "they search just that file. " .
                    "If you need to CREATE the directory, call create_directory first.\n" .
                    "TIP: Verify your current working directory with terminal_operations: exec 'pwd'.";
         },

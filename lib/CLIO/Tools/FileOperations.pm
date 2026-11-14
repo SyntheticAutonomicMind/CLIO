@@ -274,7 +274,7 @@ sub operation_summaries {
         file_exists          => 'Check whether a file or directory exists',
         get_file_info        => 'Get file metadata (size, type, modified time)',
         get_errors           => 'Get compilation or lint errors for a file (Perl)',
-        file_search          => 'Find files matching a glob pattern',
+        file_search          => 'Find files matching a glob pattern (accepts a file or a directory)',
         grep_search          => 'Search file contents with a regex',
         semantic_search      => 'Hybrid keyword and symbol search across the codebase',
         read_tool_result     => 'Read a persisted large tool result in chunks',
@@ -346,7 +346,7 @@ sub get_additional_parameters {
         },
         directory => {
             type => "string",
-            description => "[OPTIONAL] Base directory for file_search. Also accepted by grep_search (or pass `path` as an alias) to scope the search. For grep_search, accepts either a file or a directory; when a file is given, only that file is searched.",
+            description => "[OPTIONAL] Search target for file_search; also accepted by grep_search (or pass `path` as an alias). Both accept either a file or a directory - when a file is given, only that file is searched or matched, so a path you already know is not an error.",
         },
         is_regex => {
             type => "boolean",
@@ -760,12 +760,8 @@ sub read_file {
     my $sandbox_check = $self->_check_sandbox($path, $context);
     return $self->error_result($sandbox_check->{error}) unless $sandbox_check->{allowed};
 
-    if (-d $path) {
-        return $self->error_result(
-            "Path is a directory: $path. Use list_dir to enumerate its contents."
-        );
-    }
-    return $self->error_result("File not found: $path") unless -f $path;
+    my $kind_error = $self->_path_kind_error($path, 'file');
+    return $self->error_result($kind_error) if $kind_error;
     return $self->error_result("File not readable: $path") unless -r $path;
 
     if (defined $end_line && $end_line < $start_line) {
@@ -942,7 +938,8 @@ sub list_dir {
     return $self->error_result($sandbox_check->{error}) unless $sandbox_check->{allowed};
     
     # Validation
-    return $self->error_result("Directory not found: $path") unless -d $path;
+    my $kind_error = $self->_path_kind_error($path, 'directory');
+    return $self->error_result($kind_error) if $kind_error;
     return $self->error_result("Directory not readable: $path") unless -r $path;
     
     log_debug('FileOp', "Listing directory: $path (recursive=$recursive)");
@@ -1149,7 +1146,8 @@ sub _check_one_file_errors {
     my ($self, $path, $context) = @_;
 
     my $clean_path = $self->_clean_path($path);
-    return $self->error_result("File not found: $path") unless -f $clean_path;
+    my $kind_error = $self->_path_kind_error($clean_path, 'file');
+    return $self->error_result($kind_error) if $kind_error;
 
     log_debug('FileOp', "Checking syntax: $clean_path");
 
@@ -1237,16 +1235,52 @@ sub file_search {
    # Sandbox check for directory
     my $sandbox_check = $self->_check_sandbox($directory, $context);
     return $self->error_result($sandbox_check->{error}) unless $sandbox_check->{allowed};
-    
-    return $self->error_result("Directory not found: $directory") unless -d $directory;
-    
+
     # Auto-upgrade to recursive when pattern has no path components
     # Users/agents expect "*Patch*" to find "lib/X/ApplyPatch.pm"
     if ($pattern !~ m{/} && $pattern !~ /\*\*/) {
         $pattern = "**/$pattern";
         log_debug('FileOp', "Auto-recursive search: pattern upgraded to $pattern");
     }
-    
+
+    # Single-file mode: a caller that names a file has already located it.
+    # grep_search honors the same convention (Unix semantics). Answering
+    # "Directory not found" told callers the path was missing when it was
+    # right in front of them, and they re-issued the identical call instead
+    # of correcting it.
+    if (-f $directory) {
+        require File::Basename;
+
+        my $regex = $self->_glob_to_regex($pattern);
+        my $base  = File::Basename::basename($directory);
+        my $rel   = $directory;
+        $rel =~ s{^\./}{};
+
+        my @matches;
+        if ($rel =~ $regex || $base =~ $regex) {
+            push @matches, {
+                path => $directory,
+                type => 'file',
+                size => -s $directory,
+            };
+        }
+
+        log_debug('FileOp', "file_search: single-file mode on $directory ("
+            . (@matches ? 'matched' : 'pattern did not match') . ")");
+
+        return $self->success_result(
+            \@matches,
+            action_description => "searching for '$pattern' in $directory ("
+                . scalar(@matches) . " matches)",
+            pattern   => $pattern,
+            directory => $directory,
+            count     => scalar(@matches),
+        );
+    }
+
+    my $kind_error = $self->_path_kind_error($directory, 'directory');
+    return $self->error_result($kind_error) if $kind_error;
+
     log_debug('FileOp', "Searching files: pattern=$pattern, dir=$directory");
     
     my $result;
@@ -1258,35 +1292,9 @@ sub file_search {
         if ($pattern =~ /\*\*/) {
             # Use File::Find for recursive glob patterns
             require File::Find;
-            
-            # Convert glob pattern to regex
-            # **/ matches any directory depth, * matches any file/dir name
-            my $regex_pattern = $pattern;
-            
-            # Escape regex special chars first (except *, ?, {})
-            $regex_pattern =~ s{([.+^\$\[\]\\|()])}{\\$1}g;
-            
-            # Use markers for ** patterns first to avoid partial replacement by *
-            $regex_pattern =~ s{\*\*/}{\x00DOUBLESTAR_SLASH\x00}g;  # **/ -> marker
-            $regex_pattern =~ s{\*\*}{\x01DOUBLESTAR\x01}g;          # ** alone -> marker
-            
-            # Now convert single * and ?
-            $regex_pattern =~ s{\*}{[^/]*}g;        # * -> [^/]* (match within dir)
-            $regex_pattern =~ s{\?}{[^/]}g;         # ? -> single char
-            
-            # Now replace markers with regex
-            $regex_pattern =~ s{\x00DOUBLESTAR_SLASH\x00}{(?:.*/)?}g;  # **/ -> optional any path
-            $regex_pattern =~ s{\x01DOUBLESTAR\x01}{.*}g;              # ** -> any chars
-            
-            # Handle brace expansion {a,b} -> (?:a|b)
-            while ($regex_pattern =~ /\{([^}]+)\}/) {
-                my $inside = $1;
-                $inside =~ s/,/|/g;
-                $regex_pattern =~ s/\{[^}]+\}/(?:$inside)/;
-            }
-            
-            $regex_pattern = "^$regex_pattern\$";   # Anchor the pattern
-            
+
+            my $regex_pattern = $self->_glob_to_regex($pattern);
+
             log_debug('FileOp', "Recursive search, regex: $regex_pattern");
             
             # Directories to skip during recursive search
@@ -1385,6 +1393,83 @@ sub file_search {
     }
     
     return $result;
+}
+
+=head2 _glob_to_regex (Internal)
+
+Arguments: $pattern (required)
+Returns: an anchored regex string matching the same paths as the glob.
+
+Converts a glob to a regex. C<**/> matches any directory depth, C<*>
+matches within a single path segment, C<?> matches one character, and
+C<{a,b}> expands to an alternation. Shared by the recursive directory
+walk and single-file matching so both agree on what a pattern means.
+
+=cut
+
+sub _glob_to_regex {
+    my ($self, $pattern) = @_;
+
+    my $regex = $pattern;
+
+    # Escape regex special chars first (except *, ?, {})
+    $regex =~ s{([.+^\$\[\]\\|()])}{\\$1}g;
+
+    # Use markers for ** patterns first to avoid partial replacement by *
+    $regex =~ s{\*\*/}{\x00DOUBLESTAR_SLASH\x00}g;  # **/ -> marker
+    $regex =~ s{\*\*}{\x01DOUBLESTAR\x01}g;          # ** alone -> marker
+
+    # Now convert single * and ?
+    $regex =~ s{\*}{[^/]*}g;        # * -> [^/]* (match within dir)
+    $regex =~ s{\?}{[^/]}g;         # ? -> single char
+
+    # Now replace markers with regex
+    $regex =~ s{\x00DOUBLESTAR_SLASH\x00}{(?:.*/)?}g;  # **/ -> optional any path
+    $regex =~ s{\x01DOUBLESTAR\x01}{.*}g;              # ** -> any chars
+
+    # Handle brace expansion {a,b} -> (?:a|b)
+    while ($regex =~ /\{([^}]+)\}/) {
+        my $inside = $1;
+        $inside =~ s/,/|/g;
+        $regex =~ s/\{[^}]+\}/(?:$inside)/;
+    }
+
+    return "^$regex\$";
+}
+
+=head2 _path_kind_error (Internal)
+
+Arguments: $path (required), $want ('file' or 'directory', required)
+Returns: an error string when $path is not the wanted kind, undef when it is.
+
+Separates the three states a path can be in: absent, present as a
+directory, present as a file. Reporting "File not found" for a path that
+exists as a directory is false and sends the caller hunting for a path
+it already has. The mismatch text names the operations that accept the
+kind the caller actually passed, so recovery is a correction rather than
+a search.
+
+=cut
+
+sub _path_kind_error {
+    my ($self, $path, $want) = @_;
+
+    return undef if ($want eq 'directory' ? -d $path : -f $path);
+
+    if ($want eq 'directory') {
+        return "Directory not found: $path" unless -e $path;
+        return "Path is a file, not a directory: $path. "
+             . "This operation needs a directory. "
+             . "To read the file, use read_file. "
+             . "To search its contents, use grep_search with directory set to this path. "
+             . "To find files beside it, use file_search with directory set to its parent.";
+    }
+
+    return "File not found: $path" unless -e $path;
+    return "Path is a directory, not a file: $path. "
+         . "This operation needs a single file path. "
+         . "To enumerate the directory, use list_dir. "
+         . "To find files inside it, use file_search with directory set to this path.";
 }
 
 sub _escape_unescaped_braces {
@@ -2262,7 +2347,8 @@ sub replace_string {
         return $self->error_result("Authorization denied: $auth_result->{reason}");
     }
 
-    return $self->error_result("File not found: $path") unless -f $path;
+    my $kind_error = $self->_path_kind_error($path, 'file');
+    return $self->error_result($kind_error) if $kind_error;
 
     # Multi-agent coordination: Request file lock via broker
     my ($lock_acquired, $lock_error) = $self->_acquire_file_lock($path, $context);
@@ -2508,7 +2594,8 @@ sub insert_at_line {
         return $self->error_result("Authorization denied: $auth_result->{reason}");
     }
 
-    return $self->error_result("File not found: $path") unless -f $path;
+    my $kind_error = $self->_path_kind_error($path, 'file');
+    return $self->error_result($kind_error) if $kind_error;
     return $self->error_result("Invalid line number") unless $line_number > 0;
     
     # Multi-agent coordination: Request file lock via broker
