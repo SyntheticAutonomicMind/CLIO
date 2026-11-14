@@ -521,6 +521,16 @@ for downstream "missing path" handling).
 sub _clean_path {
     my ($self, $path) = @_;
     return $path unless defined $path;
+
+    # Reject NUL before it reaches any filesystem call. Perl's own operators
+    # warn loudly ("Invalid \0 character in pathname for opendir ...") and that
+    # diagnostic, which names an internal CLIO source file, would otherwise go
+    # straight to STDERR and into the tool result.
+    if ($path =~ /\0/) {
+        require Carp;
+        Carp::croak("Path contains a NUL character");
+    }
+
     return strip_path_quotes($path);
 }
 
@@ -657,7 +667,8 @@ sub _vault_capture {
 Check if a path is allowed under sandbox mode.
 
 Sandbox mode restricts all file operations to the project directory.
-This is a soft sandbox - terminal operations are NOT restricted.
+Sandbox mode also blocks terminal_operations, web_operations and
+code_intelligence; this is not a soft sandbox.
 
 Arguments:
 - path: Path to check (relative or absolute)
@@ -828,8 +839,10 @@ sub read_file {
     log_debug('FileOperations', "Reading file: $path (lines $start_line-" . ($end_line || 'EOF') . ")");
     
     # Read file
-    my $result;
-    eval {
+    # Capture the eval's value: a `return` inside an eval block exits the eval,
+    # not this subroutine (perlfunc). Assigning the eval result is what makes the
+    # early returns below reach the caller instead of evaporating.
+    my $result = eval {
         # Open in raw mode first, then try to decode UTF-8 gracefully
         open my $fh, '<:raw', $path or croak "Cannot open $path: $!";
 
@@ -903,7 +916,7 @@ sub read_file {
 
         # Informational hint when caller asked for more than was available.
         my $range_note = '';
-        if (defined $end_line && $end_line > $total_lines) {
+        if (defined $end_line && $total_lines && $end_line > $total_lines) {
             $range_note = " (file ends at line $total_lines)";
         }
         
@@ -911,9 +924,9 @@ sub read_file {
         
         # Format action description for UI feedback
         my $line_range = $end_line ? "lines $start_line-$end_line" : "from line $start_line";
-        my $action_desc = "reading $path ($line_range)";
+        my $action_desc = "reading $path ($line_range)$range_note";
         
-        $result = $self->success_result(
+        return $self->success_result(
             $content,
             action_description => $action_desc,
             lines_read => $lines_read,
@@ -926,6 +939,13 @@ sub read_file {
     if ($@) {
         log_debug('FileOp', "Failed to read $path: $@");
         return $self->error_result("Failed to read file: " . $self->_clean_eval_error($@));
+    }
+    
+    # An eval that neither produced a value nor set $@ means the block exited
+    # without a result. Say so rather than hand the caller undef.
+    unless (defined $result) {
+        log_debug('FileOp', "read_file produced no result for $path");
+        return $self->error_result("Failed to read file: $path (no result produced)");
     }
     
     return $result;

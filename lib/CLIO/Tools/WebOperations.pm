@@ -196,8 +196,10 @@ sub fetch_url {
     
     log_debug('WebOps', "Fetching URL: $url");
     
-    my $result;
-    eval {
+    # Assign the eval's value. A `return` inside an eval block exits the eval,
+    # not this subroutine (perlfunc), so the non-2xx branch below only reaches
+    # the caller through this assignment.
+    my $result = eval {
         # Use browser-like user-agent
         my $ua = CLIO::Compat::HTTP->new(
             timeout => $timeout,
@@ -219,7 +221,7 @@ sub fetch_url {
             my $final_size = length($content);
             my $action_desc = "fetching $url ($raw_size bytes raw, $final_size bytes text, " . $response->code . ")";
 
-            $result = $self->success_result(
+            return $self->success_result(
                 $content,
                 action_description => $action_desc,
                 url => $url,
@@ -235,6 +237,13 @@ sub fetch_url {
         # $@ holds the transport-layer exception (DNS, TCP, TLS, etc.).
         # Map it to a clear category instead of dumping the raw exception.
         return $self->error_result(_categorize_transport_error($url, $@, $timeout));
+    }
+
+    # HTTP::Tiny reports failures as a non-success response rather than dying,
+    # so a missing value here means the block exited without a result.
+    unless (defined $result) {
+        log_debug('WebOps', "fetch_url produced no result for $url");
+        return $self->error_result("Failed to fetch $url (no result produced)");
     }
 
     return $result;
@@ -967,6 +976,54 @@ Returns hashref:
 # Session-level URL grants
 my %_url_session_grants;
 
+# Parse an IPv4 literal into its first two octets, accepting the forms a
+# browser will happily resolve: dotted decimal, leading-zero octal, and a
+# packed single number (so 21376433 is reachable as a private address).
+# Returns ($a, $b) or an empty list when the host is not an IPv4 literal.
+# Parse an IPv4 literal into its first two octets, accepting the forms a browser
+# resolves: dotted decimal, leading-zero octet, and the partial/packed forms
+# where the final component holds all remaining bits (so 21376433 and
+# 127.1 are both loopback). Returns ($a, $b) or an empty list if the host is
+# not an IPv4 literal.
+sub _parse_ipv4 {
+    my ($host) = @_;
+    return () unless defined $host && length $host;
+    return () unless $host =~ /^[0-9.]+$/ && $host =~ /\d/;
+
+    my @parts = split /\./, $host, -1;
+    return () if @parts < 1 || @parts > 4;
+
+    my @octets;
+    for my $i (0 .. $#parts) {
+        my $p = $parts[$i];
+        return () unless length $p;
+        return () unless $p =~ /^\d+$/;
+        my $v = ($p =~ /^0\d/ && $p =~ /^[0-7]+$/) ? oct($p) : 0 + $p;
+
+        # Every component except the last must fit in one octet. The last may
+        # carry the remaining 8/16/24 bits.
+        my $is_last = ($i == $#parts);
+        my $max = $is_last ? (256 ** (4 - scalar(@octets)) ) - 1 : 255;
+        return () if $v > $max;
+
+        if ($is_last && @octets < 3) {
+            # Spread the last component across the remaining octets.
+            my @rest;
+            for my $k (1 .. 3 - $#octets) {
+                unshift @rest, $v % 256;
+                $v = int($v / 256);
+            }
+            unshift @rest, $v;
+            push @octets, @rest;
+            last;
+        }
+        push @octets, $v;
+    }
+
+    return () if @octets < 4;
+    return ($octets[0], $octets[1]);
+}
+
 sub _check_url_security {
     my ($self, $url, $context) = @_;
 
@@ -1002,9 +1059,35 @@ sub _check_url_security {
         }
     }
 
-    # Check for localhost/internal network (SSRF-like)
-    if ($url =~ m{^https?://(?:localhost|127\.0\.0\.\d+|0\.0\.0\.0|10\.\d+\.\d+\.\d+|172\.(?:1[6-9]|2\d|3[01])\.\d+\.\d+|192\.168\.\d+\.\d+)(?::\d+)?/}i) {
-        push @concerns, "URL targets internal/localhost network address";
+    # Check for localhost/internal network (SSRF-like). The list has to cover
+    # more than RFC1918: the cloud instance-metadata endpoint is the canonical
+    # target for this class of request, and IPv6 has its own private ranges.
+    if (my ($host) = $url =~ m{^https?://([^/]+)}i) {
+        $host =~ s/:\d+$//;          # strip port
+        $host =~ s/^\[|\]$//g;       # strip IPv6 brackets
+        my $internal = 0;
+
+        $internal = 1 if lc($host) eq 'localhost' || lc($host) =~ /\.localhost$/;
+        $internal = 1 if lc($host) eq 'metadata' || lc($host) eq 'metadata.google.internal';
+        # IPv6 loopback, unique-local, link-local, and the unspecified address
+        $internal = 1 if $host =~ /^(?:::1|::|f[cd][0-9a-f]{2}:|fe[89ab][0-9a-f]:)/i;
+        # IPv4 literal, including packed decimal/octal/hex forms
+        if (my @oct = _parse_ipv4($host)) {
+            my ($a, $b) = @oct;
+            $internal = 1 if $a == 10;                                    # 10/8
+            $internal = 1 if $a == 127;                                   # loopback
+            $internal = 1 if $a == 0;                                     # unspecified
+            $internal = 1 if $a == 172 && $b >= 16 && $b <= 31;           # 172.16/12
+            $internal = 1 if $a == 192 && $b == 168;                      # 192.168/16
+            $internal = 1 if $a == 169 && $b == 254;                      # link-local + IMDS
+            $internal = 1 if $a == 100 && $b >= 64 && $b <= 127;          # CGNAT / Tailscale
+            $internal = 1 if $a == 198 && ($b == 18 || $b == 19);         # benchmarking
+            $internal = 1 if $a >= 224;                                   # multicast + reserved
+        }
+
+        if ($internal) {
+            push @concerns, "URL targets internal or link-local address ($host)";
+        }
     }
 
     # Check for data: or file: URLs

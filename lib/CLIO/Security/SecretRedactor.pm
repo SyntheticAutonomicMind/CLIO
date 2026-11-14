@@ -164,11 +164,15 @@ my @API_KEY_PATTERNS = (
     qr/AIza[0-9A-Za-z\-_]{35}/,
     
     # OpenAI API keys
-    qr/sk-[a-zA-Z0-9]{48}/,
-    qr/sk-proj-[a-zA-Z0-9\-_]{64}/,
+    # Lengths vary by provider and change over time. An exact-length quantifier
+    # silently misses any key that is not exactly that long, and worse, a label
+    # pattern that consumes a fixed width can leave the tail of a real key
+    # visible while looking redacted. Match the whole token instead.
+    qr/sk-[a-zA-Z0-9]{20,}/,
+    qr/sk-proj-[a-zA-Z0-9\-_]{20,}/,
     
     # Anthropic API keys
-    qr/sk-ant-[a-zA-Z0-9\-_]{95}/,
+    qr/sk-ant-[a-zA-Z0-9\-_]{20,}/,
     
     # Slack tokens (bot, app, user, etc.)
     qr/xox[baprs]-[0-9]{10,13}-[0-9]{10,13}-[a-zA-Z0-9]{24}/,

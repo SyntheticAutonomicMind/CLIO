@@ -15,6 +15,100 @@ use Cwd 'abs_path';
 
 my $NULLDEV = $^O eq 'MSWin32' ? 'nul' : '/dev/null';
 
+# Bounds on list_usages output. A single unbounded query measured 2053 matches
+# / 401 KB (~100k tokens) on this repo, which is enough to consume an entire
+# context window in one tool result. Results are capped and the caller is told
+# how many were dropped so it can narrow the query.
+use constant {
+    MAX_USAGES_DEFAULT => 200,
+    MAX_USAGES_LIMIT   => 1000,
+    MAX_CONTEXT_LINES  => 10,
+    MAX_LINE_CHARS     => 200,
+};
+
+# Shrink a usage record for transport. Empty context arrays and multi-kilobyte
+# source lines were carried verbatim, so a capped 200-match result still cost
+# ~90 KB. Context is omitted when absent and long lines are truncated with an
+# explicit marker rather than silently cut.
+sub _shape_usage {
+    my ($u) = @_;
+    my %out = (
+        file        => $u->{file},
+        line_number => $u->{line_number},
+    );
+    my $line = defined $u->{line} ? $u->{line} : '';
+    if (length($line) > MAX_LINE_CHARS) {
+        $out{line}       = substr($line, 0, MAX_LINE_CHARS) . ' ...[truncated]';
+        $out{line_full_length} = length $line;
+    } else {
+        $out{line} = $line;
+    }
+    for my $k (qw(context_before context_after)) {
+        my $v = $u->{$k};
+        next unless ref($v) eq 'ARRAY' && @$v;
+        $out{$k} = [ map {
+            length($_) > MAX_LINE_CHARS ? substr($_, 0, MAX_LINE_CHARS) . ' ...[truncated]' : $_
+        } @$v ];
+    }
+    return \%out;
+}
+
+# Cache of file => arrayref of lines, scoped to a single search call, so
+# context extraction reads each file once instead of once per match.
+sub _file_lines {
+    my ($cache, $abs) = @_;
+    return $cache->{$abs} if exists $cache->{$abs};
+
+    my @lines;
+    if (open my $fh, '<:encoding(UTF-8)', $abs) {
+        @lines = <$fh>;
+        chomp @lines;
+        close $fh;
+    }
+    return $cache->{$abs} = \@lines;
+}
+
+# Context around a 1-based line number, read from disk. Returns the lines
+# before and after, each bounded by $n.
+sub _context_around {
+    my ($cache, $abs, $line_num, $n) = @_;
+    return ([], []) unless $n > 0;
+
+    my $lines = _file_lines($cache, $abs);
+    return ([], []) unless @$lines;
+
+    my $from = $line_num - 1 - $n; $from = 0 if $from < 0;
+    my $to   = $line_num - 1;
+    my @before = $from < $to ? @{$lines}[$from .. $to - 1] : ();
+
+    my $a_from = $line_num;
+    my $a_to   = $line_num - 1 + $n;
+    $a_to = $#$lines if $a_to > $#{$lines};
+    my @after = $a_from <= $a_to ? @{$lines}[$a_from .. $a_to] : ();
+
+    return (\@before, \@after);
+}
+
+# git grep reports paths relative to the current working directory, so the same
+# query returns `lib/Foo.pm` from the repo root and `../Core/Foo.pm` from a
+# subdirectory. The latter cannot be fed back into read_file. Normalise to
+# repo-root-relative (falling back to absolute when outside the repository).
+sub _normalize_result_path {
+    my ($self, $file, $repo_root, $cwd) = @_;
+    return $file unless defined $file && length $file;
+
+    require File::Spec;
+    my $abs = File::Spec->file_name_is_absolute($file)
+        ? $file
+        : File::Spec->rel2abs($file, $cwd);
+
+    if (defined $repo_root && length $repo_root) {
+        my $prefix = $repo_root . '/';
+        return substr($abs, length $prefix) if index($abs, $prefix) == 0;
+    }
+    return $abs;
+}
+
 =head1 NAME
 
 CLIO::Tools::CodeIntelligence - Code analysis, symbol search, and history search tool
@@ -68,8 +162,11 @@ Operations:
   Parameters: 
     - symbol_name (required): Symbol to search for
     - file_paths (optional): Array of paths to search in (default: current dir)
-    - context_lines (optional): Number of context lines around match (default: 0)
-  Returns: List of all locations where symbol appears
+    - context_lines (optional): Context lines around each match, before and after (default: 0, max: 10)
+    - max_results (optional): Maximum matches to return (default: 200, max: 1000)
+  Returns: Locations where the symbol appears, with 'count', 'truncated' and
+  'limit'. Matches include comments and string literals, so narrow file_paths
+  when a common name returns too much.
 
 -  search_history - Semantic search through git commit messages
   Parameters:
@@ -170,7 +267,7 @@ sub operation_contract {
 
     return {
         list_usages    => { required => [qw(symbol_name)],
-                            properties => [qw(symbol_name file_paths context_lines)] },
+                            properties => [qw(symbol_name file_paths context_lines max_results)] },
         search_history => { required => [qw(query)],
                             properties => [qw(query max_results since author max_commits)] },
     };
@@ -209,7 +306,11 @@ sub get_additional_parameters {
         },
         context_lines => {
             type => "integer",
-            description => "[OPTIONAL] Number of context lines around match. Default: 0.",
+            description => "[OPTIONAL] Number of context lines around each match, before and after. Default: 0, max: 10.",
+        },
+        max_results => {
+            type => "integer",
+            description => "[OPTIONAL] Maximum matches to return for list_usages. Default: 200, max: 1000. When the result is capped, 'truncated' is 1 and the message says how to narrow the query. Prefer narrowing file_paths over raising this.",
         },
         
         # search_history parameters
@@ -520,6 +621,19 @@ sub list_usages {
     my $file_paths = $params->{file_paths};
     my $context_lines = $params->{context_lines} || 0;
 
+    # Result budget. Without a cap a single query on a common symbol returned
+    # 2053 matches / 401 KB, enough to consume a whole context window.
+    my $limit = MAX_USAGES_DEFAULT;
+    if (defined $params->{max_results} && $params->{max_results} ne '') {
+        unless ($params->{max_results} =~ /^\d+$/) {
+            return $self->error_result(
+                "Invalid 'max_results' parameter: must be a non-negative integer"
+            );
+        }
+        $limit = int($params->{max_results});
+        $limit = MAX_USAGES_LIMIT if $limit > MAX_USAGES_LIMIT;
+    }
+
     # Validate context_lines as a non-negative integer. The JSON schema
     # declares this as type "integer", but schema types are advisory —
     # an adversarial LLM can send a string that would be interpolated
@@ -531,6 +645,7 @@ sub list_usages {
             );
         }
         $context_lines = int($params->{context_lines});
+        $context_lines = MAX_CONTEXT_LINES if $context_lines > MAX_CONTEXT_LINES;
     }
 
     # Normalize file_paths to an array. Handle three cases:
@@ -573,11 +688,24 @@ sub list_usages {
         @direct_paths = @$file_paths;
     }
 
-    @usages = $self->_git_grep_search($symbol_name, \@git_paths, $context_lines, $context)
-        if @git_paths;
-    push @usages, $self->_file_grep_search($symbol_name, \@direct_paths, $context_lines, $context)
-        if @direct_paths;
-    
+    my $git_truncated   = 0;
+    my $direct_truncated = 0;
+
+    if (@git_paths) {
+        my ($found, $trunc) = $self->_git_grep_search(
+            $symbol_name, \@git_paths, $context_lines, $context, $limit);
+        @usages = @$found;
+        $git_truncated = $trunc;
+    }
+    if (@direct_paths) {
+        my $remaining = $limit > @usages ? $limit - @usages : 0;
+        my ($found, $trunc) = $self->_file_grep_search(
+            $symbol_name, \@direct_paths, $context_lines, $context, $remaining);
+        push @usages, @$found;
+        $direct_truncated = $trunc;
+    }
+
+    my $truncated = ($git_truncated || $direct_truncated) ? 1 : 0;
     my $count = scalar(@usages);
     
     log_debug('CodeIntelligence', "Found $count usages");
@@ -600,14 +728,20 @@ sub list_usages {
         $a->{file} cmp $b->{file} || $a->{line_number} <=> $b->{line_number}
     } @usages;
     
-    my $action_desc = "searching for symbol '$symbol_name' (found $count usages)";
-    
+    my $action_desc = "searching for symbol '$symbol_name' ("
+        . ($truncated ? "$count shown, truncated" : "$count usages") . ")";
+
     return $self->success_result(
-        "Found $count usages of '$symbol_name'",
+        "Found $count usages of '$symbol_name'"
+        . ($truncated
+            ? " (result capped at $limit; narrow file_paths or raise max_results to see more)"
+            : ''),
         action_description => $action_desc,
-        usages => \@usages,
+        usages => [ map { _shape_usage($_) } @usages ],
         count => $count,
         symbol => $symbol_name,
+        truncated => $truncated,
+        limit => $limit,
     );
 }
 
@@ -644,62 +778,98 @@ sub _path_has_tracked_files {
 }
 
 sub _git_grep_search {
-    my ($self, $symbol, $paths, $context, $ext_context) = @_;
+    my ($self, $symbol, $paths, $context, $ext_context, $limit) = @_;
 
     my @results = ();
+    my $scanned   = 0;
+    my $truncated = 0;
 
-    # List-form exec: no shell, so a symbol or path containing spaces,
-    # quotes, backticks, or $(...) is one argv element and cannot inject.
+    # List-form exec: no shell, so a symbol or path containing spaces, quotes,
+    # backticks, or $(...) stays a single argv element and cannot inject.
     # -w asks git for whole-word matches; -F keeps the symbol literal.
-    my @cmd = ('git', 'grep', '-n');
-    push @cmd, "-C$context" if $context > 0;
-    push @cmd, '-w', '-F', $symbol, '--', @$paths;
+    #
+    # -z separates path, line and content with NUL. The default single-char
+    # delimiter also occurs inside paths and content, so a filename containing
+    # ':' or '-' cannot be split reliably.
+    #
+    # Context deliberately does not come from `git grep -C`. Context lines use
+    # '-' as their delimiter, which a ':'-only parser never matched, so context
+    # was silently discarded and context_before/context_after were always empty
+    # for tracked files. Reading the window from disk is unambiguous and yields
+    # both sides.
+    my @cmd = ('git', 'grep', '-n', '-z', '-w', '-F', $symbol, '--', @$paths);
 
     log_debug('CodeIntelligence', "Running: " . join(' ', @cmd));
 
-    open my $fh, '-|', @cmd or return @results;
+    open my $fh, '-|', @cmd or return (\@results, 0);
 
-    my $current_file = '';
-    my @context_before = ();
-    my $files_seen = 0;
+    my $cwd       = Cwd::getcwd();
+    my $repo_root = `git rev-parse --show-toplevel 2>$NULLDEV`;
+    chomp $repo_root if $repo_root;
+    $repo_root = '' unless defined $repo_root && -d $repo_root;
 
-    while (my $line = <$fh>) {
-        chomp $line;
+    my %line_cache;
+    my $records_seen = 0;
+
+    while (my $record = <$fh>) {
+        chomp $record;
+        next unless length $record;
+
+        # Hunk separator; harmless, skipped defensively.
+        next if $record eq '--';
+
+        my ($file, $line_num, $content) = split(/\0/, $record, 3);
+        next unless defined $file && defined $line_num && $line_num =~ /^\d+$/;
+        $content = '' unless defined $content;
 
         # Allow ESC interrupt during git grep. Codebase searches can return
         # thousands of matches; polling lets the user bail early.
-        if ($files_seen % 50 == 0 && $self->check_interrupt($ext_context)) {
-            log_debug('CodeIntelligence', "User interrupt during git grep after " . scalar(@results) . " match(es)");
+        if ($records_seen % 50 == 0 && $self->check_interrupt($ext_context)) {
+            log_debug('CodeIntelligence',
+                "User interrupt during git grep after $scanned match(es)");
             close $fh;
+            $truncated = 1;
             last;
         }
-        $files_seen++;
+        $records_seen++;
+        $scanned++;
 
-        # Parse git grep output: file:line:content
-        if ($line =~ /^([^:]+):(\d+):(.*)$/) {
-            my ($file, $line_num, $content) = ($1, $2, $3);
-
-            push @results, {
-                file => $file,
-                line_number => int($line_num),
-                line => $content,
-                context_before => [@context_before],
-                context_after => [],  # git grep doesn't provide easy context_after
-            };
-
-            @context_before = ();
+        if ($limit && @results >= $limit) {
+            $truncated = 1;
+            last;
         }
+
+        my ($before, $after) = ([], []);
+        if ($context > 0) {
+            require File::Spec;
+            my $abs = File::Spec->file_name_is_absolute($file)
+                ? $file : File::Spec->rel2abs($file, $cwd);
+            ($before, $after) = _context_around(\%line_cache, $abs, int($line_num), $context);
+        }
+
+        push @results, {
+            file           => $self->_normalize_result_path($file, $repo_root, $cwd),
+            line_number    => int($line_num),
+            line           => $content,
+            context_before => $before,
+            context_after  => $after,
+        };
     }
 
     close $fh;
 
-    return @results;
+    log_debug('CodeIntelligence',
+        "git grep: $scanned match(es), " . scalar(@results) . " returned"
+        . ($truncated ? " (truncated)" : ""));
+
+    return (\@results, $truncated);
 }
 
 sub _file_grep_search {
-    my ($self, $symbol, $paths, $context_lines, $ext_context) = @_;
+    my ($self, $symbol, $paths, $context_lines, $ext_context, $limit) = @_;
     
     my @results = ();
+    my $truncated = 0;
     my @files_to_search = ();
     
     # Limits to prevent DoS via massive directory trees or huge files
@@ -792,6 +962,10 @@ sub _file_grep_search {
                     }
                 }
                 
+                if ($limit && @results >= $limit) {
+                    $truncated = 1;
+                    next;
+                }
                 push @results, {
                     file => $file,
                     line_number => $line_num,
@@ -803,7 +977,7 @@ sub _file_grep_search {
         }
     }
     
-    return @results;
+    return (\@results, $truncated);
 }
 
 1;

@@ -222,6 +222,23 @@ my @DESTRUCTIVE_PATTERNS = (
     qr/>\s*\/dev\/[sh]d[a-z]/,                  # write to raw block device
     qr/\bchmod\s+(-[a-zA-Z]*R|-[a-zA-Z]*r)\s+[0-7]*\s+\//,  # recursive chmod on /
     qr/\bchown\s+(-[a-zA-Z]*R|-[a-zA-Z]*r)\s+\S+\s+\//,     # recursive chown on /
+
+    # rm with the flag that explicitly overrides the "refusing to remove /"
+    # guard. The flag-adjacent patterns above miss it because the long option
+    # comes first.
+    qr/\brm\b[^\n]*--no-preserve-root/,
+
+    # Deletion that never mentions rm at all.
+    qr/\bfind\b[^\n]*(?:\s-delete\b|\s-delete\s)/,
+    qr/\bfind\b[^\n]*-exec(?:dir)?\b[^\n]*\brm\b/,
+
+    # Zeroing a file in place destroys it without an rm.
+    qr/\btruncate\s+(?:-s[\s=]*0\b|--size[\s=]*\+?0\b)/,
+
+    # Piping a decoded blob into a shell defeats every substring rule above,
+    # so flag the decode-then-execute shape itself.
+    qr/\bbase64\s+(?:-d|--decode)\b[^\n]*\|\s*(?:ba)?sh\b/,
+    qr/\bbase64\s+(?:-d|--decode)\b[^\n]*\|\s*(?:python\d?|perl|ruby|node)\b/,
 );
 
 # ---------------------------------------------------------------------------

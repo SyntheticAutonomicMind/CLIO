@@ -15,8 +15,17 @@ use Test2::V0;
 use File::Temp qw(tempdir);
 use File::Spec;
 
-my $lib_dir = File::Spec->catdir(File::Spec->updir(File::Basename::dirname(__FILE__)), 'lib');
-use lib $lib_dir;
+# `use lib` runs at compile time, so it cannot see a lexical assigned on the
+# line above it. BEGIN makes the ordering explicit. The repo root is two levels
+# up from tests/unit, which File::Spec->updir() (no arguments) never gave us.
+use File::Basename qw(dirname);
+BEGIN {
+    require Cwd;
+    my $self = Cwd::abs_path(__FILE__);
+    my $repo_root = dirname(dirname(dirname($self)));
+    unshift @INC, "$repo_root/lib";
+}
+my $lib_dir = File::Spec->catdir(dirname(dirname(__FILE__)), 'lib');
 
 # Mock config object
 my $mock_config;
