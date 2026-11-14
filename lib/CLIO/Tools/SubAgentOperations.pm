@@ -107,12 +107,12 @@ Spawn and manage sub-agents to work on tasks in parallel.
    Returns: The complete text the agent reported
 
 EXAMPLE WORKFLOW:
-1. Spawn agents: agent_operations(operation: "spawn", task: "create file X")
+1. Spawn agents: agent_spawn(task: "create file X")
 2. Keep working, do not block on them
-3. When an agent reports in, read the message: agent_operations(operation: "inbox")
-4. Pull the full text of one report: agent_operations(operation: "report", agent_id: "agent-1")
-5. Reply if needed: agent_operations(operation: "send", agent_id: "agent-1", message: "yes")
-6. Mark as read: agent_operations(operation: "acknowledge")
+3. When an agent reports in, read the message: agent_inbox()
+4. Pull the full text of one report: agent_report(agent_id: "agent-1")
+5. Reply if needed: agent_send(agent_id: "agent-1", message: "yes")
+6. Mark as read: agent_acknowledge()
 },
         %opts,
     );
@@ -659,8 +659,8 @@ sub wait {
                     my $content = $msg->{content};
                     if (!ref($content) && defined($content) && length($content) > 2000) {
                         $content = substr($content, 0, 2000)
-                            . "\n[truncated - call agent_operations(operation: 'report', "
-                            . "agent_id: '" . ($msg->{from} // 'unknown') . "') for the full text]";
+                            . "\n[truncated - call agent_report(agent_id: '"
+                            . ($msg->{from} // 'unknown') . "') for the full text]";
                     }
 
                     push @events, {
@@ -1029,14 +1029,14 @@ sub inbox {
         elsif (length($content) > $max_preview) {
             push @output_lines, "  " . substr($content, 0, $max_preview);
             push @output_lines,
-                "  [truncated - call agent_operations(operation: 'report', agent_id: '$from') for the full text]";
+                "  [truncated - call agent_report(agent_id: '$from') for the full text]";
         }
         else {
             push @output_lines, "  $content";
         }
     }
     push @output_lines, "";
-    push @output_lines, "Call agent_operations(operation: 'acknowledge') to mark as read.";
+    push @output_lines, "Call agent_acknowledge() to mark as read.";
     
     # Emit OSC events for each message so host apps can display them
     my $host_proto = $self->_get_host_proto($context);
@@ -1051,7 +1051,7 @@ sub inbox {
     }
     
     # DO NOT auto-acknowledge messages here. Messages should only be acknowledged
-    # when the AI explicitly calls agent_operations(operation: 'acknowledge').
+    # when the AI explicitly calls agent_acknowledge.
     # This preserves unread state if the AI doesn't process the messages.
     
     return $self->success_result(
@@ -1214,22 +1214,18 @@ __END__
 The AI can use this tool to spawn and coordinate multiple sub-agents:
 
     # Spawn a sub-agent (inherits current session model)
-    agent_operations(
-        operation => "spawn",
-        task => "Create a test file in scratch/",
-    )
+    agent_spawn(task => "Create a test file in scratch/")
     
     # Check agent status
-    agent_operations(operation => "list")
+    agent_list()
     
     # Check for messages
-    agent_operations(operation => "inbox")
+    agent_inbox()
     
     # Reply to an agent
-    agent_operations(
-        operation => "send",
+    agent_send(
         agent_id => "agent-1",
-        message => "Yes, proceed with that approach"
+        message  => "Yes, proceed with that approach"
     )
 
 =head1 SEE ALSO

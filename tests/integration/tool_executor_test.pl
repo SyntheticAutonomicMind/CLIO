@@ -117,9 +117,8 @@ test "FileOperations: create_file", sub {
     my $tool_call = {
         type => 'function',
         function => {
-            name => 'file_operations',
+            name => 'write_file',
             arguments => encode_json({
-                operation => 'create_file',
                 path => $test_file,
                 content => $content,
             })
@@ -149,9 +148,8 @@ test "FileOperations: read_file", sub {
     my $tool_call = {
         type => 'function',
         function => {
-            name => 'file_operations',
+            name => 'read_file',
             arguments => encode_json({
-                operation => 'read_file',
                 path => $test_file,
             })
         }
@@ -170,9 +168,8 @@ test "FileOperations: list_dir", sub {
     my $tool_call = {
         type => 'function',
         function => {
-            name => 'file_operations',
+            name => 'list_dir',
             arguments => encode_json({
-                operation => 'list_dir',
                 path => $test_dir,
             })
         }
@@ -192,9 +189,8 @@ test "FileOperations: grep_search", sub {
     my $tool_call = {
         type => 'function',
         function => {
-            name => 'file_operations',
+            name => 'grep_search',
             arguments => encode_json({
-                operation => 'grep_search',
                 query => 'Line 2',
                 path => $test_dir,
                 is_regexp => 0,
@@ -228,9 +224,8 @@ test "FileOperations: delete_file", sub {
     my $tool_call = {
         type => 'function',
         function => {
-            name => 'file_operations',
+            name => 'delete_file',
             arguments => encode_json({
-                operation => 'delete_file',
                 path => $test_file,
             })
         }
@@ -255,10 +250,8 @@ test "VersionControl: status", sub {
     my $tool_call = {
         type => 'function',
         function => {
-            name => 'version_control',
-            arguments => encode_json({
-                operation => 'status',
-            })
+            name => 'status',
+            arguments => encode_json({})
         }
     };
     
@@ -275,9 +268,8 @@ test "VersionControl: log", sub {
     my $tool_call = {
         type => 'function',
         function => {
-            name => 'version_control',
+            name => 'log',
             arguments => encode_json({
-                operation => 'log',
                 max_count => 5,
             })
         }
@@ -344,9 +336,8 @@ test "MemoryOperations: store", sub {
     my $tool_call = {
         type => 'function',
         function => {
-            name => 'memory_operations',
+            name => 'memory_store',
             arguments => encode_json({
-                operation => 'store',
                 key => 'test_key',
                 content => 'test value',
                 memory_dir => $memory_dir,
@@ -364,9 +355,8 @@ test "MemoryOperations: retrieve", sub {
     my $tool_call = {
         type => 'function',
         function => {
-            name => 'memory_operations',
+            name => 'memory_retrieve',
             arguments => encode_json({
-                operation => 'retrieve',
                 key => 'test_key',
                 memory_dir => $memory_dir,
             })
@@ -384,9 +374,8 @@ test "MemoryOperations: search", sub {
     my $tool_call = {
         type => 'function',
         function => {
-            name => 'memory_operations',
+            name => 'memory_search',
             arguments => encode_json({
-                operation => 'search',
                 query => 'test',
                 memory_dir => $memory_dir,
             })
@@ -406,8 +395,8 @@ say "-" x 80;
 say "Error Handling Tests";
 say "-" x 80;
 
-# Test: invalid operation
-test "Error: invalid operation", sub {
+# Test: non-callable name
+test "Error: non-callable name", sub {
     my $tool_call = {
         type => 'function',
         function => {
@@ -424,10 +413,10 @@ test "Error: invalid operation", sub {
     # Errors may be returned as "ERROR: ..." plain text, not JSON
     if ($result_json =~ /^ERROR:/) {
         # Plain text error - test passes (tool failed as expected)
-        assert(1, "Should fail for invalid operation");
+        assert(1, "Should fail for a non-callable name");
     } else {
         my $result = decode_json($result_json);
-        assert(!$result->{success}, "Should fail for invalid operation");
+        assert(!$result->{success}, "Should fail for a non-callable name");
         assert($result->{error}, "Should have error message");
     }
 };
@@ -437,9 +426,8 @@ test "Error: missing parameters", sub {
     my $tool_call = {
         type => 'function',
         function => {
-            name => 'file_operations',
+            name => 'read_file',
             arguments => encode_json({
-                operation => 'read_file',
                 # Missing path
             })
         }

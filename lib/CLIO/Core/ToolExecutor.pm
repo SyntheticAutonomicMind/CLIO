@@ -213,31 +213,19 @@ sub execute_tool {
     # how "file_operations" and "delete" silently became file reads and memory
     # deletes. MCP and plugin tools are appended to the API definitions by
     # WorkflowOrchestrator and carry their own prefixes.
-    # A canonical tool name is accepted only when the caller also states an
-    # operation the tool implements. That is the text-based tool-call format
-    # local models emit ("[file_operations read_file]"); the operation is
-    # explicit, so this is not a guess. A canonical name without an operation
-    # (the old "infer from {path}" path) is still rejected.
-    my $canonical_with_operation = 0;
-    if (!$tool_registry->is_emitted_name($declared_name)
-        && $arguments && ref($arguments) eq 'HASH'
-        && defined $arguments->{operation} && length $arguments->{operation}
-        && exists $tool_registry->{tools}{$declared_name}) {
-        my $candidate = $tool_registry->{tools}{$declared_name};
-        $canonical_with_operation = 1
-            if $candidate->validate_operation($arguments->{operation});
-    }
-
+    # A grouping name plus an operation is NOT accepted here. The text format
+    # that produces it ("[file_operations read_file]") is normalized by
+    # ToolCallExtractor, which knows it is reading text; by the time a call
+    # reaches this point the name must already be callable. Anything else is a
+    # name the model invented, and the error below is the recovery path.
     if (defined $declared_name
         && $declared_name !~ /^(?:mcp_|plugin_)/
-        && !$tool_registry->is_emitted_name($declared_name)
-        && !$canonical_with_operation) {
+        && !$tool_registry->is_emitted_name($declared_name)) {
         log_debug('ToolExecutor',
             "Rejecting non-emitted tool name '$declared_name'");
         return $self->_error_result(
             "Unknown tool: $declared_name (this name is not part of the current tool set). "
-            . "Use one of the callable names from the tool definitions. "
-            . "A canonical tool name is accepted only with an explicit operation it implements."
+            . "Use one of the callable names from the tool definitions, exactly as written there."
         );
     }
     

@@ -288,7 +288,7 @@ Walk through your draft with the user:
 - Show what the analysis found
 - Ask if each section feels accurate
 - Let them add, remove, or modify anything
-- When they're satisfied, save it with the file_operations tool to: ~/.clio/profile.md
+- When they're satisfied, save it with `write_file` to: ~/.clio/profile.md
 
 The file path is: ${\CLIO::Profile::Manager->new()->profile_path()}
 

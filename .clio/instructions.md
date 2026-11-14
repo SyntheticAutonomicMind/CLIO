@@ -9,7 +9,7 @@ This protocol runs once, at the very first turn of a session — when the messag
 When the history is empty:
 
 1. `git status --short` — see what is already modified in the working tree.
-2. For any unstaged or staged files, `memory_operations(operation: "recall_sessions", query: "FILENAME")` to learn what was being done with them.
+2. For any unstaged or staged files, call `recall_sessions(query: "FILENAME")` to learn what was being done with them.
 3. If a file is modified in the tree and you do not know why, it is part of THIS session's work until proven otherwise. Investigate before treating anything as out of scope.
 
 **The ownership rule.** There is no "out of scope" for files that were already modified when the session opened. Unbroken Method Pillar 2 applies to all code in the tree, not just code the user explicitly mentions. Never label in-tree work as "pre-existing" or "not my responsibility" without explicit confirmation from the user and a concrete handoff plan.
@@ -65,7 +65,7 @@ This project follows **The Unbroken Method** for human-AI collaboration. This is
 
 ## Session Handoff Procedures
 
-When ending a session, create handoff notes in `ai-assisted/YYYYMMDD/HHMM/` with `CONTINUATION_PROMPT.md` and `AGENT_PLAN.md`. The full handoff procedure — directory format, the NEVER-COMMIT rule, required sections for each file, and the git staging checklist — is maintained as a reusable skill: load `session-handoff` with `/skill_operations load session-handoff`.
+When ending a session, create handoff notes in `ai-assisted/YYYYMMDD/HHMM/` with `CONTINUATION_PROMPT.md` and `AGENT_PLAN.md`. The full handoff procedure — directory format, the NEVER-COMMIT rule, required sections for each file, and the git staging checklist — is maintained as a reusable skill: load it with `skill_load(name: "session-handoff")`.
 
 ---
 

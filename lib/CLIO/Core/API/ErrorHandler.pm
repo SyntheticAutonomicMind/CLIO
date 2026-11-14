@@ -793,14 +793,16 @@ sub handle_api_error {
                 my $tool_schema      = '';
 
                 if ($failed_tool_name ne 'unknown') {
-                    my $tool_def = $wo->{tool_registry}->get_tool($failed_tool_name);
-                    if ($tool_def) {
-                        my $params = $tool_def->{function}{parameters};
-                        if ($params) {
-                            require JSON::PP;
-                            $tool_schema = "\n\nCorrect schema for $failed_tool_name:\n" .
-                                           JSON::PP->new->pretty->encode($params);
-                        }
+                    # get_definition returns the narrow schema the model was
+                    # shown for this callable. get_tool returns the tool
+                    # object, which has no 'function' key - asking it for the
+                    # schema silently produced no schema at all.
+                    my $tool_def = $wo->{tool_registry}->get_definition($failed_tool_name);
+                    my $params = $tool_def ? $tool_def->{parameters} : undef;
+                    if ($params) {
+                        require JSON::PP;
+                        $tool_schema = "\n\nCorrect schema for $failed_tool_name:\n" .
+                                       JSON::PP->new->pretty->encode($params);
                     }
                 }
 

@@ -2227,7 +2227,7 @@ Tune the behavior with:
 : /skills autocreate off        # disable; the create tool operation still works manually
 ```
 
-The setting persists in config as `auto_create_skills` (0/1). When you disable auto-creation, the agent still has access to the `skill_operations(create)` tool operation, so it can write a skill on demand when you ask.
+The setting persists in config as `auto_create_skills` (0/1). When you disable auto-creation, the agent still has the `skill_create` tool, so it can write a skill on demand when you ask.
 
 ### System Prompts
 

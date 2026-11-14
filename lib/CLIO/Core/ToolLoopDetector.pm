@@ -7,6 +7,7 @@ use strict;
 use warnings;
 use utf8;
 use feature 'say';
+use CLIO::Tools::Registry ();
 
 =head1 NAME
 
@@ -381,6 +382,17 @@ respective tables. Unknown tools default to state-changing.
 sub _is_state_changing {
     my ($self, $tool_name, $args) = @_;
     $args = {} unless ref($args) eq 'HASH';
+
+    # Calls arrive under the emitted callable name (write_file, grep_search,
+    # todo_read), not the grouping tool. Resolve to the owning tool and
+    # operation so the read-only tables below keep matching.
+    my $owner = CLIO::Tools::Registry->classify_callable(
+        $tool_name, $args->{operation});
+    if ($owner) {
+        $tool_name = $owner->{tool};
+        $args = { %$args, operation => $owner->{operation} }
+            if defined $owner->{operation};
+    }
 
     return 1 if $tool_name eq 'apply_patch';
 

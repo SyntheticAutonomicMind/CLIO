@@ -63,7 +63,7 @@ Render the dynamic portions of a projection as natural prose:
 active task (as plain text, no label), active todos as a checklist,
 environment (working directory first), and context files. Relevant
 memory (LTM) is not rendered here; it is available on demand via
-memory_operations(search).
+memory_search.
 
 The compressed tail (YaRN summary of dropped turns) is rendered
 as-is - it already contains its own section labels (Commits, Files,

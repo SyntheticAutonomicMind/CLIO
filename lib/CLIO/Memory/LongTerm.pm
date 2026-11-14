@@ -43,15 +43,15 @@ CLIO::Memory::LongTerm - Dynamic experience database for project-specific learni
 LongTerm memory stores patterns learned from actual usage across sessions.
 Unlike static configuration (.clio/instructions.md), LTM is populated by AGENTS.
 
-IMPORTANT FOR AGENTS: Use the memory_operations tool to store discoveries when:
+IMPORTANT FOR AGENTS: Use the memory tools to store discoveries when:
   - You fix a bug or find a root cause
   - You learn a new code pattern that applies project-wide
   - You discover a problem-solution mapping
   - You complete complex tasks with successful workflows
 
-Syntax: memory_operations(operation: "add_discovery", fact: "...", confidence: 0.9)
-        memory_operations(operation: "add_solution", error: "...", solution: "...")
-        memory_operations(operation: "add_pattern", pattern: "...", confidence: 0.85)
+Syntax: add_discovery(fact: "...", confidence: 0.9)
+        add_solution(error: "...", solution: "...")
+        add_pattern(pattern: "...", confidence: 0.85)
 
 This keeps LTM clean and prevents noise from heuristic auto-capture.
 

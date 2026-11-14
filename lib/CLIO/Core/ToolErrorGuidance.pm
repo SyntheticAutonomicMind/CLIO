@@ -47,7 +47,11 @@ sub new {
     my ($class, %args) = @_;
 
     my $self = {
-        debug => $args{debug} // 0,
+        debug         => $args{debug} // 0,
+        # Optional. When present, unknown-tool guidance can name the callables
+        # the model should have used instead of describing them in the
+        # abstract.
+        tool_registry => $args{tool_registry},
     };
     bless $self, $class;
 
@@ -144,7 +148,12 @@ Categorize the error to provide targeted guidance.
 
 sub _categorize_error {
     my ($self, $error, $tool_name) = @_;
-    
+
+    # The dispatcher refused the name: it is not a callable in this build.
+    # This must come first - the message is not a "the tool ran and failed"
+    # error, and generic file/not-found rules would mislabel it.
+    return 'unknown_tool' if $error =~ /^unknown tool:|is not part of the current tool set/i;
+
     # Edit/patch content mismatch errors (must check BEFORE generic file_not_found)
     return 'edit_content_mismatch' if $error =~ /string not found in file|old_?string not found/i;
     return 'edit_content_mismatch' if $error =~ /cannot find match position for chunk/i;
@@ -260,6 +269,43 @@ sub _categorize_error {
     return 'generic_error';
 }
 
+=head2 _example_arguments (Internal)
+
+Build a placeholder argument hash from a callable's own emitted schema, so an
+error message can show the shape of the call it is asking for.
+
+Arguments: $callable - emitted callable name
+
+Returns: Hashref of required parameter => type placeholder, or undef when the
+callable has no required parameters or no schema is available.
+
+=cut
+
+sub _example_arguments {
+    my ($self, $callable) = @_;
+
+    my $registry = $self->{tool_registry} or return undef;
+    my $def = eval { $registry->get_definition($callable) } or return undef;
+
+    my $required = $def->{parameters}{required} || [];
+    my $props    = $def->{parameters}{properties} || {};
+    return undef unless @$required;
+
+    my %example;
+    for my $name (@$required) {
+        my $type = $props->{$name}{type} // 'string';
+        $example{$name} =
+              $type eq 'number'  ? 0
+            : $type eq 'integer' ? 0
+            : $type eq 'boolean' ? \1
+            : $type eq 'array'   ? []
+            : $type eq 'object'  ? {}
+            :                      "<$name>";
+    }
+
+    return \%example;
+}
+
 =head2 _get_category_guidance
 
 Get guidance text specific to the error category.
@@ -279,6 +325,68 @@ sub _get_category_guidance {
     my ($self, $category, $tool_name, $error, $attempted, $tool_def) = @_;
 
     my %guidance = (
+        unknown_tool => sub {
+            my $text = "WHAT WENT WRONG: '$tool_name' is not a callable name in this build's tool set, so nothing ran.\n" .
+                       "The tool list is the complete set of callable names. Calling this name again, or adding an\n" .
+                       "'operation' field to it, will fail the same way.\n\n";
+
+            my $registry = $self->{tool_registry};
+
+            # The attempt usually carries the answer: a grouping name plus the
+            # operation it meant. Naming that one callable is a better fix than
+            # listing every operation the tool owns.
+            my $attempted_op = ref($attempted) eq 'HASH' ? $attempted->{operation} : undef;
+            if ($registry && defined $attempted_op && length $attempted_op) {
+                my $callable = $registry->get_operation_callable($tool_name, $attempted_op);
+                $callable ||= $attempted_op if $registry->is_emitted_name($attempted_op);
+
+                if ($callable) {
+                    my %retry = %$attempted;
+                    delete $retry{operation};
+                    # An empty body tells the model nothing; the schema does.
+                    my $example = $self->_example_arguments($callable);
+                    my $shown = %retry ? \%retry : ($example || {});
+                    my $params = eval { encode_json($shown) } || '{}';
+                    return $text
+                        . "HOW TO FIX: You meant the '$attempted_op' operation. Call the callable\n"
+                        . "'$callable' directly - it is the same operation under its published name:\n"
+                        . "  {\"name\": \"$callable\", \"parameters\": $params}\n"
+                        . "The 'operation' field is not part of that call; the parameters travel at the top level.";
+                }
+            }
+
+            # Direct hash lookup: get_tool() resolves aliases, which would
+            # answer with the owning tool for an emitted callable name and
+            # make a real callable look like a grouping tool.
+            my $tool = $registry ? $registry->{tools}{$tool_name} : undef;
+            if ($tool && $tool->can('get_operation_tool_definitions')) {
+                my $defs = $tool->get_operation_tool_definitions();
+                if ($defs && ref($defs) eq 'HASH' && keys %$defs) {
+                    my @callables = map { $registry->get_operation_callable($tool_name, $_) || $_ }
+                                    sort keys %$defs;
+                    $text .= "HOW TO FIX: '$tool_name' groups operations that are published as separate callables.\n" .
+                             "Call one of these names directly: " . join(', ', @callables) . ".\n" .
+                             "Put that callable's parameters at the top level of the arguments - no 'operation' field.";
+                    return $text;
+                }
+            }
+
+            my @similar = $self->_similar_callables($tool_name);
+            if (@similar) {
+                $text .= "HOW TO FIX: Call one of these names instead: " . join(', ', @similar) . ".\n";
+                if (@similar == 1) {
+                    my $example = $self->_example_arguments($similar[0]);
+                    if ($example) {
+                        my $params = eval { encode_json($example) } || '{}';
+                        $text .= "That callable takes: $params\n";
+                    }
+                }
+            } else {
+                $text .= "HOW TO FIX: Pick the callable from the tool list whose description matches what you want, and call it by that exact name.\n";
+            }
+            return $text;
+        },
+
         edit_content_mismatch => sub {
             return "WHAT WENT WRONG: Your edit failed because the file's current content has changed since you last read it.\n" .
                    "Your assumption about what the file contains is WRONG.\n\n" .
@@ -464,7 +572,7 @@ sub _get_category_guidance {
                    "HOW TO FIX: Check the path is correct. If you meant to pass a FILE path (where a " .
                    "directory was expected), note that grep_search now accepts file paths directly — " .
                    "pass the file as 'path' or 'directory' and it will search just that file. " .
-                   "If you need to CREATE the directory, call file_operations with operation='create_directory' first.\n" .
+                   "If you need to CREATE the directory, call create_directory first.\n" .
                    "TIP: Verify your current working directory with terminal_operations: exec 'pwd'.";
         },
 
@@ -507,7 +615,7 @@ sub _get_category_guidance {
 
         skill_not_found => sub {
             return "WHAT WENT WRONG: The skill name you provided is not in the catalog.\n" .
-                   "HOW TO FIX: Call skill_operations with operation='list' (no 'name' parameter) to see all available skills, then retry with the exact name from the catalog. " .
+                   "HOW TO FIX: Call skill_list (no 'name' parameter) to see all available skills, then retry with the exact name from the catalog. " .
                    "Skill names are case-sensitive and must match exactly.";
         },
 
@@ -719,6 +827,46 @@ sub _format_schema_help {
     return join("\n", @help);
 }
 
+=head2 _similar_callables
+
+Find emitted callable names that share a word with a name the model tried.
+
+Used by unknown-tool recovery when the attempted name is not a registered
+tool at all (a typo or an invented name). Token overlap is enough here: the
+goal is a short, plausible list to steer the next call, not a ranked spell
+checker.
+
+Arguments:
+- $name: the callable name that was attempted
+
+Returns: List of up to 6 emitted callable names, best overlap first
+
+=cut
+
+sub _similar_callables {
+    my ($self, $name) = @_;
+
+    my $registry = $self->{tool_registry};
+    return () unless $registry;
+
+    my %tokens = map { $_ => 1 } grep { length($_) > 2 } split /[^a-z0-9]+/, lc($name // '');
+    return () unless %tokens;
+
+    my @scored;
+    for my $candidate (sort keys %{ $registry->get_emitted_names() }) {
+        my $score = 0;
+        $score++ for grep { $tokens{$_} } split /_/, lc($candidate);
+        push @scored, [ $score, $candidate ] if $score;
+    }
+
+    return () unless @scored;
+
+    @scored = sort { $b->[0] <=> $a->[0] || $a->[1] cmp $b->[1] } @scored;
+    splice(@scored, 6) if @scored > 6;
+
+    return map { $_->[1] } @scored;
+}
+
 =head2 _get_examples_for_error
 
 Provide examples of correct usage for the tool.
@@ -727,69 +875,41 @@ Provide examples of correct usage for the tool.
 
 sub _get_examples_for_error {
     my ($self, $category, $tool_name) = @_;
-    
-    # Map tool names to example functions
-    my %examples = (
-        file_operations => sub {
-            return "--- CORRECT USAGE EXAMPLES ---\n" .
-                   "Reading a file:\n" .
-                   '  {"operation": "read_file", "path": "/path/to/file.txt"}\n' .
-                   "\n" .
-                   "Writing to a file:\n" .
-                   '  {"operation": "write_file", "path": "/path/to/file.txt", "content": "Hello world"}\n' .
-                   "\n" .
-                   "Searching files:\n" .
-                   '  {"operation": "grep_search", "query": "pattern", "pattern": "*.pm"}';
-        },
-        
-        interact => sub {
-            return "--- CORRECT USAGE EXAMPLES ---\n" .
-                   "Requesting user input:\n" .
-                   '  {"operation": "request_input", "message": "Which approach should I use?", "context": "Optional context here"}\n' .
-                   "\n" .
-                   "The message parameter is REQUIRED and must clearly ask the user for what you need.";
-        },
-        
-        version_control => sub {
-            return "--- CORRECT USAGE EXAMPLES ---\n" .
-                   "Check git status:\n" .
-                   '  {"operation": "status"}\n' .
-                   "\n" .
-                   "Make a commit:\n" .
-                   '  {"operation": "commit", "message": "description of changes"}\n' .
-                   "\n" .
-                   "View recent commits:\n" .
-                   '  {"operation": "log", "limit": 10}';
-        },
-        
-        terminal_operations => sub {
-            return "--- CORRECT USAGE EXAMPLES ---\n" .
-                   "Execute a command:\n" .
-                   '  {"operation": "exec", "command": "ls -la"}\n' .
-                   "\n" .
-                   "Validate command safety:\n" .
-                   '  {"operation": "validate", "command": "npm install"}';
-       },
+    # A name that is not callable has no schema to illustrate, and examples
+    # that show a different tool's shape would make the error longer without
+    # making the next call more likely to succeed.
+    return '' if $category eq 'unknown_tool';
 
-        todo_operations => sub {
-            return "--- CORRECT USAGE EXAMPLES ---\n" .
-                   "Write a todo list (EVERY item needs title, description, AND status):\n" .
-                   '  {"operation": "write", "todoList": [{"title": "Fix bug", "description": "Fix the null pointer in module X", "status": "not-started"}]}' . "\n" .
-                   "\n" .
-                   "Update todo status (uses todoUpdates, NOT todoList):\n" .
-                   '  {"operation": "update", "todoUpdates": [{"id": 1, "status": "in-progress"}]}' . "\n" .
-                   "\n" .
-                   "Add new todos (uses newTodos, NOT todoList):\n" .
-                   '  {"operation": "add", "newTodos": [{"title": "Write tests", "description": "Unit tests for module Y"}]}' . "\n" .
-                   "\n" .
-                   "CRITICAL: The 'description' field is REQUIRED for every todo item. Never omit it.";
+    # Only tools published as a single callable are keyed here. Tools that
+    # publish per-operation definitions are called by the operation name
+    # itself, and their own descriptions already carry the parameter shape.
+    my %examples = (
+        interact => sub {
+            return join("\n",
+                '--- CORRECT USAGE EXAMPLES ---',
+                'Requesting user input:',
+                '  {"operation": "request_input", "message": "Which approach should I use?", "context": "Optional context here"}',
+                '',
+                'The message parameter is REQUIRED and must clearly ask the user for what you need.',
+            );
+        },
+
+        terminal_operations => sub {
+            return join("\n",
+                '--- CORRECT USAGE EXAMPLES ---',
+                'Execute a command:',
+                '  {"operation": "exec", "command": "ls -la"}',
+                '',
+                'Validate command safety:',
+                '  {"operation": "validate", "command": "npm install"}',
+            );
         },
     );
-    
+
     if (exists $examples{$tool_name}) {
         return $examples{$tool_name}->();
     }
-    
+
     return "--- SCHEMA DETAILS ---\nRefer to the schema section above for parameter details.";
 }
 

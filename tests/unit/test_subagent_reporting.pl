@@ -307,8 +307,8 @@ subtest 'Inbox truncates long messages and points at the report' => sub {
         'inbox output is bounded');
     like($result->{output}, qr/truncated/,
         'truncation is signposted');
-    like($result->{output}, qr/operation: 'report'/,
-        'the pointer names the report operation');
+    like($result->{output}, qr/agent_report\(agent_id: 'agent-1'\)/,
+        'the pointer names the agent_report callable');
 };
 
 # ============================================================================

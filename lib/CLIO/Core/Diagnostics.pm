@@ -425,7 +425,7 @@ sub deduplicate_paragraphs {
 Returns guidance messages for specific tools when they fail with malformed JSON.
 
 Arguments:
-- $tool_name: Name of the tool that failed (e.g., 'file_operations', 'todo_operations')
+- $tool_name: Callable the model attempted (e.g., 'read_file', 'todo_add')
 
 Returns: Guidance string with alternative approaches and required field reminders.
          Empty string for unknown tool names.
@@ -437,6 +437,15 @@ sub get_tool_specific_guidance {
 
     return '' unless defined $tool_name;
 
+    # Callers pass the callable name from the failed call. Per-operation
+    # callables (read_file, todo_add) are not the grouping tool names the
+    # guidance below is keyed by, so resolve before matching.
+    my $owner = eval {
+        require CLIO::Tools::Registry;
+        CLIO::Tools::Registry->classify_callable($tool_name);
+    };
+    $tool_name = $owner->{tool} if $owner;
+
     # Special guidance for read_tool_result failures
     if ($tool_name eq 'file_operations') {
         return <<'GUIDANCE';
@@ -445,10 +454,10 @@ ALTERNATIVE APPROACHES FOR FILE OPERATIONS:
 If read_tool_result is failing repeatedly, try these instead:
 1. Use terminal_operations with head/tail/sed to view specific portions:
    terminal_operations(operation: "exec", command: "head -n 50 /path/to/file")
-2. Use file_operations with read_file and line ranges:
-   file_operations(operation: "read_file", path: "/path/to/file", start_line: 1, end_line: 100)
+2. Use read_file with line ranges:
+   read_file(path: "/path/to/file", start_line: 1, end_line: 100)
 3. Use grep_search to find specific patterns instead of reading entire file:
-   file_operations(operation: "grep_search", query: "pattern")
+   grep_search(query: "pattern")
 
 GUIDANCE
     }

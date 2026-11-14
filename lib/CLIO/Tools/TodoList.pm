@@ -70,13 +70,15 @@ Manage a structured todo list to track progress and plan tasks.
 
 **MANDATORY** for multi-step tasks. Skip only for single trivial tasks or conversational questions.
 
-REQUIRES the 'operation' parameter on every call. The 'description' field is REQUIRED on every todo item.
+Each operation below is published as its own callable (todo_read, todo_write,
+todo_add, todo_update). Call it by that name; there is no 'operation' field.
+The 'description' field is REQUIRED on every todo item.
 
-OPERATIONS (which parameter each operation needs):
--  read:    no params beyond operation
--  write:   REQUIRES 'todoList' (full array, replaces existing list)
--  update:  REQUIRES 'todoUpdates' (NOT todoList - array of {id, ...changes})
--  add:     REQUIRES 'newTodos' (NOT todoList - array of new todos to append)
+OPERATIONS (which parameter each callable needs):
+-  todo_read:   no params
+-  todo_write:  REQUIRES 'todoList' (full array, replaces existing list)
+-  todo_update: REQUIRES 'todoUpdates' (NOT todoList - array of {id, ...changes})
+-  todo_add:    REQUIRES 'newTodos' (NOT todoList - array of new todos to append)
 
 COMMON MISTAKE: Sending todo content in the wrong field. The 'update' operation needs
 'todoUpdates' (array of {id, status, ...}). The 'write' operation needs 'todoList'

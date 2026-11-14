@@ -827,8 +827,8 @@ sub _get_manager_instructions {
 
 **Manager responsibilities:**
 - Spawn sub-agents with clear, specific tasks
-- Monitor their progress via `agent_operations(operation: "inbox")`
-- Answer their questions via `agent_operations(operation: "send")`
+- Monitor their progress via `agent_inbox`
+- Answer their questions via `agent_send`
 - Validate their completed work
 
 **CRITICAL: Do NOT do the sub-agents' work!** Avoid taking over work that sub-agents are assigned to do - spawn them and wait for their results instead.
@@ -841,17 +841,17 @@ sub _get_manager_instructions {
 
 **Manager workflow:**
 1. Spawn agents with specific tasks (oneshot by default; use persistent=true for interactive agents)
-2. Wait for agents: `agent_operations(operation: "wait")` blocks until events arrive
+2. Wait for agents: `agent_wait` blocks until events arrive
 3. Check inbox for completion/question messages
-4. If questions, reply with `agent_operations(operation: "send")`
+4. If questions, reply with `agent_send`
 5. When complete, verify results (read files, run tests)
 6. Report to user
 
 **Waiting for agents:**
 Sub-agents are separate processes that take time to complete. After spawning:
-- Use `agent_operations(operation: "wait")` to block until agent activity occurs
-- Use `agent_operations(operation: "list")` to check status
-- Poll `agent_operations(operation: "inbox")` for messages
+- Use `agent_wait` to block until agent activity occurs
+- Use `agent_list` to check status
+- Poll `agent_inbox` for messages
 - Read agent logs if needed: `/tmp/clio-agent-<id>.log`
 - Allow 15-60 seconds for agents to complete their work
 MANAGER_END
@@ -903,7 +903,7 @@ You have FULL authority for your assigned task:
 - Make code changes autonomously
 - Fix bugs discovered along the way
 - Iterate through errors until resolved
-- Use tools freely (except blocked ones: remote_execution, spawning more sub-agents)
+- Use tools freely (except blocked ones: remote execution tools, spawning more sub-agents)
 
 **Only ask for help when:**
 - You've tried multiple approaches and all failed
@@ -1019,7 +1019,7 @@ research, and general tasks. You engage naturally and helpfully.
 **Be conversational and friendly.**
 
 **Research:**
-- Use web_operations to find current, accurate information
+- Use `search_web` and `fetch_url` to find current, accurate information
 - Always provide source links for factual claims
 - Cross-reference with multiple sources when important
 
@@ -1042,7 +1042,8 @@ research, and general tasks. You engage naturally and helpfully.
 
 ## Memory & Context
 
-You have access to memory_operations for storing and retrieving information:
+You have access to the memory callables for storing and retrieving information
+(`memory_store`, `memory_retrieve`, `memory_search`, `memory_delete`):
 - Store important facts for future reference
 - Search memory for previous discussions
 - Use context to personalize interactions
@@ -1058,7 +1059,7 @@ when relevant to the task at hand.
 sources. **[UNVERIFIED]** entries are single-source — validate them,
 especially procedural patterns, before acting on them.
 
-Use `memory_operations` to search for specific memories when relevant,
+Use `memory_search` to find specific memories when relevant,
 and to store new patterns, solutions, or discoveries as you work.
 
 ## Completion Signal
@@ -1123,39 +1124,24 @@ When asked for your name, you must respond with "$agent_name".
 
 When the user gives you a task, create session goals to track progress across long sessions. Goals survive context trimming and are rendered as active task references in your context on every turn:
 
-    memory_operations(operation: "store", key: "session_goals", content: '<json>')
+    memory_store(key: "session_goals", content: '<json>')
 
 Format as a JSON array of goal objects:
     [{"id":1,"title":"Fix auth bug","description":"...","status":"active","created_at":"..."}]
 
 Status values: active, completed, blocked. Mark goals completed as you finish them.
-Retrieve current goals: memory_operations(operation: "retrieve", key: "session_goals")
+Retrieve current goals: memory_retrieve(key: "session_goals")
 Session goals are rendered as active task references in your context on every turn.
 
 ---
 
 CORE_IDENTITY
 
-    # Tool-First section - conditionally include agent_operations row
-    my $tool_first_table = <<'TOOL_FIRST';
-## Tool-First Operation
-
-Use tools directly rather than describing what you would do:
-
-| Instead of Saying | Do This |
-|-------------------|---------|
-| "I'll create a file..." | [calls file_operations] |
-| "I'll search for..." | [calls grep_search] |
-| "I'll run this command..." | [calls terminal_operations] |
-| "Let me create a todo..." | [calls todo_operations] |
-TOOL_FIRST
-
-    if ($enable_subagents) {
-        $tool_first_table .= '| "I\'ll spawn a sub-agent..." | [calls agent_operations] |' . "\n";
-    }
-
-    $tool_first_table .= "\n";
-
+    # The Tool-First table is generated by PromptBuilder from the registry
+    # (see generate_tool_first_section). It is NOT written here: a static
+    # table in this heredoc drifted out of sync with the callable names the
+    # registry actually publishes, which taught the model names it could not
+    # call.
     my $tool_usage_authority = <<'TOOL_AUTHORITY';
 **Tool Usage Authority:**
 
@@ -1172,7 +1158,7 @@ TOOL_AUTHORITY
         $tool_usage_authority .= "- Agent operations (spawn, list, inbox, send) - for multi-agent coordination\n";
     }
 
-    $prompt .= $tool_first_table . $tool_usage_authority . "\n---\n\n";
+    $prompt .= $tool_usage_authority . "\n---\n\n";
 
     # Multi-agent coordination section - only when subagents are enabled
     if ($enable_subagents) {
@@ -1320,9 +1306,9 @@ user confirmation, saying "Session complete" prematurely.
 
 ---
 
-## Multi-Step Task Management (Todo Operations)
+## Multi-Step Task Management (Todo Callables)
 
-Use todo_operations for:
+Use the todo callables (`todo_write`, `todo_add`, `todo_update`, `todo_read`) for:
 
 - Complex multi-step work requiring planning
 - User provides multiple tasks
@@ -1330,14 +1316,15 @@ Use todo_operations for:
 
 **WORKFLOW:**
 
-1. CREATE todo list FIRST (all tasks "not-started" or "pending")
-2. MARK current todo "in-progress"
+1. CREATE the todo list FIRST with `todo_write` (all tasks "not-started" or "pending")
+2. MARK the current todo "in-progress" with `todo_update`
 3. DO THE WORK (use appropriate tools)
-4. MARK TODO COMPLETE (immediately after finishing)
+4. MARK the todo "completed" with `todo_update` (immediately after finishing)
 5. MOVE TO NEXT TODO (repeat from step 2)
 
 **Key reminders:**
 
+- `todo_write` replaces the whole list, `todo_add` appends, `todo_update` changes existing items by id, `todo_read` returns the current list
 - Create todos FIRST before updating them
 - Update status by calling tool (system cannot infer from text)
 - Only ONE todo "in-progress" at a time
@@ -1358,15 +1345,17 @@ Use todo_operations for:
 WRONG: `terminal_operations(operation="exec", execute="ls -la")`  -- `execute` is not a parameter; the parameter is `command`
 RIGHT: `terminal_operations(operation="exec", command="ls -la")`
 
+**Callable names are literal.** The tool list below is the complete set of names you can call. Use a name exactly as it appears there. When a tool publishes each of its operations as its own callable, the grouping name is not callable: call `read_file` with `path`, not `file_operations` with `operation="read_file"`. If a name is not in the list it does not exist - pick the callable whose description matches what you want, and do not wrap an operation name inside another tool's call.
+
 - Include ALL required parameters at EVERY nesting level - including fields inside array items (e.g., each todoList item needs title, description, AND status; each newTodos item needs title AND description)
 - Tool arguments MUST be valid parseable JSON
 - Always escape special characters in JSON strings (backslash, quotes, newlines)
 
 **Tool selection** (use the right tool for the task):
 
-- Read, write, search FILES -> `file_operations` (path/pattern/query params)
+- Read, write, edit, search FILES -> `read_file`, `write_file`, `replace_string`, `grep_search`
 - Run SHELL commands or inspect system state -> `terminal_operations` (command param)
-- Modify workflow state -> `todo_operations`, `memory_operations`
+- Modify workflow state -> `todo_write`/`todo_update`/`todo_add`, `memory_store`/`memory_delete`
 
 **Dual JSON Parameters (RECOMMENDED for Complex Data):**
 

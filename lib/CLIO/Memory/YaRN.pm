@@ -555,8 +555,23 @@ sub compress_messages {
                         $collab_tool_calls{$tc->{id}} = $question;
                     }
 
-                    # Capture file paths for file_operations and apply_patch
-                    if ($name =~ /^(file_operations|apply_patch)$/) {
+                    # Capture file paths for file operations and patches.
+                    # Calls arrive under the emitted callable name
+                    # (write_file, replace_string, apply_patch), but history
+                    # recorded before the split carries the grouping name plus
+                    # an operation. Resolve both forms through the registry.
+                    my ($op_in_args) = $args_str =~ /"operation"\s*:\s*"([^"]*)"/;
+                    my $owner = eval {
+                        require CLIO::Tools::Registry;
+                        CLIO::Tools::Registry->classify_callable($name, $op_in_args);
+                    };
+                    # 'file_operations' is not a callable, but a recorded call
+                    # under that name is still a file operation - failed calls
+                    # and history predating the split carry it with no
+                    # operation field to resolve.
+                    if ($name eq 'apply_patch'
+                        || $name eq 'file_operations'
+                        || ($owner && $owner->{tool} eq 'file_operations')) {
                         while ($args_str =~ /"(?:path|new_path|old_path)"\s*:\s*"([^"]+)"/g) {
                             push @files_touched, $1 unless $1 =~ /^\./;
                         }

@@ -72,11 +72,44 @@ Reference: https://docs.vllm.ai/en/latest/api/vllm/parser/deepseek_v32/
 
 sub new {
     my ($class, %opts) = @_;
-    
+
     return bless {
         debug => $opts{debug} || 0,
         known_tools => $opts{known_tools} || [],
+        # Optional. Text formats name a grouping tool plus an operation
+        # ("[file_operations read_file]"); the registry knows which callable
+        # that pair is published as. Resolving here - where the parser already
+        # knows it is reading text - keeps that compatibility out of the
+        # dispatcher, which must stay strict so a model that invents a name
+        # gets a real error instead of a silent redirect.
+        registry => $opts{registry},
     }, $class;
+}
+
+=head2 _resolve_callable
+
+Map a grouping tool name plus an operation to the callable the registry
+publishes for it.
+
+Arguments:
+- $tool_name: name as written in the text format
+- $operation: operation as written, or undef
+
+Returns: (callable_name, resolved_boolean). When the pair does not resolve,
+the original name is returned so dispatch produces an honest error.
+
+=cut
+
+sub _resolve_callable {
+    my ($self, $tool_name, $operation) = @_;
+
+    my $registry = $self->{registry};
+    return ($tool_name, 0) unless $registry && defined $operation;
+
+    my $callable = $registry->get_operation_callable($tool_name, $operation);
+    return ($callable, 1) if $callable;
+
+    return ($tool_name, 0);
 }
 
 =head2 extract
@@ -487,6 +520,12 @@ sub _extract_clio_format {
         my ($tool_name, $operation, $json_str) = ($1, $2, $3);
         
         log_debug('ToolCallExtractor', "Found CLIO format: [$tool_name $operation]");
+
+        # The bracketed form names the grouping tool. Emit the callable the
+        # registry publishes for that operation, and drop the textual
+        # 'operation' key: a per-operation callable takes only its own
+        # parameters, while a consolidated callable keeps the key.
+        my ($callable, $resolved) = $self->_resolve_callable($tool_name, $operation);
         
         # The JSON might already contain the operation, or we need to wrap it
         my $arguments_data = safe_decode_json($json_str);
@@ -499,6 +538,9 @@ sub _extract_clio_format {
         if (ref($arguments_data) eq 'HASH' && !exists $arguments_data->{operation}) {
             $arguments_data->{operation} = $operation;
         }
+        if ($resolved && ref($arguments_data) eq 'HASH') {
+            delete $arguments_data->{operation};
+        }
         
         # Re-encode as JSON string
         my $arguments_json = encode_json($arguments_data);
@@ -507,7 +549,7 @@ sub _extract_clio_format {
             id => $self->_generate_id(),
             type => 'function',
             function => {
-                name => $tool_name,
+                name => $callable,
                 arguments => $arguments_json
             }
         };
@@ -554,12 +596,26 @@ sub _extract_call_format {
             log_debug('ToolCallExtractor', "Failed to parse CALL format JSON: $@");
             next;
         }
-        
+
+        # CALL names the grouping tool and carries the operation inside the
+        # JSON, so resolve after parsing. When the pair resolves to a
+        # per-operation callable, the operation key is not part of that
+        # callable's parameters and is dropped.
+        my $callable = $tool_name;
+        if (ref($arguments_data) eq 'HASH' && length($arguments_data->{operation} // '')) {
+            my ($resolved_name, $resolved) = $self->_resolve_callable($tool_name, $arguments_data->{operation});
+            if ($resolved) {
+                $callable = $resolved_name;
+                delete $arguments_data->{operation};
+                $json_str = encode_json($arguments_data);
+            }
+        }
+
         push @tool_calls, {
             id => $self->_generate_id(),
             type => 'function',
             function => {
-                name => $tool_name,
+                name => $callable,
                 arguments => $json_str
             }
         };

@@ -68,12 +68,11 @@ my $executor = CLIO::Core::ToolExecutor->new(
 );
 ok($executor, "ToolExecutor created");
 
-# Test 5: Execute a file_operations tool (proper format)
+# Test 5: Execute the published write_file callable
 my $tool_call = {
     function => {
-        name => 'file_operations',
+        name => 'write_file',
         arguments => encode_json({
-            operation => 'create_file',
             path => 'test.txt',
             content => 'Hello, World!'
         })
@@ -92,9 +91,8 @@ ok(-f 'test.txt', "File was created");
 # Test 6: Read back the file
 my $read_call = {
     function => {
-        name => 'file_operations',
+        name => 'read_file',
         arguments => encode_json({
-            operation => 'read_file',
             path => 'test.txt'
         })
     }
@@ -112,8 +110,8 @@ $mock_api->set_response({
         id => 'call_abc123',
         type => 'function',
         function => {
-            name => 'file_operations',
-            arguments => '{"operation": "read_file", "path": "test.txt"}'
+            name => 'read_file',
+            arguments => '{"path": "test.txt"}'
         }
     }]
 });

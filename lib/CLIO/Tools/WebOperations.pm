@@ -39,7 +39,9 @@ sub new {
         name => 'web_operations',
         description => q{Web operations: fetch URLs and search.
 
-REQUIRES the 'operation' parameter on every call. 'url' is required for fetch_url; 'query' is required for search_web.
+Each operation below is published as its own callable: fetch_url and search_web.
+Call it by that name; there is no 'operation' field. 'url' is required for
+fetch_url; 'query' is required for search_web.
 
 Operations:
 -  fetch_url - Fetch content from URL
@@ -566,7 +568,7 @@ sub _check_local_history {
     return '' unless @matches;
     
     return "[LOCAL HISTORY NOTE: Query '$query' may have been discussed in previous sessions: " .
-           join(", ", @matches) . ". Use memory_operations(recall_sessions) for details.]\n\n";
+           join(", ", @matches) . ". Use recall_sessions(query: \"...\") for details.]\n\n";
 }
 
 =head2 _prepend_local_note

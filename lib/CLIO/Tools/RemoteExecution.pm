@@ -98,7 +98,10 @@ sub new {
         name => 'remote_execution',
         description => q{Execute CLIO tasks on remote systems via SSH.
 
-REQUIRES the 'operation' parameter on every call. 'host' is REQUIRED for execute_remote.
+Each operation below is published as its own callable. Call it by that name
+with its own parameters; there is no 'operation' field. 'host' is REQUIRED by
+every operation that targets one system; execute_parallel takes 'targets'
+instead.
 
 This tool enables running CLIO on remote systems to offload work, gather information, or coordinate across multiple devices.
 

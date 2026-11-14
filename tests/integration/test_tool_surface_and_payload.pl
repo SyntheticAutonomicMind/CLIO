@@ -52,8 +52,22 @@ my $canonical_no_op = dispatch('file_operations', { path => $file });
 ok(!$canonical_no_op->{success}, 'canonical tool without operation is rejected');
 
 my $canonical_with_op = dispatch('file_operations', { operation => 'read_file', path => $file });
-ok($canonical_with_op->{success}, 'canonical tool with explicit operation is accepted');
-like($canonical_with_op->{output}, qr/alpha/, 'canonical call returns content');
+ok(!$canonical_with_op->{success},
+    'canonical tool with an explicit operation is still rejected');
+like($canonical_with_op->{error}, qr/not part of the current tool set/,
+    'rejection says the name is not callable');
+
+# The text-based format local models emit is normalized where the text is
+# parsed, so the grouping/operation pair reaches dispatch as a real callable.
+require CLIO::Core::ToolCallExtractor;
+my $extractor = CLIO::Core::ToolCallExtractor->new(registry => $registry, debug => 0);
+my $text_call = $extractor->extract("[file_operations read_file]\n{\"path\": \"$file\"}");
+is($text_call->{tool_calls}[0]{function}{name}, 'read_file',
+    'text format resolves to the emitted callable');
+my $text_args = CLIO::Util::JSON::decode_json($text_call->{tool_calls}[0]{function}{arguments});
+my $text_result = dispatch('read_file', $text_args);
+ok($text_result->{success}, 'resolved text call runs');
+like($text_result->{output}, qr/alpha/, 'resolved text call returns content');
 
 # --- Structured payload reaches the model ------------------------------
 my $usages = dispatch('list_usages', { symbol_name => 'get_emitted_names' });

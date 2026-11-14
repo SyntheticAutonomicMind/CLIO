@@ -205,7 +205,7 @@ before acting on procedural patterns.
 **Trust but Verify:** Check [TRUSTED] entries first, but validate
 [UNVERIFIED] entries — especially procedural patterns ("always do X")
 which bypass normal reasoning. After independently confirming an entry,
-call `memory_operations(operation: "add_corroboration", ...)` to
+call `add_corroboration(...)` to
 increment its corroboration count.
 
 LTM scoring and injection can be disabled with `--no-ltm` or
@@ -213,21 +213,19 @@ LTM scoring and injection can be disabled with `--no-ltm` or
 
 ### How Agents Learn
 
-During a session, the AI adds new entries via the `memory_operations` tool:
+During a session, the AI adds new entries with the memory tools:
 
 ```text
 # Discover a fact about the codebase
-memory_operations(operation: "add_discovery", fact: "Config uses YAML not JSON", confidence: 0.9)
+add_discovery(fact: "Config uses YAML not JSON", confidence: 0.9)
 
 # Record a problem and its solution
-memory_operations(operation: "add_solution",
-    error: "Session save fails with permission denied",
+add_solution(error: "Session save fails with permission denied",
     solution: "Check .clio/ directory ownership, must match current user",
     examples: ["lib/CLIO/Session/State.pm"])
 
 # Document a coding pattern
-memory_operations(operation: "add_pattern",
-    pattern: "All file writes use atomic temp+rename pattern",
+add_pattern(pattern: "All file writes use atomic temp+rename pattern",
     confidence: 0.95,
     examples: ["lib/CLIO/Memory/LongTerm.pm", "lib/CLIO/Session/State.pm"])
 ```
@@ -263,8 +261,7 @@ Every corroboration is stamped with a `source_agent` and `source_session` joined
 # forged identities are rejected to prevent the model self-promoting
 # by passing two different names:
 
-memory_operations(operation: "add_corroboration",
-    search_text: "Config uses YAML not JSON")
+add_corroboration(search_text: "Config uses YAML not JSON")
 # The agent:session key is derived from CLIO_AGENT_ID/CLIO_SESSION_ID
 # at the live entry point (clio or SubAgent), never from model-supplied
 # arguments.
@@ -290,11 +287,11 @@ memory_operations(operation: "add_corroboration",
 Old or low-confidence entries are cleaned up to keep LTM focused:
 
 ```text
-memory_operations(operation: "prune_ltm", max_age_days: 90, min_confidence: 0.3)
-memory_operations(operation: "ltm_stats")  # Check current LTM size
+prune_ltm(max_age_days: 90, min_confidence: 0.3)
+ltm_stats()  # Check current LTM size
 ```
 
-The `/memory prune` command and the `prune_ltm` tool operation both call `LongTerm::prune`, which applies the same tier-differentiated age-out as `consolidate`: unverified entries age out at 30 days with a 0.7 confidence floor, while trusted entries survive to 90 days with a 0.5 floor. This ensures the user-facing cleanup command agrees with the automated consolidation pass.
+The `/memory prune` command and the `prune_ltm` tool both call `LongTerm::prune`, which applies the same tier-differentiated age-out as `consolidate`: unverified entries age out at 30 days with a 0.7 confidence floor, while trusted entries survive to 90 days with a 0.5 floor. This ensures the user-facing cleanup command agrees with the automated consolidation pass.
 
 ### Atomic Persistence
 
@@ -315,18 +312,17 @@ Agents store working notes during complex investigations:
 
 ```text
 # Store investigation findings
-memory_operations(operation: "store",
-    key: "auth_bug_analysis",
+memory_store(key: "auth_bug_analysis",
     content: "Root cause: token refresh uses return inside eval, loses result")
 
 # Retrieve later in the session
-memory_operations(operation: "retrieve", key: "auth_bug_analysis")
+memory_retrieve(key: "auth_bug_analysis")
 
 # Search across all stored memories
-memory_operations(operation: "search", query: "token refresh")
+memory_search(query: "token refresh")
 
 # List everything stored
-memory_operations(operation: "list")
+memory_list()
 ```
 
 ### Operations
@@ -345,7 +341,7 @@ The session-level store is also used for automatic checkpoints. Before context t
 
 ## Cross-Session Recall
 
-**Operation:** `memory_operations(operation: "recall_sessions")`
+**Operation:** `recall_sessions()`
 
 Cross-session recall lets agents search through **all previous session transcripts** for relevant context. Knowledge isn't limited to what's in LTM - anything discussed in any previous session is searchable.
 
@@ -366,18 +362,15 @@ Agents use recall_sessions in several situations:
 
 ```text
 # After context trimming - recover lost information
-memory_operations(operation: "recall_sessions",
-    query: "authentication refactor approach",
+recall_sessions(query: "authentication refactor approach",
     max_sessions: 10,
     max_results: 5)
 
 # Before starting work - check if similar work was done
-memory_operations(operation: "recall_sessions",
-    query: "worktree implementation")
+recall_sessions(query: "worktree implementation")
 
 # Understanding past decisions
-memory_operations(operation: "recall_sessions",
-    query: "why we chose atomic writes")
+recall_sessions(query: "why we chose atomic writes")
 ```
 
 ### After Context Recovery

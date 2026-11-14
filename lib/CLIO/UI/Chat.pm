@@ -2602,7 +2602,7 @@ sub _agent_event_pointer {
     return unless @parts;
 
     return "[agent event] " . join(', ', @parts)
-        . " reported in. Call agent_operations(operation: 'inbox') to review the message(s).";
+        . " reported in. Call agent_inbox() to review the message(s).";
 }
 
 =head2 _poll_broker_events

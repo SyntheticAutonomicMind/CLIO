@@ -6,6 +6,7 @@ package CLIO::Tools::Registry;
 use strict;
 use warnings;
 use utf8;
+use feature 'state';
 binmode(STDOUT, ':encoding(UTF-8)');
 binmode(STDERR, ':encoding(UTF-8)');
 use Carp qw(croak confess);
@@ -68,6 +69,217 @@ sub new {
         tool_order => [],   # ordered list of tool names
         debug => $opts{debug} || 0,
     }, $class;
+}
+
+=head2 standard_tool_specs
+
+The tool set a normal session registers, in registration order.
+
+Registration order decides which caller keeps a contested bare name (see
+_operation_name_map), so this list is the single source of truth for the
+emitted surface. WorkflowOrchestrator registers from it, and
+classify_callable() replays it when it needs the same names without a live
+session.
+
+Returns: Arrayref of hashrefs with C<name> and C<module>.
+
+=cut
+
+sub standard_tool_specs {
+    return [
+        { name => 'file_operations',     module => 'CLIO::Tools::FileOperations' },
+        { name => 'version_control',     module => 'CLIO::Tools::VersionControl' },
+        { name => 'terminal_operations', module => 'CLIO::Tools::TerminalOperations' },
+        { name => 'memory_operations',   module => 'CLIO::Tools::MemoryOperations' },
+        { name => 'web_operations',      module => 'CLIO::Tools::WebOperations' },
+        { name => 'todo_operations',     module => 'CLIO::Tools::TodoList' },
+        { name => 'code_intelligence',   module => 'CLIO::Tools::CodeIntelligence' },
+        { name => 'interact',            module => 'CLIO::Tools::Interact' },
+        { name => 'apply_patch',         module => 'CLIO::Tools::ApplyPatch' },
+    ];
+}
+
+=head2 conditional_tool_specs
+
+Tools that a session registers only when their configuration switch is on.
+
+Returns: Arrayref of hashrefs with C<name>, C<module>, C<config_key>, and
+C<subagent_blocked>.
+
+=cut
+
+sub conditional_tool_specs {
+    return [
+        {
+            name             => 'remote_execution',
+            module           => 'CLIO::Tools::RemoteExecution',
+            config_key       => 'enable_remote',
+            subagent_blocked => 1,
+        },
+        {
+            name             => 'agent_operations',
+            module           => 'CLIO::Tools::SubAgentOperations',
+            config_key       => 'enable_subagents',
+            subagent_blocked => 1,
+        },
+        {
+            name             => 'skill_operations',
+            module           => 'CLIO::Tools::SkillOperations',
+            config_key       => 'auto_discover_skills',
+            subagent_blocked => 0,
+        },
+    ];
+}
+
+=head2 _spec_registry (Internal)
+
+Build the registry the surface helpers classify against.
+
+The helpers below answer questions about names without a live session, so
+they need a registry built from the same specs a session registers. It is
+constructed once per process and cached.
+
+Returns: A CLIO::Tools::Registry holding the standard and conditional tools
+
+=cut
+
+sub _spec_registry {
+    my ($class) = @_;
+
+    state $registry;
+    return $registry if $registry;
+
+    my $built = $class->new();
+
+    for my $spec (@{ $class->standard_tool_specs() },
+                  @{ $class->conditional_tool_specs() }) {
+        (my $file = "$spec->{module}.pm") =~ s{::}{/}g;
+        my $loaded = eval { require $file; 1 };
+        next unless $loaded;
+
+        my $tool = eval { $spec->{module}->new() };
+        next unless $tool;
+
+        $built->register_tool($tool);
+    }
+
+    $registry = $built;
+    return $registry;
+}
+
+=head2 callable_map
+
+Map every emitted callable name to the tool and operation behind it.
+
+Callers outside the dispatcher - loop detection, guidance text, replay
+summaries - see a tool call after the surface has already been flattened to
+one callable per operation. They need to know which tool owns a name such as
+C<write_file> without holding a live registry. Building the map from the
+standard specs keeps those answers identical to what dispatch does, so a
+classifier cannot drift from the surface it classifies.
+
+Returns: Hashref of callable name => { tool => ..., operation => ... }. A
+single-callable tool maps to itself with C<operation> set to undef.
+
+=cut
+
+sub callable_map {
+    my ($class) = @_;
+
+    state $map;
+    return $map if $map;
+
+    my $registry = $class->_spec_registry();
+
+    my %map;
+    my $name_map = $registry->_operation_name_map();
+
+    for my $tool_name (@{ $registry->{tool_order} }) {
+        my $tool = $registry->{tools}{$tool_name};
+        my $contract = eval { $tool->operation_contract() };
+
+        unless ($contract && ref($contract) eq 'HASH' && keys %$contract) {
+            $map{$tool_name} = { tool => $tool_name, operation => undef };
+            next;
+        }
+
+        for my $op (keys %$contract) {
+            my $callable = $name_map->{$tool_name}{$op} // $op;
+            $map{$callable} = { tool => $tool_name, operation => $op };
+        }
+    }
+
+    $map = \%map;
+    return $map;
+}
+
+=head2 _grouping_map (Internal)
+
+Map each grouping tool and operation to the callable name that dispatch uses.
+
+Returns: Hashref of tool name => { operation => callable name }
+
+=cut
+
+sub _grouping_map {
+    my ($class) = @_;
+
+    state $map;
+    return $map if $map;
+
+    my $registry = $class->_spec_registry();
+    my $name_map = $registry->_operation_name_map();
+
+    my %map;
+    for my $tool_name (@{ $registry->{tool_order} }) {
+        my $tool = $registry->{tools}{$tool_name};
+        my $contract = eval { $tool->operation_contract() };
+        next unless $contract && ref($contract) eq 'HASH' && keys %$contract;
+
+        $map{$tool_name} = {
+            map { $_ => ($name_map->{$tool_name}{$_} // $_) } keys %$contract
+        };
+    }
+
+    $map = \%map;
+    return $map;
+}
+
+=head2 classify_callable
+
+Resolve a callable name to the tool and operation that own it.
+
+Arguments:
+- $name: callable name as the model called it
+- $operation (optional): operation field carried by the same call
+
+Returns: Hashref with C<tool> and C<operation>, or undef for an unknown name
+
+The second form exists for reading stored history, not for dispatch. Calls
+recorded before a tool published per-operation callables carry the grouping
+name plus an operation ("file_operations" + "read_file"), and so do calls that
+arrive in the textual "[tool operation]" format. Classification gets those
+right; dispatch still refuses the name because the model was never given it.
+
+=cut
+
+sub classify_callable {
+    my ($class, $name, $operation) = @_;
+
+    return undef unless defined $name && length $name;
+
+    my $map = $class->callable_map();
+    return $map->{$name} if $map->{$name};
+
+    return undef unless defined $operation && length $operation;
+
+    # A grouping name is not a callable, but it does name the tool that owns
+    # the operation, which is what callers of this function need.
+    my $grouping = $class->_grouping_map();
+    my $callable = $grouping->{$name} ? $grouping->{$name}{$operation} : undef;
+    return undef unless $callable;
+
+    return $map->{$callable} || { tool => $name, operation => $operation };
 }
 
 =head2 register_tool

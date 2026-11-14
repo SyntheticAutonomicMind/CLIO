@@ -68,7 +68,7 @@ sub new {
 
 THIS IS A JSON TOOL CALL, NOT TEXT. Always call via JSON function call, never as plain text.
 
-REQUIRES the 'operation' parameter (always 'request_input') AND the 'message' parameter.
+Call this tool by name with 'message'. There is no 'operation' parameter.
 
 - FREE (does not consume API requests) and BLOCKING (pauses until user responds)
 - Use for: checkpoints, approvals, progress updates, questions, reporting blockers
@@ -79,7 +79,7 @@ Parameters:
 - context (optional): Additional context to help user understand
 
 QUICK EXAMPLE:
-{"operation": "request_input", "message": "Which approach should I use?"}
+{"message": "Which approach should I use?"}
 },
         supported_operations => [qw(request_input)],
         single_operation => 'request_input',

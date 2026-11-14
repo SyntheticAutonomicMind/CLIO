@@ -197,7 +197,7 @@ sub build_system_prompt {
 
     # Auto-skill creation guidance. Goes in the system prompt only when
     # the feature is enabled and not in incognito mode. The agent uses
-    # this to decide when to call skill_operations(operation=create).
+    # this to decide when to call skill_create.
     my $auto_skill_section = $self->generate_auto_skill_section();
     if ($auto_skill_section) {
         $base_prompt .= "\n\n$auto_skill_section";
@@ -324,24 +324,20 @@ sub generate_tools_section {
 
     log_debug('PromptBuilder', "Generating tools section for $tool_count tools");
 
-    my $section = "Always use the correct tool name and parameters as specified in the tool definitions.\n\n## Available Tools - READ THIS CAREFULLY\n\n";
+    my $section = $self->generate_tool_first_section();
+    $section .= "Always use the correct tool name and parameters as specified in the tool definitions.\n\n## Available Tools - READ THIS CAREFULLY\n\n";
     $section .= "You have access to exactly $tool_count function calling tools. ";
     $section .= "When users ask \"what tools do you have?\", list ALL $tool_count tools by name:\n\n";
 
-    # Summaries for the consolidated tools. Per-operation entries carry their
-    # own description, which already names the required parameters.
+    # Summaries for tools that are published as a single callable. A tool that
+    # publishes per-operation definitions never reaches this table: its entries
+    # carry their own description, which already names the required parameters.
+    # Keys here must therefore be names that can appear in @tool_entries, and
+    # never a grouping name such as file_operations.
     my %tool_summaries = (
-        file_operations => "File read/write/search operations",
-        version_control => "Git version control operations",
         terminal_operations => "Execute shell commands",
-        memory_operations => "Store/recall memory across sessions",
-        web_operations => "Search web and fetch URLs",
-        todo_operations => "Manage structured todo lists",
-        code_intelligence => "Find code usages and search history",
-        interact => "Request user input mid-execution",
-        agent_operations => "Spawn and manage sub-agents",
-        remote_execution => "Execute CLIO on remote systems",
-        apply_patch => "Apply patch to modify files",
+        interact            => "Request user input mid-execution",
+        apply_patch         => "Apply patch to modify files",
     );
 
     my $num = 1;
@@ -448,6 +444,88 @@ sub generate_tools_section {
     $self->{_tools_section_cache} = $section;
 
     return $section;
+}
+
+=head2 generate_tool_first_section
+
+Build the "Tool-First Operation" table from the registry.
+
+The table used to be a static heredoc listing grouping names such as
+C<file_operations>. Once a tool publishes per-operation definitions, its
+grouping name stops being callable, so the static table taught the model a
+name it could not use. Every row is resolved through the registry here, and a
+row whose callable is not published in this session is dropped rather than
+advertised.
+
+Returns:
+- Markdown text ending with a blank line, or an empty string when no row
+  resolves
+
+=cut
+
+sub generate_tool_first_section {
+    my ($self) = @_;
+
+    my $registry = $self->{tool_registry};
+    return '' unless $registry;
+
+    my @rows = (
+        [ '"I\'ll create a file..."',     [ 'file_operations', 'write_file' ] ],
+        [ '"I\'ll search for..."',        [ 'file_operations', 'grep_search' ] ],
+        [ '"I\'ll run this command..."',  [ 'terminal_operations', undef ] ],
+        [ '"Let me create a todo..."',    [ 'todo_operations', 'write' ] ],
+    );
+    if ($self->{enable_subagents}) {
+        push @rows, [ '"I\'ll spawn a sub-agent..."', [ 'agent_operations', 'spawn' ] ];
+    }
+
+    my @lines;
+    for my $row (@rows) {
+        my ($label, $target) = @$row;
+        my $callable = $self->_resolve_callable(@$target);
+        next unless $callable;
+        push @lines, "| $label | [calls $callable] |";
+    }
+
+    return '' unless @lines;
+
+    return "## Tool-First Operation\n\n" .
+           "Use tools directly rather than describing what you would do:\n\n" .
+           "| Instead of Saying | Do This |\n" .
+           "|-------------------|---------|\n" .
+           join("\n", @lines) . "\n\n";
+}
+
+=head2 _resolve_callable
+
+Resolve the callable the model should emit for a (tool, operation) pair.
+
+Arguments:
+- $tool_name (required): canonical registered tool name
+- $operation (optional): operation key; undef means the tool is published as
+  one callable
+
+Returns: The emitted callable name, or undef when the pair is not callable in
+this session (tool filtered out by enable_tools, or name not published)
+
+=cut
+
+sub _resolve_callable {
+    my ($self, $tool_name, $operation) = @_;
+
+    my $registry = $self->{tool_registry};
+    return undef unless $registry && defined $tool_name;
+
+    if ($self->{enable_tools}) {
+        my %enabled = map { $_ => 1 } split(/\s*,\s*/, $self->{enable_tools});
+        return undef unless $enabled{$tool_name};
+    }
+
+    if (defined $operation) {
+        return $registry->get_operation_callable($tool_name, $operation);
+    }
+
+    return $registry->is_emitted_name($tool_name) ? $tool_name : undef;
 }
 
 =head2 generate_skills_section

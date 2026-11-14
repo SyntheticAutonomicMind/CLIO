@@ -192,7 +192,7 @@ sub project_summary {
     push @lines, "";
     push @lines, "To delegate work to a project, spawn a sub-agent with working_dir:";
     push @lines, '```';
-    push @lines, 'agent_operations(operation: "spawn", task: "...", working_dir: "./ProjectName")';
+    push @lines, 'agent_spawn(task: "...", working_dir: "./ProjectName")';
     push @lines, '```';
     push @lines, "The child agent will load that project's .clio/ context (LTM, instructions, memory).";
     

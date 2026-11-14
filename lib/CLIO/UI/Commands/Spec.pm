@@ -456,7 +456,8 @@ sub _manager {
 =head2 Integration
 
 The /spec propose command returns an AI prompt that instructs the AI to
-generate all planning artifacts using file_operations. This leverages
+generate all planning artifacts with the file tools (write_file,
+replace_string). This leverages
 CLIO's existing tool-calling workflow rather than requiring a separate CLI.
 
 =cut

@@ -2029,7 +2029,7 @@ sub read_tool_result {
                 "The tool result has $total characters total.\n" .
                 "Valid offset range: 0 to " . ($total - 1) . "\n\n" .
                 "Start reading from offset 0:\n" .
-                "file_operations(operation: \"read_tool_result\", toolCallId: \"$toolCallId\", offset: 0, length: $length)"
+                "read_tool_result(toolCallId: \"$toolCallId\", offset: 0, length: $length)"
             );
         } else {
             return $self->error_result("Failed to retrieve tool result: $error");
@@ -2055,7 +2055,7 @@ sub read_tool_result {
     if ($chunk->{hasMore}) {
         push @lines, "";
         push @lines, "To read next chunk:";
-        push @lines, "file_operations(operation: \"read_tool_result\", toolCallId: \"$chunk->{toolCallId}\", offset: $chunk->{nextOffset}, length: $length)";
+        push @lines, "read_tool_result(toolCallId: \"$chunk->{toolCallId}\", offset: $chunk->{nextOffset}, length: $length)";
     } else {
         push @lines, "";
         push @lines, "SUCCESS: All content retrieved (no more chunks)";

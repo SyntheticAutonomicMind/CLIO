@@ -228,7 +228,7 @@ sub get_tool_definition {
     $def->{parameters}{required} = ["patch"];
     # Single-operation tool: there is no operation field on the wire.
     delete $def->{parameters}{properties}{operation};
-    $def->{description} = 'Apply a patch to create, modify, or delete files. Uses a lightweight diff format that is more efficient than full file rewrites. Each patch can contain multiple file operations. Prefer this over file_operations write_file/replace_string for multi-file changes.';
+    $def->{description} = 'Apply a patch to create, modify, or delete files. Uses a lightweight diff format that is more efficient than full file rewrites. Each patch can contain multiple file operations. Prefer this over write_file/replace_string for multi-file changes.';
     $def->{parameters}{properties}{patch} = {
         type => 'string',
         description => '[REQUIRED] The patch text. Format:
@@ -256,7 +256,7 @@ Bare text lines (POD blocks like =head2/=cut, function signatures like
 "sub foo {", or prose paragraphs) are silently dropped, which breaks
 contiguous chunk matching and causes "Cannot find match position for
 chunk" errors. When editing POD blocks or anything with mixed prose,
-prefer file_operations.replace_string with exact old_string/new_string.
+prefer replace_string with exact old_string/new_string.
 If you see "Unrecognized line in patch chunk" warnings, the chunk
 format is wrong - reread this rule.',
     };

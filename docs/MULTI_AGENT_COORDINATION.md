@@ -114,7 +114,7 @@ This project manages 2 child project(s):
 - **SAM** (SAM) [LTM, instructions, submodule]
 
 To delegate work to a project, spawn a sub-agent with working_dir:
-agent_operations(operation: "spawn", task: "...", working_dir: "./SAM")
+agent_spawn(task: "...", working_dir: "./SAM")
 The child agent will load that project's .clio/ context (LTM, instructions, memory).
 ```text
 
@@ -248,8 +248,8 @@ Ordinary agent messages stay unread in the broker until the manager reviews
 them. This is deliberate:
 
 - The session renders them for the user as they arrive.
-- The manager reads them with `agent_operations(operation: 'inbox')` and
-  marks them read with `operation: 'acknowledge'`.
+- The manager reads them with `agent_inbox()` and
+  marks them read with `agent_acknowledge()`.
 
 Acknowledging them at display time would hide the agent's findings from the
 manager. Authorization requests are the exception: they are resolved
@@ -365,9 +365,9 @@ The manager reads it from the broker, the same convention every other agent
 message follows:
 
 ```
-agent_operations(operation: 'inbox')                    # bounded preview
-agent_operations(operation: 'report', agent_id: 'agent-1')  # full text
-agent_operations(operation: 'acknowledge')               # mark read
+agent_inbox()                    # bounded preview
+agent_report(agent_id: 'agent-1')  # full text
+agent_acknowledge()               # mark read
 ```
 
 ---

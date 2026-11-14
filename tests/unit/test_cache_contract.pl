@@ -81,6 +81,10 @@ use CLIO::Core::PromptBuilder;
     sub new           { bless { tools => [] }, shift }
     sub get_all_tools { $_[0]->{tools} }
     sub has_tool      { 0 }
+    # PromptBuilder resolves tool-first targets through this. With no tools
+    # registered there is nothing to resolve, which is the point of the mock.
+    sub get_operation_callable { undef }
+    sub is_emitted_name        { 0 }
 }
 
 # A minimal ResponseHandler shim

@@ -131,9 +131,6 @@ sub new {
         non_interactive => $args{non_interactive},
     );
     
-    # Initialize tool error guidance
-    $self->{error_guidance} = CLIO::Core::ToolErrorGuidance->new();
-
     # Store config reference for tool registration decisions
     $self->{config} = $args{config};
 
@@ -147,6 +144,14 @@ sub new {
     $self->{tool_registry} = CLIO::Tools::Registry->new(debug => $args{debug});
     
     $self->_register_default_tools();
+
+    # Initialize tool error guidance. It needs the registry so unknown-tool
+    # errors can name the callables the model should have used, rather than
+    # describing the correct shape in the abstract.
+    $self->{error_guidance} = CLIO::Core::ToolErrorGuidance->new(
+        debug         => $args{debug},
+        tool_registry => $self->{tool_registry},
+    );
     
     # Initialize tool executor (Task 4)
     require CLIO::Core::ToolExecutor;
@@ -438,40 +443,10 @@ sub _register_default_tools {
         return 1;  # Default: register
     };
     
-    # All default tools with their module paths
-    my @default_tools = (
-        { name => 'file_operations',    module => 'CLIO::Tools::FileOperations' },
-        { name => 'version_control',    module => 'CLIO::Tools::VersionControl' },
-        { name => 'terminal_operations', module => 'CLIO::Tools::TerminalOperations' },
-        { name => 'memory_operations',  module => 'CLIO::Tools::MemoryOperations' },
-        { name => 'web_operations',     module => 'CLIO::Tools::WebOperations' },
-        { name => 'todo_operations',    module => 'CLIO::Tools::TodoList' },
-        { name => 'code_intelligence',  module => 'CLIO::Tools::CodeIntelligence' },
-        { name => 'interact', module => 'CLIO::Tools::Interact' },
-        { name => 'apply_patch',        module => 'CLIO::Tools::ApplyPatch' },
-    );
-    
-    # Conditionally-available tools (existing config switches + sub-agent restrictions)
-    my @conditional_tools = (
-        {
-            name => 'remote_execution',
-            module => 'CLIO::Tools::RemoteExecution',
-            config_key => 'enable_remote',
-            subagent_blocked => 1,
-        },
-        {
-            name => 'agent_operations',
-            module => 'CLIO::Tools::SubAgentOperations',
-            config_key => 'enable_subagents',
-            subagent_blocked => 1,
-        },
-        {
-            name => 'skill_operations',
-            module => 'CLIO::Tools::SkillOperations',
-            config_key => 'auto_discover_skills',
-            subagent_blocked => 0,
-        },
-    );
+    # Tool specs live in the registry so anything that needs to know the
+    # emitted surface (prompt, recovery, loop detection) reads one list.
+    my @default_tools = @{ CLIO::Tools::Registry->standard_tool_specs() };
+    my @conditional_tools = @{ CLIO::Tools::Registry->conditional_tool_specs() };
     
     # Register standard tools
     for my $tool_def (@default_tools) {
@@ -940,8 +915,9 @@ sub process_input {
         if (!$api_response->{tool_calls} || !@{$api_response->{tool_calls}}) {
             require CLIO::Core::ToolCallExtractor;
             my $extractor = CLIO::Core::ToolCallExtractor->new(
-                debug => $self->{debug},
+                debug       => $self->{debug},
                 known_tools => $self->{tools} || [],
+                registry    => $self->{tool_registry},
             );
             
             my $result = $extractor->extract($api_response->{content});
@@ -2402,7 +2378,7 @@ sub _execute_tool_round {
 
     # Checkpoint session progress to memory every 15 iterations
     if ($iteration % 15 == 0 && $session) {
-        _checkpoint_session_progress($session, $tool_calls_made, $iteration, $messages);
+        $self->_checkpoint_session_progress($session, $tool_calls_made, $iteration, $messages);
     }
 
     # Print newline to separate tool output from next iteration
@@ -3451,6 +3427,65 @@ sub _compress_dropped_for_recovery {
     };
 }
 
+=head2 _summarize_tool_activity (Internal)
+
+Count tool calls by the tool and operation that ran, and collect the file
+paths they touched.
+
+Arguments: $tool_calls_made - Arrayref of call records. Each record carries the
+canonical tool name in C<name>, the operation in C<operation>, and the raw
+JSON argument string in C<arguments>.
+
+Returns: Hashref with C<counts> (label => call count, labels of the form
+C<file_operations.read_file>) and C<files> (arrayref of paths, in call order,
+deduplicated, capped at 20, most recent first).
+
+=cut
+
+sub _summarize_tool_activity {
+    my ($tool_calls_made) = @_;
+
+    require CLIO::Tools::Registry;
+
+    my %counts;
+    my @files;
+
+    for my $tc (@{ $tool_calls_made || [] }) {
+        my $name = $tc->{name} // $tc->{tool} // 'unknown';
+        my $args = $tc->{arguments} // $tc->{args} // {};
+
+        # arguments is the raw JSON string the model emitted, so a hash-only
+        # check here never fires and the file list stays empty.
+        if (!ref($args) && defined $args && length $args) {
+            $args = eval { decode_json($args) } || {};
+        }
+        $args = {} unless ref($args) eq 'HASH';
+
+        my $owner = CLIO::Tools::Registry->classify_callable(
+            $name, $tc->{operation} || $args->{operation});
+        my $label = $owner && defined $owner->{operation}
+            ? "$owner->{tool}.$owner->{operation}"
+            : $name;
+        $counts{$label}++;
+
+        # 'file_operations' is not a callable, but a recorded call under that
+        # name is still a file operation - failed calls and history predating
+        # the per-operation split carry it.
+        next unless $name eq 'apply_patch'
+            || $name eq 'file_operations'
+            || ($owner && $owner->{tool} eq 'file_operations');
+
+        my $path = $args->{path} || '';
+        push @files, $path if $path && $path !~ /^\./;
+    }
+
+    my %seen;
+    @files = grep { !$seen{$_}++ } reverse @files;
+    splice(@files, 20) if @files > 20;
+
+    return { counts => \%counts, files => \@files };
+}
+
 =head2 _checkpoint_session_progress
 
 Saves a lightweight progress snapshot to .clio/memory/session_progress.md.
@@ -3466,7 +3501,7 @@ Arguments:
 =cut
 
 sub _checkpoint_session_progress {
-    my ($session, $tool_calls_made, $iteration, $messages) = @_;
+    my ($self, $session, $tool_calls_made, $iteration, $messages) = @_;
 
     eval {
         my $memory_dir = do { require CLIO::Util::PathResolver; eval { CLIO::Util::PathResolver::get_project_memory_dir() } || '.clio/memory'; };
@@ -3483,29 +3518,19 @@ sub _checkpoint_session_progress {
 
         # Summarize tool calls made
         if ($tool_calls_made && @$tool_calls_made) {
-            my %tool_summary;
-            my @recent_files;
-            for my $tc (@$tool_calls_made) {
-                my $tc_name = $tc->{name} // $tc->{tool} // 'unknown';
-                $tool_summary{$tc_name}++;
-                my $tc_args = $tc->{arguments} // $tc->{args} // {};
-                if ($tc_name =~ /file_operations|apply_patch/ && ref($tc_args) eq 'HASH') {
-                    my $path = $tc_args->{path} || '';
-                    push @recent_files, $path if $path && $path !~ /^\./;
-                }
-            }
+            my $activity = _summarize_tool_activity($tool_calls_made);
+            my $counts = $activity->{counts};
+            my @recent_files = @{ $activity->{files} };
+
             push @parts, "## Tool Activity";
             push @parts, "Total tool calls: " . scalar(@$tool_calls_made);
-            for my $t (sort { $tool_summary{$b} <=> $tool_summary{$a} } keys %tool_summary) {
-                push @parts, "- $t: $tool_summary{$t} calls";
+            for my $t (sort { $counts->{$b} <=> $counts->{$a} } keys %$counts) {
+                push @parts, "- $t: $counts->{$t} calls";
             }
             push @parts, "";
 
-            # Recent files touched (deduplicated)
+            # Recent files touched (deduplicated and capped by the helper)
             if (@recent_files) {
-                my %seen;
-                @recent_files = grep { !$seen{$_}++ } reverse @recent_files;
-                @recent_files = @recent_files[0..19] if @recent_files > 20;
                 push @parts, "## Files Touched";
                 push @parts, "- $_" for @recent_files;
                 push @parts, "";

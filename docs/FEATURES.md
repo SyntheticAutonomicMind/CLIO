@@ -241,6 +241,35 @@ If you see an error message you can't interpret, check `/tmp/clio_api_400.log` f
 
 Tools are CLIO's hands and eyes. They let the AI interact with your filesystem, terminal, version control, and more. CLIO has a comprehensive toolset covering file operations, version control, terminal execution, memory, web search, code intelligence, and more - plus dynamic MCP and plugin bridges that extend capabilities further.
 
+### How Tool Names Reach the Model
+
+A tool that groups related operations (`file_operations`, `todo_operations`,
+`memory_operations`) publishes each operation as its own callable: `read_file`,
+`todo_add`, `memory_store`. The model sees those names on the wire and calls
+them with their parameters at the top level. The grouping name is not callable
+- `file_operations` with `operation: "read_file"` is an error, not a synonym.
+
+Some tools are published as a single callable under their own name (`interact`,
+`apply_patch`, `terminal_operations`). Of those, only `terminal_operations`
+takes an `operation` field; the tool definitions the model receives are the
+authority on which form applies, and nothing in the prompt is written from a
+separate list.
+
+When the model calls a name that is not in the current tool set, dispatch
+refuses it and returns guidance that names the callable it should have used:
+
+```text
+WHAT WENT WRONG: 'file_operations' is not a callable name in this build's tool set, so nothing ran.
+HOW TO FIX: You meant the 'replace_string' operation. Call the callable
+'replace_string' directly - it is the same operation under its published name:
+  {"name": "replace_string", "parameters": {"path": "x.pm", "old_string": "a", "new_string": "b"}}
+```
+
+The refusal is deliberate. Silently redirecting a grouping name to an operation
+teaches the model that the wrong shape works, which is how a session ends up
+repeating the same invented call. An error that names the right callable ends
+the loop in one turn.
+
 ### File Operations
 
 The most-used tool. 16 canonical operations for working with files:
@@ -744,8 +773,8 @@ Key-value storage within a session. The AI stores temporary notes, investigation
 
 ```text
 # AI calls internally:
-memory_operations(operation: "store", key: "auth_bug_root_cause", content: "Missing null check in token validation")
-memory_operations(operation: "retrieve", key: "auth_bug_root_cause")
+memory_store(key: "auth_bug_root_cause", content: "Missing null check in token validation")
+memory_retrieve(key: "auth_bug_root_cause")
 ```
 
 ### Long-Term Memory (LTM)
@@ -773,7 +802,7 @@ Search through previous session transcripts:
 
 ```text
 # AI calls internally:
-memory_operations(operation: "recall_sessions", query: "authentication refactor")
+recall_sessions(query: "authentication refactor")
 ```
 
 This finds relevant conversations from past sessions, even if the current session has no direct context.

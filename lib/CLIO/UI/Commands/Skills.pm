@@ -370,7 +370,7 @@ sub _add_skill {
 Toggle the auto-skill creation feature.
 
 When auto_create_skills is on, the system prompt includes guidance for
-the agent to call skill_operations(operation=create) after completing
+the agent to call skill_create after completing
 substantial reusable work. The agent then writes a SKILL.md file that
 future sessions can load via /skills load.
 

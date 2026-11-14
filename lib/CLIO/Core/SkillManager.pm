@@ -217,7 +217,7 @@ You are reviewing the project design with fresh eyes, helping the user:
 ## Approach
 
 ### 1. Load and Analyze
-Read `.clio/PRD.md` using file_operations and analyze it critically.
+Read `.clio/PRD.md` with `read_file` and analyze it critically.
 
 ### 2. Present Findings
 Use interact to show the user your analysis and ask: "What's changed since this PRD was written?"

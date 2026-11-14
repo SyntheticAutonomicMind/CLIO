@@ -39,10 +39,16 @@ User Input -> Terminal UI (Chat.pm, SessionReplay) -> AI Agent (APIManager -> Pr
   -> Result Processing -> Markdown (Markdown.pm) -> Terminal Output
 ```
 
-Tools: file_operations, version_control, terminal_operations, memory_operations,
+Tool modules: file_operations, version_control, terminal_operations, memory_operations,
 todo_operations, web_operations, code_intelligence, interact, apply_patch,
 remote_execution, agent_operations, skill_operations [conditional],
 MCPBridge [dynamic], PluginBridge [dynamic]
+
+A module publishes either one callable under its own name
+(`terminal_operations`, `interact`, `apply_patch`) or one callable per
+operation (`read_file`, `grep_search`, `todo_add`, ...), in which case the
+module name is not callable. The tool definitions on the wire are the
+authority - read them, do not infer from the module name.
 
 ---
 
@@ -449,7 +455,7 @@ command_label (cyan), command_value (white).
 This project's anti-pattern catalog is maintained as a reusable skill. Load it on demand:
 
 ```
-/skill_operations load anti-patterns
+skill_load(name: "anti-patterns")
 ```
 
 In short: fix bugs you find (never "out of scope"), read code before changing it, test before committing, use `log_debug()` not `print STDERR`, and never leave TODO/FIXME comments. The full table lives in `skills/anti-patterns.md`.
