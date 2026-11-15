@@ -7,6 +7,7 @@ use warnings;
 use FindBin qw($Bin);
 use lib "$Bin/../../lib";
 use Test::More;
+use Time::HiRes ();
 
 use_ok('CLIO::Security::SecretRedactor', qw(redact redact_any get_redactor));
 
@@ -234,14 +235,20 @@ subtest 'Nested Structures' => sub {
 
 subtest 'Performance' => sub {
     my $large_text = "Normal text without secrets. " x 1000;  # ~30KB
-    
-    my $start = time();
+
+    # Time::HiRes, not time(): the builtin has one-second resolution, so
+    # $elapsed could only be 0 or >= 1 and the assertion reported a pass for
+    # anything under a second and a failure for anything that crossed a
+    # boundary. Under suite load that boundary was crossed and this failed
+    # at 1s while the work actually takes ~0.04s. Measuring at sub-second
+    # resolution is what makes the bound mean something.
+    my $start = Time::HiRes::time();
     for (1..10) {
         my $result = redact($large_text);
     }
-    my $elapsed = time() - $start;
-    
-    ok($elapsed < 1, "30KB x 10 iterations in < 1 second (got: ${elapsed}s)");
+    my $elapsed = Time::HiRes::time() - $start;
+
+    ok($elapsed < 1, sprintf("30KB x 10 iterations in < 1 second (got: %.3fs)", $elapsed));
 };
 
 #
