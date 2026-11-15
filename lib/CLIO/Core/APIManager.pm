@@ -2517,7 +2517,7 @@ sub _preflight_validate_messages {
 
 
 sub _learn_from_api_response {
-    my ($self, $usage, $messages) = @_;
+    my ($self, $usage, $messages, $tool_chars) = @_;
     
     return unless $usage && $messages;
     return unless $usage->{prompt_tokens};
@@ -2541,7 +2541,10 @@ sub _learn_from_api_response {
     # Tool definitions count toward prompt_tokens but are not part of
     # $messages. Leaving them out makes the ratio read low by the tool
     # share of the prompt, and every later estimate inflated by that share.
-    $total_chars += $self->{_request_tool_chars} // 0;
+    # The count must belong to the same request as $messages and $usage,
+    # which is why the streaming path passes the value captured with its
+    # context instead of reading the instance field.
+    $total_chars += $tool_chars // $self->{_request_tool_chars} // 0;
     
     return if $total_chars == 0;  # Avoid division by zero
     
@@ -3860,6 +3863,11 @@ sub _prepare_api_request {
         endpoint_config  => $endpoint_config,
         model            => $model,
         messages         => $messages,
+        # Captured with the request. The ratio measurement pairs these tool
+        # characters with this request's prompt_tokens, so reading the
+        # instance field at learn time could pair them with a later request
+        # in a streaming session.
+        tool_chars       => $self->{_request_tool_chars} // 0,
         json             => $json,
         payload          => $payload,
         provider_label   => $provider_label,
@@ -4665,6 +4673,7 @@ sub send_request_streaming {
         endpoint_config       => $endpoint_config,
         provider_label        => $provider_label,
         messages              => $messages,
+        tool_chars            => $ctx->{tool_chars} // 0,
         input                 => $input,
         json                  => $json,
         _finish_reason        => $ss->{_finish_reason},
@@ -5758,7 +5767,7 @@ sub _resolve_streaming_usage {
 
     if ($s->{streaming_usage}) {
         log_debug('APIManager', "Real usage: prompt=$s->{streaming_usage}{prompt_tokens}, completion=$s->{streaming_usage}{completion_tokens}");
-        $self->_learn_from_api_response($s->{streaming_usage}, $s->{messages});
+        $self->_learn_from_api_response($s->{streaming_usage}, $s->{messages}, $s->{tool_chars});
         return $s->{streaming_usage};
     }
 

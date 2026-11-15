@@ -495,6 +495,10 @@ Two behaviours are deliberate:
 
 The `<thread_summary>` of dropped messages is folded in after the cut, so the finished array can sit slightly above the target. The headroom the target buys absorbs it.
 
+The cost is that each trim drops more at once, so a single event compresses more of the conversation into one summary. The summary is bounded - it keeps the original request, a bounded set of recent user requests, decisions and unresolved items, not the transcript - so the detail of any individual dropped turn is gone either way. Trimming rarely and deeply is the cheaper side of that trade because each summary pass is itself lossy: successive shallow trims re-summarize the carried summary every few turns, so frequent trimming accumulates loss faster than one deeper cut does.
+
+The walk does not modify the array it is given. Messages it keeps retain their identity so the provider's cache stays warm for the unchanged prefix; only the message that receives the summary is copied. Without that, a second validation of the same array saw a summary that was not in its input and trimmed to a different point - two answers for one request, and a cache miss each time.
+
 ### What Gets Preserved During Trimming
 
 When messages must be dropped, CLIO prioritizes keeping:

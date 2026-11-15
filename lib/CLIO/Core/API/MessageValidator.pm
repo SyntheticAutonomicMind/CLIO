@@ -186,6 +186,9 @@ sub validate_and_truncate {
     # of the same prefix. Dropping to a target pays one larger drop and
     # then many turns of growth before the next one.
     my $trim_target = int($effective_limit * CLIO::Core::Defaults::CONTEXT_TRIM_TARGET());
+    # A target at or above the limit would drop messages, re-summarize them,
+    # and land back over the limit -- the worst of both policies. Clamp.
+    $trim_target = $effective_limit if $trim_target > $effective_limit;
 
     my $active_task = $args{active_task} // '';
     my $active_todos = $args{active_todos} || [];
@@ -259,18 +262,27 @@ tool_call/tool_result pairs together (never leaves a tool_result
 without its call, or vice versa).
 
 When messages are dropped, a YaRN-compressed thread_summary is injected
-so the model retains a factual record of what was trimmed. For local-
-inference providers (llama.cpp, LM Studio), the summary is folded
-into the last user message — these providers use Jinja chat templates
-(e.g. Qwen3) that reject mid-conversation role=system messages with
-"System message must be at the beginning" errors. For cloud providers,
-the summary is emitted as a system message (the canonical placement).
+so the model retains a factual record of what was trimmed. The summary
+is folded into the last user message for ALL providers. A separate
+mid-array system message is not used: local-inference providers reject
+it outright (llama.cpp's Jinja chat templates, e.g. Qwen3, fail with
+"System message must be at the beginning"), and for cloud providers it
+sat between the recent turns and the user message, changing whenever a
+trim dropped a different count of messages and collapsing the prefix
+cache at that position. Folding into the last message places the
+summary at the end of the array, so the cached prefix extends through
+the stable parts.
 The projection's compressed_tail only covers turns dropped by the
 projection (before the recent window); the proactive trim can also drop
 messages from within the recent window (e.g. after a large tool result
 pushes the total over budget). Without this re-compression, those
 messages are permanently lost — the model forgets what it just did and
 resets to earlier tasks.
+
+The walk does not modify the array it is given. Messages it does not
+drop keep their identity, so a provider's KV cache stays warm for the
+unchanged prefix; the one message that receives the summary is copied
+first.
 
 Arguments:
 - $messages: ArrayRef of message hashes
@@ -650,12 +662,25 @@ sub _role_based_tail_walk {
                 && ref($trimmed[$inject_idx]) eq 'HASH'
                 && ($trimmed[$inject_idx]{role} // '') eq 'user') {
                 my $content = $trimmed[$inject_idx]{content} // '';
+                # Copy before modifying. @trimmed shares hash refs with the
+                # caller's array (see the array-slice above), so writing
+                # through the ref would fold the summary into a message the
+                # caller still owns. That made the walk a function of its own
+                # previous output: a second call on the same array saw a
+                # <thread_summary> that was not in the input, pinned that
+                # message by the summary rule as well as the last-user rule,
+                # and cut at a different point (measured 2009 vs 1947 kept on
+                # identical input). Copying keeps the walk pure, so the same
+                # array always trims to the same result and the provider's
+                # cached prefix cannot drift between two validations of one
+                # request.
+                $trimmed[$inject_idx] = { %{ $trimmed[$inject_idx] } };
                 if (ref($content) eq 'ARRAY') {
                     # Multimodal user message - prepend as text part
-                    unshift @$content, {
+                    $trimmed[$inject_idx]{content} = [ {
                         type => 'text',
                         text => $summary->{content} . "\n\n",
-                    };
+                    }, @$content ];
                 } else {
                     $trimmed[$inject_idx]{content} =
                         $summary->{content} . "\n\n" . $content;
@@ -1131,18 +1156,27 @@ sub remove_existing_thread_summaries {
             # The thread_summary was folded into a user message.
             # Strip the <thread_summary> block from the content,
             # preserving the rest of the message (user input).
+            #
+            # Copy before modifying: @$messages shares hash refs with the
+            # caller's trimmed array, so stripping in place would edit a
+            # message the caller still holds and make a repeated call see
+            # different input from the first.
             if (ref($content) eq 'ARRAY') {
-                for my $part (@$content) {
-                    if (ref($part) eq 'HASH' && exists $part->{text}) {
-                        $part->{text} =~ s/<thread_summary>.*?<\/thread_summary>\s*//s;
+                my @parts = map {
+                    if (ref($_) eq 'HASH' && exists $_->{text}) {
+                        (my $t = $_->{text}) =~
+                            s/<thread_summary>.*?<\/thread_summary>\s*//s;
+                        { %$_, text => $t };
+                    } else {
+                        $_
                     }
-                }
+                } @$content;
+                push @result, { %$msg, content => \@parts };
             } else {
                 $content =~ s/<thread_summary>.*?<\/thread_summary>\s*//s;
                 $content =~ s/^\n+//;
-                $msg->{content} = $content;
+                push @result, { %$msg, content => $content };
             }
-            push @result, $msg;
         } elsif ($has_summary && $role eq 'system') {
             # System messages with thread_summary (legacy/carryover):
             # remove entirely (don't add to @result).
