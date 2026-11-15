@@ -988,27 +988,38 @@ sub process_input {
             }
 
             # Check for tool success loop break before looping back.
+            # Instead of ending the session, inject recovery guidance as a
+            # user message and continue the turn - the same pattern the
+            # error loop and the nudge path use. This keeps the agent alive
+            # to try a different approach rather than blocking all further
+            # work. The loop detector is reset so the guidance window starts
+            # fresh.
             if (my $sbreak = delete $self->{_tool_success_loop_break}) {
                 my $msg = sprintf(
-                    "Tool success loop broken: %d similar successful calls to '%s' "
-                    . "(sig: %s) produced near-identical results. A guidance note "
-                    . "and %d loop-break instruction(s) were injected during the "
-                    . "run; the pattern continued, so the turn was ended instead "
-                    . "of burning more iterations. Review the session history and "
-                    . "give the agent new direction.",
+                    "You've been calling similar tools with near-identical results "
+                    . "(%d similar successful calls to '%s', signature: %s). "
+                    . "A guidance note and %d loop-break instruction(s) were "
+                    . "injected during the run, but the pattern continued. "
+                    . "Try a different approach: use a different search pattern, "
+                    . "read a specific file, ask the user for clarification, or "
+                    . "summarize what you've found and act on it.",
                     $sbreak->{count} // 5,
                     $sbreak->{tool} || 'unknown',
                     $sbreak->{sig} || '',
                     $self->{_tool_loop_nudges_injected} // 0,
                 );
-                return {
-                    success => 0,
-                    error => $msg,
-                    error_type => 'tool_success_loop',
-                    tool_name => $sbreak->{tool},
-                    iterations => $iteration,
-                    tool_calls_made => \@tool_calls_made,
+                log_debug('WorkflowOrchestrator',
+                    "Tool success loop break: injecting recovery guidance "
+                    . "(count=$sbreak->{count}, tool=$sbreak->{tool})");
+                push @messages, {
+                    role => 'user',
+                    content => $msg,
                 };
+                # Reset the loop detector so the guidance window starts fresh.
+                $self->{tool_loop_detector}->reset() if $self->{tool_loop_detector};
+                # Not a full iteration - same accounting as the nudge path.
+                $iteration--;
+                next;
             }
 
             # A success-loop escalation was converted into an in-loop

@@ -115,8 +115,14 @@ my %READ_ONLY_GIT_SUBCOMMANDS = map { $_ => 1 } qw(
 );
 
 # file_operations operations that only read state.
+# read_file and file_exists are intentionally excluded: they return
+# identical content by design (reading the same path always yields the
+# same bytes), so tracking them as loop-prone causes false loop-breaks
+# whenever an agent re-reads a file after edits or reads multiple files.
+# Only search/discovery operations that can produce varying results are
+# tracked here.
 my %READ_ONLY_FILE_OPS = map { $_ => 1 } qw(
-    read_file list_dir file_exists get_file_info
+    list_dir get_file_info
     file_search grep_search semantic_search
     get_errors read_tool_result
 );

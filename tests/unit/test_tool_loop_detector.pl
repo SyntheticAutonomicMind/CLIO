@@ -386,14 +386,23 @@ subtest 'mutating commands clear the window' => sub {
 subtest 'file_operations read-only ops tracked, writes clear' => sub {
     my $d = CLIO::Core::ToolLoopDetector->new();
 
-    # read_file same path repeatedly with identical content -> loop.
+    # read_file returns identical content by design (same path = same bytes),
+    # so it is NOT tracked as loop-prone. Repeated reads reset the window
+    # instead of escalating.
     my $verdict;
     for my $i (0 .. 2) {
         $verdict = $d->record_call('file_operations',
             { operation => 'read_file', path => 'lib/CLIO/Core/X.pm' }, 'package X; 1;');
     }
-    is($verdict->{count}, 3, 'read_file runs counted');
-    ok(defined $verdict->{guidance}, 'guidance fires for repeated identical reads');
+    is($verdict->{tracked}, 0, 'read_file is not tracked (state-changing)');
+    is($verdict->{count}, 0, 'read_file does not accumulate count');
+    is($verdict->{break}, 0, 'read_file does not trigger break');
+
+    # file_exists is also not tracked: checking existence returns the same
+    # result for the same path by design.
+    $verdict = $d->record_call('file_operations',
+        { operation => 'file_exists', path => 'lib/CLIO/Core/X.pm' }, '1');
+    is($verdict->{tracked}, 0, 'file_exists is not tracked (state-changing)');
 
     # A write clears the window.
     $verdict = $d->record_call('file_operations',
@@ -404,6 +413,45 @@ subtest 'file_operations read-only ops tracked, writes clear' => sub {
     $verdict = $d->record_call('file_operations',
         { operation => 'grep_search', query => 'script', scope => 'lib' }, 'some results');
     is($verdict->{tracked}, 1, 'grep_search is read-only and tracked');
+
+    # list_dir is read-only and tracked.
+    $verdict = $d->record_call('file_operations',
+        { operation => 'list_dir', path => 'lib/CLIO/Core' }, 'file1.pm file2.pm');
+    is($verdict->{tracked}, 1, 'list_dir is read-only and tracked');
+};
+
+subtest 'read_file and file_exists reset the window on success' => sub {
+    # A non-tracked operation (like read_file) succeeding should reset the
+    # loop detector window so stale state from a previous loop pattern
+    # does not carry forward. This mirrors the state-changing reset path.
+    my $d = CLIO::Core::ToolLoopDetector->new(
+        guidance_threshold => 3,
+        break_threshold    => 4,
+        nudge_budget       => 0,
+    );
+
+    my $field_result = 'some search results';
+
+    # Build up a loop pattern with grep_search (tracked).
+    for my $i (0 .. 2) {
+        $d->record_call('file_operations',
+            { operation => 'grep_search', query => 'script', directory => 'lib' },
+            $field_result);
+    }
+    # At this point guidance has fired for the grep_search signature.
+
+    # Now a read_file call (non-tracked) should reset the window.
+    my $verdict = $d->record_call('file_operations',
+        { operation => 'read_file', path => 'lib/CLIO/Core/X.pm' }, 'package X; 1;');
+    is($verdict->{tracked}, 0, 'read_file is not tracked');
+    is($verdict->{count}, 0, 'read_file resets count to 0');
+
+    # The same grep_search again should start fresh (count=1, no guidance).
+    $verdict = $d->record_call('file_operations',
+        { operation => 'grep_search', query => 'script', directory => 'lib' },
+        $field_result);
+    is($verdict->{count}, 1, 'window was reset: grep_search count restarts at 1');
+    is($verdict->{break}, 0, 'no break after read_file reset');
 };
 
 subtest 'different signature resets run' => sub {
@@ -449,8 +497,6 @@ subtest 'emitted callables are tracked like grouping names' => sub {
         [ 'file_search',    { pattern => '**/Scanner.pm', directory => 'lib/CLIO/Code' } ],
         [ 'grep_search',    { query => 'sub is_code_language', directory => 'lib/CLIO/Code' } ],
         [ 'list_usages',    { symbol_name => 'is_code_language' } ],
-        [ 'read_file',      { path => 'lib/CLIO/Code/Scanner.pm' } ],
-        [ 'file_exists',    { path => 'lib/CLIO/Code/Scanner.pm' } ],
     );
 
     for my $case (@cases) {
@@ -472,6 +518,36 @@ subtest 'emitted callables are tracked like grouping names' => sub {
             (defined $broke_at ? $broke_at : 'never') . ")");
         cmp_ok($broke_at // 99, '<=', 6,
             "$tool: escalation arrives early, not after a dozen attempts");
+    }
+};
+
+# read_file and file_exists are intentionally NOT tracked as loop-prone:
+# they return identical content by design (same path = same bytes).
+# Repeated calls should be classified as state-changing and reset the
+# window, never escalate.
+subtest 'read_file and file_exists are not tracked (emitted callables)' => sub {
+    my $field_result = '{"path":"lib/CLIO/Code/Scanner.pm","type":"file","size":7167}';
+
+    my @cases = (
+        [ 'read_file',      { path => 'lib/CLIO/Code/Scanner.pm' } ],
+        [ 'file_exists',    { path => 'lib/CLIO/Code/Scanner.pm' } ],
+    );
+
+    for my $case (@cases) {
+        my ($tool, $args) = @$case;
+        my $d = CLIO::Core::ToolLoopDetector->new();
+
+        my $first = $d->record_call($tool, $args, $field_result);
+        is($first->{tracked}, 0, "$tool is not tracked (state-changing)");
+        is($first->{break}, 0, "$tool: no break on first call");
+
+        # Repeated calls should never escalate.
+        my $broke = 0;
+        for my $i (2 .. 13) {
+            my $v = $d->record_call($tool, $args, $field_result);
+            $broke = 1 if $v->{break};
+        }
+        ok(!$broke, "$tool: repeated identical call never escalates");
     }
 };
 
