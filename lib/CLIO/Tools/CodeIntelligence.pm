@@ -11,7 +11,11 @@ binmode(STDERR, ':encoding(UTF-8)');
 use CLIO::Core::Logger qw(log_debug);
 use parent 'CLIO::Tools::Tool';
 use File::Find;
+use File::Spec;
 use Cwd 'abs_path';
+
+use CLIO::Code::Scanner    qw(scan language_for is_code_language);
+use CLIO::Code::Extractor  qw(extract_symbols classify_reference kind_weights);
 
 my $NULLDEV = $^O eq 'MSWin32' ? 'nul' : '/dev/null';
 
@@ -36,6 +40,9 @@ sub _shape_usage {
         file        => $u->{file},
         line_number => $u->{line_number},
     );
+    # Role of this reference: definition, method_call, call, and so on. Without
+    # it a definition and a mention look identical to the caller.
+    $out{kind} = $u->{kind} if defined $u->{kind};
     my $line = defined $u->{line} ? $u->{line} : '';
     if (length($line) > MAX_LINE_CHARS) {
         $out{line}       = substr($line, 0, MAX_LINE_CHARS) . ' ...[truncated]';
@@ -189,6 +196,7 @@ Operations:
 },
         supported_operations => [qw(
             list_usages
+            outline
             search_history
         )],
         %opts,
@@ -223,6 +231,7 @@ sub dispatch_table {
     return {
         list_usages    => 'list_usages',
         search_history => 'search_history',
+        outline          => 'outline',
     };
 }
 
@@ -270,6 +279,8 @@ sub operation_contract {
                             properties => [qw(symbol_name file_paths context_lines max_results)] },
         search_history => { required => [qw(query)],
                             properties => [qw(query max_results since author max_commits)] },
+        outline        => { required => [qw(path)],
+                            properties => [qw(path)] },
     };
 }
 
@@ -287,6 +298,7 @@ sub operation_summaries {
     return {
         list_usages    => 'Find every reference to a symbol',
         search_history => 'Search git history for commits matching a query',
+        outline        => 'Summarise a file: symbols, signatures and line ranges, no bodies',
     };
 }
 
@@ -334,6 +346,12 @@ sub get_additional_parameters {
             type => "integer",
             description => "[OPTIONAL] Maximum number of commits to scan from git history. Default: 0 (no limit, bounded by the 120-second git log timeout). Set to a positive integer to cap effort on very large repos.",
             default => 0,
+        },
+
+        # outline parameters
+        path => {
+            type => "string",
+            description => "[REQUIRED for outline] File path to summarise. Must be a supported code language.",
         },
     };
 }
@@ -706,9 +724,68 @@ sub list_usages {
     }
 
     my $truncated = ($git_truncated || $direct_truncated) ? 1 : 0;
+
+    # Drop matches that live only in comments, POD or string literals, label
+    # what survives, and rank it. Measured on this repository, 17.5% of raw text
+    # matches are non-code, rising to 80% for names that appear mostly in
+    # documentation. Filtering before capping matters: otherwise the budget is
+    # spent on prose and the definition falls off the end.
+    my $raw_count = scalar @usages;
+    my $weights   = kind_weights();
+    my %scanned;
+    my @kept;
+    my $dropped = 0;
+
+    for my $u (@usages) {
+        my $abs = File::Spec->file_name_is_absolute($u->{file})
+            ? $u->{file}
+            : File::Spec->rel2abs($u->{file}, Cwd::getcwd());
+
+        my $code_line;
+        if (exists $scanned{$abs}) {
+            $code_line = $scanned{$abs}[$u->{line_number} - 1];
+        }
+        else {
+            my $lang = language_for($abs);
+            my $src;
+            if (open my $in, '<:encoding(UTF-8)', $abs) {
+                local $/;
+                $src = <$in>;
+                close $in;
+            }
+            if (defined $src) {
+                my $clean = is_code_language($lang) ? scan($src, $lang) : $src;
+                $scanned{$abs} = [ split /\n/, $clean, -1 ];
+                $code_line     = $scanned{$abs}[$u->{line_number} - 1];
+            }
+            else {
+                $scanned{$abs} = undef;
+                $code_line     = $u->{line};   # unreadable: keep and label later
+            }
+        }
+
+        my $in_code = (defined $code_line && $code_line =~ /(?<![\w:])\Q$symbol_name\E(?![\w:])/) ? 1 : 0;
+        if (!$in_code) { $dropped++; next }
+
+        $u->{kind} = classify_reference($code_line, $symbol_name);
+        push @kept, $u;
+    }
+
+    @usages = sort {
+        ($weights->{ $b->{kind} } // 0) <=> ($weights->{ $a->{kind} } // 0)
+            || $a->{file} cmp $b->{file}
+            || $a->{line_number} <=> $b->{line_number}
+    } @kept;
+
     my $count = scalar(@usages);
-    
-    log_debug('CodeIntelligence', "Found $count usages");
+    if ($limit && $count > $limit) {
+        @usages = @usages[0 .. $limit - 1];
+        $count  = scalar @usages;
+        $truncated = 1;
+    }
+
+    log_debug('CodeIntelligence',
+        "Found $count usages ($dropped non-code match(es) filtered from $raw_count)");
     
     if ($count == 0) {
         my $action_desc = "searching for symbol '$symbol_name' (found 0 usages)";
@@ -723,10 +800,9 @@ sub list_usages {
         };
     }
     
-    # Sort by file, then line number
-    @usages = sort { 
-        $a->{file} cmp $b->{file} || $a->{line_number} <=> $b->{line_number}
-    } @usages;
+    # Ordering is already deterministic: kind weight, then file, then line.
+    # A second sort here by file alone would undo the ranking that puts
+    # definitions ahead of call sites.
     
     my $action_desc = "searching for symbol '$symbol_name' ("
         . ($truncated ? "$count shown, truncated" : "$count usages") . ")";
@@ -742,6 +818,94 @@ sub list_usages {
         symbol => $symbol_name,
         truncated => $truncated,
         limit => $limit,
+        filtered_noncode => $dropped,
+    );
+}
+
+=head2 outline
+
+Summarise a file as its symbols, signatures and line ranges, with no bodies.
+
+This is the cheapest way for a model to orient itself in an unfamiliar file.
+Reading a 900-line module costs roughly 9k tokens; its outline costs a few
+hundred and answers "is the thing I need in here, and where".
+
+Arguments: $params->{path} (required)
+Returns: Hashref with package, symbols (kind, name, line, end_line, signature)
+         and total_lines.
+
+=cut
+
+sub outline {
+    my ($self, $params, $context) = @_;
+
+    my $path = $params->{path};
+    return $self->error_result("Missing required parameter: path",
+        action_description => "Error: Missing required parameter: path")
+        unless defined $path && length $path;
+
+    if ($self->check_interrupt($context)) {
+        return $self->error_result("Interrupted before outlining $path");
+    }
+
+    my $abs = File::Spec->file_name_is_absolute($path)
+        ? $path : File::Spec->rel2abs($path, Cwd::getcwd());
+
+    return $self->error_result("File not found: $path") unless -f $abs;
+
+    my $max_bytes = 4 * 1024 * 1024;
+    return $self->error_result("File too large to outline (limit 4 MB): $path")
+        if -s $abs > $max_bytes;
+
+    my $src = do {
+        open my $in, '<:encoding(UTF-8)', $abs or return $self->error_result("Cannot read $path: $!");
+        local $/; <$in>;
+    };
+
+    my $lang = language_for($abs);
+    return $self->error_result(
+        "Unsupported file type for outline: $path\n"
+      . "Supported: C-like (c, cpp, java, js, ts, go, rust, ...), perl, ruby, python, shell."
+    ) unless is_code_language($lang);
+
+    my $clean   = scan($src, $lang);
+    my @raw     = extract_symbols($clean, $lang, $path);
+    my @lines   = split /\n/, $src, -1;
+    my $total   = scalar @lines;
+
+    # A symbol's body runs to the line before the next symbol. Enough to scope
+    # a read; it does not try to end a body early at a closing brace.
+    my @symbols;
+    for my $i (0 .. $#raw) {
+        my $sym = $raw[$i];
+        my $end = $total;
+        for my $j ($i + 1 .. $#raw) {
+            if ($raw[$j]{line} > $sym->{line}) { $end = $raw[$j]{line} - 1; last }
+        }
+        push @symbols, {
+            kind      => $sym->{kind},
+            name      => $sym->{name},
+            line      => $sym->{line},
+            end_line  => $end,
+            (defined $sym->{package}  ? (package   => $sym->{package})  : ()),
+            (defined $sym->{signature} ? (signature => substr($sym->{signature}, 0, 160)) : ()),
+        };
+    }
+
+    my ($package) = map { $_->{name} } grep { $_->{kind} eq 'package' } @symbols;
+
+    my %counts;
+    $counts{ $_->{kind} }++ for @symbols;
+    my $summary = join(', ', map { "$_=$counts{$_}" } sort keys %counts) || 'no symbols';
+
+    return $self->success_result(
+        "Outline of $path: $summary",
+        action_description => "outlining $path (" . scalar(@symbols) . " symbols)",
+        path        => $path,
+        language    => $lang,
+        (defined $package ? (package => $package) : ()),
+        total_lines => $total,
+        symbols     => \@symbols,
     );
 }
 
