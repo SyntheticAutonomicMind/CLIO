@@ -626,6 +626,69 @@ run_test(
     }
 );
 
+# Commit search: tokenizer, stemmer, and scoring
+run_test(
+    "search_history - Porter stemmer vectors",
+    { operation => 'list_usages', symbol_name => 'test' },
+    1,
+    sub {
+        my %want = (
+            caresses => 'caress', ponies => 'poni',   ties     => 'ti',
+            hopping  => 'hop',    falling => 'fall',  hissing  => 'hiss',
+            filing   => 'file',   agreed  => 'agre',  relational => 'relat',
+            controll => 'control', ignore => 'ignor', ignored  => 'ignor',
+            ignoring => 'ignor',
+        );
+        for my $word (sort keys %want) {
+            my $got = CLIO::Tools::CodeIntelligence::_stem($word);
+            return 0 unless $got eq $want{$word};
+        }
+        return 1;
+    }
+);
+
+run_test(
+    "search_history - tokenizer drops function words and stems",
+    { operation => 'list_usages', symbol_name => 'test' },
+    1,
+    sub {
+        my @terms = CLIO::Tools::CodeIntelligence::_tokenize(
+            "stop the agent from ignoring files");
+        my %have = map { $_ => 1 } @terms;
+        return 0 if $have{the} || $have{from};
+        return 0 unless $have{ignor} && $have{file} && $have{agent} && $have{stop};
+        return 1;
+    }
+);
+
+run_test(
+    "search_history - IDF favours the rare term",
+    { operation => 'list_usages', symbol_name => 'test' },
+    1,
+    sub {
+        my $self  = bless {}, 'CLIO::Tools::CodeIntelligence';
+        my $terms = ['common', 'rare'];
+        my $idf   = { common => 1, rare => 10 };
+        my $rare  = $self->_score_commit($terms, $idf, { rare   => 1 }, {});
+        my $common = $self->_score_commit($terms, $idf, { common => 1 }, {});
+        return $rare > $common;
+    }
+);
+
+run_test(
+    "search_history - full coverage outranks a single match",
+    { operation => 'list_usages', symbol_name => 'test' },
+    1,
+    sub {
+        my $self  = bless {}, 'CLIO::Tools::CodeIntelligence';
+        my $terms = ['alpha', 'beta'];
+        my $idf   = { alpha => 2, beta => 2 };
+        my $both  = $self->_score_commit($terms, $idf, { alpha => 1, beta => 1 }, {});
+        my $one   = $self->_score_commit($terms, $idf, { beta => 1 }, {});
+        return $both > $one;
+    }
+);
+
 # Summary
 print "="x60, "\n";
 print "TEST SUMMARY\n";

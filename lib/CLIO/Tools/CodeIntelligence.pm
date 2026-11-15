@@ -401,13 +401,15 @@ sub search_history {
     
     log_debug('CodeIntelligence', "Searching history for: $query");
     
-    # Extract keywords from query (words > 2 chars, lowercase)
-    my @keywords = grep { length($_) > 2 } split(/\W+/, lc($query));
-    
+    # Tokenise the query: lowercase, drop English function words, and stem so
+    # that ignore/ignored/ignoring all match. A raw split scored a commit that
+    # happened to contain 'the' or 'from' as highly as the intended term.
+    my @keywords = _unique(_tokenize($query));
+
     unless (@keywords) {
-        return $self->error_result("No valid search keywords in query");
+        return $self->error_result("No meaningful search keywords in query");
     }
-    
+
     log_debug('CodeIntelligence', "Keywords: " . join(', ', @keywords));
     
     # Fetch commits from git log
@@ -425,16 +427,29 @@ sub search_history {
         );
     }
     
-    # Score each commit based on keyword matches
-    my @scored_commits = ();
-    
-    foreach my $commit (@commits) {
-        my $score = $self->_score_commit($commit, \@keywords);
-        
-        if ($score > 0) {
-            $commit->{score} = $score;
-            push @scored_commits, $commit;
-        }
+    # Tokenise each commit once, then weight query terms by inverse document
+    # frequency. A term that appears in most commits ('fix', 'update') carries
+    # little signal; a rare term distinguishes the commit the caller wants.
+    my @docs;
+    my %df;
+    for my $commit (@commits) {
+        my %subject = map { $_ => 1 } _tokenize($commit->{subject});
+        my %body    = map { $_ => 1 } _tokenize($commit->{body});
+        my %seen;
+        $df{$_}++ for grep { !$seen{$_}++ } (keys %subject, keys %body);
+        push @docs, { commit => $commit, subject => \%subject, body => \%body };
+    }
+
+    my $doc_count = scalar @docs;
+    my %idf = map { $_ => log(1 + $doc_count / ($df{$_} || 1)) } @keywords;
+
+    my @scored_commits;
+    for my $doc (@docs) {
+        my $score = $self->_score_commit(
+            \@keywords, \%idf, $doc->{subject}, $doc->{body});
+        next unless $score > 0;
+        $doc->{commit}{score} = $score;
+        push @scored_commits, $doc->{commit};
     }
     
     # Sort by score (descending), then by date (newer first)
@@ -551,44 +566,182 @@ Scoring:
 
 =cut
 
+# ---------------------------------------------------------------------------
+# Commit-search text processing
+#
+# Splitting a query on non-word characters and counting substring hits ranks a
+# commit that happens to contain "the" or "from" as highly as the term the
+# caller meant. Tokens are stemmed so ignore/ignored/ignoring collapse to one
+# term, English function words are dropped, and a term's contribution is
+# weighted by inverse document frequency at scoring time.
+# ---------------------------------------------------------------------------
+
+my %STOPWORD = map { $_ => 1 } qw(
+    a about above after again against all am an and any are as at be because
+    been before being below between both but by can cannot could did do does
+    doing down during each few for from further had has have having he her here
+    hers herself him himself his how i if in into is it its itself me more most
+    my myself no nor not now of off on once only or other our ours ourselves out
+    over own same she should so some such than that the their theirs them
+    themselves then there these they this those through to too under until up
+    very was we were what when where which while who whom why will with would
+    you your yours yourself yourselves
+);
+
+sub _unique {
+    my %seen;
+    return grep { !$seen{$_}++ } @_;
+}
+
+# Split on non-word characters, drop function words, stem the rest.
+sub _tokenize {
+    my ($text) = @_;
+    return () unless defined $text && length $text;
+
+    my @tokens;
+    for my $raw (split /[^A-Za-z0-9_]+/, lc $text) {
+        next if length($raw) < 2;
+        next if $STOPWORD{$raw};
+        next if $raw =~ /^[0-9_]+$/;
+        push @tokens, _stem($raw);
+    }
+    return @tokens;
+}
+
+# Porter stemmer, steps 1a through 5b. Enough to collapse the inflection and
+# derivation a commit message uses: ignore/ignored/ignoring, fix/fixed/fixes.
+sub _stem {
+    my ($w) = @_;
+    return $w if length($w) <= 2;
+
+    # Step 1a
+    if    ($w =~ /sses$/) { $w =~ s/sses$/ss/ }
+    elsif ($w =~ /ies$/)  { $w =~ s/ies$/i/ }
+    elsif ($w =~ /ss$/)   { }
+    elsif ($w =~ /s$/)    { $w =~ s/s$// }
+
+    # Step 1b
+    if ($w =~ /(eed)$/ && length($w) > 3) {
+        my $stem = substr($w, 0, length($w) - 3);
+        $w = $stem . 'ee' if _measure($stem) > 0;
+    }
+    elsif ($w =~ /(ed|ing)$/) {
+        my $suffix = $1;
+        my $stem   = substr($w, 0, length($w) - length($suffix));
+        if ($stem =~ /[aeiouy]/) {
+            $w = $stem;
+            if    ($w =~ /at$/) { $w .= 'e' }
+            elsif ($w =~ /bl$/) { $w .= 'e' }
+            elsif ($w =~ /iz$/) { $w .= 'e' }
+            # A double consonant that is not l, s or z loses one letter, so
+            # 'hopping' -> 'hop' but 'fall' and 'hiss' keep their endings.
+            elsif ($w =~ /([bcdfghjkmnpqrtvwxy])\1$/) { chop $w }
+            elsif (_measure($w) == 1 && $w =~ /[^aeiouy][aeiou][^aeiouwxy]$/) { $w .= 'e' }
+        }
+    }
+
+    # Step 1c
+    if ($w =~ /y$/ && substr($w, 0, length($w) - 1) =~ /[aeiouy]/) {
+        substr($w, -1, 1, 'i');
+    }
+
+    # Step 2
+    my @step2 = (
+        ['ational',  'ate'],  ['tional',  'tion'], ['enci',    'ence'],
+        ['anci',     'ance'], ['izer',    'ize'],  ['bli',     'ble'],
+        ['alli',     'al'],   ['entli',   'ent'],  ['eli',     'e'],
+        ['ousli',    'ous'],  ['ization', 'ize'],  ['ation',   'ate'],
+        ['ator',     'ate'],  ['alism',   'al'],   ['iveness', 'ive'],
+        ['fulness',  'ful'],  ['ousness', 'ous'],  ['aliti',   'al'],
+        ['iviti',    'ive'],  ['biliti',  'ble'],  ['logi',    'log'],
+    );
+    for my $pair (@step2) {
+        my ($suf, $rep) = @$pair;
+        next unless length($w) > length($suf) && substr($w, -length($suf)) eq $suf;
+        my $stem = substr($w, 0, length($w) - length($suf));
+        $w = $stem . $rep if _measure($stem) > 0;
+        last;
+    }
+
+    # Step 3
+    my @step3 = (
+        ['icate', 'ic'], ['ative', ''], ['alize', 'al'],
+        ['iciti', 'ic'], ['ical', 'ic'], ['ful', ''],
+        ['ness', ''],
+    );
+    for my $pair (@step3) {
+        my ($suf, $rep) = @$pair;
+        next unless length($w) > length($suf) && substr($w, -length($suf)) eq $suf;
+        my $stem = substr($w, 0, length($w) - length($suf));
+        $w = $stem . $rep if _measure($stem) > 0;
+        last;
+    }
+
+    # Step 4
+    my @step4 = qw(
+        al ance ence er ic able ible ant ement ment ent ion ou ism ate iti ous ive ize
+    );
+    for my $suf (@step4) {
+        next unless length($w) > length($suf) && substr($w, -length($suf)) eq $suf;
+        my $stem = substr($w, 0, length($w) - length($suf));
+        if ($suf eq 'ion') {
+            $w = $stem if _measure($stem) > 1 && $stem =~ /[st]$/;
+        }
+        elsif (_measure($stem) > 1) {
+            $w = $stem;
+        }
+        last;
+    }
+
+    # Step 5a
+    if ($w =~ /e$/) {
+        my $stem = substr($w, 0, length($w) - 1);
+        my $m    = _measure($stem);
+        if ($m > 1 || ($m == 1 && $stem !~ /[^aeiouy][aeiou][^aeiouwxy]$/)) {
+            $w = $stem;
+        }
+    }
+
+    # Step 5b: (m>1 and *d and *L) drops the final letter only for a double
+    # L, so 'controll' becomes 'control' while 'caress', 'hiss' and 'fizz'
+    # keep their endings.
+    if (_measure($w) > 1 && $w =~ /ll$/) {
+        chop $w;
+    }
+
+    return $w;
+}
+
+# Porter's m(): the number of vowel-consonant sequences in a word.
+sub _measure {
+    my ($word) = @_;
+    return 0 unless defined $word && length $word;
+    my $s = $word;
+    $s =~ s/^[^aeiouy]+//;
+    my $m = 0;
+    $m++ while $s =~ /[aeiouy][^aeiouy]*/g;
+    return $m;
+}
+
+# Score one commit against the query terms. Subject hits weigh more than body
+# hits, term weight comes from IDF, and coverage scales the total so a commit
+# matching every term outranks one that matches a single rare term.
 sub _score_commit {
-    my ($self, $commit, $keywords) = @_;
-    
-    my $score = 0;
-    my $subject_lc = lc($commit->{subject} || '');
-    my $body_lc = lc($commit->{body} || '');
-    my $full_text = "$subject_lc $body_lc";
-    
-    my $subject_matches = 0;
-    my $body_matches = 0;
-    
-    foreach my $keyword (@$keywords) {
-        # Subject matches (higher weight)
-        if ($subject_lc =~ /\Q$keyword\E/) {
-            $score += 3;
-            $subject_matches++;
-        }
-        
-        # Body matches (lower weight)
-        if ($body_lc =~ /\Q$keyword\E/) {
-            $score += 1;
-            $body_matches++;
-        }
+    my ($self, $terms, $idf, $subject_tokens, $body_tokens) = @_;
+
+    my $score   = 0;
+    my $matched = 0;
+
+    for my $term (@$terms) {
+        my $weight = $idf->{$term} || 1;
+        my $hit    = 0;
+        if ($subject_tokens->{$term}) { $score += 3 * $weight; $hit = 1 }
+        if ($body_tokens->{$term})    { $score += 1 * $weight; $hit = 1 }
+        $matched++ if $hit;
     }
-    
-    # Bonus for multiple keywords matching
-    my $total_keyword_matches = $subject_matches + $body_matches;
-    if ($total_keyword_matches >= 2) {
-        $score += $total_keyword_matches;  # Bonus for relevance
-    }
-    
-    # Bonus for matching most/all keywords
-    my $keyword_coverage = ($subject_matches + $body_matches) / (scalar(@$keywords) * 2);
-    if ($keyword_coverage >= 0.5) {
-        $score += 3;  # Good coverage bonus
-    }
-    
-    return $score;
+
+    return 0 unless $matched;
+    return $score * ($matched / scalar @$terms);
 }
 
 =head2 _get_files_changed
