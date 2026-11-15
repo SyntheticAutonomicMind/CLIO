@@ -38,8 +38,8 @@ which one it wanted.
 
 Extraction runs over L<CLIO::Code::Scanner> output, so comments and string
 literals cannot produce symbols. Patterns are lexical rather than syntactic:
-they are strong on the languages CLIO targets and deliberately report a
-confidence instead of pretending to parse.
+they are strong on the languages CLIO targets and report nothing at all for a
+language they do not know, rather than guessing.
 
 =head1 METHODS
 
@@ -97,7 +97,7 @@ my %KIND_WEIGHT = (
     variable => 5,  import   => 4,
     definition => 10, declaration => 8,
     qualified_call => 6, method_call => 6, call => 6,
-    assignment => 3, reference => 2, mention => 1,
+    assignment => 3, reference => 2,
 );
 
 =head2 kind_weights
@@ -195,7 +195,28 @@ sub classify_reference {
 
     return 'definition' if $t =~ /^(?:sub|def|func|fn|function|class|interface|enum|struct|trait|module|package|namespace)\s+$q\b/;
     return 'definition' if $t =~ /^(?:export\s+)?(?:const|let|var)\s+$q\b.*=>\s*(?:async\s*)?\(/;
-    return 'declaration' if $t =~ /^(?:our|my|local|extern|declare|type)\b.*\b$q\b/;
+
+    # A declaration names the symbol as the thing being declared, so the
+    # sigil and the name must be adjacent (modulo a list opener, as in
+    # `my ($a, $b)`). The earlier pattern matched the name anywhere on a
+    # `my ...` line, which labelled
+    # `my $lang = CLIO::Code::Scanner::language_for($file)` a declaration of
+    # language_for when it is a qualified call - and declarations outrank
+    # calls, so those references led the result set.
+    return 'declaration' if $t =~ /^(?:our|my|local|extern|declare|type)\s+[\(\[\s]*[\$\@\%\*]?$q\b/;
+
+    # Every member of a list declaration is being declared, not just the
+    # first. Consider only the left of the assignment: `my ($a, $b) = @_`
+    # declares both, while `my $x = Foo::bar()` declares $x and merely calls
+    # bar.
+    if ($t =~ /^(?:our|my|local|extern|declare|type)\b/) {
+        my ($lhs) = $t =~ /^([^=]*)/;
+        $lhs = $t unless defined $lhs;
+        return 'declaration' if $lhs =~ /(?<![\w])\Q$symbol\E(?![\w])/;
+    }
+
+    # Call shapes before assignment: a line that assigns the result of a call
+    # is more usefully reported as the call.
     return 'method_call' if $line =~ /->\s*$q\s*[(\{;]/ || $line =~ /\.\s*$q\s*\(/;
     return 'qualified_call' if $line =~ /::\s*$q\s*[(\{;]/ || $line =~ /\.\s*$q\s*\.\s*\w/;
     return 'call' if $line =~ /(?<![\w:.\$])$q\s*\(/;

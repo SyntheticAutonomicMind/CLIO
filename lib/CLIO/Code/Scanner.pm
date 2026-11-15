@@ -8,7 +8,7 @@ use warnings;
 use utf8;
 
 use Exporter 'import';
-our @EXPORT_OK = qw(scan scan_file language_for is_code_language BLANK);
+our @EXPORT_OK = qw(scan scan_file language_for is_code_language);
 
 our $VERSION = '0.01';
 
@@ -44,6 +44,11 @@ The scanner is deliberately conservative. Where a construct is ambiguous - a
 Perl regex delimiter versus division, for instance - it leaves the text as code
 rather than guessing. That can leave a noisy match; it can never hide a real
 one.
+
+That invariant is why a C<#> preceded by C<$> or C<{> is not treated as a
+comment opener: Perl's C<$#array> and shell's C<${#var}> and C<$#> are live
+code, and blanking from there would hide every symbol later on the line. A C<#>
+after a space or at the start of a token is still a comment.
 
 =head2 Supported languages
 
@@ -83,6 +88,8 @@ my %LANG = (
         blocks  => [[ '=begin', '=end' ]],
         strings => [qw(" ' ?)],
         escapes => 1,
+        # =begin is only a block opener at the start of a line.
+        block_at_line_start => 1,
         heredoc => qr{(?<op><< *[-~]?['"]?(?<marker>[A-Za-z_]\w*)['"]?)},
     },
     python => {
@@ -105,7 +112,10 @@ my %LANG = (
         escapes => 1,
     },
     markdown => {
-        line    => qr{<!--},
+        # No line-comment entry: '<!--' is a block opener, not a line
+        # comment. Declaring it as both made the line-comment branch match
+        # first and consume only the opener, so the body of a multi-line
+        # HTML comment survived the scan while single-line ones were blanked.
         blocks  => [[ '<!--', '-->' ]],
         strings => [],
         escapes => 0,
@@ -240,6 +250,18 @@ sub scan {
 
         # --- line comment ---
         if ($cfg->{line} && $rest =~ /\A$cfg->{line}/) {
+            # '#' is not always a comment opener. Perl's $#array (last index)
+            # and shell's ${#var} / $# (length and argument count) put a '#'
+            # in live code, and blanking from there hid every symbol later on
+            # the line. A '#' preceded by a sigil or an opening brace is an
+            # operator, not a comment.
+            my $prev = $i > 0 ? substr($source, $i - 1, 1) : '';
+            if (substr($source, $i, 1) eq '#' && ($prev eq '$' || $prev eq '{')) {
+                $out .= '#';
+                $at_line_start = 0;
+                $i++;
+                next;
+            }
             my $nl = index($source, "\n", $i);
             $nl = $len if $nl < 0;
             $out .= _blank_from($source, $i, $nl);
@@ -252,7 +274,11 @@ sub scan {
         for my $b (@{ $cfg->{blocks} || [] }) {
             my ($open, $close) = @$b;
             next unless substr($source, $i, length $open) eq $open;
-            if ($open !~ m{^/} && !$at_line_start) { next }
+            # Only some openers are anchored to a line start (=begin); a
+            # '/*' or '<!--' may open anywhere. The old test inferred this
+            # from whether the opener began with '/', which made an inline
+            # markdown comment invisible to the block branch.
+            next if $cfg->{block_at_line_start} && !$at_line_start;
             my $idx = index($source, $close, $i + length $open);
             my $end = ($idx < 0) ? $len : $idx + length($close);
             $out .= _blank_from($source, $i, $end);

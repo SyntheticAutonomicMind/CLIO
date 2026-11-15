@@ -28,6 +28,14 @@ use constant {
     MAX_USAGES_LIMIT   => 1000,
     MAX_CONTEXT_LINES  => 10,
     MAX_LINE_CHARS     => 200,
+    # Matches to collect before filtering and ranking. The caller's
+    # max_results is a ceiling on what is RETURNED, not on what is
+    # considered: ranking definitions ahead of call sites is only
+    # meaningful if the definition is in the candidate set, and on this
+    # repository roughly a sixth of raw matches are comments or strings.
+    # This bound is what keeps a query on a common symbol from reading
+    # an unbounded number of files.
+    MAX_USAGES_COLLECT => 5000,
 };
 
 # Shrink a usage record for transport. Empty context arrays and multi-kilobyte
@@ -94,6 +102,18 @@ sub _context_around {
     my @after = $a_from <= $a_to ? @{$lines}[$a_from .. $a_to] : ();
 
     return (\@before, \@after);
+}
+
+# Absolute path of the working tree root, or '' when not in a repository.
+# Memoised per instance: list_usages and _git_grep_search both need it, and
+# it cannot change mid-call.
+sub _repo_root {
+    my ($self) = @_;
+    return $self->{_repo_root} if exists $self->{_repo_root};
+    my $root = `git rev-parse --show-toplevel 2>$NULLDEV`;
+    chomp $root if $root;
+    $root = '' unless defined $root && length $root && -d $root;
+    return $self->{_repo_root} = $root;
 }
 
 # git grep reports paths relative to the current working directory, so the same
@@ -172,8 +192,10 @@ Operations:
     - context_lines (optional): Context lines around each match, before and after (default: 0, max: 10)
     - max_results (optional): Maximum matches to return (default: 200, max: 1000)
   Returns: Locations where the symbol appears, with 'count', 'truncated' and
-  'limit'. Matches include comments and string literals, so narrow file_paths
-  when a common name returns too much.
+  'limit'. Comments, POD and string literals are filtered out and the rest are
+  ranked definitions-first, so 'kind' tells you whether a hit is the
+  definition, a call, or a mention. Narrow file_paths when a common name
+  returns too much.
 
 -  search_history - Semantic search through git commit messages
   Parameters:
@@ -771,17 +793,36 @@ sub _get_files_changed {
 Find all usages of a symbol across the codebase.
 
 Uses git grep if available (faster), falls back to File::Find + regex search.
+Paths that git does not track are searched directly, so a caller that names an
+untracked or ignored file still gets an answer.
+
+Matches that survive only inside a comment, POD block, docstring or string
+literal are dropped, the rest are labelled with the role they play, and the
+result is ranked definitions-first. That filtering and ranking happen before
+the caller's C<max_results> cap, so a small cap returns the most useful
+matches rather than the first ones found.
 
 Parameters:
 - symbol_name: Symbol to search for (required)
-- file_paths: Array of paths to search (optional, default: ['.'])
-- context_lines: Number of context lines (optional, default: 0)
+- file_paths: Array of paths to search (optional, default: the git repo root)
+- context_lines: Context lines either side of each match (optional, default: 0,
+                 clamped to MAX_CONTEXT_LINES)
+- max_results: Maximum matches to return (optional, default:
+               MAX_USAGES_DEFAULT). 0 means no cap. Clamped to
+               MAX_USAGES_LIMIT.
 
 Returns: Hash with:
 - success: Boolean
-- message: Summary message
-- usages: Array of {file, line, line_number, context_before, context_after}
-- count: Total number of usages found
+- output: Human-readable summary
+- usages: Array of {file, line, line_number, kind}, plus context_before and
+          context_after when requested. B<file> is repo-root-relative, so it
+          can be fed straight back to read_file. B<line> is truncated at
+          MAX_LINE_CHARS with an explicit marker, and B<line_full_length> is
+          added when that happened.
+- count: Number of usages returned
+- truncated: 1 when the result was capped
+- limit: The cap that was applied
+- filtered_noncode: Matches dropped because they were not in code
 
 =cut
 
@@ -862,14 +903,22 @@ sub list_usages {
     my $git_truncated   = 0;
     my $direct_truncated = 0;
 
+    # Collect past the caller's ceiling so the filter and the ranking have
+    # material to work with. Capping the collection at max_results would
+    # return the first files alphabetically, which is what a small budget
+    # used to do: max_results=1 for 'read_file' returned AGENTS.md:49 (a
+    # comment) while the definition sat further down the result set.
+    my $collect_limit = MAX_USAGES_COLLECT;
+    $collect_limit = $limit if $limit && $limit > $collect_limit;
+
     if (@git_paths) {
         my ($found, $trunc) = $self->_git_grep_search(
-            $symbol_name, \@git_paths, $context_lines, $context, $limit);
+            $symbol_name, \@git_paths, $context_lines, $context, $collect_limit);
         @usages = @$found;
         $git_truncated = $trunc;
     }
     if (@direct_paths) {
-        my $remaining = $limit > @usages ? $limit - @usages : 0;
+        my $remaining = $collect_limit > @usages ? $collect_limit - @usages : 0;
         my ($found, $trunc) = $self->_file_grep_search(
             $symbol_name, \@direct_paths, $context_lines, $context, $remaining);
         push @usages, @$found;
@@ -881,46 +930,77 @@ sub list_usages {
     # Drop matches that live only in comments, POD or string literals, label
     # what survives, and rank it. Measured on this repository, 17.5% of raw text
     # matches are non-code, rising to 80% for names that appear mostly in
-    # documentation. Filtering before capping matters: otherwise the budget is
-    # spent on prose and the definition falls off the end.
+    # documentation. Filtering and ranking both run before the caller's cap:
+    # otherwise the budget is spent on prose, or on the first files
+    # alphabetically, and the definition falls off the end.
     my $raw_count = scalar @usages;
     my $weights   = kind_weights();
     my %scanned;
     my @kept;
     my $dropped = 0;
 
+    # Every record carries a repo-root-relative path (see
+    # _normalize_result_path). Resolve against the repo root, not the
+    # process's working directory: from a subdirectory, joining a
+    # repo-relative path onto the cwd produces lib/lib/... which does not
+    # exist, so the scan read nothing and every match in the repository was
+    # reported as non-code.
+    my $repo_root = $self->_repo_root();
+
     for my $u (@usages) {
         my $abs = File::Spec->file_name_is_absolute($u->{file})
             ? $u->{file}
-            : File::Spec->rel2abs($u->{file}, Cwd::getcwd());
+            : File::Spec->rel2abs($u->{file}, length($repo_root) ? $repo_root : Cwd::getcwd());
 
         my $code_line;
+        # A file that could not be read is recorded as an empty list, not
+        # undef: indexing undef autovivifies it, so every later match in
+        # that file would compare against nothing and be reported as
+        # non-code.
         if (exists $scanned{$abs}) {
             $code_line = $scanned{$abs}[$u->{line_number} - 1];
         }
         else {
             my $lang = language_for($abs);
             my $src;
+            my $readable = 0;
             if (open my $in, '<:encoding(UTF-8)', $abs) {
                 local $/;
                 $src = <$in>;
                 close $in;
+                $readable = 1;
             }
-            if (defined $src) {
+            if ($readable && defined $src) {
                 my $clean = is_code_language($lang) ? scan($src, $lang) : $src;
                 $scanned{$abs} = [ split /\n/, $clean, -1 ];
                 $code_line     = $scanned{$abs}[$u->{line_number} - 1];
             }
             else {
-                $scanned{$abs} = undef;
-                $code_line     = $u->{line};   # unreadable: keep and label later
+                # Unreadable: trust the match text rather than dropping a
+                # result we cannot check.
+                $scanned{$abs} = [];
+                $code_line     = $u->{line};
             }
         }
 
-        my $in_code = (defined $code_line && $code_line =~ /(?<![\w:])\Q$symbol_name\E(?![\w:])/) ? 1 : 0;
+        # Reject a match that survives only inside a comment or a string
+        # literal. The lookarounds are what stop 'foo' matching inside
+        # 'foobar'. A ':' prefix is allowed because a qualified reference
+        # (CLIO::Tools::FileOperations::read_file) mentions the symbol in real
+        # code, and classify_reference scores it as qualified_call. Excluding
+        # ':' dropped every such reference and counted it as a comment.
+        my $in_code = (defined $code_line
+            && $code_line =~ /(?<![\w])\Q$symbol_name\E(?![\w:])/) ? 1 : 0;
         if (!$in_code) { $dropped++; next }
 
-        $u->{kind} = classify_reference($code_line, $symbol_name);
+        # Classify with a code grammar only in a code file. A markdown doc
+        # that contains 'sub read_file { ... }' as an example is mentioning
+        # the symbol, not defining it; classifying it as 'definition' put the
+        # doc ahead of the module that actually defines it.
+        my $file_lang = language_for($abs);
+        $u->{kind} = ($file_lang eq 'markdown')
+            ? 'reference'
+            : classify_reference($code_line, $symbol_name);
         push @kept, $u;
     }
 
@@ -960,11 +1040,21 @@ sub list_usages {
     my $action_desc = "searching for symbol '$symbol_name' ("
         . ($truncated ? "$count shown, truncated" : "$count usages") . ")";
 
+    # Two different things can cut a result short: the caller's cap, and the
+    # collection ceiling reached while gathering candidates. Say which, and do
+    # not tell the caller to raise a cap that is already unlimited.
+    my $truncation_note = '';
+    if ($truncated) {
+        if ($limit && $count >= $limit) {
+            $truncation_note = " (result capped at $limit; narrow file_paths or raise max_results to see more)";
+        } else {
+            $truncation_note = " (search stopped after " . MAX_USAGES_COLLECT
+                . " matches before ranking; narrow file_paths to search a smaller tree)";
+        }
+    }
+
     return $self->success_result(
-        "Found $count usages of '$symbol_name'"
-        . ($truncated
-            ? " (result capped at $limit; narrow file_paths or raise max_results to see more)"
-            : ''),
+        "Found $count usages of '$symbol_name'" . $truncation_note,
         action_description => $action_desc,
         usages => [ map { _shape_usage($_) } @usages ],
         count => $count,
@@ -1121,9 +1211,7 @@ sub _git_grep_search {
     open my $fh, '-|', @cmd or return (\@results, 0);
 
     my $cwd       = Cwd::getcwd();
-    my $repo_root = `git rev-parse --show-toplevel 2>$NULLDEV`;
-    chomp $repo_root if $repo_root;
-    $repo_root = '' unless defined $repo_root && -d $repo_root;
+    my $repo_root = $self->_repo_root();
 
     my %line_cache;
     my $records_seen = 0;
@@ -1225,6 +1313,9 @@ sub _file_grep_search {
     
     # Search each file
     foreach my $file (@files_to_search) {
+        # Stop once the collection ceiling is reached. Without this, every
+        # remaining file is read up to its first match only to be discarded.
+        last if $limit && @results >= $limit;
         next unless -f $file && -r $file;
 
         # Skip files over the size limit
@@ -1281,10 +1372,12 @@ sub _file_grep_search {
                 
                 if ($limit && @results >= $limit) {
                     $truncated = 1;
-                    next;
+                    last;
                 }
                 push @results, {
-                    file => $file,
+                    # Same normalisation as the git-grep path so the
+                    # consumer's repo-root resolution is correct for both.
+                    file => $self->_normalize_result_path($file, $self->_repo_root(), Cwd::getcwd()),
                     line_number => $line_num,
                     line => $lines[$i],
                     context_before => \@context_before,

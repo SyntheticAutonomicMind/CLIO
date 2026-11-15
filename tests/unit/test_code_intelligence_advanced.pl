@@ -174,14 +174,56 @@ run_test(
     }
 );
 
-# Test: filtered_noncode field present
+# Test: non-code matches are actually filtered
+# Asserting only that the field exists let the filter be disabled entirely
+# without a single test failing - the count would simply read 0.
 run_test(
-    "list_usages - filtered_noncode field present",
-    { operation => 'list_usages', symbol_name => 'use strict', file_paths => ['lib/'] },
+    "list_usages - non-code matches are filtered out",
+    { operation => 'list_usages', symbol_name => 'FileOperations', file_paths => ['lib/'] },
     1,
     sub {
         my $r = shift;
-        return exists $r->{filtered_noncode};
+        return 0 unless $r->{success};
+        return 0 unless defined $r->{filtered_noncode};
+        # FileOperations appears in POD, in comments, and in 'use' lines.
+        # Some of those hits must have been rejected as non-code.
+        return $r->{filtered_noncode} > 0;
+    }
+);
+
+# Test: ranking puts a definition above a mention, then the cap applies
+# The cap used to be applied while collecting matches, so it returned the
+# first files alphabetically - prose, usually - and the definition never
+# reached the result set however small the budget.
+run_test(
+    "list_usages - cap applies after ranking, not during collection",
+    { operation => 'list_usages', symbol_name => 'read_file', file_paths => ['.'], max_results => 1 },
+    1,
+    sub {
+        my $r = shift;
+        return 0 unless $r->{success} && $r->{count} == 1;
+        my $top = $r->{usages}[0];
+        return 0 unless $top;
+        # With a budget of one and correct ordering the single result is the
+        # definition, in source, not a mention in documentation.
+        return ($top->{kind} // '') eq 'definition'
+            && $top->{file} =~ m{^lib/};
+    }
+);
+
+# Test: a qualified reference is not mistaken for a comment
+# The post-filter's lookbehind excluded ':' before the symbol, which is
+# exactly the shape of a qualified call, so every such reference was counted
+# as non-code and dropped.
+run_test(
+    "list_usages - qualified references are classified, not dropped",
+    { operation => 'list_usages', symbol_name => 'language_for', file_paths => ['lib/'], max_results => 200 },
+    1,
+    sub {
+        my $r = shift;
+        return 0 unless $r->{success};
+        my @qualified = grep { ($_->{kind} // '') eq 'qualified_call' } @{ $r->{usages} || [] };
+        return @qualified > 0;
     }
 );
 
@@ -200,6 +242,72 @@ run_test(
             return 0 if File::Spec->file_name_is_absolute($u->{file});
         }
         return 1;
+    }
+);
+
+# Test: the same query from a subdirectory returns the same answer
+# The reported path is repo-root-relative while the scan resolved it against
+# the process working directory. From lib/ that produced lib/lib/..., which
+# does not exist, so the file could not be read and every match in it was
+# reported as non-code.
+run_test(
+    "list_usages - identical result from a subdirectory",
+    { operation => 'list_usages', symbol_name => 'scan_file', file_paths => ['.'], max_results => 100 },
+    1,
+    sub {
+        my $from_root = shift;
+        return 0 unless $from_root->{success};
+
+        my $cwd = Cwd::getcwd();
+        chdir("$project_root/lib") or return 0;
+        my $from_sub = $tool->execute(
+            { operation => 'list_usages', symbol_name => 'scan_file',
+              file_paths => ['.'], max_results => 100 },
+            { session => { id => 'test' } },
+        );
+        chdir($cwd) or return 0;
+
+        return 0 unless $from_sub->{success};
+        return 0 unless ($from_sub->{count} // -1) == ($from_root->{count} // -2);
+
+        # Same files, same kinds - not merely the same number.
+        my $sig = sub {
+            my ($r) = @_;
+            return join '|', map { ($_->{file} // '') . ':' . ($_->{kind} // '') }
+                sort { ($a->{file} // '') cmp ($b->{file} // '') }
+                @{ $r->{usages} || [] };
+        };
+        return $sig->($from_sub) eq $sig->($from_root);
+    }
+);
+
+# Test: a symbol that appears in POD, comments and its own module still has
+# its definition found and its prose excluded. The raw match count, the kept
+# count and the drop count must add up, so a scan that failed to read the file
+# (and therefore classified everything as non-code) shows up as a change in
+# the total rather than hiding behind a plausible-looking cap.
+run_test(
+    "list_usages - definition found, POD and comments excluded",
+    { operation => 'list_usages', symbol_name => 'read_file',
+      file_paths => ['lib/CLIO/Tools/FileOperations.pm'], max_results => 500 },
+    1,
+    sub {
+        my $r = shift;
+        return 0 unless $r->{success};
+        return 0 unless ($r->{count} // 0) > 0;
+
+        my @defs = grep { ($_->{kind} // '') eq 'definition' } @{ $r->{usages} };
+        return 0 unless @defs == 1;
+        return 0 unless $defs[0]{file} eq 'lib/CLIO/Tools/FileOperations.pm';
+
+        # Nothing that survived may be a POD line or a comment.
+        for my $u (@{ $r->{usages} }) {
+            my $text = $u->{line} // '';
+            return 0 if $text =~ /^\s*=head|^\s*=item|^\s*=cut/;
+        }
+        # Some hits were prose (the module documents its own operations), so
+        # the filter must have done something.
+        return ($r->{filtered_noncode} // 0) > 0;
     }
 );
 
@@ -335,6 +443,62 @@ run_test(
         my $src = "=head1 NAME\n\nTest module\n\n=cut\n\nsub foo { 1 }";
         my $clean = scan($src, 'perl');
         return $clean !~ /Test module/ && $clean =~ /sub foo/;
+    }
+);
+
+# Test: '#' used as an operator is not a comment
+# The invariant is that a comment scan may leave a noisy match but must never
+# hide a real one. Treating every '#' as a comment start broke that for
+# $#array (Perl last index) and ${#var}/$# (shell length and argument count):
+# the rest of the line was blanked, so a symbol defined after the operator was
+# invisible to a scan-based search.
+run_test(
+    "Scanner - '#' as an operator does not hide code",
+    { operation => 'list_usages', symbol_name => 'test' },
+    1,
+    sub {
+        my $perl  = scan("my \$last = \$#array; my \$kept = 1;\n", 'perl');
+        my $sh_len = scan("echo \${#arr[\@]}; echo KEPT_SHELL\n", 'sh');
+        my $sh_cnt = scan("echo \$#; echo ALSO_KEPT\n", 'sh');
+        # ...while a real comment is still blanked.
+        my $real  = scan("my \$x = 1; # REAL_COMMENT\nmy \$after = 2;\n", 'perl');
+        return $perl   =~ /\$kept/
+            && $sh_len =~ /KEPT_SHELL/
+            && $sh_cnt =~ /ALSO_KEPT/
+            && $real !~ /REAL_COMMENT/
+            && $real =~ /\$after/;
+    }
+);
+
+# Test: markdown HTML comments, single- and multi-line
+# '<!--' was declared as both a line comment and a block opener. The
+# line-comment branch won and consumed only the opener, so the body of a
+# multi-line comment survived while a single-line one was blanked.
+run_test(
+    "Scanner - markdown HTML comments (block and inline)",
+    { operation => 'list_usages', symbol_name => 'test' },
+    1,
+    sub {
+        my $multi  = scan("before\n<!--\nHIDDEN_ML\n-->\nafter\n", 'markdown');
+        my $inline = scan("before <!-- HIDDEN_INLINE --> after\n", 'markdown');
+        my $plain  = scan("before\nVISIBLE_TEXT\nafter\n", 'markdown');
+        return $multi  !~ /HIDDEN_ML/
+            && $inline !~ /HIDDEN_INLINE/
+            && $plain  =~ /VISIBLE_TEXT/
+            && $multi  =~ /before/
+            && $multi  =~ /after/;
+    }
+);
+
+# Test: a line-anchored block opener still requires a line start
+run_test(
+    "Scanner - ruby =begin stays line-anchored",
+    { operation => 'list_usages', symbol_name => 'test' },
+    1,
+    sub {
+        my $src = "puts 1\n=begin\nHIDDEN_RUBY\n=end\nputs 2\n";
+        my $clean = scan($src, 'ruby');
+        return $clean !~ /HIDDEN_RUBY/ && $clean =~ /puts 2/;
     }
 );
 
@@ -496,6 +660,30 @@ run_test(
     1,
     sub {
         return classify_reference('my $foo', 'foo') eq 'declaration';
+    }
+);
+
+# Test: a declaration names the symbol being declared, not anything on the line
+# The pattern used to match the name anywhere after `my`, so a qualified call
+# assigned to a variable was labelled a declaration of the callee. Since
+# declarations outrank calls, those references sorted to the top.
+run_test(
+    "Extractor - declaration means the declared name, not any name on the line",
+    { operation => 'list_usages', symbol_name => 'test' },
+    1,
+    sub {
+        return 0 unless classify_reference('my $foo', 'foo') eq 'declaration';
+        # Every member of a list declaration is declared.
+        return 0 unless classify_reference('my ($a, $b) = @_;', 'b') eq 'declaration';
+        # The callee on the right of the assignment is a qualified call.
+        return 0 unless classify_reference(
+            'my $lang = CLIO::Code::Scanner::language_for($file);', 'language_for'
+        ) eq 'qualified_call';
+        # ...and the variable it is assigned to is still a declaration.
+        return 0 unless classify_reference(
+            'my $lang = CLIO::Code::Scanner::language_for($file);', 'lang'
+        ) eq 'declaration';
+        return 1;
     }
 );
 
