@@ -92,4 +92,84 @@ close $bf;
 my $past_eof = dispatch('insert_at_line', { path => "$dir/small.txt", line => 99, content => 'x' });
 ok(!$past_eof->{success}, 'insert_at_line past EOF is an error');
 
+# --- Internal bookkeeping never reaches the wire ------------------------
+# Tool-call hashes are carried in conversation history and cloned into the
+# request payload. Any key CLIO adds is sent to the provider unless it is
+# stripped, so the payload builders must remove all of them.
+subtest 'internal tool_call keys are stripped from the payload' => sub {
+    require CLIO::Core::APIManager;
+    require CLIO::Core::Config;
+
+    my $cfg_dir = tempdir(CLEANUP => 1);
+    open my $cf, '>', "$cfg_dir/config.json" or die $!;
+    print $cf q({"provider":"github_copilot","api_key":"sk-test-key"});
+    close $cf;
+
+    my $api = CLIO::Core::APIManager->new(
+        config  => CLIO::Core::Config->new(config_dir => $cfg_dir),
+        debug   => 0,
+        session => bless({ state_data => {} }, 'FakeSession'),
+    );
+
+    my @internal = qw(_emitted_name _name_complete _parsed_args);
+    ok(scalar @CLIO::Core::APIManager::INTERNAL_TOOL_CALL_KEYS,
+        'the internal key list is declared');
+    is_deeply(
+        [ sort @CLIO::Core::APIManager::INTERNAL_TOOL_CALL_KEYS ],
+        [ sort @internal ],
+        'the declared list covers every key CLIO attaches to a tool_call',
+    );
+
+    my $messages = [
+        { role => 'user', content => 'find the file' },
+        {
+            role    => 'assistant',
+            content => '',
+            tool_calls => [ {
+                id             => 'call_1',
+                type           => 'function',
+                function       => { name => 'file_operations', arguments => '{"operation":"file_search"}' },
+                _name_complete => 1,
+                _emitted_name  => 'file_search',
+                _parsed_args   => { operation => 'file_search', pattern => '**/x' },
+            } ],
+        },
+        { role => 'tool', tool_call_id => 'call_1', content => 'ok' },
+    ];
+
+    my $payload = $api->_build_payload(
+        $messages, 'gpt-4o', { endpoint => '/chat/completions', openai => 1 },
+        stream => 0,
+    );
+    my $tc = $payload->{messages}[1]{tool_calls}[0];
+    is_deeply([ sort keys %$tc ], [qw(function id type)],
+        'Chat Completions tool_call carries only schema keys');
+    ok(!exists $tc->{$_}, "Chat Completions payload has no $_") for @internal;
+    is($tc->{function}{arguments}, '{"operation":"file_search"}',
+        'the real arguments are untouched');
+
+    my $json = CLIO::Util::JSON::encode_json($payload);
+    my @found = grep { index($json, $_) >= 0 } @internal;
+    is_deeply(\@found, [], 'serialized Chat Completions body is clean');
+
+    my $rpayload = $api->_build_responses_api_payload(
+        $messages, 'gpt-4o',
+        { endpoint => '/responses', openai => 1, use_responses_api => 1 },
+        stream => 0,
+    );
+    my $rjson = CLIO::Util::JSON::encode_json($rpayload);
+    my @rfound = grep { index($rjson, $_) >= 0 } @internal;
+    is_deeply(\@rfound, [], 'serialized Responses body is clean');
+
+    # The payload is a copy: the caller's history keeps its own bookkeeping.
+    ok(exists $messages->[1]{tool_calls}[0]{_emitted_name},
+        'stripping the payload does not modify the caller\'s message');
+};
+
+package FakeSession;
+sub can   { my ($self, $m) = @_; return $m eq 'state' ? 1 : undef }
+sub state { return $_[0]->{state_data} }
+
+package main;
+
 done_testing();

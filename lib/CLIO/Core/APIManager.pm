@@ -77,6 +77,11 @@ use constant {
     DEFAULT_ENDPOINT => 'https://api.openai.com/v1',
 };
 
+# Keys CLIO attaches to a tool_call hash for its own bookkeeping. They are not
+# part of any provider's schema, so they are stripped from the payload in
+# _build_payload. Add a key here when adding one to a tool_call elsewhere.
+our @INTERNAL_TOOL_CALL_KEYS = qw(_name_complete _emitted_name _parsed_args);
+
 # No external dependencies, only core Perl
 
 # Create an HTTP client with proxy config from CLIO config
@@ -3158,6 +3163,16 @@ sub _build_payload {
                         for my $tc (@{$clone->{tool_calls}}) {
                             if (ref($tc) eq 'HASH') {
                                 $tc = { %$tc };
+                                # Drop CLIO's bookkeeping. This loop is the
+                                # choke point every Chat Completions message
+                                # passes through on its way into the request,
+                                # so a key added to a tool_call hash anywhere
+                                # upstream cannot reach the provider.
+                                # @INTERNAL_TOOL_CALL_KEYS is the single list;
+                                # add to it rather than to this loop.
+                                delete @{$tc}{
+                                    grep { exists $tc->{$_} } @INTERNAL_TOOL_CALL_KEYS
+                                };
                                 if (ref($tc->{function}) eq 'HASH') {
                                     $tc->{function} = { %{$tc->{function}} };
                                 }
@@ -3775,17 +3790,11 @@ sub _prepare_api_request {
             $msg_count, $msg_key, $tool_count, $endpoint));
     }
 
-    # Clean up internal metadata fields from tool_calls (Chat Completions only)
-    if (!$use_responses_api && $payload->{messages}) {
-        for my $msg (@{$payload->{messages}}) {
-            if ($msg->{tool_calls} && ref($msg->{tool_calls}) eq 'ARRAY') {
-                for my $tc (@{$msg->{tool_calls}}) {
-                    delete $tc->{_name_complete} if exists $tc->{_name_complete};
-                }
-            }
-        }
-    }
-
+    # CLIO's internal tool_call keys are stripped in _build_payload's clone
+    # loop, which every Chat Completions message passes through. The Responses
+    # API path never copies them: _build_responses_api_payload constructs
+    # fresh function_call items from name/arguments/call_id only.
+    #
     # Pre-flight validation (Chat Completions only)
     if (!$use_responses_api) {
         my $preflight_errors = $self->_preflight_validate_messages($payload->{messages});
