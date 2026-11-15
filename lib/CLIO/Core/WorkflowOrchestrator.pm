@@ -1844,7 +1844,12 @@ sub _execute_tool_round {
 
         my $tool_call = $ordered_tools->[$i];
         my $tool_name = $tool_call->{function}->{name} || 'unknown';
-        my $tool_display_name = uc($tool_name);
+        # Phase 3 rewrites an emitted callable to the tool that owns it, so
+        # $tool_name reads 'file_operations' even when the model called
+        # 'read_file'. Label the header with the name the model actually
+        # emitted: a legitimate call otherwise renders as a grouping-name call
+        # that the model was never permitted to make.
+        my $tool_display_name = uc($tool_call->{_emitted_name} // $tool_name);
         $tool_display_name =~ s/_/ /g;
 
         log_debug('WorkflowOrchestrator', "Executing tool: $tool_name");
@@ -2336,6 +2341,12 @@ sub _execute_tool_round {
                     {
                         tool_call_id => $tool_call->{id},
                         tool_name => $tool_name,
+                        # The callable the model emitted, before alias
+                        # resolution rewrote it. Replay labels the header with
+                        # this so a read_file does not render as file_operations.
+                        emitted_name => ($tool_call->{_emitted_name}
+                            && $tool_call->{_emitted_name} ne $tool_name)
+                            ? $tool_call->{_emitted_name} : undef,
                         action_description => ($action_detail && $action_detail ne '' && !$pre_action_printed)
                             ? $action_detail
                             : ($result_data->{action_description} || undef),

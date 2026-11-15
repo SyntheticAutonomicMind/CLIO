@@ -480,9 +480,16 @@ sub execute_tool {
         }
         
         # Log successful execution
+        if (defined $declared_name && $declared_name ne $tool_name) {
+            log_debug('ToolExecutor',
+                "Model emitted '$declared_name'; executed as '$tool_name'"
+                . " (operation=" . ($arguments->{operation} // '') . ")");
+        }
         $self->_log_tool_operation({
             tool_call_id => $tool_call_id,
             tool_name => $tool_name,
+            (defined $declared_name && $declared_name ne $tool_name
+                ? (emitted_name => $declared_name) : ()),
             operation => $arguments->{operation} || 'unknown',
             parameters => $arguments,
             output => $raw_output,  # Log the FULL output, not the truncated version
@@ -534,6 +541,8 @@ sub execute_tool {
         $self->_log_tool_operation({
             tool_call_id => $tool_call_id,
             tool_name => $tool_name,
+            (defined $declared_name && $declared_name ne $tool_name
+                ? (emitted_name => $declared_name) : ()),
             operation => $arguments->{operation} || 'unknown',
             parameters => $arguments,
             output => $result->{output} || {},

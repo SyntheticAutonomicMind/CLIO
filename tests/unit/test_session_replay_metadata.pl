@@ -66,9 +66,14 @@ mkdir "$clio_dir/sessions";
     my $content = do { local $/; <$fh> };
     close $fh;
 
-    # Verify the add_message call for tool results includes display metadata
-    like($content, qr/tool_name\s*=>\s*\$tool_name,\s*action_description\s*=>/,
-        "WorkflowOrchestrator passes tool_name and action_description to add_message");
+    # Verify the add_message call for tool results includes display metadata.
+    # Assert each key independently: requiring them to be adjacent in the
+    # source breaks every time a new key is added between them.
+    like($content, qr/tool_name\s*=>\s*\$tool_name,/,
+        "WorkflowOrchestrator passes tool_name to add_message");
+
+    like($content, qr/action_description\s*=>/,
+        "WorkflowOrchestrator passes action_description to add_message");
 
     like($content, qr/pre_action_description\s*=>/,
         "WorkflowOrchestrator passes pre_action_description to add_message");

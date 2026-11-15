@@ -345,7 +345,11 @@ sub _render_assistant_message {
     for my $i (0 .. $#$tool_calls) {
         my $tc = $tool_calls->[$i];
         my $tool_name = $tc->{function}->{name} || 'unknown';
-        my $tool_display_name = uc($tool_name);
+        # Phase 3 rewrites an emitted callable to the tool that owns it. Render
+        # and group by the name the model emitted so replay matches the live
+        # session, while $tool_name stays canonical for suppression rules.
+        my $emitted_name = $tc->{_emitted_name} // $tool_name;
+        my $tool_display_name = uc($emitted_name);
         $tool_display_name =~ s/_/ /g;
 
         # Parse tool arguments
@@ -373,7 +377,7 @@ sub _render_assistant_message {
         my $suppress_display = $self->_should_suppress($tool_name, $tool_operation, $tool_result);
 
         # Track tool group changes for box format
-        my $tool_changed = ($tool_name ne $$current_tool_ref);
+        my $tool_changed = ($emitted_name ne $$current_tool_ref);
         if ($tool_changed) {
             # In box format, print a newline before new tool group
             if ($tool_format ne 'inline' && $$current_tool_ref ne '') {
@@ -384,7 +388,7 @@ sub _render_assistant_message {
         }
 
         $self->_render_tool_call(
-            $tool_name, $tool_display_name, $tool_operation,
+            $emitted_name, $tool_display_name, $tool_operation,
             $tool_args, $suppress_display, $tool_changed,
             $tool_format, $i, $#$tool_calls,
             $tool_result, $rendered_map, $current_tool_ref,
@@ -395,7 +399,10 @@ sub _render_assistant_message {
     # Print trailing newline after tool calls (matches live session's
     # _execute_tool_round which prints "\n" at the end of the tool loop,
     # skipping for interact which provides its own separation)
-    my $last_tool_name = $tool_calls->[-1]->{function}->{name} || '';
+    my $last_call      = $tool_calls->[-1];
+    my $last_tool_name = $last_call->{_emitted_name}
+                      // $last_call->{function}->{name}
+                      // '';
     if ($last_tool_name ne 'interact') {
         print "\n";
         STDOUT->flush() if STDOUT->can('flush');
@@ -649,7 +656,10 @@ sub _render_orphan_tool_result {
 
     my $chat = $self->{chat};
     my $tool_name = $msg->{tool_name} || $msg->{name} || 'unknown';
-    my $tool_display_name = uc($tool_name);
+    # Prefer the emitted callable when the tool message recorded one, so an
+    # orphaned result is labelled with what the model actually called.
+    my $display_src = $msg->{emitted_name} || $tool_name;
+    my $tool_display_name = uc($display_src);
     $tool_display_name =~ s/_/ /g;
 
     # Display header

@@ -13,7 +13,7 @@ work items via the message bus or direct interaction.
 
 =head1 USAGE
 
-    perl tests/integration/test_subagent_persistent.pl
+    perl tests/manual/test_subagent_persistent.pl
 
 This will spawn a persistent agent that you can interact with.
 
@@ -80,6 +80,11 @@ print "  5. You can send more tasks to the same agent\n\n";
 
 print "Test directory: $test_dir\n";
 print "Agent log: /tmp/clio-agent-agent-1.log\n\n";
+
+# A persistent agent outlives the process that spawned it, so a manual run
+# that skipped cleanup left agents running for days. Stop them here.
+print "[CLEANUP] Stopping spawned agents...\n";
+system(qq{$RealBin/../../clio --input '/subagent killall' --exit});
 
 print "[SUCCESS] Manual test setup complete.\n";
 print "Check the outputs above to verify persistent agent functionality.\n\n";
