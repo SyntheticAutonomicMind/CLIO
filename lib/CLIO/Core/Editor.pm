@@ -9,6 +9,7 @@ use utf8;
 use CLIO::Core::Logger qw(log_debug);
 use File::Temp qw(tempfile);
 use File::Spec;
+use CLIO::Util::Temp qw(temp_dir);
 
 =head1 NAME
 
@@ -118,7 +119,7 @@ sub edit_multiline {
     eval {
         ($fh, $filename) = tempfile(
             'clio_XXXXXX',
-            DIR => File::Spec->tmpdir(),
+            DIR => temp_dir(),
             SUFFIX => '.txt',
             UNLINK => 0  # Don't auto-delete - we'll clean up manually
         );

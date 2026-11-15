@@ -46,12 +46,13 @@
 #
 # Warning provenance:
 #   A warning is attributed to vendor when it names a system or CPAN perl
-#   tree, and to CLIO otherwise. Warnings inside perl core count as CLIO:
-#   core modules such as lib.pm report the undef they were handed, not the
-#   caller that handed it, so excluding them would hide real defects. The
-#   rules match the previous implementation so historical counts stay
-#   comparable. Vendor warnings are informational and never affect the exit
-#   code.
+#   tree and no CLIO frame is on the stack, and to CLIO otherwise. Each test
+#   runs under CLIO::Test::WarningTrace, which prints the nearest frame inside
+#   the repository after the warning. That closes the blind spot where a
+#   vendor module (lib.pm and friends) reported the undef it was handed, the
+#   blame line pointed at the vendor file, and the CLIO caller that caused it
+#   was discarded as informational. Vendor warnings with no CLIO frame are
+#   informational and never affect the exit code.
 #
 # Why this exists:
 #   CLIO enables `use warnings;` per the module template, but a warning only
@@ -85,8 +86,9 @@ $repo_root = abs_path('.') unless -d "$repo_root/lib";
 
 # Runtime, not `use lib`: a BEGIN-time lib import would see $repo_root
 # undef, since the assignment above only runs after compilation.
-unshift @INC, "$repo_root/lib";
+unshift @INC, "$repo_root/lib", "$repo_root/tests/lib";
 require CLIO::Util::JSON;
+require CLIO::Test::WarningAttribution;
 
 my $BASELINE_FILE  = "$repo_root/tests/.strict-baseline.json";
 my $BASELINE_VER   = 1;
@@ -186,34 +188,7 @@ sub strip_ansi {
     return $s;
 }
 
-# Provenance rules preserved from the previous implementation.
-sub is_vendor_line {
-    my ($line) = @_;
-    return 1 if $line =~ m{/System/Library/Perl/};
-    return 1 if $line =~ m{/Library/Perl/};
-    return 1 if $line =~ m{\.cpan\b|/\.cpan/};
-    return 1 if $line =~ m{at\s+\S*perl/\S+/\S+\.pm\s+line\s+\d+};
-    return 0;
-}
 
-# Turn "at lib/CLIO/Foo/Bar.pm line 42." into "lib/CLIO/Foo/Bar.pm:42" so the
-# report is directly navigable, relative to the repo root.
-sub warning_location {
-    my ($line) = @_;
-    if ($line =~ m{\bat\s+(\S+?)\s+line\s+(\d+)}) {
-        my ($file, $lineno) = ($1, $2);
-        $file =~ s{^\Q$repo_root\E/}{};
-        return "$file:$lineno";
-    }
-    return '(unknown location)';
-}
-
-sub summarize_warning {
-    my ($line) = @_;
-    $line =~ s/\s*at\s+\S+\s+line\s+\d+.*$//;
-    $line =~ s/^\s+|\s+$//g;
-    return $line;
-}
 
 sub slurp {
     my ($path) = @_;
@@ -244,6 +219,9 @@ sub run_one_test {
 
     my @cmd = ($^X, '-I', "$repo_root/lib", '-I', "$repo_root/tests/lib");
     push @cmd, '-W';
+    # Emit the nearest CLIO stack frame after each warning so a warning raised
+    # inside a vendor module can be attributed to the CLIO caller.
+    push @cmd, '-MCLIO::Test::WarningTrace';
     push @cmd, $abs;
 
     my $pid = fork();
@@ -259,6 +237,7 @@ sub run_one_test {
         # runner above them. Without this a strict run recurses into a full
         # nested suite.
         $ENV{CLIO_TEST_RUNNER_INVOKED} = 1;
+        $ENV{CLIO_REPO_ROOT} = $repo_root;
         exec { $cmd[0] } @cmd;
         exit 99;
     }
@@ -301,40 +280,7 @@ sub run_one_test {
 # Analysis
 # ---------------------------------------------------------------------------
 
-# Groups CLIO-attributed warnings by label then location, so the report names
-# the exact place to fix instead of only a count. Returns (\@findings, $vendor).
-sub classify_warnings {
-    my ($stderr) = @_;
-    my (%found, $vendor);
-    $vendor = 0;
 
-    for my $pat (@warning_patterns) {
-        my ($re, $label) = @$pat;
-        for my $line (split /\n/, $stderr) {
-            next unless $line =~ m{$re};
-            my $clean = strip_ansi($line);
-            if (is_vendor_line($clean)) {
-                $vendor++;
-                next;
-            }
-            my $loc = warning_location($clean);
-            $found{$label} ||= {};
-            $found{$label}{$loc} ||= { count => 0, message => summarize_warning($clean) };
-            $found{$label}{$loc}{count}++;
-        }
-    }
-
-    my @findings;
-    for my $label (sort keys %found) {
-        my @places = map {
-            { location => $_, count => $found{$label}{$_}{count}, message => $found{$label}{$_}{message} }
-        } sort keys %{ $found{$label} };
-        my $count = 0;
-        $count += $_->{count} for @places;
-        push @findings, { label => $label, count => $count, places => \@places };
-    }
-    return (\@findings, $vendor);
-}
 
 # Failing assertions a test printed without signalling through its exit code
 # are still evidence the caller needs.
@@ -425,7 +371,7 @@ for my $abs (@targets) {
     }
 
     my $run             = run_one_test($abs);
-    my ($findings, $vendor) = classify_warnings($run->{stderr});
+    my ($findings, $vendor) = CLIO::Test::WarningAttribution::classify_warnings($run->{stderr}, \@warning_patterns, $repo_root);
 
     my $clio_count = 0;
     $clio_count += $_->{count} for @$findings;

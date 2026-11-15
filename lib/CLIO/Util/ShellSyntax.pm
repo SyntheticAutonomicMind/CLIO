@@ -10,6 +10,7 @@ use POSIX qw(WNOHANG :signal_h);
 use Time::HiRes ();
 use File::Temp qw(tempfile);
 use CLIO::Core::Logger qw(log_debug);
+use CLIO::Util::Temp qw(temp_dir);
 
 =head1 NAME
 
@@ -105,7 +106,7 @@ sub check_shell_syntax {
 
     # Write to a file rather than passing via -c so the parser reports real
     # line numbers and so no quoting layer can alter the command under test.
-    my ($tfh, $tfile) = tempfile('clio_synchk_XXXXXX', TMPDIR => 1, UNLINK => 1);
+    my ($tfh, $tfile) = tempfile('clio_synchk_XXXXXX', DIR => temp_dir(), UNLINK => 1);
     unless ($tfh) {
         log_debug('ShellSyntax', "Cannot create temp file - skipping check: $!");
         return undef;

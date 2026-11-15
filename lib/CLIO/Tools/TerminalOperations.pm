@@ -11,6 +11,7 @@ binmode(STDOUT, ':encoding(UTF-8)');
 binmode(STDERR, ':encoding(UTF-8)');
 use parent 'CLIO::Tools::Tool';
 use CLIO::Util::ShellSyntax qw(check_shell_syntax);
+use CLIO::Util::Temp qw(temp_dir);
 use Cwd 'getcwd';
 use POSIX qw(WNOHANG dup2);
 use File::Temp ();
@@ -335,7 +336,7 @@ sub _capture_dir {
 
     return $CAPTURE_DIR if defined $CAPTURE_DIR && -d $CAPTURE_DIR;
 
-    my $dir = File::Temp::tempdir('clio-term-XXXXXXXX', TMPDIR => 1, CLEANUP => 1);
+    my $dir = File::Temp::tempdir('clio-term-XXXXXXXX', DIR => temp_dir(), CLEANUP => 1);
     chmod 0700, $dir;
     $CAPTURE_DIR = $dir;
     return $CAPTURE_DIR;
@@ -1340,7 +1341,7 @@ Returns: ($path, $error) - exactly one is defined
 sub _write_stdin_file {
     my ($content) = @_;
 
-    my ($fh, $path) = File::Temp::tempfile('clio_stdin_XXXXXX', TMPDIR => 1);
+    my ($fh, $path) = File::Temp::tempfile('clio_stdin_XXXXXX', DIR => temp_dir());
     unless ($fh) {
         return (undef, "tempfile: $!");
     }
