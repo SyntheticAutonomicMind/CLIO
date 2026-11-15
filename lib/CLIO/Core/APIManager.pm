@@ -27,6 +27,7 @@ use warnings;
 use utf8;
 use CLIO::Core::Logger qw(should_log log_debug log_warning);
 use CLIO::Core::ErrorContext qw(classify_error format_error);
+use CLIO::Core::Defaults ();
 use CLIO::Util::ConfigPath qw(get_config_dir);
 use CLIO::Providers qw(get_provider list_providers provider_from_url);
 use POSIX ":sys_wait_h"; # For WNOHANG
@@ -2450,6 +2451,20 @@ sub validate_and_truncate_messages {
     
     $model ||= $self->get_current_model();
     my $caps = $self->get_model_capabilities($model);
+
+    # Character count of the tool definitions in this request. The
+    # chars/token ratio learned from the response has to describe the whole
+    # prompt, tools included, or every message estimate is inflated by the
+    # tool share. One encode of the same array the request already carries,
+    # against a request measured in seconds.
+    my $tool_chars = 0;
+    if ($tools && ref($tools) eq 'ARRAY' && @$tools) {
+        for my $tool (@$tools) {
+            my $json = safe_encode_json($tool);
+            $tool_chars += length($json) if defined $json;
+        }
+    }
+    $self->{_request_tool_chars} = $tool_chars;
     
     return validate_and_truncate(
         messages           => $messages,
@@ -2522,25 +2537,36 @@ sub _learn_from_api_response {
             }
         }
     }
+
+    # Tool definitions count toward prompt_tokens but are not part of
+    # $messages. Leaving them out makes the ratio read low by the tool
+    # share of the prompt, and every later estimate inflated by that share.
+    $total_chars += $self->{_request_tool_chars} // 0;
     
     return if $total_chars == 0;  # Avoid division by zero
     
     # Calculate actual char/token ratio from this response
     my $actual_ratio = $total_chars / $actual_tokens;
-    
-    # Weighted average: 80% old ratio + 20% new observation
-    # This smooths out variance while still adapting to patterns
+
+    # Weight the observation by its size. A 200-token reply says almost
+    # nothing about how this model tokenizes a 100K-token prompt; a full
+    # prompt says almost everything. A fixed 20% step needed roughly
+    # fifteen requests to converge, so a session spent its first turns
+    # estimating with a ratio from a different model.
     my $old_ratio = $self->{learned_token_ratio};
-    my $new_ratio = ($old_ratio * 0.8) + ($actual_ratio * 0.2);
-    
-    # Clamp ratio to reasonable bounds (1.5 to 4.0)
-    # Prevents outliers from skewing too far
-    $new_ratio = 1.5 if $new_ratio < 1.5;
-    $new_ratio = 4.0 if $new_ratio > 4.0;
+    my $weight = $actual_tokens / ($actual_tokens + CLIO::Core::Defaults::TOKEN_RATIO_PRIOR_SAMPLE());
+    my $new_ratio = ($old_ratio * (1 - $weight)) + ($actual_ratio * $weight);
+
+    # Clamp only to reject a corrupt measurement. A ceiling below the
+    # model's real ratio (it was 4.0; local models measure well above
+    # that) is not conservative protection, it is a permanent
+    # over-estimate that trims the conversation far too early.
+    $new_ratio = CLIO::Core::Defaults::TOKEN_RATIO_MIN() if $new_ratio < CLIO::Core::Defaults::TOKEN_RATIO_MIN();
+    $new_ratio = CLIO::Core::Defaults::TOKEN_RATIO_MAX() if $new_ratio > CLIO::Core::Defaults::TOKEN_RATIO_MAX();
     
     if ($self->{debug}) {
-        printf STDERR "[DEBUG][APIManager] Token learning: actual=%d, chars=%d, ratio=%.2f, old_learned=%.2f, new_learned=%.2f\n",
-            $actual_tokens, $total_chars, $actual_ratio, $old_ratio, $new_ratio;
+        printf STDERR "[DEBUG][APIManager] Token learning: actual=%d, chars=%d, ratio=%.2f, weight=%.2f, old_learned=%.2f, new_learned=%.2f\n",
+            $actual_tokens, $total_chars, $actual_ratio, $weight, $old_ratio, $new_ratio;
     }
     
     $self->{learned_token_ratio} = $new_ratio;

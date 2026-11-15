@@ -8,6 +8,7 @@ use warnings;
 use utf8;
 use POSIX qw(ceil);
 use Exporter 'import';
+use CLIO::Core::Defaults ();
 
 our @EXPORT_OK = qw(estimate_tokens estimate_messages_tokens get_effective_ratio compute_prompt_budget message_character_count);
 
@@ -68,7 +69,8 @@ Called by APIManager after observing actual prompt_tokens from API responses.
 Propagates to ALL subsequent estimate_tokens calls across the codebase.
 
 Arguments:
-- $ratio: Characters per token (typically 2.0-4.0, clamped to [1.5, 5.0])
+- $ratio: Characters per token (measured; clamped to
+          CLIO::Core::Defaults::TOKEN_RATIO_MIN..TOKEN_RATIO_MAX)
 
 =cut
 
@@ -76,9 +78,11 @@ sub set_learned_ratio {
     my ($ratio) = @_;
     return unless defined $ratio && $ratio > 0;
     
-    # Clamp to reasonable bounds
-    $ratio = 1.5 if $ratio < 1.5;
-    $ratio = 5.0 if $ratio > 5.0;
+    # Clamp only to reject a corrupt measurement. The ceiling used to be
+    # 5.0, which a real prompt easily exceeds; a ceiling below the model's
+    # true ratio makes every estimate too high and trims too early.
+    $ratio = CLIO::Core::Defaults::TOKEN_RATIO_MIN() if $ratio < CLIO::Core::Defaults::TOKEN_RATIO_MIN();
+    $ratio = CLIO::Core::Defaults::TOKEN_RATIO_MAX() if $ratio > CLIO::Core::Defaults::TOKEN_RATIO_MAX();
     
     $learned_ratio = $ratio;
 }

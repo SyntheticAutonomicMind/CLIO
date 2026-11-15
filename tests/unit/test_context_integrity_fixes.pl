@@ -188,7 +188,11 @@ subtest 'validate_and_truncate: local inference thread_summary folding' => sub {
         model_capabilities => $caps,
         tools              => [],
         token_ratio        => 2.5,
-        active_task        => 'Build a widget system',
+        # YaRN treats a task shorter than 50 characters as absent and
+        # builds "Current task" from whichever dropped user message is
+        # most substantive. That made this assertion depend on how many
+        # messages the trim happened to drop, not on summary folding.
+        active_task        => 'Build a widget system with advanced features and a clean API',
         debug              => 0,
     );
     # Verify NO system message appears after index 0

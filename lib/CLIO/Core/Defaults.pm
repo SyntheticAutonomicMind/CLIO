@@ -43,6 +43,10 @@ our @EXPORT_OK = qw(
     COPILOT_API_VERSION
     COPILOT_USER_API_VERSION
     TOOL_RESULT_MAX_CHUNK
+    CONTEXT_TRIM_TARGET
+    TOKEN_RATIO_MIN
+    TOKEN_RATIO_MAX
+    TOKEN_RATIO_PRIOR_SAMPLE
     OUTPUT_ESTIMATION_BUFFER
     OUTPUT_ESTIMATION_BUFFER_PCT
     OUTPUT_ESTIMATION_BUFFER_MAX
@@ -68,6 +72,27 @@ use constant DEFAULT_MAX_RESPONSE_TOKENS  => 16000;   # Response budget for conv
 use constant OUTPUT_ESTIMATION_BUFFER     => 8192;    # Constant part of reserve
 use constant OUTPUT_ESTIMATION_BUFFER_PCT => 0.05;    # Proportional part (5% of context)
 use constant OUTPUT_ESTIMATION_BUFFER_MAX => 51200;   # Cap proportional buffer at 50K
+
+# Context trim target. The proactive trim drops whole messages from the
+# oldest end, so the provider's cached prefix ends at the first dropped
+# message: the next request re-prefills everything that survived. Trimming
+# only until the array fits pays a full re-prefill every few turns.
+# Trimming down to this fraction of the prompt budget instead buys headroom,
+# so the conversation grows for many turns before the next trim.
+#   0.75 of a 224K budget -> ~56K tokens of headroom, ~150 turns at the
+#   measured 370 tokens of growth per turn.
+use constant CONTEXT_TRIM_TARGET          => 0.75;
+
+# Bounds for the learned characters-per-token ratio. The ratio is measured,
+# not guessed: too narrow a ceiling forces every estimate to be inflated,
+# which trims early and often. The floor catches a corrupted measurement.
+use constant TOKEN_RATIO_MIN              => 1.0;
+use constant TOKEN_RATIO_MAX              => 10.0;
+
+# Weight of a ratio observation is tokens/(tokens + prior). The prior is the
+# prompt size that moves the learned ratio by roughly a third: small replies
+# barely nudge it, a full prompt sets it.
+use constant TOKEN_RATIO_PRIOR_SAMPLE     => 2000;
 
 # Tool result chunking
 use constant TOOL_RESULT_MAX_CHUNK        => 32768;   # Hard ceiling per chunk (bytes)

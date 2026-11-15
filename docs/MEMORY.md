@@ -472,7 +472,28 @@ original task even after extreme state trimming.
 
 Token estimation uses a character-to-token ratio that starts at a conservative default and **learns from actual API responses**. Each streaming response with real usage data updates the ratio, making estimates more accurate over time.
 
+Three properties of the learning path matter:
+
+- **Coverage.** The ratio is measured against the whole prompt the provider counted: message text, tool-call JSON, and the tool definitions sent with the request. Tool definitions are not part of the message array, so leaving them out reads the ratio low by the tool share and inflates every later estimate.
+- **Weighting.** An observation moves the ratio by `tokens / (tokens + TOKEN_RATIO_PRIOR_SAMPLE)`. A full prompt sets it; a short reply barely nudges it. A fixed step needed roughly fifteen requests to converge, which meant a session's first turns were estimated with another model's ratio.
+- **Bounds.** The ratio is clamped to `TOKEN_RATIO_MIN..TOKEN_RATIO_MAX` (`CLIO::Core::Defaults`), wide enough to accept what a real model produces. A ceiling below the true ratio is not conservative protection: it over-estimates every prompt permanently, so the trim fires early and often.
+
 The learned ratio is critical - an inaccurate ratio means proactive trimming either fires too aggressively (wasting context) or too late (causing API rejections).
+
+### Trim Target
+
+The proactive trim drops whole messages from the oldest end of the array. The provider's cached prefix therefore ends at the first dropped message, and the next request re-prefills every message that survived - so a trim costs one full prompt of prefill.
+
+Trimming *until the array fits* reclaims almost nothing: on a measured 8.5-hour session, each trim reclaimed a median 0.5% of the context window, so a trim fired every 3 turns and 88% of all prefill time was re-reading the same prefix.
+
+`CONTEXT_TRIM_TARGET` (`CLIO::Core::Defaults`, 0.75) makes a triggered trim land on a fraction of the prompt budget instead of on the limit. The conversation then grows for many turns before the next trim. On the same session's growth sequence, the change turns dozens of trims into two or three.
+
+Two behaviours are deliberate:
+
+- The target is a landing point, not a trigger. A conversation above the target but still inside the budget is not trimmed.
+- When the pinned messages alone exceed the target (a system prompt larger than the reduced budget, or a very small context window), the walk falls back to trimming toward the hard limit so there is still something to drop.
+
+The `<thread_summary>` of dropped messages is folded in after the cut, so the finished array can sit slightly above the target. The headroom the target buys absorbs it.
 
 ### What Gets Preserved During Trimming
 
@@ -616,10 +637,11 @@ The memory system isn't just infrastructure - it's actively used by agents throu
 
 ### When Context Gets Full
 
-1. **Proactive trim** fires when approaching 75% of the model's context window
-2. Oldest messages are compressed via YaRN into a summary
-3. The summary is injected as a system message so the AI knows what was dropped
-4. A progress checkpoint is written to `~/.clio/projects/<uuid>/memory/session_progress.md`
+1. **Proactive trim** fires when the estimated prompt exceeds the model's prompt budget (context window minus the output reserve and an estimation buffer)
+2. The walk drops oldest messages until the array reaches `CONTEXT_TRIM_TARGET` of that budget - see [Trim Target](#trim-target)
+3. Dropped messages are compressed via YaRN into a summary
+4. The summary is folded into the last user message so the AI knows what was dropped
+5. A progress checkpoint is written to `~/.clio/projects/<uuid>/memory/session_progress.md`
 
 ### After Context Recovery
 

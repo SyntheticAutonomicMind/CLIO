@@ -8,6 +8,7 @@ use warnings;
 use utf8;
 use CLIO::Core::Logger qw(log_debug log_warning);
 use CLIO::Memory::TokenEstimator qw(estimate_tokens compute_prompt_budget);
+use CLIO::Core::Defaults ();
 use CLIO::Util::JSON qw(safe_encode_json);
 use CLIO::Core::MessageFingerprinter qw(trace_context_transition);
 
@@ -175,12 +176,23 @@ sub validate_and_truncate {
     my $effective_limit = $prompt_budget - $tool_tokens;
     $effective_limit = 1000 if $effective_limit < 1000;
 
+    # Trim down to a target below the limit, not to the limit itself.
+    # The walk drops whole messages from the oldest end, so the provider's
+    # cached prefix ends at the first dropped message and the next request
+    # re-prefills every surviving message. Dropping only enough to fit
+    # therefore costs a full re-prefill every few turns: measured on a
+    # real session, trims reclaimed a median 0.5% of the window each time
+    # and fired every 3 turns, which made 88% of all prefill time a repeat
+    # of the same prefix. Dropping to a target pays one larger drop and
+    # then many turns of growth before the next one.
+    my $trim_target = int($effective_limit * CLIO::Core::Defaults::CONTEXT_TRIM_TARGET());
+
     my $active_task = $args{active_task} // '';
     my $active_todos = $args{active_todos} || [];
     my $unresolved   = $args{unresolved}   || [];
     my $ltm_entries  = $args{ltm_entries}  || [];
 
-    log_debug('MessageValidator', "Token budget: max=$max_prompt, tools=$tool_tokens, budget=$prompt_budget, effective=$effective_limit");
+    log_debug('MessageValidator', "Token budget: max=$max_prompt, tools=$tool_tokens, budget=$prompt_budget, effective=$effective_limit, trim_target=$trim_target");
     
     # Estimate token usage (use the clamped token_ratio if provided)
     my $estimated_tokens = _estimate_tokens($messages, $token_ratio);
@@ -205,9 +217,9 @@ sub validate_and_truncate {
                   || $caps->{context_window}
                   || $caps->{max_prompt_tokens}
                   || 0;
-    my $result = _role_based_tail_walk($messages, $effective_limit,
+    my $result = _role_based_tail_walk($messages, $trim_target,
         $debug, $active_task, $ctx_window, $active_todos, $unresolved,
-        $ltm_entries);
+        $ltm_entries, $token_ratio, $effective_limit);
 
     trace_context_transition(
         phase           => 'after-proactive-trim',
@@ -241,7 +253,7 @@ sub validate_and_truncate {
 
 =head2 _role_based_tail_walk
 
-Drop messages from the oldest end until the array fits the budget.
+Drop messages from the oldest end until the array fits the target.
 Preserves the first user message (original task anchor) and keeps
 tool_call/tool_result pairs together (never leaves a tool_result
 without its call, or vice versa).
@@ -262,13 +274,19 @@ resets to earlier tasks.
 
 Arguments:
 - $messages: ArrayRef of message hashes
-- $effective_limit: Token budget for the resulting array
+- $target: Token budget for the resulting array, normally the trim target
+           (a fraction of the effective limit) rather than the limit itself
 - $debug: 1 to emit debug logs
 - $active_task: Scalar task text to seed the thread_summary (optional)
 - $context_window: Model context window in tokens (optional)
 - $active_todos: ArrayRef of active todo texts (optional)
 - $unresolved: ArrayRef of unresolved state items (optional)
 - $ltm_entries: ArrayRef of LTM entries (optional)
+- $ratio: Chars-per-token ratio for estimates (optional; defaults to the
+          TokenEstimator global)
+- $hard_limit: The effective limit the array must not exceed (optional).
+               Used when the target is unreachable because the pinned
+               messages exceed it on their own.
 
 Returns: Trimmed ArrayRef (possibly with a thread_summary folded into
 the last user message for ALL providers)
@@ -276,7 +294,7 @@ the last user message for ALL providers)
 =cut
 
 sub _role_based_tail_walk {
-    my ($messages, $effective_limit, $debug, $active_task, $context_window, $active_todos, $unresolved, $ltm_entries) = @_;
+    my ($messages, $target, $debug, $active_task, $context_window, $active_todos, $unresolved, $ltm_entries, $ratio, $hard_limit) = @_;
 
     return $messages unless $messages && @$messages;
 
@@ -331,18 +349,31 @@ sub _role_based_tail_walk {
     my %pinned_idx = map { $_ => 1 } @pinned;
 
     # Reserve walk budget for pinned up front. Without this, the walk
-    # accumulates non-pinned content close to (or past) effective_limit,
+    # accumulates non-pinned content close to (or past) the target,
     # and the pinned inclusion loop has to evict - which has to drop
     # pinned messages, defeating the pin. By reserving pinned tokens
-    # from the walk budget, the walk stays within (effective_limit -
+    # from the walk budget, the walk stays within (target -
     # pinned_total) and the pinned loop fits without eviction in
     # typical cases. Fall back to a 0 floor if pinned alone exceeds
     # budget (the bail-out at the end of the function handles that).
     my $pinned_total = 0;
     for my $idx (@pinned) {
-        $pinned_total += _estimate_tokens([$messages->[$idx]]);
+        $pinned_total += _estimate_tokens([$messages->[$idx]], $ratio);
     }
-    my $walk_limit = $effective_limit - $pinned_total;
+
+    # Hysteresis needs room to work: the walk can only drop content that is
+    # not pinned. When the pinned messages alone exceed the target (a system
+    # prompt larger than the reduced budget, or a tiny context window),
+    # trimming toward the target would keep nothing at all. Fall back to the
+    # hard limit so the walk still trims what it can, and let the bail-outs
+    # below handle the case where even that is impossible.
+    if ($pinned_total > $target && defined $hard_limit && $hard_limit > $target) {
+        log_debug('MessageValidator',
+            "role-based tail walk: pinned messages ($pinned_total) exceed the trim target ($target); trimming to the limit ($hard_limit) instead");
+        $target = $hard_limit;
+    }
+
+    my $walk_limit = $target - $pinned_total;
     $walk_limit = 0 if $walk_limit < 0;
 
     # Walk backwards from newest to oldest, accumulating until budget
@@ -365,7 +396,7 @@ sub _role_based_tail_walk {
         # Pinned indices are force-included below; skip the walk for
         # them so the budget is reserved for the dynamic context.
         next if $pinned_idx{$i};
-        my $msg_tokens = _estimate_tokens([$msg]);
+        my $msg_tokens = _estimate_tokens([$msg], $ratio);
 
         # If this is a tool_result, locate its assistant tool_call
         # index and ensure it would also be kept. We make
@@ -384,7 +415,7 @@ sub _role_based_tail_walk {
                 # by exiting the walk (all remaining items are older
                 # and will be skipped).
                 my $call_msg = $messages->[$call_idx];
-                my $call_tokens = _estimate_tokens([$call_msg]);
+                my $call_tokens = _estimate_tokens([$call_msg], $ratio);
                 if ($kept_tokens + $msg_tokens + $call_tokens <= $walk_limit) {
                     # Splice call_idx into @kept_indices at its
                     # ascending position (call_idx is older than $i
@@ -422,7 +453,7 @@ sub _role_based_tail_walk {
                     # Its other tool_results (older, not yet walked)
                     # are implicitly dropped by the `last`.
                     @kept_indices = grep { $_ != $call_idx } @kept_indices;
-                    $kept_tokens -= _estimate_tokens([$messages->[$call_idx]]);
+                    $kept_tokens -= _estimate_tokens([$messages->[$call_idx]], $ratio);
                     log_debug('MessageValidator',
                         "role-based tail walk: tool batch at assistant idx "
                         . "$call_idx partially un-fitable (tool_result at $i "
@@ -470,24 +501,24 @@ sub _role_based_tail_walk {
     for my $idx (sort { $a <=> $b } @pinned) {
         next if $kept_set{$idx};
         my $msg = $messages->[$idx];
-        my $msg_tokens = _estimate_tokens([$msg]);
+        my $msg_tokens = _estimate_tokens([$msg], $ratio);
         # Evict from the front (oldest non-pinned) until pinned fits.
-        while ($kept_tokens + $msg_tokens > $effective_limit && @kept_indices) {
+        while ($kept_tokens + $msg_tokens > $target && @kept_indices) {
             my $front = $kept_indices[0];
             # Pinned indices are force-included; evicting them would
             # defeat the pin. Stop evicting instead - the bail-out
             # below handles the over-budget case.
             last if $pinned_idx{$front};
-            $kept_tokens -= _estimate_tokens([$messages->[$front]]);
+            $kept_tokens -= _estimate_tokens([$messages->[$front]], $ratio);
             shift @kept_indices;
             delete $kept_set{$front};
         }
         # If we broke out of the eviction loop with over-budget, the
         # pinned message can't fit alongside any kept content. Bail to
         # return-as-is rather than silently dropping the pin.
-        if ($kept_tokens + $msg_tokens > $effective_limit) {
+        if ($kept_tokens + $msg_tokens > $target) {
             log_debug('MessageValidator',
-                "role-based tail walk: pinned message at index $idx cannot fit (have $kept_tokens, need +$msg_tokens of $effective_limit); returning as-is");
+                "role-based tail walk: pinned message at index $idx cannot fit (have $kept_tokens, need +$msg_tokens of $target); returning as-is");
             # Byte stability: only re-validate if there are actual orphans/dupes
             # to fix. If the full array is already clean, return it as-is so
             # provider KV caches aren't invalidated by identical re-serialization.
@@ -511,9 +542,9 @@ sub _role_based_tail_walk {
     # If still over budget with only the first user message kept,
     # give up and return as-is (validate_tool_message_pairs will
     # still clean orphans).
-    if ($kept_tokens > $effective_limit) {
+    if ($kept_tokens > $target) {
         log_debug('MessageValidator',
-            "role-based tail walk: even first user message exceeds budget ($kept_tokens > $effective_limit); returning as-is");
+            "role-based tail walk: even first user message exceeds budget ($kept_tokens > $target); returning as-is");
         # Byte stability: see comment at the other bail-out path above.
         return _validate_or_passthrough($messages);
     }
