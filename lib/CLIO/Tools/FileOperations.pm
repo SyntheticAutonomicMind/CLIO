@@ -274,7 +274,7 @@ sub operation_summaries {
         file_exists          => 'Check whether a file or directory exists',
         get_file_info        => 'Get file metadata (size, type, modified time)',
         get_errors           => 'Get compilation or lint errors for a file (Perl)',
-        file_search          => 'Find files matching a glob pattern (accepts a file or a directory)',
+        file_search          => 'Find files by name or glob pattern, at any depth by default',
         grep_search          => 'Search file contents with a regex',
         semantic_search      => 'Hybrid keyword and symbol search across the codebase',
         read_tool_result     => 'Read a persisted large tool result in chunks',
@@ -342,7 +342,7 @@ sub get_additional_parameters {
         },
         pattern => {
             type => "string",
-            description => "[REQUIRED for file_search, OPTIONAL for grep_search] File glob filter to limit which files are searched (e.g., '**/*.pm', '*.pl'). This is NOT the search text — use 'query' for that.",
+            description => "[REQUIRED for file_search] The files to find, as a glob: '*.pm', '**/*.py', 'ApplyPatch*'. A pattern with no path separators is matched at any depth, so 'Scanner.pm' finds lib/CLIO/Code/Scanner.pm. There is no 'query' parameter on file_search - the pattern IS the search. [OPTIONAL for grep_search] Narrows which files are searched; the text to find goes in 'query'. A no-match result is not an error: it means nothing in the directory has that name.",
         },
         directory => {
             type => "string",
@@ -943,7 +943,7 @@ sub read_file {
         log_debug('FileOp', "read_file produced no result for $path");
         return $self->error_result("Failed to read file: $path (no result produced)");
     }
-    
+
     return $result;
 }
 
@@ -1258,8 +1258,20 @@ sub file_search {
 
     # Auto-upgrade to recursive when pattern has no path components
     # Users/agents expect "*Patch*" to find "lib/X/ApplyPatch.pm"
+    #
+    # The rewritten pattern is used for matching only. Everything reported back
+    # - action_description and the result's pattern field - names the pattern
+    # the caller actually sent. Reporting the rewrite taught the model a string
+    # it never wrote: a call with pattern='x' came back saying
+    # "searching for '**/x'", the model read its own tool result, and reissued
+    # the call as '**/x'. Echoing the caller's input is the rule; if the
+    # internally matched form is worth showing, it goes in a field the model
+    # cannot mistake for its own request.
+    my $requested_pattern = $pattern;
+    my $recursive_pattern;
     if ($pattern !~ m{/} && $pattern !~ /\*\*/) {
-        $pattern = "**/$pattern";
+        $recursive_pattern = "**/$pattern";
+        $pattern = $recursive_pattern;
         log_debug('FileOp', "Auto-recursive search: pattern upgraded to $pattern");
     }
 
@@ -1290,11 +1302,13 @@ sub file_search {
 
         return $self->success_result(
             \@matches,
-            action_description => "searching for '$pattern' in $directory ("
+            action_description => "searching for '$requested_pattern' in $directory ("
                 . scalar(@matches) . " matches)",
-            pattern   => $pattern,
+            pattern   => $requested_pattern,
             directory => $directory,
             count     => scalar(@matches),
+            (defined $recursive_pattern
+                ? (matched_recursively_as => $recursive_pattern) : ()),
         );
     }
 
@@ -1396,14 +1410,17 @@ sub file_search {
         
         log_debug('FileOperations', "Found " . scalar(@matches) . " matches");
         
-        my $action_desc = "searching for '$pattern' in $directory (" . scalar(@matches) . " matches)";
+        my $action_desc = "searching for '$requested_pattern' in $directory ("
+            . scalar(@matches) . " matches)";
         
         $result = $self->success_result(
             \@matches,
             action_description => $action_desc,
-            pattern => $pattern,
+            pattern => $requested_pattern,
             directory => $directory,
             count => scalar(@matches),
+            (defined $recursive_pattern
+                ? (matched_recursively_as => $recursive_pattern) : ()),
         );
     };
     

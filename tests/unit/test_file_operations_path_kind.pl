@@ -64,6 +64,31 @@ subtest 'file_search honors a file path' => sub {
     is($r->{count}, 2, 'both files found recursively');
 };
 
+subtest 'file_search reports the pattern the caller sent' => sub {
+    # The tool rewrites a bare name to a recursive glob for matching. That
+    # rewritten form must not come back as if it were the caller's input: the
+    # model reads its own tool result, adopted '**/x' after sending 'x', and
+    # reissued the call in the rewritten form.
+    my $r = $fo->file_search({ pattern => 'target.pm', directory => $dir }, {});
+    ok($r->{success}, 'bare name search succeeds');
+    is($r->{pattern}, 'target.pm',
+        'result.pattern is the caller\'s pattern, not the rewritten glob');
+    like($r->{action_description}, qr/'target\.pm'/,
+        'action_description quotes the caller\'s pattern');
+    unlike($r->{action_description}, qr/\*\*/,
+        'action_description contains no invented glob');
+    is($r->{matched_recursively_as}, '**/target.pm',
+        'the internally matched form is reported separately');
+    is($r->{count}, 1, 'the bare name still matches recursively');
+
+    # A pattern the caller wrote with a glob is echoed unchanged and carries
+    # no rewrite note.
+    $r = $fo->file_search({ pattern => '**/*.pm', directory => $dir }, {});
+    is($r->{pattern}, '**/*.pm', 'an explicit glob is echoed unchanged');
+    ok(!exists $r->{matched_recursively_as},
+        'no rewrite note when no rewrite happened');
+};
+
 subtest 'file_search reports a genuinely absent directory' => sub {
     my $missing = File::Spec->catdir($dir, 'no_such_dir');
     my $r = $fo->file_search({ pattern => '*.pm', directory => $missing }, {});
