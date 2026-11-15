@@ -66,6 +66,15 @@ invisible object placeholders
 
 =item B<Byte Order Marks> - U+FEFF mid-string - invisible outside document start
 
+=item B<Fullwidth ASCII> - U+FF01-U+FF5E - a 1:1 mirror of printable ASCII.
+Written in fullwidth, a payload reads normally to a human while being invisible
+to every ASCII pattern match. Folded to ASCII before other processing.
+
+=item B<Mixed-script homoglyphs> - Cyrillic and Greek letters that are visually
+identical to Latin ones (U+0430 for 'a', U+03BF for 'o', and so on) substituted
+inside a Latin token. Detected and reported, not rewritten: folding them would
+corrupt legitimate Cyrillic and Greek text.
+
 =back
 
 =head1 SYNOPSIS
@@ -204,6 +213,18 @@ my $RE_VARIATION_SELECTORS = qr/[\x{FE00}-\x{FE0F}\x{E0100}-\x{E01EF}]/u;
 
 # Soft hyphen and null byte
 my $RE_SOFT_HYPHEN  = qr/\x{00AD}/u;
+
+# Fullwidth ASCII variants (U+FF01-U+FF5E) are a 1:1 mirror of printable
+# ASCII. Left alone, a payload written in fullwidth reads normally to a human
+# while being invisible to every ASCII pattern match in the pipeline. Folded
+# to ASCII rather than stripped: the mapping is lossless.
+my $RE_FULLWIDTH     = qr/[\x{FF01}-\x{FF5E}]/u;
+my $FULLWIDTH_OFFSET = 0xFEE0;
+
+# Cyrillic and Greek letters that are visually identical to Latin letters.
+# Detection only: folding these would corrupt legitimate Russian and Greek
+# text, so a token that mixes them with Latin characters is reported instead.
+my $RE_CONFUSABLE = qr/[\x{0430}\x{0435}\x{043E}\x{0440}\x{0441}\x{0443}\x{0445}\x{0456}\x{0458}\x{0455}\x{04BB}\x{0501}\x{051B}\x{051D}\x{0410}\x{0415}\x{041E}\x{0420}\x{0421}\x{0422}\x{041D}\x{041C}\x{041A}\x{0425}\x{0412}\x{0406}\x{0405}\x{0408}\x{03BF}\x{03B1}\x{03B5}\x{03B9}\x{03BA}\x{03BD}\x{03C1}\x{03C4}\x{03C5}\x{03C7}\x{039F}\x{0391}\x{0395}\x{0399}\x{039A}\x{039C}\x{039D}\x{03A1}\x{03A4}\x{03A7}\x{0396}\x{0397}\x{03A5}]/u;
 my $RE_NULL_BYTE    = qr/\x{0000}/u;
 
 # Unicode C0 and C1 control characters (except common whitespace)
@@ -211,8 +232,7 @@ my $RE_NULL_BYTE    = qr/\x{0000}/u;
 # C1: U+0080-U+009F
 my $RE_CONTROL_CHARS = qr/[\x{0001}-\x{0008}\x{000B}\x{000C}\x{000E}-\x{001F}\x{0080}-\x{009F}]/u;
 
-# Composite: any char that should be stripped outright
-# Composite pattern: all chars that should be stripped outright.
+# Composite: all chars that should be stripped outright.
 # Covers: zero-width chars, BiDi controls, Tag block, variation selectors,
 # interlinear annotation, soft hyphen, null byte, C0/C1 control chars,
 # object replacement char.
@@ -278,6 +298,12 @@ my @DETECTION_RULES = (
         description => 'Invisible newlines in contexts that expect single-line text',
     },
     {
+        name  => 'Fullwidth ASCII characters',
+        regex => qr/[\x{FF01}-\x{FF5E}]/u,
+        severity => 'HIGH',
+        description => 'Fullwidth letters and digits render normally but defeat ASCII pattern matching',
+    },
+    {
         name  => 'Unusual whitespace variants',
         regex => qr/[\x{00A0}\x{1680}\x{2000}-\x{200A}\x{202F}\x{205F}\x{3000}]/u,
         severity => 'LOW',
@@ -301,6 +327,7 @@ Behavior:
   interlinear annotations, soft hyphen, null bytes, C0/C1 control chars,
   object replacement chars
 - Normalizes: unusual whitespace variants to regular ASCII space or newline
+- Folds: fullwidth ASCII (U+FF01-U+FF5E) to plain ASCII
 
 Arguments:
 - $text: Input text (may be undef)
@@ -321,6 +348,10 @@ sub filter_invisible_chars {
         $text =~ s/[\x{0000}\x{0001}-\x{0008}\x{000B}\x{000C}\x{000E}-\x{001F}]//g;
         return $text;
     }
+
+    # Fold fullwidth ASCII to plain ASCII so a payload written in fullwidth
+    # cannot dodge an ASCII pattern match later in the pipeline.
+    $text =~ s/($RE_FULLWIDTH)/chr(ord($1) - $FULLWIDTH_OFFSET)/ge;
 
     # Normalize unusual whitespace to real whitespace first
     # (preserve word boundaries)
@@ -354,11 +385,32 @@ sub has_invisible_chars {
 
     return 1 if $text =~ $RE_STRIP_ALL;
 
+    # Fullwidth ASCII defeats ASCII pattern matching without looking unusual.
+    return 1 if $text =~ $RE_FULLWIDTH;
+
+    # A token that mixes Latin letters with Cyrillic/Greek lookalikes.
+    return 1 if _has_mixed_script_confusables($text);
+
     # Also check for normalizable whitespace variants
     for my $char (keys %NORMALIZE_WHITESPACE) {
         return 1 if index($text, $char) >= 0;
     }
 
+    return 0;
+}
+
+# Internal: a homoglyph attack keeps a token readable as Latin while smuggling
+# in a lookalike. Pure Cyrillic or Greek tokens are legitimate text and are not
+# reported.
+sub _has_mixed_script_confusables {
+    my ($text) = @_;
+    return 0 unless defined $text && $text =~ $RE_CONFUSABLE;
+
+    while ($text =~ /(\p{L}[\p{L}\p{M}]*)/g) {
+        my $token = $1;
+        next unless $token =~ /[A-Za-z]/;
+        return 1 if $token =~ $RE_CONFUSABLE;
+    }
     return 0;
 }
 
@@ -400,6 +452,16 @@ sub describe_invisible_chars {
                 count       => scalar @matches,
             };
         }
+    }
+
+    if (_has_mixed_script_confusables($text)) {
+        $result->{found} = 1;
+        push @{$result->{detections}}, {
+            name        => 'Mixed-script homoglyphs',
+            severity    => 'HIGH',
+            description => 'Cyrillic or Greek letters substituted for Latin lookalikes within a token',
+            count       => 1,
+        };
     }
 
     if ($result->{found}) {

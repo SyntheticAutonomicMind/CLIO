@@ -253,4 +253,29 @@ my $tag_in_sanitize = "vis\x{E0041}\x{E0042}ible";
 my $sanitized2 = sanitize_text($tag_in_sanitize);
 ok($sanitized2 !~ /[\x{E0000}-\x{E007F}]/, "sanitize_text strips Tag block chars via integration");
 
+# ---------------------------------------------------------------------------
+# Test: fullwidth ASCII and mixed-script homoglyphs
+# ---------------------------------------------------------------------------
+
+my $fullwidth = "\x{FF29}\x{FF47}\x{FF4E}\x{FF4F}\x{FF52}\x{FF45}";  # "Ignore"
+ok(has_invisible_chars($fullwidth), "Detects fullwidth ASCII");
+is(filter_invisible_chars($fullwidth), "Ignore", "Folds fullwidth ASCII to plain ASCII");
+
+my $homoglyph = "p\x{0430}ypal";  # Cyrillic 'a' inside a Latin token
+ok(has_invisible_chars($homoglyph), "Detects mixed-script homoglyph");
+
+ok(passes("\x{041F}\x{0440}\x{0438}\x{0432}\x{0435}\x{0442} \x{043C}\x{0438}\x{0440}"),
+   "Pure Cyrillic is not flagged as a homoglyph attack");
+ok(passes("\x{03B1}-globin"),
+   "A single Greek letter next to Latin text is not flagged");
+is(filter_invisible_chars($homoglyph), $homoglyph,
+   "Homoglyphs are reported, not rewritten (Cyrillic text preserved)");
+
+my $homoglyph_report = describe_invisible_chars($fullwidth . " " . $homoglyph);
+my @homoglyph_names  = map { $_->{name} } @{$homoglyph_report->{detections}};
+ok(grep({ $_ eq 'Fullwidth ASCII characters' } @homoglyph_names),
+   "describe reports fullwidth ASCII");
+ok(grep({ $_ eq 'Mixed-script homoglyphs' } @homoglyph_names),
+   "describe reports mixed-script homoglyphs");
+
 done_testing();
