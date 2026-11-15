@@ -2238,7 +2238,17 @@ sub _execute_tool_round {
             } else {
                 my $detector = $self->_get_tool_loop_detector();
                 if ($detector) {
-                    my $verdict = $detector->record_call($tool_name, $tool_args, $ai_content);
+                    # Detection keys off the canonical name, but the note the
+                    # model reads should name what it actually called. Phase 3
+                    # rewrites an emitted callable to its owning tool, so
+                    # $tool_name alone would report a legitimate file_search as
+                    # 'file_operations'.
+                    my $verdict = $detector->record_call(
+                        $tool_name,
+                        $tool_args,
+                        $ai_content,
+                        $tool_call->{_emitted_name},
+                    );
                     if ($verdict->{break}) {
                         if ($verdict->{nudge}) {
                             # Escalation with nudge budget remaining: park the

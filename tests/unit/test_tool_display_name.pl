@@ -40,6 +40,7 @@ $ENV{CLIO_LOG_LEVEL} = 'ERROR';
 use CLIO::UI::SessionReplay;
 use CLIO::Tools::Registry;
 use CLIO::Core::ToolExecutor;
+use CLIO::Core::ToolLoopDetector;
 use CLIO::Tools::FileOperations;
 
 {
@@ -141,7 +142,36 @@ is($alias && $alias->{operation}, 'file_search',
     'file_search resolves to the file_search operation');
 
 # ---------------------------------------------------------------------------
-# 4. Nothing guesses an operation for an invented grouping-name call
+# 4. The loop-break note names the callable the model emitted
+# ---------------------------------------------------------------------------
+
+{
+    my $detector = CLIO::Core::ToolLoopDetector->new(
+        guidance_threshold => 1,
+        break_threshold    => 99,
+        similarity_threshold => 0.1,
+    );
+
+    my $note;
+    for my $i (1 .. 4) {
+        my $v = $detector->record_call(
+            'file_operations',                                  # canonical
+            { operation => 'file_search', pattern => 'x' },
+            "same result every time",
+            'file_search',                                      # emitted
+        );
+        $note = $v->{guidance} if $v->{guidance};
+    }
+
+    ok(defined $note, 'guidance note was produced');
+    like($note // '', qr/'file_search'/, 'note names the emitted callable')
+        or diag("note: " . ($note // '<none>'));
+    unlike($note // '', qr/'file_operations'/,
+        'note does not name the rewritten grouping tool');
+}
+
+# ---------------------------------------------------------------------------
+# 5. Nothing guesses an operation for an invented grouping-name call
 # ---------------------------------------------------------------------------
 
 my $executor = CLIO::Core::ToolExecutor->new(

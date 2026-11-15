@@ -202,7 +202,7 @@ Returns a hashref:
 =cut
 
 sub record_call {
-    my ($self, $tool_name, $args, $content) = @_;
+    my ($self, $tool_name, $args, $content, $display_name) = @_;
     $content = '' unless defined $content;
 
     # A state-changing call resets the window: the model just changed the
@@ -269,7 +269,7 @@ sub record_call {
             return {
                 tracked    => 1, count => $count, sig => $sig,
                 guidance   => undef, break => 1, nudge => 1,
-                nudge_text => $self->_nudge_text($tool_name, $sig, $count),
+                nudge_text => $self->_nudge_text($display_name // $tool_name, $sig, $count),
             };
         }
         return { tracked => 1, count => $count, sig => $sig, guidance => undef, break => 1 };
@@ -279,7 +279,7 @@ sub record_call {
         $self->_prune_guidance_state();
         return {
             tracked => 1, count => $count, sig => $sig, break => 0,
-            guidance => $self->_guidance_text($tool_name, $sig, $count),
+            guidance => $self->_guidance_text($display_name // $tool_name, $sig, $count),
         };
     }
     return { tracked => 1, count => $count, sig => $sig, guidance => undef, break => 0 };
