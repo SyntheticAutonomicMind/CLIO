@@ -1793,13 +1793,15 @@ sub _execute_tool_round {
         $self->_poll_agent_activity();
 
         my $tool_call = $ordered_tools->[$i];
-        my $tool_name = $tool_call->{function}->{name} || 'unknown';
-        # Phase 3 rewrites an emitted callable to the tool that owns it, so
-        # $tool_name reads 'file_operations' even when the model called
-        # 'read_file'. Label the header with the name the model actually
-        # emitted: a legitimate call otherwise renders as a grouping-name call
-        # that the model was never permitted to make.
-        my $tool_display_name = uc($tool_call->{_emitted_name} // $tool_name);
+        # Dispatch uses the canonical tool that owns the callable; display,
+        # logging, and the tool result use the name the model actually
+        # emitted. Keeping them separate is what lets history stay faithful:
+        # a file_search call is recorded and replayed as file_search, while
+        # execution still reaches file_operations.
+        my $tool_name = $tool_call->{_dispatch_name}
+            // $tool_call->{function}->{name} // 'unknown';
+        my $emitted_name = $tool_call->{_emitted_name} // $tool_name;
+        my $tool_display_name = uc($emitted_name);
         $tool_display_name =~ s/_/ /g;
 
         log_debug('WorkflowOrchestrator', "Executing tool: $tool_name");
@@ -1856,16 +1858,13 @@ sub _execute_tool_round {
         }
         
         # Tool arguments for this round. Prefer _parsed_args: alias
-        # resolution (_prepare_tool_round) rewrites an emitted callable such
-        # as `grep_search` to `file_operations` AND injects
-        # operation => 'grep_search' into _parsed_args, but the model's raw
-        # JSON never carried that operation. Re-parsing function->{arguments}
-        # here used to discard it, so $tool_operation was '' for every
-        # per-operation call. That silently disabled diff capture for edits,
-        # the operation component of tool-error loop signatures, and the
-        # success-loop detector (_is_state_changing treats a grouping name
-        # with no operation as state-changing, which reset the window on
-        # every read-only call).
+        # resolution (_prepare_tool_round) injects
+        # operation => 'grep_search' into _parsed_args and records the owning
+        # tool in _dispatch_name, but the model's raw JSON never carried that
+        # operation. Re-parsing function->{arguments} here used to discard it,
+        # so $tool_operation was '' for every per-operation call. That
+        # silently disabled diff capture for edits, the operation component of
+        # tool-error loop signatures, and the success-loop detector.
         my $raw_args = $tool_call->{function}->{arguments};
         my $tool_args = ref($tool_call->{_parsed_args}) eq 'HASH'
             ? $tool_call->{_parsed_args}
@@ -1939,7 +1938,10 @@ sub _execute_tool_round {
                     # the model was actually shown: for a per-operation
                     # callable that is the narrow one, not the consolidated
                     # schema listing every parameter of every operation.
-                    my $tool_def = $self->{tool_registry}->get_definition($tool_name);
+                    # The definition the model was shown is the emitted
+                    # callable's narrow schema, not the grouping tool's
+                    # consolidated one.
+                    my $tool_def = $self->{tool_registry}->get_definition($emitted_name);
                     if (!$tool_def) {
                         my $tool_obj = $self->{tool_registry}->get_tool($tool_name);
                         if ($tool_obj && $tool_obj->can('get_tool_definition')) {
@@ -1962,7 +1964,7 @@ sub _execute_tool_round {
                     } else {
                         $enhanced_error_for_ai = $self->{error_guidance}->enhance_tool_error(
                             error => $error_msg,
-                            tool_name => $tool_name,
+                            tool_name => $emitted_name,
                             tool_definition => $tool_def,
                             attempted_params => $attempted_params
                         );
@@ -2017,7 +2019,8 @@ sub _execute_tool_round {
             # In inline mode, each call has its own bullet, so remaining is 0
             if (!$is_inline) {
                 for my $j ($i+1..$#$ordered_tools) {
-                    if ($ordered_tools->[$j]->{function}->{name} eq $tool_name) {
+                    my $other = $ordered_tools->[$j];
+                    if (($other->{_emitted_name} // $other->{function}->{name}) eq $emitted_name) {
                         $remaining_same_tool++;
                     }
                 }
@@ -2188,8 +2191,8 @@ sub _execute_tool_round {
                 if ($detector) {
                     # Detection keys off the canonical name, but the note the
                     # model reads should name what it actually called. Phase 3
-                    # rewrites an emitted callable to its owning tool, so
-                    # $tool_name alone would report a legitimate file_search as
+                    # records the owning tool in _dispatch_name, so $tool_name
+                    # alone would report a legitimate file_search as
                     # 'file_operations'.
                     my $verdict = $detector->record_call(
                         $tool_name,
@@ -2216,7 +2219,7 @@ sub _execute_tool_round {
         push @$messages, {
             role => 'tool',
             tool_call_id => $tool_call->{id},
-            name => $tool_name,
+            name => $emitted_name,
             content => $sanitized_content
         };
 
@@ -2587,8 +2590,9 @@ sub _prepare_tool_round {
     for my $tool_call (@{$api_response->{tool_calls}}) {
         my $tool_name = $tool_call->{function}->{name} || 'unknown';
         # Preserve the name the model emitted. ToolExecutor uses it for the
-        # strict surface check after this loop rewrites an emitted alias to
-        # its canonical tool name.
+        # strict surface check. The canonical tool is recorded in
+        # _dispatch_name, so function.name keeps the emitted name and the
+        # history sent back to the provider stays faithful.
         $tool_call->{_emitted_name} = $tool_name;
 
         # Resolve tool aliases
@@ -2603,7 +2607,14 @@ sub _prepare_tool_round {
         my $alias_info = $self->{tool_registry}->get_alias_info($tool_name);
         if ($alias_info) {
             log_debug('WorkflowOrchestrator', "Alias detected: '$tool_name' -> '$alias_info->{tool}' with operation='$alias_info->{operation}'");
-            $tool_call->{function}->{name} = $alias_info->{tool};
+            # Record the canonical tool for dispatch. Do NOT rewrite the
+            # function name: this hashref is already in the assistant message,
+            # and the history sent back to the provider must show the callable
+            # the model actually called. Rewriting it made the model's own
+            # transcript claim it called the grouping tool ("file_operations"
+            # with {"pattern":"x"}), dropped _emitted_name on the way out, and
+            # left the model unable to reason about its own tool calls.
+            $tool_call->{_dispatch_name} = $alias_info->{tool};
             $tool_name = $alias_info->{tool};
 
             # Inject operation + alias defaults DIRECTLY into _parsed_args.

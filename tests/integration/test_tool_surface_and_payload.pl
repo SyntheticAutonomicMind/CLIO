@@ -111,7 +111,7 @@ subtest 'internal tool_call keys are stripped from the payload' => sub {
         session => bless({ state_data => {} }, 'FakeSession'),
     );
 
-    my @internal = qw(_emitted_name _name_complete _parsed_args);
+    my @internal = qw(_emitted_name _name_complete _parsed_args _dispatch_name);
     ok(scalar @CLIO::Core::APIManager::INTERNAL_TOOL_CALL_KEYS,
         'the internal key list is declared');
     is_deeply(
@@ -128,10 +128,13 @@ subtest 'internal tool_call keys are stripped from the payload' => sub {
             tool_calls => [ {
                 id             => 'call_1',
                 type           => 'function',
-                function       => { name => 'file_operations', arguments => '{"operation":"file_search"}' },
+                # The model called file_search. function.name keeps that name;
+                # the owning tool is carried separately for dispatch.
+                function       => { name => 'file_search', arguments => '{"pattern":"**/x"}' },
                 _name_complete => 1,
                 _emitted_name  => 'file_search',
                 _parsed_args   => { operation => 'file_search', pattern => '**/x' },
+                _dispatch_name => 'file_operations',
             } ],
         },
         { role => 'tool', tool_call_id => 'call_1', content => 'ok' },
@@ -145,7 +148,9 @@ subtest 'internal tool_call keys are stripped from the payload' => sub {
     is_deeply([ sort keys %$tc ], [qw(function id type)],
         'Chat Completions tool_call carries only schema keys');
     ok(!exists $tc->{$_}, "Chat Completions payload has no $_") for @internal;
-    is($tc->{function}{arguments}, '{"operation":"file_search"}',
+    is($tc->{function}{name}, 'file_search',
+        'the payload keeps the callable the model actually called');
+    is($tc->{function}{arguments}, '{"pattern":"**/x"}',
         'the real arguments are untouched');
 
     my $json = CLIO::Util::JSON::encode_json($payload);

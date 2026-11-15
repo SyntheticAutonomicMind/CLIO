@@ -66,7 +66,7 @@ sub header_label {
 my $orch = build_orchestrator();
 isa_ok($orch, 'CLIO::Core::WorkflowOrchestrator');
 
-subtest 'a rewritten call keeps the emitted name for display' => sub {
+subtest 'an aliased call keeps the emitted name and records the dispatch tool' => sub {
     my $call = {
         id       => 'call_1',
         type     => 'function',
@@ -79,8 +79,10 @@ subtest 'a rewritten call keeps the emitted name for display' => sub {
     is(scalar @tools, 1, 'one tool ordered');
 
     my $ordered = $tools[0];
-    is($ordered->{function}{name}, 'file_operations',
-        'dispatch uses the canonical tool name');
+    is($ordered->{function}{name}, 'file_search',
+        'the wire name keeps the callable the model emitted');
+    is($ordered->{_dispatch_name}, 'file_operations',
+        'the owning tool is recorded separately for dispatch');
     is($ordered->{_emitted_name}, 'file_search',
         'the emitted callable is recorded on the same hash');
     is(header_label($ordered), 'FILE SEARCH',

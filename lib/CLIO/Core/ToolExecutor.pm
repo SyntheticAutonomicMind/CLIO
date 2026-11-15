@@ -243,6 +243,17 @@ sub execute_tool {
             $arguments->{operation} = $alias_info->{operation};
         }
     }
+
+    # Canonical tool that owns this call. Phase 3 records it when it resolves
+    # an emitted alias; direct callers get it from the registry. Execution and
+    # cache invalidation key off the canonical tool, while $tool_name keeps the
+    # name the model emitted for logs and action descriptions.
+    my $dispatch_tool = $tool_call->{_dispatch_name};
+    unless ($dispatch_tool) {
+        my $owner = CLIO::Tools::Registry->classify_callable(
+            $tool_name, $arguments->{operation});
+        $dispatch_tool = $owner ? $owner->{tool} : $tool_name;
+    }
     
     # Check if this is an MCP tool (prefixed with mcp_)
     if ($tool_name =~ /^mcp_/ && $self->{mcp_manager}) {
@@ -322,7 +333,7 @@ sub execute_tool {
         }
     }
     
-    my $tool = $tool_registry->get_tool($tool_name);
+    my $tool = $tool_registry->get_tool($dispatch_tool);
     unless ($tool) {
         # Log unknown tool error
         $self->_log_tool_operation({
@@ -527,7 +538,7 @@ sub execute_tool {
         # system-prompt build. skill_operations is gated on
         # auto_discover_skills in PromptBuilder, so we only need to invalidate
         # when the orchestrator's prompt_builder is present.
-        if ($tool_name eq 'skill_operations' && $operation =~ /^(create|delete|load|unload)$/) {
+        if ($dispatch_tool eq 'skill_operations' && $operation =~ /^(create|delete|load|unload)$/) {
             my $orch = $self->{orchestrator};
             if ($orch && $orch->can('invalidate_tool_cache')) {
                 $orch->invalidate_tool_cache();

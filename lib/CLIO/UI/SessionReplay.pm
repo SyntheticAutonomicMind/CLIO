@@ -345,9 +345,9 @@ sub _render_assistant_message {
     for my $i (0 .. $#$tool_calls) {
         my $tc = $tool_calls->[$i];
         my $tool_name = $tc->{function}->{name} || 'unknown';
-        # Phase 3 rewrites an emitted callable to the tool that owns it. Render
-        # and group by the name the model emitted so replay matches the live
-        # session, while $tool_name stays canonical for suppression rules.
+        # Sessions recorded before the dispatch-name split stored the
+        # canonical tool in function.name and the truth in _emitted_name.
+        # Render by the emitted callable so replay matches the live session.
         my $emitted_name = $tc->{_emitted_name} // $tool_name;
         my $tool_display_name = uc($emitted_name);
         $tool_display_name =~ s/_/ /g;

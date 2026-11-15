@@ -220,9 +220,10 @@ sub run_loop {
     my $result  = $orch->process_input('do the thing', $session);
 
     return {
-        dir    => $dir,
-        api    => $api,
-        result => $result,
+        dir     => $dir,
+        api     => $api,
+        session => $session,
+        result  => $result,
     };
 }
 
@@ -273,6 +274,33 @@ subtest 'alias edit call carries its operation and displays a diff' => sub {
 #    detector never ends the turn; the iteration budget does. file_exists is
 #    neutral: it neither enters the window nor clears it.
 # ---------------------------------------------------------------------------
+subtest 'history records the callable the model emitted, not the dispatch tool' => sub {
+    my $run = run_loop(
+        max_calls => 1,
+        calls     => [
+            { name => 'file_search', args => { pattern => '*.pm', directory => '.' } },
+        ],
+    );
+
+    my ($assistant) = grep { $_->{role} eq 'assistant' && $_->{tool_calls} }
+        @{ $run->{session}{messages} };
+    ok($assistant, 'assistant message with tool_calls was saved');
+
+    my $tc = $assistant->{tool_calls}[0];
+    is($tc->{function}{name}, 'file_search',
+        'function.name keeps the emitted callable');
+    is($tc->{_dispatch_name}, 'file_operations',
+        'dispatch name records the owning tool');
+    is($tc->{_parsed_args}{operation}, 'file_search',
+        'operation is injected without rewriting the name');
+
+    my ($tool_msg) = grep { $_->{role} eq 'tool' } @{ $run->{session}{messages} };
+    ok($tool_msg, 'tool result was saved');
+    is($tool_msg->{tool_name}, 'file_operations', 'stored tool_name is the dispatch tool');
+    is($tool_msg->{emitted_name}, 'file_search',
+        'session records the emitted callable for replay');
+};
+
 subtest 'repeated stable searches produce guidance without ending the turn' => sub {
     my $run = run_loop(
         max_calls => 60,
