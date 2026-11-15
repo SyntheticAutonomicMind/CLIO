@@ -976,52 +976,61 @@ Returns hashref:
 # Session-level URL grants
 my %_url_session_grants;
 
-# Parse an IPv4 literal into its first two octets, accepting the forms a
-# browser will happily resolve: dotted decimal, leading-zero octal, and a
-# packed single number (so 21376433 is reachable as a private address).
-# Returns ($a, $b) or an empty list when the host is not an IPv4 literal.
-# Parse an IPv4 literal into its first two octets, accepting the forms a browser
-# resolves: dotted decimal, leading-zero octet, and the partial/packed forms
-# where the final component holds all remaining bits (so 21376433 and
-# 127.1 are both loopback). Returns ($a, $b) or an empty list if the host is
-# not an IPv4 literal.
+# Parse an IPv4 literal into its four octets, accepting every form inet_aton
+# resolves and therefore every form a browser will connect to:
+#
+#   127.0.0.1        dotted decimal
+#   127.1            partial - the last component carries the remaining bits
+#   010.0.0.1        leading-zero octal (8.0.0.1)
+#   0x7f.0.0.1       hexadecimal component
+#   0x7f000001       packed hexadecimal
+#   2130706433       packed decimal
+#
+# A guard that knows only dotted decimal is trivially bypassed by writing the
+# same address another way, so the alternative forms are the point of this
+# function, not a nicety. Returns the four octets, or an empty list when the
+# host is not an IPv4 literal.
 sub _parse_ipv4 {
     my ($host) = @_;
     return () unless defined $host && length $host;
-    return () unless $host =~ /^[0-9.]+$/ && $host =~ /\d/;
+    # Only the characters a numeric component can contain. This also rules out
+    # a trailing dot ("127.0.0.1."), which inet_aton rejects.
+    return () unless $host =~ /\A[0-9A-Fa-fxX.]+\z/ && $host =~ /\d/;
 
     my @parts = split /\./, $host, -1;
     return () if @parts < 1 || @parts > 4;
 
-    my @octets;
+    my $value   = 0;
+    my $slots   = 4;        # octet slots still available for this component
+
     for my $i (0 .. $#parts) {
         my $p = $parts[$i];
         return () unless length $p;
-        return () unless $p =~ /^\d+$/;
-        my $v = ($p =~ /^0\d/ && $p =~ /^[0-7]+$/) ? oct($p) : 0 + $p;
 
-        # Every component except the last must fit in one octet. The last may
-        # carry the remaining 8/16/24 bits.
+        my $v;
+        if    ($p =~ /\A0[xX]([0-9A-Fa-f]+)\z/) { $v = hex($1) }
+        elsif ($p =~ /\A0([0-7]+)\z/)            { $v = oct($1) }
+        elsif ($p =~ /\A[0-9]+\z/)               { $v = 0 + $p  }
+        else                                     { return ()     }
+
+        $slots = 4 - $i;
         my $is_last = ($i == $#parts);
-        my $max = $is_last ? (256 ** (4 - scalar(@octets)) ) - 1 : 255;
-        return () if $v > $max;
 
-        if ($is_last && @octets < 3) {
-            # Spread the last component across the remaining octets.
-            my @rest;
-            for my $k (1 .. 3 - $#octets) {
-                unshift @rest, $v % 256;
-                $v = int($v / 256);
-            }
-            unshift @rest, $v;
-            push @octets, @rest;
-            last;
+        if ($is_last) {
+            # The final component may occupy every remaining octet.
+            return () if $v > 256 ** $slots - 1;
+            $value = $value * 256 ** $slots + $v;
+            $slots = 0;
+        } else {
+            return () if $v > 255;
+            $value = $value * 256 + $v;
+            $slots--;
         }
-        push @octets, $v;
     }
 
-    return () if @octets < 4;
-    return ($octets[0], $octets[1]);
+    return () if $slots != 0;
+    return (($value >> 24) & 0xFF, ($value >> 16) & 0xFF,
+            ($value >>  8) & 0xFF,  $value        & 0xFF);
 }
 
 sub _check_url_security {
