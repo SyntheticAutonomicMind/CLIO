@@ -188,8 +188,6 @@ sub strip_ansi {
     return $s;
 }
 
-
-
 sub slurp {
     my ($path) = @_;
     open my $fh, '<', $path or return '';
@@ -279,8 +277,6 @@ sub run_one_test {
 # ---------------------------------------------------------------------------
 # Analysis
 # ---------------------------------------------------------------------------
-
-
 
 # Failing assertions a test printed without signalling through its exit code
 # are still evidence the caller needs.

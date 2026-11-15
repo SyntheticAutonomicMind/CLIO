@@ -223,7 +223,7 @@ routing/session identity; `cached_tokens` reports the observed reuse.
 | Terminal | `TerminalOperations.pm` | exec - run shell commands safely (fork+process group, ESC-interruptible) |
 | Memory | `MemoryOperations.pm` | store, retrieve, search, list, delete |
 | Todo | `TodoList.pm` | create, update, complete, list, track tasks |
-| Code Intelligence | `CodeIntelligence.pm` | list_usages, search_history |
+| Code Intelligence | `CodeIntelligence.pm` | list_usages, outline, search_history |
 | Web | `WebOperations.pm` | fetch_url, search_web |
 | Interact | `Interact.pm` | request_input - checkpoint prompts |
 | Sub-Agent Operations | `SubAgentOperations.pm` | Spawn and manage parallel agents |

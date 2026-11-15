@@ -43,7 +43,7 @@ CLIO exposes 9 tools to the model. Three more load conditionally based on config
 | `memory_operations` | Store/retrieve key-value state, LTM patterns, session recall |
 | `web_operations` | Fetch URLs, web search |
 | `todo_operations` | Create, update, complete, list multi-step tasks |
-| `code_intelligence` | Symbol search (list_usages), semantic git commit search (search_history) |
+| `code_intelligence` | Symbol references with definitions ranked first (list_usages), file outline (outline), semantic git commit search (search_history) |
 | `interact` | Checkpoint prompts - pause the agent loop to ask for your input |
 | `apply_patch` | Apply lightweight diff patches |
 

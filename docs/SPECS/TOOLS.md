@@ -339,7 +339,8 @@ Check whether a known file matches a pattern:
 
 | Operation | Description | Required Parameters |
 |-----------|-------------|---------------------|
-| `list_usages` | Find all usages of a symbol | `symbol_name` (required), `file_paths` (optional) |
+| `list_usages` | Find every reference to a symbol, definitions first | `symbol_name` (required), `file_paths` (optional), `context_lines` (optional), `max_results` (optional) |
+| `outline` | Symbols, signatures and line ranges for a file, no bodies | `path` (required) |
 | `search_history` | Semantic search git history | `query` (required), `max_results` (optional), `since` (optional) |
 
 ---

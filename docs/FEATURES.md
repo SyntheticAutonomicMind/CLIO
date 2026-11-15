@@ -346,10 +346,11 @@ This is more efficient than full file rewrites and produces cleaner diffs.
 
 ### Code Intelligence
 
-Two specialized operations for understanding code:
+Three operations for understanding code:
 
-- **list_usages** - Find all references to a symbol across the codebase
-- **search_history** - Semantic search through git commit messages (e.g., "when did we fix the login bug?")
+- **list_usages** - Find every reference to a symbol. Matches that exist only in comments, POD or string literals are filtered out, and each hit is labelled with the role it plays (definition, call, assignment, reference) so the definition is easy to find.
+- **outline** - List a file's symbols with their signatures and line ranges, without the bodies. The cheap way to find out whether a module contains what you need before reading it.
+- **search_history** - Semantic search through git commit messages (e.g., "when did we fix the login bug?"). Ranked by stemmed terms weighted by how rare they are in the history.
 
 ### Web Operations
 

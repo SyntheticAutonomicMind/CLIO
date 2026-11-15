@@ -25,7 +25,6 @@ BEGIN {
     my $repo_root = dirname(dirname(dirname($self)));
     unshift @INC, "$repo_root/lib";
 }
-my $lib_dir = File::Spec->catdir(dirname(dirname(__FILE__)), 'lib');
 
 # Mock config object
 my $mock_config;

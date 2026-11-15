@@ -1094,6 +1094,15 @@ The `execute_parallel` operation runs the same task on multiple devices at once 
 YOU: Find all usages of the function validate_token
 ```
 
+References that exist only in comments or string literals are dropped, and each remaining hit is labelled with its role, so the definition sorts above the call sites. Use `max_results` to cap a query on a common name.
+
+**outline** - List a file's symbols with signatures and line ranges, no bodies
+```text
+YOU: Give me an outline of lib/CLIO/Core/ToolExecutor.pm
+```
+
+Useful before reading a large module: it answers "is what I need in here, and on which line" for a few hundred tokens instead of a few thousand.
+
 **search_history** - Semantic search through git commit messages
 ```text
 YOU: When did we fix the authentication bug?
