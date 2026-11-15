@@ -63,7 +63,7 @@ authority - read them, do not infer from the module name.
 | `lib/CLIO/Core/SkillRepository.pm` | Skill repository configuration and management |
 | `lib/CLIO/Core/SkillManager.pm` | Skill catalog, scopes, and freeform skill creation (`auto_create_skills`) |
 | `lib/CLIO/Core/RepositoryLoader.pm` | Load skills from cached Git repositories |
-| `lib/CLIO/Code/` | Code intelligence primitives (TreeSitter) |
+| `lib/CLIO/Code/` | Code intelligence primitives (Scanner, Extractor) |
 | `lib/CLIO/Test/` | Test infrastructure (MockAPI) |
 | `lib/CLIO/Tools/` | AI-callable tools (14 modules) + 2 infrastructure files (Registry.pm, Tool.pm) |
 | `lib/CLIO/UI/` | Terminal UI (Chat, Markdown, Theme, Commands, SessionReplay, Multiplexer) |
@@ -236,7 +236,7 @@ If the system handles the condition (retry, reroute, fallback), use `log_debug`,
 | `CLIO::Logging::` | Structured logging | ToolLogger, ProcessStats |
 | `CLIO::Compat::` | Compatibility | Terminal (ReadKey, ReadMode), HTTP |
 | `CLIO::Util::` | Utilities | PathResolver, TextSanitizer, JSON, JSONRepair, YAML, ImageAttachment, ImageDisplay, ConfigPath, AtomicWrite, RateLimit, GitIgnore, AnthropicXMLParser, CABundle, Curl, InputHelpers, Proxy, UUID |
-| `CLIO::Code::` | Code intelligence | TreeSitter |
+| `CLIO::Code::` | Code intelligence | Scanner, Extractor |
 | `CLIO::Spec::` | OpenSpec integration | Manager |
 | `CLIO::Test::` | Test infrastructure | MockAPI |
 

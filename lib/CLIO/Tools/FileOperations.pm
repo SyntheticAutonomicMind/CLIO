@@ -1892,7 +1892,7 @@ sub _semantic_search_hybrid {
         }
     }
     
-    # Apply tree-sitter analysis to boost scores for symbol definitions
+    # Apply symbol analysis to boost scores for symbol definitions
     $self->_enhance_scores_with_symbols(\%file_scores, \%file_matches, \@keywords);
     
     # Sort files by relevance score
@@ -1940,66 +1940,68 @@ sub _semantic_search_hybrid {
     );
 }
 
-# Enhance scores using tree-sitter symbol analysis
+# Enhance scores using symbol analysis. Symbol extraction goes through the
+# shared Scanner and Extractor, so a name that appears only in a comment or a
+# string literal cannot earn a boost.
 sub _enhance_scores_with_symbols {
     my ($self, $file_scores, $file_matches, $keywords) = @_;
-    
-    # Try to load TreeSitter
-    my $ts;
-    eval {
-        require CLIO::Code::TreeSitter;
-        $ts = CLIO::Code::TreeSitter->new(debug => 0);
+
+    my $loaded = eval {
+        require CLIO::Code::Scanner;
+        require CLIO::Code::Extractor;
+        1;
     };
-    
-    unless ($ts) {
-        log_debug('FileOp', "TreeSitter not available, skipping symbol analysis");
+    unless ($loaded) {
+        log_debug('FileOp', "Symbol analysis unavailable: $@");
         return;
     }
-    
+
     log_debug('FileOp', "Enhancing scores with symbol analysis");
-    
+
     # Analyze top files (limit to avoid slow performance)
     my @top_files = sort { $file_scores->{$b} <=> $file_scores->{$a} } keys %$file_scores;
     @top_files = splice(@top_files, 0, 50) if @top_files > 50;
-    
+
     for my $file (@top_files) {
-        # Skip non-code files
-        next unless $file =~ /\.(pm|pl|t|py|js|jsx|ts|tsx)$/i;
-        
-        my $analysis = eval { $ts->analyze_file($file) };
-        next unless $analysis && $analysis->{symbols};
-        
-        # Check each symbol against keywords
-        for my $symbol (@{$analysis->{symbols}}) {
-            my $name = lc($symbol->{name} || '');
-            next unless $name;
-            
+        my $lang = CLIO::Code::Scanner::language_for($file);
+        next unless CLIO::Code::Scanner::is_code_language($lang);
+
+        my $src = eval {
+            open my $fh, '<:encoding(UTF-8)', $file or die "Cannot read $file: $!";
+            local $/;
+            <$fh>;
+        };
+        next unless defined $src;
+
+        my $clean = CLIO::Code::Scanner::scan($src, $lang);
+        my @symbols = CLIO::Code::Extractor::extract_symbols($clean, $lang, $file);
+        next unless @symbols;
+
+        for my $symbol (@symbols) {
+            my $name = lc($symbol->{name} // '');
+            next unless length $name;
+
             for my $keyword (@$keywords) {
-                if ($name =~ /\Q$keyword\E/i) {
-                    # Boost based on symbol type
-                    my $boost = 0;
-                    if ($symbol->{type} eq 'function') {
-                        $boost = 5;  # Strong boost for function definitions
-                    } elsif ($symbol->{type} eq 'package') {
-                        $boost = 4;  # Good boost for package/class definitions
-                    } elsif ($symbol->{type} eq 'variable' && $symbol->{scope} eq 'global') {
-                        $boost = 2;  # Moderate boost for global variables
-                    }
-                    
-                    if ($boost > 0) {
-                        $file_scores->{$file} += $boost;
-                        log_debug('FileOp', "Boosted $file +$boost (symbol: $name, type: $symbol->{type})");
-                        
-                        # Add symbol match to file matches
-                        push @{$file_matches->{$file}}, {
-                            file => $file,
-                            line => $symbol->{line},
-                            content => "$symbol->{type} definition: $symbol->{name}",
-                            symbol_type => $symbol->{type},
-                        };
-                    }
-                    last;  # One boost per keyword per file
+                next unless index($name, lc $keyword) >= 0;
+
+                my $kind  = $symbol->{kind};
+                my $boost = 0;
+                if    ($kind eq 'function')                              { $boost = 5 }
+                elsif ($kind eq 'package' || $kind eq 'class')           { $boost = 4 }
+                elsif ($kind eq 'variable' || $kind eq 'constant')       { $boost = 2 }
+
+                if ($boost > 0) {
+                    $file_scores->{$file} += $boost;
+                    log_debug('FileOp', "Boosted $file +$boost (symbol: $name, kind: $kind)");
+
+                    push @{$file_matches->{$file}}, {
+                        file        => $file,
+                        line        => $symbol->{line},
+                        content     => "$kind definition: $symbol->{name}",
+                        symbol_type => $kind,
+                    };
                 }
+                last;  # One boost per keyword per file
             }
         }
     }

@@ -754,7 +754,7 @@ Added interactive mode detection to skip pagination in pipes.
 | `CLIO::Compat::` | Compatibility | Terminal (ReadKey, ReadMode), HTTP |
 | `CLIO::Util::` | Utilities | PathResolver, TextSanitizer, JSONRepair, JSON, YAML, ImageAttachment, ImageDisplay, ConfigPath, AtomicWrite, RateLimit, GitIgnore, AnthropicXMLParser, CABundle, Curl, InputHelpers, Proxy, UUID |
 | `CLIO::Spec::` | OpenSpec integration | Manager (spec lifecycle management) |
-| `CLIO::Code::` | Code intelligence | TreeSitter |
+| `CLIO::Code::` | Code intelligence | Scanner, Extractor |
 | `CLIO::Test::` | Test infrastructure | MockAPI |
 
 ---------------------------------------------------

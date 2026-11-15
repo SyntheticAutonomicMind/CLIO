@@ -301,10 +301,12 @@ Tools can be restricted via `--enable` (allowlist) or `--disable` (blocklist) CL
 
 | Component | File | Purpose |
 |-----------------------------------------------------------------------------------------------------------------------------------------------------------|------------------------------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------|
-| Tree-sitter | `TreeSitter.pm` | Parse code into AST |
+| Scanner | `Scanner.pm` | Blank comments, POD, and string literals while preserving offsets |
+| Extractor | `Extractor.pm` | Typed symbols and reference classification from scanned source |
 
 **How it works:**
-- TreeSitter parses source code into abstract syntax trees for code intelligence features
+- Scanner removes non-code without changing line or column positions, so a match still maps back to the original file
+- Extractor turns scanned source into typed symbols (package, function, variable, import) used by `outline` and by reference ranking in `list_usages`
 
 ### 7. Security
 **Files:** `lib/CLIO/Security/`
@@ -762,7 +764,8 @@ lib/CLIO/
       YaRN.pm              # Context windowing
       TokenEstimator.pm    # Token counting
   Code/                    # Code analysis
-      TreeSitter.pm        # AST parsing
+      Scanner.pm           # Non-code stripping, offset preserving
+      Extractor.pm         # Typed symbol extraction
   Coordination/            # Multi-agent coordination
       Broker.pm            # Coordination server
       Client.pm            # Broker connection API

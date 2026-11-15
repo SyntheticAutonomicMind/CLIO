@@ -267,7 +267,8 @@ clio/
           Auth/OAuth.pm     # MCP OAuth 2.0 support
           Transport/Stdio.pm  Transport/HTTP.pm
       Code/                 # Code intelligence
-          TreeSitter.pm     # Tree-sitter integration
+          Scanner.pm        # Non-code stripping
+          Extractor.pm      # Typed symbol extraction
       Logging/              # Logging system
           ToolLogger.pm     # Tool operation logging
           ProcessStats.pm   # Process statistics
