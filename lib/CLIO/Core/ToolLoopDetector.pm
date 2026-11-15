@@ -11,7 +11,7 @@ use CLIO::Tools::Registry ();
 
 =head1 NAME
 
-CLIO::Core::ToolLoopDetector - Detect non-converging runs of successful near-duplicate tool calls
+CLIO::Core::ToolLoopDetector - Notice non-converging runs of successful near-duplicate tool calls
 
 =head1 SYNOPSIS
 
@@ -19,19 +19,14 @@ CLIO::Core::ToolLoopDetector - Detect non-converging runs of successful near-dup
 
     my $detector = CLIO::Core::ToolLoopDetector->new();
     my $verdict = $detector->record_call('terminal_operations', $tool_args, $result_content);
-    if ($verdict->{break} && $verdict->{nudge}) {
-        # Escalation with nudge budget remaining: inject $verdict->{nudge_text}
-        # as a user message and keep the turn running.
-    } elsif ($verdict->{break}) {
-        # Hard break: end the turn and report to the user.
-    } elsif ($verdict->{guidance}) {
+    if ($verdict->{guidance}) {
         # Append $verdict->{guidance} to the tool result the model sees.
     }
 
 =head1 DESCRIPTION
 
-Two existing mechanisms guard against agent tool loops, and neither catches
-the third failure mode:
+Two existing mechanisms collapse repeated tool calls, and neither notices
+the failure mode where every call SUCCEEDS but nothing new comes back:
 
 =over 4
 
@@ -41,56 +36,66 @@ WorkflowOrchestrator handles repeated tool ERRORS.
 =item * ContextBuilder collapses byte-identical repeated calls in the
 context projection.
 
-=item * NOTHING handles the loop where every call succeeds with DIFFERENT
-arguments but near-identical results - a model re-running grep with new
-patterns against the same target fifteen times in a row.
+=item * This module notices the loop where every call succeeds with
+DIFFERENT arguments but near-identical results - a model re-running a
+search against the same target fifteen times with new wording.
 
 =back
 
-This module tracks recent read-only tool calls in a sliding window and
-counts calls sharing a loose signature that collapses argument variations
-(grep flags and quoted patterns are ignored; the command word and target
-paths are kept). Escalation requires the result-similarity gate: the
-current result must be near-identical (token overlap) to an earlier
-result with the same signature (not necessarily the immediately previous
-one). A search that keeps producing new information never triggers.
+This module is a B<guidance provider>, not a circuit breaker. It watches
+recent read-only tool calls in a sliding window, counts calls sharing a
+loose signature that collapses argument variations (the search term is
+dropped; the tool, operation, and target are kept), and gates on result
+similarity: the current result must be near-identical (token overlap) to
+an earlier result with the same signature (not necessarily the
+immediately previous one). A search that keeps producing new information
+never produces guidance.
 
-    N = guidance_threshold (3)  -> inject a "stop searching" note into the
-                                   tool result the model sees
-    N = break_threshold (5), or any similar call after guidance fired for
-        the same signature -> escalation. Guidance state is tracked per
-        signature: a model that interleaves two similar-result searches
-        gets escalated, not re-warned, and a window that alternates two
-        signatures still caps per-signature counts, so the count path
-        alone is unreachable there - the guidance path completes the
-        ladder. While nudge budget remains, the
-        break is converted into a loop-break INSTRUCTION (nudge) that the
-        orchestrator injects as a user message and the turn CONTINUES -
-        an advisory note the model can ignore becomes a direct order it
-        must follow. When the nudge budget is exhausted, the call breaks
-        hard and the caller ends the turn.
+When a run is confirmed, C<record_call> returns a note explaining the
+pattern with the measured overlap and concrete exits. The caller appends
+the note to the tool result the model sees. A full notice fires at
+C<guidance_threshold> and a compact reminder repeats every
+C<reminder_interval> similar calls while the pattern continues. The
+module never ends a turn, never injects user-role text, and never
+escalates to enforcement: ending a turn is the orchestrator's decision
+(iteration budget, error handling), not a detector's.
 
-State-changing calls (file writes, patches, builds, mutating git commands)
-clear the window: a model that edits between searches is doing legitimate
-work, not looping. Only contiguous read-only thrash escalates.
+Calls are classified in three ways:
 
-All thresholds are constructor arguments so tests can exercise escalation
-without large call counts.
+=over 4
+
+=item * B<tracked> - search/discovery reads whose results can vary and
+repeat (grep/search/list/outline/web fetch). These enter the window.
+
+=item * B<neutral> - reads that return stable content by design
+(read_file, file_exists) and bookkeeping operations (todo_read,
+skill_list, interact). These are ignored: they neither enter the window
+nor clear it. A model that reads a file between searches is not looping,
+and the read is not evidence that the search loop stopped.
+
+=item * B<mutating> - writes, patches, builds, and unknown tools. These
+reset the window: the world changed, so prior search runs no longer
+indicate thrash.
+
+=back
+
+All thresholds are constructor arguments so tests can exercise the
+guidance ladder without large call counts.
 
 =cut
 
 # Default thresholds. Overridable via constructor arguments.
-our $DEFAULT_WINDOW_SIZE        = 8;     # sliding window of recent calls
-our $DEFAULT_GUIDANCE_THRESHOLD = 3;     # similar calls before guidance note
-our $DEFAULT_BREAK_THRESHOLD    = 5;     # similar calls before escalation
-our $DEFAULT_SIMILARITY         = 0.75;  # token-overlap ratio for "same result"
-our $DEFAULT_NUDGE_BUDGET       = 2;     # break->nudge conversions before hard break
+our $DEFAULT_WINDOW_SIZE        = 8;      # sliding window of recent calls
+our $DEFAULT_GUIDANCE_THRESHOLD = 3;      # similar results before the first notice
+our $DEFAULT_REMINDER_INTERVAL  = 2;      # similar calls between reminders
+our $DEFAULT_SIMILARITY         = 0.75;   # token-overlap ratio for "same result"
+our $DEFAULT_TOKENIZE_BYTES     = 65536;  # content prefix considered for similarity
 
 # Terminal commands recognized as read-only. Anything else (make, perl,
-# npm, git mutations, ...) is treated as state-changing and clears the
-# window. Deliberately strict: a mutating command that slips through as
-# read-only only weakens detection slightly, but a read-only command
-# treated as mutating suppresses detection entirely.
+# npm, git mutations, ...) is treated as mutating and clears the window.
+# Deliberately strict: a mutating command that slips through as read-only
+# only weakens detection slightly, but a read-only command treated as
+# mutating suppresses detection entirely.
 my %READ_ONLY_COMMANDS = map { $_ => 1 } qw(
     grep egrep fgrep zgrep rg ack ag
     ls find locate fd
@@ -114,17 +119,44 @@ my %READ_ONLY_GIT_SUBCOMMANDS = map { $_ => 1 } qw(
     cat-file shortlog reflog
 );
 
-# file_operations operations that only read state.
-# read_file and file_exists are intentionally excluded: they return
-# identical content by design (reading the same path always yields the
-# same bytes), so tracking them as loop-prone causes false loop-breaks
-# whenever an agent re-reads a file after edits or reads multiple files.
-# Only search/discovery operations that can produce varying results are
-# tracked here.
+# Command wrappers that sit in front of the real command. Stripped before
+# classification and signature extraction, so "cd repo && sudo grep ..."
+# is recognized as the grep it really is.
+my %WRAPPERS = map { $_ => 1 } qw(
+    sudo sudoedit doas time command builtin nohup env nice ionice stdbuf
+    timeout xargs
+);
+
+# Operational detail for wrappers whose flags consume a following value.
+# Parsing these keeps the first non-flag token from being mistaken for the
+# command (e.g. "sudo -u root grep" -> grep, not root).
+my %WRAPPER_FLAGS_WITH_VALUE = (
+    sudo => { map { $_ => 1 } qw(
+        -u -g -p -C -T -U -h --user --group --prompt --close-from
+        --command-timeout --other-user --host
+    ) },
+    nice     => { map { $_ => 1 } qw(-n --adjustment) },
+    ionice   => { map { $_ => 1 } qw(-c -n -p -t --class --classdata) },
+    stdbuf   => { map { $_ => 1 } qw(-i -o -e --input --output --error) },
+    timeout  => { map { $_ => 1 } qw(-s -k --signal --kill-after) },
+    env      => { map { $_ => 1 } qw(-u --unset -C --chdir -S --split-string) },
+    xargs    => { map { $_ => 1 } qw(-n -I -P -L -s -d -E -a) },
+);
+
+# file_operations operations whose results can vary across calls and
+# repeat without progress: search and discovery. read_file and
+# file_exists are NOT here. They return identical content by design (the
+# same path always yields the same bytes), so they are neutral: ignored
+# by the window rather than counted as a loop or treated as a reset.
 my %READ_ONLY_FILE_OPS = map { $_ => 1 } qw(
     list_dir get_file_info
     file_search grep_search semantic_search
     get_errors read_tool_result
+);
+
+# file_operations operations that read stable content. Ignored entirely.
+my %NEUTRAL_FILE_OPS = map { $_ => 1 } qw(
+    read_file file_exists
 );
 
 # version_control operations that only read state.
@@ -132,12 +164,15 @@ my %READ_ONLY_GIT_OPS = map { $_ => 1 } qw(
     status log diff blame
 );
 
+# memory_operations operations that search rather than write.
+my $READ_ONLY_MEMORY_RE = qr/^(?:retrieve|search|list|recall_sessions|ltm_stats)$/;
+
 =head1 METHODS
 
 =head2 new
 
 Arguments: %args with optional keys window_size, guidance_threshold,
-break_threshold, similarity_threshold, nudge_budget (all numeric;
+reminder_interval, similarity_threshold, tokenize_bytes (all numeric;
 defaults from the package-level $DEFAULT_* constants).
 
 Returns: blessed detector with fresh (empty) state.
@@ -149,9 +184,9 @@ sub new {
     my $self = {
         window_size          => $args{window_size} // $DEFAULT_WINDOW_SIZE,
         guidance_threshold   => $args{guidance_threshold} // $DEFAULT_GUIDANCE_THRESHOLD,
-        break_threshold      => $args{break_threshold} // $DEFAULT_BREAK_THRESHOLD,
+        reminder_interval    => $args{reminder_interval} // $DEFAULT_REMINDER_INTERVAL,
         similarity_threshold => $args{similarity_threshold} // $DEFAULT_SIMILARITY,
-        nudge_budget         => $args{nudge_budget} // $DEFAULT_NUDGE_BUDGET,
+        tokenize_bytes       => $args{tokenize_bytes} // $DEFAULT_TOKENIZE_BYTES,
     };
     bless $self, $class;
     $self->reset();
@@ -160,12 +195,11 @@ sub new {
 
 =head2 reset
 
-Clears the sliding window and per-signature guidance state. Called by
-the orchestrator
-at the start of every turn (loop tracking is per-turn, not per-session)
-and whenever the interact tool returns user input, which counts as a
-strategy change. The nudge budget is restored: a cleared window means a
-fresh escalation ladder.
+Clears the sliding window and per-signature notice state. Called by the
+orchestrator at the start of every turn (loop tracking is per-turn, not
+per-session), on a mutating tool call, and whenever the interact tool
+returns user input - user engagement is a strategy change, so old runs
+no longer mean anything.
 
 Returns: $self.
 
@@ -174,10 +208,9 @@ Returns: $self.
 sub reset {
     my ($self) = @_;
     $self->{state} = {
-        window         => [],
-        call_index     => 0,
-        guidance_fired => {},    # sig => call_index of the guidance fire
-        nudges_used    => 0,
+        window     => [],
+        call_index => 0,
+        notice     => {},    # sig => call_index of the last guidance emit
     };
     return $self;
 }
@@ -187,115 +220,103 @@ sub reset {
 Record a successful tool call and evaluate it against recent history.
 
 Arguments:
-    $tool_name - tool name as dispatched (e.g. 'terminal_operations')
-    $args      - parsed tool arguments hashref (or undef)
-    $content   - the result content the model will receive (string)
+    $tool_name    - tool name as dispatched (canonical or emitted callable)
+    $args         - parsed tool arguments hashref (or undef)
+    $content      - the result content the model will receive (string)
+    $display_name - optional name the model actually called, used in text
 
 Returns a hashref:
-    tracked    - 1 if the call was recorded, 0 if it was state-changing
-                 (state-changing calls reset the window and are not tracked)
-    count      - number of window entries sharing this call's signature
-    sig        - the loose signature of this call
-    guidance   - guidance note string, or undef (inject into the tool
-                 result the model sees)
-    break      - 1 when escalation fired (see C<nudge>)
-    nudge      - 1 when the break was converted into a loop-break
-                 instruction (C<nudge_text>) because budget remained.
-                 The caller injects nudge_text as a user message and
-                 CONTINUES the turn. 0/undef when this is a real break.
-    nudge_text - the loop-break instruction text (present when nudge is 1)
+    tracked  - 1 if the call entered the loop window, 0 for neutral and
+               mutating calls
+    count    - number of window entries sharing this call's signature
+    sig      - the loose signature of this call ('' when not tracked)
+    level    - 0 none, 1 notice, 2 reminder
+    guidance - guidance note string to append to the tool result, or undef
+
+No field in this result authorizes ending the turn. Callers decide that
+on their own authority.
 
 =cut
 
 sub record_call {
     my ($self, $tool_name, $args, $content, $display_name) = @_;
-    $content = '' unless defined $content;
+    $args = {} unless ref($args) eq 'HASH';
+    my $quiet = { tracked => 0, count => 0, sig => '', level => 0, guidance => undef };
 
-    # A state-changing call resets the window: the model just changed the
-    # world, so prior search runs no longer indicate thrash.
-    if ($self->_is_state_changing($tool_name, $args)) {
+    my ($tool, $op) = $self->_resolve_call($tool_name, $args);
+    my $kind = $self->_classify($tool, $op, $args);
+
+    if ($kind eq 'mutating') {
+        # The model changed the world; prior search runs are no longer
+        # evidence of thrash.
         $self->reset();
-        return { tracked => 0, count => 0, sig => '', guidance => undef, break => 0 };
+        return $quiet;
     }
+    # Neutral reads are neither loop evidence nor a strategy change. They
+    # must not reset the window: reads interleave with searches constantly,
+    # and resetting here would make an ongoing loop invisible.
+    return $quiet if $kind eq 'neutral';
 
-    my $sig     = $self->call_signature($tool_name, $args);
-    my $st      = $self->{state};
-    my $tokens  = $self->_tokenize($content);
+    my $sig    = $self->call_signature($tool_name, $args);
+    my $st     = $self->{state};
+    my $tokens = $self->_tokenize($content);
 
     # Result-similarity gate: compare this result against ANY earlier
-    # window entry with the same signature, keeping the best match.
-    # Computed before the push so the current call is excluded. Checking
+    # window entry with the same signature, keeping the best match. The
+    # current call is excluded because this runs before the push. Checking
     # any prior run (not just the immediately previous one) keeps
-    # interleaved searches detectable: A, B, A still triggers when the
-    # second A result repeats the first A result.
-    my $best_sim   = 0;
-    my $best_match = undef;
-    for my $entry (@{$st->{window}}) {
+    # interleaved searches detectable: A, B, A still fires when the second
+    # A result repeats the first A result.
+    my $best_sim = 0;
+    for my $entry (@{ $st->{window} }) {
         next unless $entry->{sig} eq $sig;
         my $sim = $self->_similarity($tokens, $entry->{tokens});
-        if (!defined $best_match || $sim > $best_sim) {
-            $best_sim   = $sim;
-            $best_match = $entry;
-        }
+        $best_sim = $sim if $sim > $best_sim;
     }
 
-    push @{$st->{window}}, { sig => $sig, tokens => $tokens };
-    shift @{$st->{window}} while @{$st->{window}} > $self->{window_size};
+    push @{ $st->{window} }, { sig => $sig, tokens => $tokens };
+    shift @{ $st->{window} } while @{ $st->{window} } > $self->{window_size};
 
     my $count = 0;
-    for my $entry (@{$st->{window}}) {
-        $count++ if $entry->{sig} eq $sig;
-    }
+    $count++ for grep { $_->{sig} eq $sig } @{ $st->{window} };
 
-    # Without this gate, legitimately converging searches would be
-    # penalized: a search producing new information never escalates.
     $st->{call_index}++;
-    return {
-        tracked => 1, count => $count, sig => $sig, guidance => undef, break => 0,
-    } unless $best_match && $best_sim >= $self->{similarity_threshold};
+    $self->_prune_notice_state();
 
-    # Guidance is tracked per signature. The model may interleave two
-    # (or more) similar-result searches, and with single-slot bookkeeping
-    # each guidance fire was overwritten by the alternating partner, so
-    # the warning re-fired forever and escalation never became reachable.
-    my $fired = $st->{guidance_fired}{ $sig };
-    my $guidance_active = defined $fired
-        && ($st->{call_index} - $fired) <= $self->{window_size};
+    # A search producing new information is convergence, not a loop.
+    return { tracked => 1, count => $count, sig => $sig, level => 0, guidance => undef }
+        if $best_sim < $self->{similarity_threshold};
 
-    if ($guidance_active || $count >= $self->{break_threshold}) {
-        # Escalation. The advisory guidance note was either already active
-        # or the break threshold was hit directly. A hard break that ends
-        # the turn is the last resort, not the first: while nudge budget
-        # remains, return the break WITH a loop-break instruction the
-        # orchestrator injects as a user message so the turn continues.
-        # A model that ignored a note woven into tool results usually
-        # obeys a direct instruction. Budget exhausted -> real break.
-        if ($st->{nudges_used} < $self->{nudge_budget}) {
-            $st->{nudges_used}++;
-            return {
-                tracked    => 1, count => $count, sig => $sig,
-                guidance   => undef, break => 1, nudge => 1,
-                nudge_text => $self->_nudge_text($display_name // $tool_name, $sig, $count),
-            };
-        }
-        return { tracked => 1, count => $count, sig => $sig, guidance => undef, break => 1 };
+    return { tracked => 1, count => $count, sig => $sig, level => 0, guidance => undef }
+        if $count < $self->{guidance_threshold};
+
+    my $last   = $st->{notice}{$sig};
+    my $source = $display_name // $tool;
+    my $pct    = sprintf('%d', $best_sim * 100 + 0.5);
+
+    my $level;
+    my $text;
+    if (!defined $last) {
+        $level = 1;
+        $text  = $self->_notice_text($source, $sig, $count, $pct);
+    } elsif (($st->{call_index} - $last) >= $self->{reminder_interval}) {
+        $level = 2;
+        $text  = $self->_reminder_text($source, $count, $pct);
+    } else {
+        return { tracked => 1, count => $count, sig => $sig, level => 0, guidance => undef };
     }
-    if ($count >= $self->{guidance_threshold}) {
-        $st->{guidance_fired}{ $sig } = $st->{call_index};
-        $self->_prune_guidance_state();
-        return {
-            tracked => 1, count => $count, sig => $sig, break => 0,
-            guidance => $self->_guidance_text($display_name // $tool_name, $sig, $count),
-        };
-    }
-    return { tracked => 1, count => $count, sig => $sig, guidance => undef, break => 0 };
+
+    $st->{notice}{$sig} = $st->{call_index};
+
+    return { tracked => 1, count => $count, sig => $sig, level => $level, guidance => $text };
 }
 
 =head2 call_signature
 
-Compute the loose signature for a tool call. Variations in flags, quoted
-patterns, and other noise collapse to the same signature; the command
-word (or operation) and target paths are preserved.
+Compute the loose signature for a tool call. Argument variations that do
+not change the target collapse to one signature: the search term is
+dropped, flags are dropped, command wrappers are stripped, and the tool,
+operation, and target are kept.
 
 Arguments: $tool_name, $args (parsed arguments hashref or undef)
 
@@ -305,23 +326,48 @@ Returns: signature string.
 
 sub call_signature {
     my ($self, $tool_name, $args) = @_;
-    $tool_name //= 'unknown';
     $args = {} unless ref($args) eq 'HASH';
 
-    if ($tool_name eq 'terminal_operations') {
-        return $self->_terminal_signature(
-            $args->{command} // '',
-            $args->{operation} // '',
-        );
+    my ($tool, $op) = $self->_resolve_call($tool_name, $args);
+
+    if ($tool eq 'terminal_operations') {
+        return $self->_terminal_signature($args->{command} // '', $op // '');
+    }
+
+    if ($tool eq 'file_operations') {
+        if ($op eq 'grep_search') {
+            # Drop the query; keep the path and the file glob filter.
+            return $self->_scoped_signature($tool, $op, $args, qw(path pattern));
+        }
+        if ($op eq 'file_search') {
+            # The pattern IS the search term here; the directory is the target.
+            return $self->_scoped_signature($tool, $op, $args, qw(directory));
+        }
+        if ($op eq 'semantic_search') {
+            return $self->_scoped_signature($tool, $op, $args, qw(scope));
+        }
+        if ($op eq 'read_tool_result') {
+            return $self->_scoped_signature($tool, $op, $args, qw(toolCallId offset length));
+        }
+        if ($op =~ /^(?:list_dir|get_errors|get_file_info)$/) {
+            return $self->_scoped_signature($tool, $op, $args, qw(path recursive));
+        }
+    }
+
+    if ($tool eq 'web_operations' && $op eq 'search_web') {
+        # Every query looks different; the repeated search is the loop.
+        return join('|', $tool, $op);
+    }
+
+    if ($tool eq 'memory_operations' && $op =~ /^(?:search|recall_sessions)$/) {
+        return join('|', $tool, $op);
     }
 
     # Generic fallback: tool name + operation + normalized scalar params.
     # Deliberately strict (near byte-identical calls collide) because the
-    # observed loop mode is terminal search commands; ContextBuilder
-    # already collapses byte-identical repeats for the strict case.
-    my @parts = ($tool_name);
-    push @parts, $args->{operation}
-        if defined $args->{operation} && length $args->{operation};
+    # operations above cover the observed loop modes.
+    my @parts = ($tool);
+    push @parts, $op if defined $op && length $op;
     for my $key (sort keys %$args) {
         next if $key eq 'operation';
         my $value = $args->{$key};
@@ -335,12 +381,188 @@ sub call_signature {
 
 =head1 INTERNAL METHODS
 
+=head2 _resolve_call (Internal)
+
+Resolve a callable or grouping name plus operation to the canonical tool
+and operation, so the same logical call gets the same signature and
+classification regardless of which name the caller used.
+
+Returns: ($tool, $operation)
+
+=cut
+
+sub _resolve_call {
+    my ($self, $tool_name, $args) = @_;
+    $tool_name = 'unknown' unless defined $tool_name && length $tool_name;
+    my $op = ref($args) eq 'HASH' ? $args->{operation} : undef;
+
+    my $owner = CLIO::Tools::Registry->classify_callable($tool_name, $op);
+    if ($owner) {
+        my $resolved_op = defined $owner->{operation} ? $owner->{operation} : $op;
+        return ($owner->{tool}, $resolved_op);
+    }
+    return ($tool_name, $op);
+}
+
+=head2 _classify (Internal)
+
+Classify a resolved call as 'tracked', 'neutral', or 'mutating'.
+
+=cut
+
+sub _classify {
+    my ($self, $tool, $op, $args) = @_;
+
+    if (!defined $op && CLIO::Tools::Registry->is_grouping_name($tool)) {
+        # None of the tables below can match, so the call lands in the
+        # mutating default and resets the window. That is the safe answer
+        # for an unclassifiable call, but it silently disables detection -
+        # say so, so the cause is diagnosable from logs.
+        log_debug('ToolLoopDetector',
+            "Grouping name '$tool' recorded without an operation - "
+            . "treating as mutating (loop detection disabled for it)");
+    }
+
+    return 'mutating' if $tool eq 'apply_patch';
+
+    if ($tool eq 'file_operations') {
+        my $operation = $op // '';
+        return 'tracked'  if $READ_ONLY_FILE_OPS{$operation};
+        return 'neutral'  if $NEUTRAL_FILE_OPS{$operation};
+        return 'mutating';
+    }
+    if ($tool eq 'version_control') {
+        return ($READ_ONLY_GIT_OPS{ $op // '' }) ? 'tracked' : 'mutating';
+    }
+    if ($tool eq 'memory_operations') {
+        return (($op // '') =~ $READ_ONLY_MEMORY_RE) ? 'tracked' : 'mutating';
+    }
+    if ($tool eq 'terminal_operations') {
+        return 'neutral' if ($op // '') eq 'validate';
+        my $head = $self->_terminal_head($args->{command} // '');
+        my ($binary) = $head =~ /^\s*(\S+)/;
+        $binary = lc($binary // '');
+        $binary =~ s{^.*/}{};
+        # Empty/malformed command is not productive work and not a
+        # strategy signal: treat it as mutating so it clears the window
+        # instead of polluting a legitimate read-only run.
+        return 'mutating' unless length $binary;
+        return 'tracked' if $READ_ONLY_COMMANDS{$binary};
+        if ($binary eq 'git') {
+            my ($sub) = $head =~ /^\s*git\s+([^\s-]\S*)/;
+            return ($READ_ONLY_GIT_SUBCOMMANDS{ lc($sub // '') }) ? 'tracked' : 'mutating';
+        }
+        return 'mutating';
+    }
+    if ($tool eq 'code_intelligence') {
+        return 'tracked';  # list_usages / outline / search_history
+    }
+    if ($tool eq 'web_operations') {
+        return (($op // '') =~ /^(?:search_web|fetch_url)$/) ? 'tracked' : 'mutating';
+    }
+    if ($tool eq 'todo_operations') {
+        return (($op // '') eq 'read') ? 'neutral' : 'mutating';
+    }
+    if ($tool eq 'skill_operations') {
+        return (($op // '') =~ /^(?:list|load)$/) ? 'neutral' : 'mutating';
+    }
+    if ($tool eq 'interact') {
+        return 'neutral';
+    }
+
+    # Unknown tools: conservative - treat as mutating so the window is
+    # cleared rather than letting an unrelated call inherit a search run.
+    return 'mutating';
+}
+
+=head2 _is_state_changing (Internal)
+
+Compatibility wrapper: true only for calls that reset the window.
+
+=cut
+
+sub _is_state_changing {
+    my ($self, $tool_name, $args) = @_;
+    my ($tool, $op) = $self->_resolve_call($tool_name, $args);
+    return $self->_classify($tool, $op, $args) eq 'mutating' ? 1 : 0;
+}
+
+=head2 _terminal_head (Internal)
+
+Return the command word of the first pipeline stage after stripping
+quoted strings, command wrappers, leading assignments, and leading
+C<cd> stages ("cd repo && grep ..." is a grep).
+
+=cut
+
+sub _terminal_head {
+    my ($self, $command) = @_;
+    $command = '' unless defined $command;
+
+    # Quoted content is neutralized BEFORE pipeline splitting so a pipe
+    # inside a grep pattern does not truncate the stage.
+    (my $stripped = $command) =~ s/'[^']*'/ /g;
+    $stripped =~ s/"[^"]*"/ /g;
+
+    for my $stage (split /\s*(?:&&|\|\||;)\s*/, $stripped) {
+        my ($head) = split /\s*\|\s*/, $stage, 2;
+        next unless defined $head;
+        my $normalized = $self->_strip_wrappers($head);
+        next unless length $normalized;
+        # A bare cd changes nothing in a non-persistent shell.
+        next if $normalized =~ /^\s*cd(?:\s|$)/;
+        return $normalized;
+    }
+    return '';
+}
+
+=head2 _strip_wrappers (Internal)
+
+Drop leading environment assignments and command wrappers (with their
+flag values) so the first token is the command that actually runs.
+
+=cut
+
+sub _strip_wrappers {
+    my ($self, $stage) = @_;
+    my @tokens = split /\s+/, $stage // '';
+
+    while (@tokens) {
+        my $token = $tokens[0];
+
+        # VAR=value prefix
+        if ($token =~ /^[A-Za-z_][A-Za-z0-9_]*=/) {
+            shift @tokens;
+            next;
+        }
+
+        last unless $WRAPPERS{$token};
+        my $wrapper = $token;
+        shift @tokens;
+
+        my $valued = $WRAPPER_FLAGS_WITH_VALUE{$wrapper} || {};
+        while (@tokens && $tokens[0] =~ /^-/) {
+            my $flag = shift @tokens;
+            # --flag=value carries its value inline.
+            shift @tokens if $flag !~ /=/ && $valued->{$flag} && @tokens;
+        }
+
+        # timeout's duration operand comes after its flags.
+        if ($wrapper eq 'timeout' && @tokens && $tokens[0] !~ /^-/) {
+            shift @tokens;
+        }
+    }
+
+    return join(' ', @tokens);
+}
+
 =head2 _terminal_signature (Internal)
 
-Signature for a terminal command: strip quoted strings first (patterns
-must not fragment the signature, and quoted pipes must not split the
-pipeline), then take the first pipeline stage, drop flags, and keep the
-binary plus up to two path-like tokens as targets.
+Signature for a terminal command: the operation, the command word, the
+git subcommand when present, and the last non-flag operand as the
+target. Relative directory names count as targets ("grep foo lib"); an
+earlier version kept only path-like tokens, which collapsed searches in
+different relative directories into one signature.
 
 =cut
 
@@ -350,110 +572,47 @@ sub _terminal_signature {
     my @tokens = split /\s+/, $head;
     my $binary = lc(shift @tokens // '');
     $binary =~ s{^.*/}{};
-    my @targets;
-    for my $token (@tokens) {
-        next if $token =~ /^-{1,2}/;
-        push @targets, lc $token if $token =~ m{[/.\\*]};
-        last if @targets >= 2;
-    }
-    return join('|', 'terminal', $operation, $binary, @targets);
-}
 
-=head2 _terminal_head (Internal)
+    my @parts = ('terminal', $operation // '', $binary);
+    my $subcommand = '';
 
-Return the first pipeline stage of a command with quoted strings removed.
-Quoted content is neutralized BEFORE pipeline splitting so a pipe inside a
-grep pattern does not truncate the stage.
-
-=cut
-
-sub _terminal_head {
-    my ($self, $command) = @_;
-    $command = '' unless defined $command;
-    (my $stripped = $command) =~ s/'[^']*'/ /g;
-    $stripped =~ s/"[^"]*"/ /g;
-    my ($head) = split /\s*(?:&&|\|\||;|\|)\s*/, $stripped, 2;
-    return $head // '';
-}
-
-=head2 _is_state_changing (Internal)
-
-Classify a tool call as state-changing (clears the window) or read-only
-(tracked). Read-only terminal commands come from %READ_ONLY_COMMANDS plus
-%READ_ONLY_GIT_SUBCOMMANDS; file/version-control operations from their
-respective tables. Unknown tools default to state-changing.
-
-=cut
-
-sub _is_state_changing {
-    my ($self, $tool_name, $args) = @_;
-    $args = {} unless ref($args) eq 'HASH';
-
-    # Calls arrive under the emitted callable name (write_file, grep_search,
-    # todo_read), not the grouping tool. Resolve to the owning tool and
-    # operation so the read-only tables below keep matching.
-    my $owner = CLIO::Tools::Registry->classify_callable(
-        $tool_name, $args->{operation});
-    if ($owner) {
-        $tool_name = $owner->{tool};
-        $args = { %$args, operation => $owner->{operation} }
-            if defined $owner->{operation};
-    }
-
-    # A grouping name with no operation cannot be classified: none of the
-    # tables below match, so every call resets the window and loop detection
-    # silently stops working. That happened when the caller re-parsed the
-    # model's raw arguments and dropped the operation injected during alias
-    # resolution. Say so, so the next occurrence is diagnosable from logs.
-    if (!defined $args->{operation}
-        && CLIO::Tools::Registry->is_grouping_name($tool_name)) {
-        log_debug('ToolLoopDetector',
-            "Grouping name '$tool_name' recorded without an operation - "
-            . "treating as state-changing (loop detection disabled for it)");
-    }
-
-    return 1 if $tool_name eq 'apply_patch';
-
-    if ($tool_name eq 'file_operations') {
-        return $READ_ONLY_FILE_OPS{ $args->{operation} // '' } ? 0 : 1;
-    }
-    if ($tool_name eq 'version_control') {
-        return $READ_ONLY_GIT_OPS{ $args->{operation} // '' } ? 0 : 1;
-    }
-    if ($tool_name eq 'memory_operations') {
-        my $op = $args->{operation} // '';
-        return ($op =~ /^(retrieve|search|list|recall_sessions|ltm_stats)$/) ? 0 : 1;
-    }
-    if ($tool_name eq 'terminal_operations') {
-        return 0 if ($args->{operation} // '') eq 'validate';
-        my $head = $self->_terminal_head($args->{command} // '');
-        my ($binary) = $head =~ /^\s*(\S+)/;
-        $binary = lc($binary // '');
-        $binary =~ s{^.*/}{};
-        # Empty/malformed command is not productive work and not a
-        # strategy signal: treat it as state-changing so it clears the
-        # window instead of polluting a legitimate read-only run.
-        # Repeated empty calls surface through error handling instead.
-        return 1 unless length $binary;
-        return 0 if $READ_ONLY_COMMANDS{$binary};
-        if ($binary eq 'git') {
-            my ($sub) = $head =~ /^\s*git\s+(\S+)/;
-            return ($READ_ONLY_GIT_SUBCOMMANDS{ lc($sub // '') }) ? 0 : 1;
+    if ($binary eq 'git') {
+        for my $token (@tokens) {
+            next if $token =~ /^-/;
+            $subcommand = lc $token;
+            last;
         }
-        return 1;
+        # The subcommand alone identifies the read. Option values are not
+        # targets ("git log -n 5" must collapse with "git log --oneline"),
+        # and the result-similarity gate handles different refs.
+        push @parts, $subcommand if length $subcommand;
+        return join('|', @parts);
     }
-    if ($tool_name eq 'code_intelligence') {
-        return 0;  # list_usages / search_history are read-only
+
+    my @operands = grep { !/^-/ && !/^[A-Za-z_][A-Za-z0-9_]*=/ } @tokens;
+    push @parts, lc $operands[-1] if @operands;
+
+    return join('|', @parts);
+}
+
+=head2 _scoped_signature (Internal)
+
+Signature built from the tool, operation, and the named scope keys.
+Values not present are omitted, so calls that differ only in the dropped
+arguments collapse to the same signature.
+
+=cut
+
+sub _scoped_signature {
+    my ($self, $tool, $op, $args, @keys) = @_;
+    my @parts = ($tool, $op // '');
+    for my $key (@keys) {
+        my $value = $args->{$key};
+        next if !defined $value || ref $value || !length $value;
+        (my $norm = lc $value) =~ s/\s+/ /g;
+        push @parts, "$key=" . substr($norm, 0, 60);
     }
-    if ($tool_name eq 'web_operations') {
-        my $op = $args->{operation} // '';
-        return ($op =~ /^(search_web|fetch_url)$/) ? 0 : 1;
-    }
-    if ($tool_name eq 'todo_operations' || $tool_name eq 'skill_operations') {
-        return 0;  # bookkeeping calls never invalidate file-search context
-    }
-    # Unknown tools: conservative - treat as state-changing.
-    return 1;
+    return join('|', @parts);
 }
 
 =head2 _similarity (Internal)
@@ -479,74 +638,71 @@ sub _similarity {
 =head2 _tokenize (Internal)
 
 Lowercase, strip non-alphanumerics, return a sorted unique token list.
+Only the first C<tokenize_bytes> of the content are considered, which
+bounds memory for very large tool results.
 
 =cut
 
 sub _tokenize {
     my ($self, $text) = @_;
-    return [] unless defined $text && length $text;
+    return [] if !defined $text || ref $text || !length $text;
+    $text = substr($text, 0, $self->{tokenize_bytes})
+        if length $text > $self->{tokenize_bytes};
     (my $norm = lc $text) =~ s/[^a-z0-9]+/ /g;
     my %set = map { $_ => 1 } grep { length } split /\s+/, $norm;
     return [sort keys %set];
 }
 
-=head2 _prune_guidance_state (Internal)
+=head2 _prune_notice_state (Internal)
 
-Drop guidance-fired entries older than the staleness window. Inert by
-the guidance_active check anyway; pruning keeps the hash bounded.
+Drop notice entries older than the window. A signature that is still in
+the window always has a last emit within the window, so pruning cannot
+re-fire a notice for an active run.
 
 =cut
 
-sub _prune_guidance_state {
+sub _prune_notice_state {
     my ($self) = @_;
     my $st     = $self->{state};
     my $cutoff = $st->{call_index} - $self->{window_size};
-    for my $sig (keys %{ $st->{guidance_fired} }) {
-        delete $st->{guidance_fired}{$sig}
-            if $st->{guidance_fired}{$sig} < $cutoff;
+    for my $sig (keys %{ $st->{notice} }) {
+        delete $st->{notice}{$sig} if $st->{notice}{$sig} < $cutoff;
     }
     return;
 }
 
-=head2 _guidance_text (Internal)
+=head2 _notice_text (Internal)
 
-Build the "stop searching" note injected into the tool result. Mirrors the
-ToolErrorGuidance style: state the problem, give concrete actions.
+First guidance note for a confirmed run. Mirrors ToolErrorGuidance:
+state the problem, show the evidence, give concrete exits. No threat of
+enforcement, because this module has none.
 
 =cut
 
-sub _guidance_text {
-    my ($self, $tool_name, $sig, $count) = @_;
-    return "LOOP WARNING (from CLIO): this is call #${count} in a run of similar "
-         . "'$tool_name' calls (signature: $sig) returning near-identical results. "
-         . "The search is not converging. STOP searching and do one of:\n"
-         . "1. Summarize what you already know and act on it.\n"
-         . "2. Change strategy entirely: different tool, different target, or ask the user.\n"
-         . "Do not re-run the same search with another variation. Continuing this "
-         . "pattern will trigger a forced loop-break instruction, and then the turn ends.";
+sub _notice_text {
+    my ($self, $tool_name, $sig, $count, $pct) = @_;
+    return "LOOP NOTICE (from CLIO): '$tool_name' has now returned a near-identical "
+         . "result $count times (signature: $sig; latest result ${pct}% identical to an "
+         . "earlier one). The search is not producing new information. The data you need "
+         . "is already in this conversation.\n"
+         . "Prefer one of these next steps:\n"
+         . "1. Act on what you already have - make the edit, run the build, or write the answer.\n"
+         . "2. Change the question, not just the wording: a different tool or a different target.\n"
+         . "3. If the remaining work needs a decision only the user can make, ask.\n"
+         . "This note repeats while the pattern continues; it does not end the turn.";
 }
 
-=head2 _nudge_text (Internal)
+=head2 _reminder_text (Internal)
 
-Build the loop-break instruction injected as a user message when a break
-escalation is converted into a nudge. Unlike the guidance note (advice
-woven into a tool result), this is a direct order from the framework.
-It states the loop, points at the existing data, gives concrete exits,
-and declares the consequence of ignoring it.
+Compact reminder for a run that continued after the first notice.
 
 =cut
 
-sub _nudge_text {
-    my ($self, $tool_name, $sig, $count) = @_;
-    return "LOOP BREAK (from CLIO): This is call #${count} in a run of near-identical "
-         . "'$tool_name' calls (signature: $sig) that all returned the same result. "
-         . "The information you need is already in this conversation - repeating this "
-         . "call produces nothing new. Change tactic NOW:\n"
-         . "1. Act on the results you already have (edit, build, commit, or reason from them).\n"
-         . "2. Switch to a different tool or target - do something that changes state.\n"
-         . "3. If the work is done, give your final answer and stop making tool calls.\n"
-         . "This instruction will not repeat: another call with this signature ends the "
-         . "turn and returns control to the user.";
+sub _reminder_text {
+    my ($self, $tool_name, $count, $pct) = @_;
+    return "LOOP REMINDER (from CLIO): '$tool_name' returned another near-identical "
+         . "result (#$count, ${pct}% overlap). Nothing new. Act on the data you have, "
+         . "or change target.";
 }
 
 1;  # MANDATORY: End every .pm file with 1;

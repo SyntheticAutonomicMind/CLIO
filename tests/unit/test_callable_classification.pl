@@ -87,15 +87,15 @@ is(CLIO::Tools::Registry->classify_callable('file_operations', 'no_such_op'), un
 my $detector = CLIO::Core::ToolLoopDetector->new();
 
 my %expected = (
-    read_file     => 0,
-    grep_search   => 0,
-    status        => 0,
-    list_dir      => 0,
-    write_file    => 1,
+    read_file      => 0,   # neutral: ignored by the loop window
+    grep_search    => 0,   # tracked: search results can repeat
+    status         => 0,   # tracked: read-only version control
+    list_dir       => 0,   # tracked: discovery
+    write_file     => 1,   # mutating: clears the window
     replace_string => 1,
-    commit        => 1,
-    todo_add      => 0,
-    apply_patch   => 1,
+    commit         => 1,
+    todo_add       => 1,   # mutating: todo state changed
+    apply_patch    => 1,
 );
 
 for my $name (sort keys %expected) {
@@ -103,14 +103,23 @@ for my $name (sort keys %expected) {
         "_is_state_changing resolves '$name'");
 }
 
-# A read-only call repeated with identical results is a loop signal. Under the
-# grouping-name comparison it was misread as state-changing, which cleared the
-# window every call and made repeated reads invisible.
-my $verdict;
-$verdict = $detector->record_call('read_file', { path => 'lib/CLIO/Core/X.pm' },
-    'package X; 1;') for 1 .. 3;
-is($verdict->{tracked}, 1, 'repeated read_file calls are tracked');
-is($verdict->{count}, 3, 'repeated read_file calls count toward the window');
+# read_file returns the same bytes for the same path by design, so it is
+# neutral: neither loop evidence nor a strategy change. It must not clear an
+# active search run either, or reads interleaved with searches would hide the
+# loop.
+my $seed = 'lib/CLIO/Core/X.pm:1: script';
+$detector->record_call('grep_search', { query => 'a', path => 'lib' }, $seed);
+$detector->record_call('grep_search', { query => 'b', path => 'lib' }, $seed);
+
+my $read = $detector->record_call('read_file', { path => 'lib/CLIO/Core/X.pm' },
+    'package X; 1;');
+is($read->{tracked}, 0, 'read_file is not tracked');
+is($read->{count}, 0, 'read_file does not accumulate count');
+
+my $verdict = $detector->record_call('grep_search',
+    { query => 'c', path => 'lib' }, $seed);
+is($verdict->{count}, 3, 'neutral read_file did not clear the search run');
+ok(defined $verdict->{guidance}, 'the search run still reaches guidance');
 
 # ── Session checkpoint read the recorded call shapes ───────────────────────
 

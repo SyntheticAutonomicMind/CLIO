@@ -181,8 +181,8 @@ sub build_orchestrator {
             sig       => $verdict->{sig} // '',
             tracked   => $verdict->{tracked} // 0,
             count     => $verdict->{count} // 0,
-            break     => $verdict->{break} // 0,
-            nudge     => $verdict->{nudge} // 0,
+            level     => $verdict->{level} // 0,
+            guidance  => defined $verdict->{guidance} ? 1 : 0,
         };
         return $verdict;
     };
@@ -269,15 +269,15 @@ subtest 'alias edit call carries its operation and displays a diff' => sub {
 };
 
 # ---------------------------------------------------------------------------
-# 2. Repeated read-only alias calls are tracked, not treated as
-#    state-changing, so the success-loop detector escalates and ends the turn
-#    instead of letting the model search forever.
+# 2. Repeated read-only calls with stable results produce guidance. The
+#    detector never ends the turn; the iteration budget does. file_exists is
+#    neutral: it neither enters the window nor clears it.
 # ---------------------------------------------------------------------------
-subtest 'repeated read-only alias calls escalate instead of looping' => sub {
+subtest 'repeated stable searches produce guidance without ending the turn' => sub {
     my $run = run_loop(
         max_calls => 60,
         calls     => [
-            { name => 'file_search', args => { pattern => 'outline - unsupported', directory => '.' } },
+            { name => 'file_search', args => { pattern => '*advanced*', directory => '.' } },
             { name => 'file_exists', args => { path => 'README.md' } },
             { name => 'file_search', args => { pattern => '*advanced*', directory => '.' } },
         ],
@@ -285,19 +285,30 @@ subtest 'repeated read-only alias calls escalate instead of looping' => sub {
 
     ok(scalar @DETECTOR_LOG > 0, 'detector recorded calls');
 
-    my @untracked = grep { !$_->{tracked} } @DETECTOR_LOG;
-    is(scalar @untracked, 0, 'every read-only alias call is tracked')
-        or diag('untracked: ' . join(', ', map { $_->{tool} . '/' . ($_->{operation} // 'undef') } @untracked));
+    my @searches = grep { ($_->{operation} // '') eq 'file_search' } @DETECTOR_LOG;
+    ok(scalar @searches > 0, 'file_search calls were recorded');
+    is(scalar(grep { !$_->{tracked} } @searches), 0, 'every file_search is tracked');
+
+    my @neutral = grep { ($_->{operation} // '') eq 'file_exists' } @DETECTOR_LOG;
+    ok(scalar @neutral > 0, 'file_exists calls were recorded');
+    is(scalar(grep { $_->{tracked} } @neutral), 0, 'file_exists is neutral, not tracked');
 
     my @missing_op = grep { !defined $_->{operation} } @DETECTOR_LOG;
     is(scalar @missing_op, 0, 'every recorded call carries its operation')
         or diag('missing operation: ' . join(', ', map { $_->{tool} } @missing_op));
 
-    my @escaped = grep { $_->{break} || $_->{nudge} } @DETECTOR_LOG;
-    ok(scalar @escaped > 0, 'loop escalation fired for repeated stable searches');
+    my @notices = grep { $_->{guidance} } @DETECTOR_LOG;
+    ok(scalar @notices > 0, 'guidance fired for repeated stable searches');
+    is(scalar(grep { $_->{level} } @notices), scalar(@notices),
+        'every guidance entry carries a level');
 
-    cmp_ok($run->{api}->{calls}, '<', 20,
-        "turn ended early instead of burning 60 calls (made $run->{api}->{calls})");
+    # Guidance is advisory: the turn runs to the iteration cap, not to a
+    # detector verdict. build_orchestrator sets max_iterations to 20.
+    is($run->{api}->{calls}, 20,
+        'iteration budget bounded the turn; the detector did not end it');
+    my $result = $run->{result};
+    ok(!(ref $result eq 'HASH' && ($result->{error_type} // '') eq 'tool_success_loop'),
+        'the detector did not raise a tool_success_loop error');
 };
 
 done_testing();

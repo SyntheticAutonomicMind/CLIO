@@ -601,7 +601,6 @@ sub process_input {
     # legitimate (re-running tests after edits in a later turn), so the
     # window must not carry over.
     $self->{tool_loop_detector}->reset() if $self->{tool_loop_detector};
-    $self->{_tool_loop_nudges_injected} = 0;
 
     my $max_iter = $self->{max_iterations};
     my $iter_limit_display = $max_iter ? $max_iter : 'unlimited';
@@ -985,66 +984,6 @@ sub process_input {
                     iterations => $iteration,
                     tool_calls_made => \@tool_calls_made,
                 };
-            }
-
-            # Check for tool success loop break before looping back.
-            # Instead of ending the session, inject recovery guidance as a
-            # user message and continue the turn - the same pattern the
-            # error loop and the nudge path use. This keeps the agent alive
-            # to try a different approach rather than blocking all further
-            # work. The loop detector is reset so the guidance window starts
-            # fresh.
-            if (my $sbreak = delete $self->{_tool_success_loop_break}) {
-                my $msg = sprintf(
-                    "You've been calling similar tools with near-identical results "
-                    . "(%d similar successful calls to '%s', signature: %s). "
-                    . "A guidance note and %d loop-break instruction(s) were "
-                    . "injected during the run, but the pattern continued. "
-                    . "Try a different approach: use a different search pattern, "
-                    . "read a specific file, ask the user for clarification, or "
-                    . "summarize what you've found and act on it.",
-                    $sbreak->{count} // 5,
-                    $sbreak->{tool} || 'unknown',
-                    $sbreak->{sig} || '',
-                    $self->{_tool_loop_nudges_injected} // 0,
-                );
-                log_debug('WorkflowOrchestrator',
-                    "Tool success loop break: injecting recovery guidance "
-                    . "(count=$sbreak->{count}, tool=$sbreak->{tool})");
-                push @messages, {
-                    role => 'user',
-                    content => $msg,
-                };
-                # Reset the loop detector so the guidance window starts fresh.
-                $self->{tool_loop_detector}->reset() if $self->{tool_loop_detector};
-                # Not a full iteration - same accounting as the nudge path.
-                $iteration--;
-                next;
-            }
-
-            # A success-loop escalation was converted into an in-loop
-            # correction instead of a break: inject the loop-break
-            # instruction as an ephemeral user message and keep the
-            # workflow running. Same mechanism as the premature-stop
-            # nudge below - a direct instruction keeps the turn alive
-            # where an advisory note in the tool result did not. The
-            # message is intentionally NOT persisted to session
-            # history: a turn interrupted here resumes without the
-            # instruction, which is harmless because loop-detector
-            # state resets at the start of every turn anyway.
-            if (my $nudge = delete $self->{_tool_success_loop_nudge}) {
-                $self->{_tool_loop_nudges_injected}++;
-                log_debug('WorkflowOrchestrator',
-                    "Injecting tool-loop break instruction "
-                    . "(count=$nudge->{count}, tool=$nudge->{tool})");
-                push @messages, {
-                    role => 'user',
-                    content => $nudge->{text},
-                };
-                # Not a full iteration - same accounting as the
-                # premature-stop nudge.
-                $iteration--;
-                next;
             }
 
             # Loop back - AI will process tool results
@@ -2236,16 +2175,14 @@ sub _execute_tool_round {
 
             # Success-loop detection: successful read-only calls sharing a
             # loose signature (argument variations collapsed) with
-            # near-identical results. The detector returns either a
-            # guidance note (append to the tool result the model sees) or
-            # a break flag (checked by process_input after this round).
-            # An interact result means the user engaged, which is a
+            # near-identical results. The detector is a guidance provider:
+            # it returns a note appended to the tool result the model
+            # sees, and nothing else. It never ends the turn; the
+            # iteration budget is the bound on a model that ignores the
+            # note. An interact result means the user engaged, which is a
             # strategy change - clear the detector rather than track.
             if ($tool_name eq 'interact') {
                 $self->{tool_loop_detector}->reset() if $self->{tool_loop_detector};
-                # The user just engaged - any parked loop-break instruction
-                # predates their direction and must not fire.
-                delete $self->{_tool_success_loop_nudge};
             } else {
                 my $detector = $self->_get_tool_loop_detector();
                 if ($detector) {
@@ -2260,36 +2197,11 @@ sub _execute_tool_round {
                         $ai_content,
                         $tool_call->{_emitted_name},
                     );
-                    if ($verdict->{break}) {
-                        if ($verdict->{nudge}) {
-                            # Escalation with nudge budget remaining: park the
-                            # loop-break instruction instead of the break flag.
-                            # process_input injects it as a user message after
-                            # this round and keeps the turn alive.
-                            $self->{_tool_success_loop_nudge} = {
-                                tool  => $tool_name,
-                                sig   => $verdict->{sig} // '',
-                                count => $verdict->{count},
-                                text  => $verdict->{nudge_text},
-                            };
-                            log_debug('WorkflowOrchestrator',
-                                "Tool success loop: $verdict->{count} similar successful calls "
-                                . "to $tool_name (sig: $verdict->{sig}). Escalating to "
-                                . "loop-break instruction (turn continues).");
-                        } else {
-                            $self->{_tool_success_loop_break} = {
-                                tool  => $tool_name,
-                                sig   => $verdict->{sig} // '',
-                                count => $verdict->{count},
-                            };
-                            log_warning('WorkflowOrchestrator',
-                                "Tool success loop: $verdict->{count} similar successful calls "
-                                . "to $tool_name (sig: $verdict->{sig}). Breaking to user.");
-                        }
-                    } elsif ($verdict->{guidance}) {
+                    if ($verdict->{guidance}) {
                         $ai_content .= "\n\n" . $verdict->{guidance};
                         log_debug('WorkflowOrchestrator',
-                            "Tool success loop guidance injected (count=$verdict->{count}, "
+                            "Tool success loop guidance injected "
+                            . "(level=$verdict->{level}, count=$verdict->{count}, "
                             . "sig=$verdict->{sig})");
                     }
                 }

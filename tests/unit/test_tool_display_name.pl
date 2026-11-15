@@ -142,13 +142,12 @@ is($alias && $alias->{operation}, 'file_search',
     'file_search resolves to the file_search operation');
 
 # ---------------------------------------------------------------------------
-# 4. The loop-break note names the callable the model emitted
+# 4. The loop guidance note names the callable the model emitted
 # ---------------------------------------------------------------------------
 
 {
     my $detector = CLIO::Core::ToolLoopDetector->new(
-        guidance_threshold => 1,
-        break_threshold    => 99,
+        guidance_threshold   => 1,
         similarity_threshold => 0.1,
     );
 
