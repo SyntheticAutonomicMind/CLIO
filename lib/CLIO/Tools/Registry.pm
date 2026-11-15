@@ -245,6 +245,26 @@ sub _grouping_map {
     return $map;
 }
 
+=head2 is_grouping_name
+
+True when C<$name> is a grouping tool that publishes per-operation
+callables instead of being callable itself (C<file_operations> yes,
+C<replace_string> no, C<apply_patch> no).
+
+Arguments:
+- $name: name to test
+
+Returns: 1 or 0
+
+=cut
+
+sub is_grouping_name {
+    my ($class, $name) = @_;
+    return 0 unless defined $name && length $name;
+    my $grouping = $class->_grouping_map();
+    return $grouping->{$name} ? 1 : 0;
+}
+
 =head2 classify_callable
 
 Resolve a callable name to the tool and operation that own it.

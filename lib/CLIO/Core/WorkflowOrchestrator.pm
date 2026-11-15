@@ -1900,9 +1900,21 @@ sub _execute_tool_round {
             $self->{ui}->clear_system_message_flag() if $self->{ui};
         }
         
-        # Parse tool arguments early (needed for suppress_display and pre-action)
+        # Tool arguments for this round. Prefer _parsed_args: alias
+        # resolution (_prepare_tool_round) rewrites an emitted callable such
+        # as `grep_search` to `file_operations` AND injects
+        # operation => 'grep_search' into _parsed_args, but the model's raw
+        # JSON never carried that operation. Re-parsing function->{arguments}
+        # here used to discard it, so $tool_operation was '' for every
+        # per-operation call. That silently disabled diff capture for edits,
+        # the operation component of tool-error loop signatures, and the
+        # success-loop detector (_is_state_changing treats a grouping name
+        # with no operation as state-changing, which reset the window on
+        # every read-only call).
         my $raw_args = $tool_call->{function}->{arguments};
-        my $tool_args = ref($raw_args) ? $raw_args : safe_decode_json($raw_args // '{}');
+        my $tool_args = ref($tool_call->{_parsed_args}) eq 'HASH'
+            ? $tool_call->{_parsed_args}
+            : (ref($raw_args) ? $raw_args : safe_decode_json($raw_args // '{}'));
         my $tool_operation = ($tool_args && $tool_args->{operation}) ? $tool_args->{operation} : '';
         
         # Skip display for internal-only operations and self-displaying tools

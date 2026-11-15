@@ -394,6 +394,18 @@ sub _is_state_changing {
             if defined $owner->{operation};
     }
 
+    # A grouping name with no operation cannot be classified: none of the
+    # tables below match, so every call resets the window and loop detection
+    # silently stops working. That happened when the caller re-parsed the
+    # model's raw arguments and dropped the operation injected during alias
+    # resolution. Say so, so the next occurrence is diagnosable from logs.
+    if (!defined $args->{operation}
+        && CLIO::Tools::Registry->is_grouping_name($tool_name)) {
+        log_debug('ToolLoopDetector',
+            "Grouping name '$tool_name' recorded without an operation - "
+            . "treating as state-changing (loop detection disabled for it)");
+    }
+
     return 1 if $tool_name eq 'apply_patch';
 
     if ($tool_name eq 'file_operations') {
