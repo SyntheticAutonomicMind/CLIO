@@ -19,7 +19,8 @@
 use strict;
 use warnings;
 use utf8;
-use lib '/home/deck/repositories/CLIO/lib';
+use FindBin qw($RealBin);
+use lib "$RealBin/../../lib";
 binmode(STDOUT, ':encoding(UTF-8)');
 binmode(STDERR, ':encoding(UTF-8)');
 

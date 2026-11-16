@@ -117,6 +117,75 @@ sub _get_shared_http_client {
     return $self->{_http_client_cache}{$cache_key};
 }
 
+=head2 _provider_http_timeout (Internal)
+
+Arguments:
+  slow_api      - provider definition flag: local / CPU-bound inference
+  route_timeout - provider definition flag: request routes through an extra hop
+  max_tokens    - output ceiling for THIS request (optional)
+  provider_name - for the debug log (optional)
+
+Returns: integer seconds to pass to curl C<--max-time>.
+
+The ceiling must exceed the longest legitimate response, not the average
+one. A cloud provider answers or gives up quickly, so a flat 300s is right
+there. Local inference has no such guarantee: a model that legitimately
+emits its full 16k-token output at 17 tokens/s needs ~950s, and the old
+flat 900s ceiling cut exactly that case off mid-stream while curl reported
+exit 28 - which the streaming layer then misread as a provider-side drop
+and retried forever. The slow tier is therefore derived from the request's
+own output budget and a conservative decode-rate floor, so a full-length
+response can never be mistaken for a dead connection.
+
+=cut
+
+sub _provider_http_timeout {
+    my ($self, %opts) = @_;
+
+    # Historical cloud ceiling. Kept: a cloud call that runs this long is
+    # already lost, and the retry is cheaper than waiting.
+    my $cloud_timeout = 300;
+
+    # Route-based providers add a hop but are still expected to answer fast.
+    my $route_timeout = 300;
+
+    # Lowest decode rate treated as legitimate. 4 tokens/s is well under
+    # any observed local backend (17-20 tokens/s in practice, see
+    # docs/PERFORMANCE.md) and only exists to keep the ceiling finite.
+    my $slow_decode_floor_tps = 4;
+
+    # Never shrink below the previous flat ceiling: this changes where the
+    # deadline lands, it does not make long local generations fail sooner.
+    my $slow_min_timeout = 900;
+    my $slow_max_timeout = 7200;
+
+    my $timeout;
+    if ($opts{slow_api}) {
+        my $max_tokens = $opts{max_tokens};
+        $timeout = $slow_min_timeout;
+        if (defined $max_tokens && $max_tokens > 0) {
+            my $derived = int($max_tokens / $slow_decode_floor_tps);
+            $timeout = $derived if $derived > $timeout;
+            $timeout = $slow_max_timeout if $timeout > $slow_max_timeout;
+        }
+    }
+    elsif ($opts{route_timeout}) {
+        $timeout = $route_timeout;
+    }
+    else {
+        $timeout = $cloud_timeout;
+    }
+
+    log_debug('APIManager',
+        "HTTP ceiling for " . ($opts{provider_name} // 'provider')
+        . ": ${timeout}s (slow_api=" . ($opts{slow_api} ? 1 : 0)
+        . ($opts{route_timeout} ? ", route_timeout=1" : '')
+        . ", max_tokens=" . (defined $opts{max_tokens} ? $opts{max_tokens} : 'undef')
+        . ")");
+
+    return $timeout;
+}
+
 # Build a stable cache key from ssl_opts hashref. Keys are sorted so the
 # key is order-independent. Used to differentiate HTTP clients configured
 # with different TLS verification settings.
@@ -3982,17 +4051,17 @@ sub _prepare_api_request {
     return { error_result => $json } if ref($json) eq 'HASH' && !$json->{success};
 
     # Create HTTP client with appropriate timeout for the provider tier.
-    # Tiered timeouts via curl's --max-time:
-    #   - Local inference (slow_api): 900s — llama.cpp/LM Studio are CPU-bound
-    #   - Route-based (route_timeout): 300s — OpenRouter/OrcaRouter add upstream hop latency
-    #   - Direct cloud (default):     300s — OpenAI, Anthropic, Google, Copilot respond fast
+    # The slow tier is derived from this request's output budget, so a local
+    # model that legitimately runs for 15+ minutes is not cut off and
+    # misreported as a provider drop. See _provider_http_timeout.
     # Use shared client for connection pooling (keep-alive)
-    my $cloud_timeout = 300;
-    my $route_timeout = 300;
-    my $slow_timeout  = 900;
-    my $ua_timeout = $endpoint_config->{slow_api} ? $slow_timeout
-                : $endpoint_config->{route_timeout} ? $route_timeout
-                : $cloud_timeout;
+    my $ua_timeout = $self->_provider_http_timeout(
+        slow_api      => $endpoint_config->{slow_api},
+        route_timeout => $endpoint_config->{route_timeout},
+        max_tokens    => $payload->{max_tokens} // $payload->{max_completion_tokens}
+                         // $payload->{max_output_tokens},
+        provider_name => $endpoint_config->{name},
+    );
     my $ua = $self->_get_shared_http_client(
         timeout  => $ua_timeout,
         agent    => 'GitHubCopilotChat/0.22.4',
@@ -4029,6 +4098,7 @@ sub _prepare_api_request {
         payload          => $payload,
         provider_label   => $provider_label,
         use_responses_api => $use_responses_api,
+        timeout          => $ua_timeout,
     };
 }
 
@@ -4417,6 +4487,12 @@ sub _process_non_streaming_response {
         $self->_log_api_response($resp, $provider_label, 1);
         $self->{response_handler}->release_broker_slot($resp, $resp->code);
         $self->{rate_limiter}->release(lc($provider_label));
+        # Slot is already released above, so this only overrides the
+        # classification: a deadline CLIO imposed must not be retried as if
+        # the provider had dropped the connection (see _deadline_failure_result).
+        if (my $deadline = $self->_deadline_failure_result($resp, timeout => $ctx->{timeout})) {
+            return $deadline;
+        }
         return $self->{response_handler}->handle_error_response($resp, $json, 0,
             attempt_token_recovery => sub { $self->_attempt_token_recovery() },
             headers => $resp->headers);
@@ -4672,6 +4748,7 @@ sub send_request_streaming {
         control_auth_value  => undef,
         use_responses_api => $use_responses_api,
         model            => $model,
+        timeout          => $ctx->{timeout},   # curl --max-time in force for this request
         on_chunk         => $on_chunk,
         on_tool_call     => $on_tool_call,
         on_thinking      => $on_thinking,
@@ -4837,6 +4914,7 @@ sub send_request_streaming {
         tool_chars            => $ctx->{tool_chars} // 0,
         input                 => $input,
         json                  => $json,
+        timeout               => $ss->{timeout},
         _finish_reason        => $ss->{_finish_reason},
         _sse_error            => $ss->{_sse_error},
     );
@@ -5467,6 +5545,66 @@ sub _cleanup_streaming_state {
 }
 
 
+# Classify a 599 response as "CLIO's own deadline expired" when curl says so.
+#
+# Both a deadline CLIO imposed and a connection the network killed surface as
+# status 599. Telling them apart needs curl's exit code: 28 means curl stopped
+# the transfer itself because --max-time or --connect-timeout expired, i.e.
+# the peer was still sending and CLIO chose to stop listening.
+#
+# Without this distinction a slow-but-healthy local model that outran the
+# request ceiling arrives at the truncation guard as "no finish_reason" and is
+# reported, retried and re-reported as if the provider had dropped the
+# connection - an infinite loop, because a response that needs longer than the
+# ceiling will need longer than the ceiling on every retry.
+#
+# Args (hash):
+#   timeout        => the ceiling in force for this request (undef if unknown)
+#   content        => accumulated text that will be discarded
+#   tool_calls     => number of accumulated tool calls that will be discarded
+#
+# Returns: undef unless this response is a CLIO-imposed deadline; otherwise the
+#   error result hashref. The caller owns slot release, exactly as it does for
+#   the other error results it returns.
+#
+sub _deadline_failure_result {
+    my ($self, $resp, %info) = @_;
+    return undef unless $resp && ref $resp;
+
+    my $status = eval { $resp->{status} } // eval { $resp->code } // 0;
+    return undef unless defined $status && $status == 599;
+
+    my $curl_exit = eval { $resp->{curl_exit} };
+    return undef unless defined $curl_exit && $curl_exit == 28;
+
+    my $reason      = eval { $resp->{reason} } // eval { $resp->message } // 'Connection timed out';
+    my $content_len = length($info{content} // '');
+    my $tc_count    = $info{tool_calls} // 0;
+    my $ceiling     = defined $info{timeout} ? "$info{timeout}s request ceiling" : 'request ceiling';
+
+    my $arrived = ($content_len && $tc_count) ? "$content_len characters and $tc_count tool call(s) had arrived"
+                : $content_len                 ? "$content_len characters had arrived"
+                : $tc_count                    ? "$tc_count tool call(s) had arrived"
+                :                                'no content had arrived yet';
+
+    log_debug('APIManager',
+        "Request deadline expired (curl exit 28, status 599, $ceiling): "
+        . "content=$content_len chars, tool_calls=$tc_count, reason=$reason");
+
+    return {
+        success     => 0,
+        error       => "CLIO stopped waiting for the model: the $ceiling expired while the response "
+                     . "was still streaming ($reason). $arrived and was discarded.",
+        user_message => "The model was still streaming when CLIO's $ceiling expired, so the partial "
+                      . "response was discarded. Retrying cannot help while a single response takes "
+                      . "longer than the ceiling.",
+        retryable   => 1,
+        retry_after => 2,
+        error_type  => 'request_timeout',
+        partial_chars => $content_len,
+    };
+}
+
 # Process the result of a streaming HTTP request: handle errors, build final response.
 #
 # Called after the SSE streaming callback completes. Handles: network errors,
@@ -5585,6 +5723,33 @@ sub _finalize_streaming_response {
             retry_after => $is_retryable ? $retry_after : 0,
             error_type => $error_type,
         };
+    }
+
+    # Distinguish a deadline CLIO imposed from a connection the peer dropped.
+    # Both reach the truncation guard below as "no finish_reason", but only the
+    # latter can be fixed by retrying: a response that outran the ceiling will
+    # outrun it on every attempt, so reporting it as a truncation loops forever.
+    # A captured finish_reason means the provider declared the response
+    # complete, even if the socket then lingered until curl gave up; there is
+    # nothing missing in that case and the response must not be discarded.
+    if (!$s{_finish_reason}
+        && (my $deadline = $self->_deadline_failure_result($resp,
+            timeout    => $s{timeout},
+            content    => $s{accumulated_content},
+            tool_calls => scalar(keys %{$s{tool_calls_accumulator} || {}})))) {
+        $self->{response_handler}->release_broker_slot($resp, 200);
+        $self->{rate_limiter}->release(lc($s{provider_label})) if $s{provider_label};
+        return $deadline;
+    }
+
+    # curl stopped at our deadline (`--max-time`) but the provider had already
+    # declared the turn complete: only the lingering socket was cut, the answer
+    # itself is whole. Retrying would re-generate it for nothing.
+    if ($is_error && !$s{_sse_error} && $s{_finish_reason}
+        && blessed($resp) && ($resp->{curl_exit} // 0) == 28) {
+        log_debug('APIManager',
+            "curl exit 28 after finish_reason=$s{_finish_reason} - keeping the completed response");
+        $is_error = 0;
     }
 
     # Detect truncated stream: content/tool_calls were streamed but no
@@ -6678,22 +6843,23 @@ sub _send_native_streaming {
         model => $full_model,
     );
     
-    # Create HTTP client with tiered timeout matching the OpenAI-compatible path.
-    # Native providers (Anthropic, Google, NVIDIA NIM) use cloud-tier 300s by
-    # default, but respect slow_api/route_timeout flags for consistency if a
-    # native provider is ever added to a local or route-based tier.
-    my $cloud_timeout = 300;
-    my $route_timeout = 300;
-    my $slow_timeout  = 900;
+    # Create HTTP client with the same timeout policy as the OpenAI-compatible
+    # path (see _provider_http_timeout). Native providers are cloud-tier today,
+    # but the flags are honoured so a local or route-based native provider
+    # gets the same derived ceiling as any other.
     my $ua_timeout;
+    my $native_provider_name;
     {
-        my ($native_provider_name) = $self->_parse_model_provider($full_model);
+        ($native_provider_name) = $self->_parse_model_provider($full_model);
         $native_provider_name //= $self->{provider} // $self->{config}->get('provider');
         require CLIO::Providers;
         my $native_provider_def = CLIO::Providers::get_provider($native_provider_name);
-        $ua_timeout = ($native_provider_def && $native_provider_def->{slow_api}) ? $slow_timeout
-                    : ($native_provider_def && $native_provider_def->{route_timeout}) ? $route_timeout
-                    : $cloud_timeout;
+        $ua_timeout = $self->_provider_http_timeout(
+            slow_api      => $native_provider_def && $native_provider_def->{slow_api},
+            route_timeout => $native_provider_def && $native_provider_def->{route_timeout},
+            max_tokens    => $build_opts{max_tokens},
+            provider_name => $native_provider_name,
+        );
     }
     my $ua = $self->_get_shared_http_client(
         timeout => $ua_timeout,
@@ -6867,19 +7033,34 @@ sub _send_native_streaming {
         my $error_body = $response->decoded_content // '';
         log_debug('APIManager', "Native API error $status: $error_body");
 
-        # Classify the error. For status 599 (curl exit code 28 = --max-time
-        # fired), use connection_error so the ErrorHandler gives it the same
-        # infinite-retry budget as the OpenAI-compatible path, instead of
-        # falling to the default 3-retry bucket.
+        # Hand the broker its slot back before returning: this branch returns
+        # its own result and never reaches the success path that normally
+        # releases. Under multi-agent coordination a leaked slot stays counted
+        # against the provider for the rest of the run.
+        $self->{response_handler}->release_broker_slot($response, $status)
+            if $self->{response_handler};
+
+        # A 599 with curl exit 28 is CLIO's own deadline expiring, not a
+        # provider failure. Reporting it as connection_error retries forever:
+        # the response needs longer than the ceiling every single time.
+        if (my $deadline = $self->_deadline_failure_result($response,
+                timeout    => $ua_timeout,
+                content    => $accumulated_content,
+                tool_calls => scalar @tool_calls)) {
+            return $deadline;
+        }
+
+        # Classify the rest of the errors. Genuine 599s (connection reset,
+        # TLS failure, DNS) mean the request never completed and a retry can
+        # legitimately succeed, so they keep the connection_error budget.
         my $result = {
             success => 0,
             error => "HTTP $status" . ($error_body =~ /\S/ ? ": $error_body" : ''),
             retryable => ($status == 429 || $status >= 500 || $status == 599),
         };
         if ($status == 599) {
-            # curl --max-time fired (exit code 28) or connection-level
-            # failure. The reason field from HTTP compat layer contains
-            # the curl error description (e.g. "Connection timed out").
+            # Connection-level failure. The reason field from the HTTP compat
+            # layer carries the curl error description.
             my $reason = eval { $response->message } // 'Connection error';
             $result->{error} = "Connection error: $reason";
             $result->{retryable} = 1;

@@ -1940,13 +1940,24 @@ sub release_broker_slot {
     my %headers;
     if ($resp && $resp->can('headers')) {
         my $h = $resp->headers;
-        $h->scan(sub {
-            my ($name, $value) = @_;
-            my $lc_name = lc($name);
-            if ($lc_name =~ /ratelimit|retry-after|quota/) {
-                $headers{$lc_name} = $value;
+        # Streaming responses built by the curl transport expose headers as a
+        # plain hashref, not an HTTP::Headers object. Scanning is optional
+        # metadata; the slot must be released either way.
+        if ($h && ref($h) && $h->can('scan')) {
+            $h->scan(sub {
+                my ($name, $value) = @_;
+                my $lc_name = lc($name);
+                if ($lc_name =~ /ratelimit|retry-after|quota/) {
+                    $headers{$lc_name} = $value;
+                }
+            });
+        }
+        elsif (ref($h) eq 'HASH') {
+            for my $name (keys %$h) {
+                my $lc_name = lc($name);
+                $headers{$lc_name} = $h->{$name} if $lc_name =~ /ratelimit|retry-after|quota/;
             }
-        });
+        }
     }
 
     my $request_id = $self->{_current_broker_request_id};

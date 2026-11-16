@@ -98,6 +98,7 @@ our $DEFAULT_TOKENIZE_BYTES     = 65536;  # content prefix considered for simila
 # mutating suppresses detection entirely.
 my %READ_ONLY_COMMANDS = map { $_ => 1 } qw(
     grep egrep fgrep zgrep rg ack ag
+    sed awk
     ls find locate fd
     cat zcat head tail
     wc sort uniq comm cut paste
@@ -109,6 +110,11 @@ my %READ_ONLY_COMMANDS = map { $_ => 1 } qw(
     jq nl rev fold fmt column tree
     md5sum sha256sum sha1sum
     xxd hexdump od base64
+    strings
+    ps pgrep pidof
+    basename dirname realpath readlink
+    printenv
+    cksum sha512sum
 );
 
 # git subcommands that only read repository state. Everything else

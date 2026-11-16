@@ -97,6 +97,11 @@ my %ROUTING_ERROR_LABELS = (
     'model_not_found'         => ['Model Not Found',           404],
     'region_unavailable'      => ['Region Unavailable',        403],
     'user_interrupt'          => ['User Interrupt',            undef],
+    'request_timeout'         => ['Request Deadline',           504],
+    'quota_exceeded'          => ['Quota Exceeded',             429],
+    'auth_error'              => ['Auth Error',                 401],
+    'content_filter'          => ['Content Filtered',           400],
+    'param_conflict'          => ['Parameter Conflict',         400],
 );
 
 =head2 _routing_error_label($api_response)
@@ -693,6 +698,14 @@ sub handle_api_error {
             # what would otherwise be a single successful retry.
             $retry_limit = $max_server_retries;
             $allow_infinite_retry = 1 if $max_server_retries == 0;
+        } elsif ($error_type_for_limit eq 'request_timeout') {
+            # CLIO's own request ceiling expired while the model was still
+            # streaming. Unlike a dropped connection this is deterministic: the
+            # response will outrun the ceiling on every attempt, so an
+            # infinite-retry budget guarantees a permanent loop. One retry
+            # covers the case where the ceiling was grazed by a one-off stall;
+            # after that, the ceiling or the output budget has to change.
+            $retry_limit = 1;
         } elsif ($error_type_for_limit eq 'bad_request') {
             $retry_limit = 4;
         } else {
@@ -702,6 +715,19 @@ sub handle_api_error {
         # Skip retry limit check for rate limits when infinite retry is enabled
         if (!$allow_infinite_retry && $$retry_count_ref > $retry_limit) {
             log_debug('ErrorHandler', "Maximum retries ($retry_limit) exceeded for this iteration");
+            if ($error_type_for_limit eq 'request_timeout') {
+                my $cause = $api_response->{user_message}
+                         // 'The model was still streaming when the request time limit expired.';
+                return {
+                    success         => 0,
+                    error           => "$cause Retrying is capped for this error because a response "
+                                     . "that outruns the limit will outrun it every time. Raise the "
+                                     . "request timeout for this provider, or request less output "
+                                     . "(lower max_tokens), so the response fits inside the limit.",
+                    iterations      => $iteration,
+                    tool_calls_made => $tool_calls_made,
+                };
+            }
             return {
                 success         => 0,
                 error           => "Maximum retries exceeded: $error",
@@ -745,6 +771,8 @@ sub handle_api_error {
             $error_type = "upstream overload";
         } elsif ($api_response->{error_type} && $api_response->{error_type} eq 'truncated') {
             $error_type = "stream truncated";
+        } elsif ($api_response->{error_type} && $api_response->{error_type} eq 'request_timeout') {
+            $error_type = "request deadline";
         }
 
         # Format retry count display (show ∞ for infinite retries)

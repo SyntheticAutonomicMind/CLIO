@@ -359,12 +359,32 @@ sub _request_via_curl {
             log_debug('HTTP', "Body length: " . length($body));
         }
         
+        # A non-zero exit means the transfer did not complete. Reporting
+        # success here hands the caller a silently truncated body; the
+        # streaming path already refuses to do that, and callers that only
+        # inspect the status need the same truth from this one.
+        if ($exit_code != 0) {
+            my $desc = "curl exit code $exit_code";
+            if (should_log("DEBUG")) {
+                log_debug('HTTP::curl', "Transfer incomplete: $desc (was HTTP $status)");
+            }
+            return {
+                success  => 0,
+                status   => 599,
+                reason   => "$desc (was HTTP $status)",
+                headers  => \%resp_headers,
+                content  => $body,
+                curl_exit => $exit_code,
+            };
+        }
+
         return {
-            success => ($status >= 200 && $status < 300),
-            status => $status,
-            reason => $reason,
-            headers => \%resp_headers,
-            content => $body,
+            success  => ($status >= 200 && $status < 300),
+            status   => $status,
+            reason   => $reason,
+            headers  => \%resp_headers,
+            content  => $body,
+            curl_exit => $exit_code,
         };
     } else {
         # Failed to parse response
@@ -374,6 +394,7 @@ sub _request_via_curl {
             reason => 'Internal Exception',
             headers => {},
             content => "curl failed: exit code $exit_code",
+            curl_exit => $exit_code,
         };
     }
 }
@@ -597,12 +618,19 @@ sub _request_via_curl_streaming {
     }
     
     # Create response object with correct headers (parsed from header file)
+    #
+    # curl_exit carries the raw curl exit code so the API layer can tell a
+    # deadline CLIO imposed (exit 28: --max-time/--connect-timeout fired)
+    # apart from a connection the network tore down (exit 18/56/...). Both
+    # surface as status 599, and callers that only see 599 cannot decide
+    # whether retrying can possibly help.
     my $final_response = bless {
         success => ($status >= 200 && $status < 300),
         status => $status,
         reason => $reason,
         headers => \%resp_headers,
         content => $accumulated_content,
+        curl_exit => $exit_code,
     }, 'CLIO::Compat::HTTP::Response';
     
     return $final_response;
@@ -775,13 +803,23 @@ Returns: Object with is_success, code, message, content, decoded_content methods
 sub _convert_response {
     my ($self, $response) = @_;
     
-    return bless {
+    my $converted = bless {
         success => $response->{success},
         status => $response->{status},
         reason => $response->{reason},
         content => $response->{content} || '',
         headers => $response->{headers} || {},
     }, 'CLIO::Compat::HTTP::Response';
+
+    # Carry curl's exit code through the conversion. Both curl paths record it
+    # so the API layer can tell a deadline CLIO imposed (exit 28: --max-time
+    # fired) from a connection the network tore down (exit 18/56/...); both
+    # arrive as status 599. Dropping it here made every 599 look like a
+    # provider-side drop, so a slow local model that outran the request
+    # ceiling was retried forever as "Stream truncated detected".
+    $converted->{curl_exit} = $response->{curl_exit} if defined $response->{curl_exit};
+
+    return $converted;
 }
 
 package CLIO::Compat::HTTP::Response;
