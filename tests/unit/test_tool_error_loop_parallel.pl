@@ -1,18 +1,14 @@
 #!/usr/bin/env perl
-# SPDX-License-Identifier: GPL-3.0-or-later
-# Copyright (c) 2026 fewtarius
+# SPDX-License-Identifier: GPL-3.0-only
+# SPDX-FileCopyrightText: Copyright (c) 2026 Andrew Wyatt (Fewtarius)
 #
-# Regression tests for the tool error loop break bug:
+# Regression test: parallel tool calls in one response must not inflate the
+# error-loop counters.
 #
-#   When a model emits multiple parallel tool calls in a single response
-#   and they all fail with the same error (e.g. missing 'operation'
-#   parameter), the error-loop counter should NOT inflate to 3 and
-#   trigger a break. Parallel calls in the same iteration should count
-#   as a single error for loop-detection purposes. Only sequential
-#   retries across DIFFERENT iterations should increment the counter.
-#
-#   Additionally, when the loop DOES break (genuine sequential retries),
-#   the enhanced error guidance must be saved to session history.
+# A model that emits three calls in one response and has all three fail is
+# not looping - it made one decision. Only sequential retries across
+# different iterations describe a loop. The accounting lives in
+# WorkflowOrchestrator::track_tool_error_loop and is exercised directly here.
 
 use strict;
 use warnings;
@@ -22,173 +18,81 @@ binmode(STDOUT, ':encoding(UTF-8)');
 binmode(STDERR, ':encoding(UTF-8)');
 
 use Test::More;
+use File::Temp qw(tempdir);
+use CLIO::Core::Config;
 use CLIO::Core::WorkflowOrchestrator;
-use CLIO::Core::ToolErrorGuidance;
 
-# ──────────────────────────────────────────────────────────────────────
-# Simulate the error loop counting logic directly.
-# The real _execute_tool_round is deep inside process_input and hard to
-# unit-test in isolation (it needs a live API, UI, etc.). Instead we
-# test the counting algorithm by extracting and replaying the same
-# logic path.
-# ──────────────────────────────────────────────────────────────────────
-
-# We test the core counting algorithm by simulating what happens inside
-# _execute_tool_round's error tracking block. The algorithm:
-# - Tracks _tool_error_loop_last_sig, _tool_error_loop_last_iteration,
-#   _tool_error_loop_count
-# - Same sig + different iteration = increment (sequential retry)
-# - Same sig + same iteration = no increment (parallel call)
-# - Different sig = reset to 1
-
-sub simulate_error {
-    my ($state, $iteration, $tool_name, $tool_operation, $err_category) = @_;
-    my $err_sig = join("|", $tool_name, $tool_operation || '', $err_category);
-
-    my $last_iter = $state->{_tool_error_loop_last_iteration};
-    my $same_sig  = (defined $state->{_tool_error_loop_last_sig}
-                     && $state->{_tool_error_loop_last_sig} eq $err_sig);
-    my $same_iter = (defined $last_iter && $last_iter == $iteration);
-
-    if (!defined $state->{_tool_error_loop_count}) {
-        $state->{_tool_error_loop_count} = {};
-        $state->{_tool_error_loop_last_sig} = undef;
-        $state->{_tool_error_loop_last_iteration} = undef;
-    }
-
-    if ($same_sig && !$same_iter) {
-        $state->{_tool_error_loop_count}{$err_sig}++;
-    } elsif (!($same_sig && $same_iter)) {
-        $state->{_tool_error_loop_count}{$err_sig} = 1;
-    }
-
-    $state->{_tool_error_loop_last_sig} = $err_sig;
-    $state->{_tool_error_loop_last_iteration} = $iteration;
-
-    return $state->{_tool_error_loop_count}{$err_sig};
+sub build_orchestrator {
+    my $dir = tempdir(CLEANUP => 1);
+    open my $fh, '>', "$dir/config.json" or die $!;
+    print $fh q({"provider":"github_copilot","api_key":"sk-test-key"});
+    close $fh;
+    return CLIO::Core::WorkflowOrchestrator->new(
+        config  => CLIO::Core::Config->new(config_dir => $dir),
+        debug   => 0,
+        session => undef,
+    );
 }
 
-sub simulate_success {
-    my ($state) = @_;
-    $state->{_tool_error_loop_count} = {};
-    $state->{_tool_error_loop_last_sig} = undef;
-    $state->{_tool_error_loop_last_iteration} = undef;
+sub fail_call {
+    my ($orch, %over) = @_;
+    return $orch->track_tool_error_loop(
+        tool        => $over{tool} // 'terminal_operations',
+        operation   => $over{operation} // 'exec',
+        category    => $over{category} // 'missing_required',
+        args_digest => $over{digest} // 'same-arguments',
+        iteration   => $over{iteration},
+    );
 }
 
-# ──────────────────────────────────────────────────────────────────────
-# Test 1: 3 parallel calls, same error, same iteration => no break
-# This is the bug that was reported: 3 terminal_operations calls all
-# failing with "Missing 'operation'" should NOT trigger the break.
-# ──────────────────────────────────────────────────────────────────────
-{
-    my $state = {};
-    my $iter = 5;
+subtest 'three parallel failures in one iteration count once' => sub {
+    my $orch = build_orchestrator();
 
-    # 3 parallel tool calls in the same iteration
-    my $c1 = simulate_error($state, $iter, 'terminal_operations', 'missing_operation', 'unknown');
-    my $c2 = simulate_error($state, $iter, 'terminal_operations', 'missing_operation', 'unknown');
-    my $c3 = simulate_error($state, $iter, 'terminal_operations', 'missing_operation', 'unknown');
+    my @verdicts = map { fail_call($orch, iteration => 5) } 1 .. 3;
 
-    ok($c1 == 1, "Parallel call 1: count=1");
-    ok($c2 == 1, "Parallel call 2: count stays 1 (not incremented)");
-    ok($c3 == 1, "Parallel call 3: count stays 1 (not incremented)");
-    ok($c1 < 3, "Count below break threshold (3) for parallel calls");
-    no_break($state, "No break flag set for parallel calls");
-}
+    is($verdicts[0]{identical}, 1, 'first parallel call: count 1');
+    is($verdicts[1]{identical}, 1, 'second parallel call: count unchanged');
+    is($verdicts[2]{identical}, 1, 'third parallel call: count unchanged');
+    is($verdicts[2]{same_mode}, 1, 'failure-mode count is unchanged too');
+    is($verdicts[2]{guidance}, undef, 'parallel failures produce no note');
+};
 
-# ──────────────────────────────────────────────────────────────────────
-# Test 2: Same error across 3 different iterations => break at 3rd
-# This is the real loop: model keeps making the same mistake.
-# ──────────────────────────────────────────────────────────────────────
-{
-    my $state = {};
+subtest 'sequential retries do accumulate' => sub {
+    my $orch = build_orchestrator();
 
-    my $c1 = simulate_error($state, 1, 'terminal_operations', 'missing_operation', 'unknown');
-    my $c2 = simulate_error($state, 2, 'terminal_operations', 'missing_operation', 'unknown');
-    my $c3 = simulate_error($state, 3, 'terminal_operations', 'missing_operation', 'unknown');
+    my $one   = fail_call($orch, iteration => 1);
+    my $two   = fail_call($orch, iteration => 2);
+    my $three = fail_call($orch, iteration => 3);
 
-    ok($c1 == 1, "Iteration 1: count=1");
-    ok($c2 == 2, "Iteration 2: count=2 (sequential retry)");
-    ok($c3 == 3, "Iteration 3: count=3 (sequential retry, should trigger break)");
-    ok($c3 >= 3, "Break threshold reached for sequential retries");
-}
+    is($one->{identical}, 1, 'iteration 1: count 1');
+    is($two->{identical}, 2, 'iteration 2: count 2');
+    is($three->{identical}, 3, 'iteration 3: count 3');
+    ok(defined $two->{guidance}, 'the identical-retry note fires at 2');
+};
 
-# ──────────────────────────────────────────────────────────────────────
-# Test 3: Mixed parallel + sequential: 3 parallel in iter 1, same error
-# in iter 2 => count goes to 2 (not 3)
-# ──────────────────────────────────────────────────────────────────────
-{
-    my $state = {};
+subtest 'parallel burst then a sequential retry' => sub {
+    my $orch = build_orchestrator();
 
-    # 3 parallel in iteration 1
-    simulate_error($state, 1, 'terminal_operations', 'missing_operation', 'unknown');
-    simulate_error($state, 1, 'terminal_operations', 'missing_operation', 'unknown');
-    simulate_error($state, 1, 'terminal_operations', 'missing_operation', 'unknown');
+    # Three parallel failures, then one retry in the next iteration.
+    fail_call($orch, iteration => 1) for 1 .. 3;
+    my $retry = fail_call($orch, iteration => 2);
 
-    # Same error in iteration 2
-    my $c = simulate_error($state, 2, 'terminal_operations', 'missing_operation', 'unknown');
-    ok($c == 2, "3 parallel in iter 1 + retry in iter 2 => count=2 (not 3)");
-}
+    is($retry->{identical}, 2,
+        'the burst counted once, so the retry makes it a two-attempt loop');
+    ok(defined $retry->{guidance}, 'note fires on the real retry, not on the burst');
+};
 
-# ──────────────────────────────────────────────────────────────────────
-# Test 4: Different errors in same iteration (parallel with different sigs)
-# Each error type should get its own count=1
-# ──────────────────────────────────────────────────────────────────────
-{
-    my $state = {};
-    my $iter = 1;
+subtest 'a success clears the counters' => sub {
+    my $orch = build_orchestrator();
 
-    my $c1 = simulate_error($state, $iter, 'terminal_operations', 'exec', 'missing_required');
-    my $c2 = simulate_error($state, $iter, 'file_operations', 'read_file', 'invalid_operation');
-    my $c3 = simulate_error($state, $iter, 'terminal_operations', 'exec', 'missing_required');
+    fail_call($orch, iteration => 1);
+    fail_call($orch, iteration => 2);
+    $orch->reset_tool_error_loop();
 
-    ok($c1 == 1, "Different sig A: count=1");
-    ok($c2 == 1, "Different sig B: count=1");
-    ok($c3 == 1, "Re-seen sig A in same iter: count stays 1 (parallel)");
-}
-
-# ──────────────────────────────────────────────────────────────────────
-# Test 5: Success resets the counter
-# ──────────────────────────────────────────────────────────────────────
-{
-    my $state = {};
-
-    simulate_error($state, 1, 'terminal_operations', 'missing_operation', 'unknown');
-    simulate_error($state, 2, 'terminal_operations', 'missing_operation', 'unknown');
-    ok($state->{_tool_error_loop_count}{'terminal_operations|missing_operation|unknown'} == 2,
-       "Before success: count=2");
-
-    simulate_success($state);
-    ok($state->{_tool_error_loop_count} = {}, "After success: count reset to empty hash");
-
-    my $c = simulate_error($state, 3, 'terminal_operations', 'missing_operation', 'unknown');
-    ok($c == 1, "After reset, same error in new iteration: count=1 (not 3)");
-}
-
-# ──────────────────────────────────────────────────────────────────────
-# Test 6: ToolErrorGuidance is available (integration check)
-# ──────────────────────────────────────────────────────────────────────
-{
-    my $g = CLIO::Core::ToolErrorGuidance->new();
-    ok(defined $g, "ToolErrorGuidance object created");
-    ok($g->can('categorize_error'), "ToolErrorGuidance has categorize_error method");
-    ok($g->can('enhance_tool_error'), "ToolErrorGuidance has enhance_tool_error method");
-
-    # Test that the categorize produces stable categories
-    my $cat1 = $g->categorize_error("Missing 'operation' parameter", 'terminal_operations');
-    my $cat2 = $g->categorize_error("Missing 'operation' parameter", 'file_operations');
-    ok(defined $cat1, "categorize_error returns defined category");
-    ok(defined $cat2, "categorize_error returns defined category for file_operations");
-}
-
-# ──────────────────────────────────────────────────────────────────────
-# Helper: check that no break flag is set (simulated)
-# ──────────────────────────────────────────────────────────────────────
-sub no_break {
-    my ($state, $msg) = @_;
-    my $sig = $state->{_tool_error_loop_last_sig};
-    my $count = $state->{_tool_error_loop_count}{$sig} || 0;
-    ok($count < 3, $msg);
-}
+    my $after = fail_call($orch, iteration => 3);
+    is($after->{identical}, 1, 'identical count restarts at 1');
+    is($after->{same_mode}, 1, 'mode count restarts at 1');
+    is($after->{guidance}, undef, 'no note carried over the success');
+};
 
 done_testing();

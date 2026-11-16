@@ -229,6 +229,21 @@ sub execute_tool {
         );
     }
     
+    # Arguments must be an object. A model can emit a bare string or array,
+    # which decodes cleanly and then dies on the first hash access. Reject it
+    # here so a direct caller gets an error result instead of an exception.
+    unless (ref($arguments) eq 'HASH') {
+        my $kind = ref($arguments) eq 'ARRAY' ? 'an array'
+            : ref($arguments) ? 'a ' . ref($arguments) . ' reference'
+            : defined $arguments ? 'a string' : 'null';
+        log_debug('ToolExecutor',
+            "Arguments for '$tool_name' decoded to $kind, not an object");
+        return $self->_error_result(
+            "Tool arguments must be a JSON object of parameter names, but $kind "
+            . "was received. Nothing was executed."
+        );
+    }
+
     # Fallback alias resolution. Phase 3 in _prepare_tool_round
     # already resolves aliases and injects operation into _parsed_args;
     # this block only runs when ToolExecutor is called directly

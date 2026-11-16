@@ -153,4 +153,64 @@ subtest 'multiple calls keep their own labels' => sub {
         'no call collapsed onto the grouping name');
 };
 
+subtest 'a mangled argument key is reported on the tool result' => sub {
+    # What a stray quote in the arguments produces: the rest of the payload
+    # becomes part of a key name, and the result still parses as valid JSON.
+    my $q = chr(39);
+    # Reproduces the shape from a real session: the stray quote swallows the
+    # rest of the payload up to the next double quote, and the result is
+    # still valid JSON.
+    my $args = '{"todoUpdates":[{"id":4,"status":"blocked","blockedReason'
+        . $q . ': ' . $q . 'because' . $q . '}] if False else [{":""}]}';
+
+    my $call = {
+        id       => 'call_mangled',
+        type     => 'function',
+        function => { name => 'todo_update', arguments => $args },
+    };
+
+    my $round = round($orch, $call);
+    ok($round, 'the call is still dispatched: the tool decides what to do');
+    my @tools = @{ $round->{ordered_tools} };
+    is(scalar @tools, 1, 'one call ordered');
+    ok(defined $tools[0]{_mangled_key}, 'the impossible key is recorded on the call');
+
+    my $shown = $tools[0]{_mangled_key};
+    like($shown, qr/blockedReason/, 'the recorded key identifies the field that was mangled');
+};
+
+subtest 'a well-formed call is unaffected by the mangled-key guard' => sub {
+    my $round = round(
+        $orch,
+        { id => 'c1', type => 'function',
+          function => { name => 'file_search',
+                        arguments => '{"pattern":"*.pm","directory":"lib"}' } },
+    );
+    ok($round, 'the round is prepared');
+    is(scalar @{ $round->{ordered_tools} }, 1, 'the call is ordered');
+    ok(!defined $round->{ordered_tools}[0]{_mangled_key},
+        'no mangled key recorded for a clean call');
+};
+
+subtest 'non-object arguments are rejected with a usable message' => sub {
+    my @messages = ({ role => 'user', content => 'do the thing' });
+    my $round = $orch->_prepare_tool_round(
+        { content => '',
+          tool_calls => [ {
+              id => 'call_scalar', type => 'function',
+              function => { name => 'read_file', arguments => '"lib/foo.pm"' },
+          } ] },
+        \@messages, undef);
+
+    ok(!$round, 'nothing is dispatched for non-object arguments');
+
+    my ($tool_msg) = grep { ($_->{role} // '') eq 'tool' } @messages;
+    ok($tool_msg, 'the rejection is explained to the model');
+    like($tool_msg->{content}, qr/decoded to a string/,
+        'the message names the shape that arrived');
+    like($tool_msg->{content}, qr/must be a JSON object/,
+        'the message states what is required');
+    like($tool_msg->{content}, qr/Nothing was executed/, 'the message says nothing ran');
+};
+
 done_testing();

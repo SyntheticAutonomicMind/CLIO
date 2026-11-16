@@ -163,8 +163,9 @@ sub _categorize_error {
     # carry actionable detail ("Multiple todos marked as in-progress...") but
     # the previous "validation failed" message gave the agent no schema to
     # follow. Surface them under their own category with a targeted fix.
-    return 'todo_validation_failed' if $error =~ /^update validation failed/i;
+    return 'todo_validation_failed' if $error =~ /^(?:update|add|todo list) validation failed/i;
     return 'todo_validation_failed' if $error =~ /multiple todos marked as in-progress/i;
+    return 'todo_validation_failed' if $error =~ /has unrecognized field/i;
 
     # Missing the operation parameter entirely (must come BEFORE missing_required
     # since some messages mention 'parameter' too, but we want operation-specific
@@ -556,6 +557,17 @@ sub _get_category_guidance {
             } elsif ($error =~ /no blockedReason|has no blockedReason/i) {
                 $hint = "A todo with status='blocked' MUST have a 'blockedReason' field " .
                         "explaining what it's blocked on.";
+            } elsif ($error =~ /has unrecognized field/i) {
+                # A field name the schema does not list. Either the caller
+                # invented it or the arguments JSON was mangled and a value
+                # was parsed as a key. Both are invisible in the tool result
+                # unless this hint names them.
+                $hint = "You sent a field name the schema does not define. Only the " .
+                        "fields listed in the schema are accepted; anything else is " .
+                        "rejected, not ignored. If a field name contains a quote, a " .
+                        "bracket, or a trailing space, the arguments JSON was " .
+                        "malformed and a value was read as a key - re-send the same " .
+                        "call with clean JSON rather than inventing new field names.";
             }
             return "WHAT WENT WRONG: The todo list update was rejected by validation.\n" .
                    "Original errors:\n$error\n\n" .

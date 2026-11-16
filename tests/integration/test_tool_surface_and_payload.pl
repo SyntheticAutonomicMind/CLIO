@@ -111,7 +111,7 @@ subtest 'internal tool_call keys are stripped from the payload' => sub {
         session => bless({ state_data => {} }, 'FakeSession'),
     );
 
-    my @internal = qw(_emitted_name _name_complete _parsed_args _dispatch_name);
+    my @internal = qw(_emitted_name _name_complete _parsed_args _dispatch_name _mangled_key);
     ok(scalar @CLIO::Core::APIManager::INTERNAL_TOOL_CALL_KEYS,
         'the internal key list is declared');
     is_deeply(

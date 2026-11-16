@@ -80,7 +80,7 @@ use constant {
 # Keys CLIO attaches to a tool_call hash for its own bookkeeping. They are not
 # part of any provider's schema, so they are stripped from the payload in
 # _build_payload. Add a key here when adding one to a tool_call elsewhere.
-our @INTERNAL_TOOL_CALL_KEYS = qw(_name_complete _emitted_name _parsed_args _dispatch_name);
+our @INTERNAL_TOOL_CALL_KEYS = qw(_name_complete _emitted_name _parsed_args _dispatch_name _mangled_key);
 
 # No external dependencies, only core Perl
 

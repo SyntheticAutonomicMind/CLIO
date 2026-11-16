@@ -44,8 +44,35 @@ Based on SAM's TodoManager pattern.
 3. Dependencies must reference existing todo IDs
 4. Blocked status requires blockedReason
 5. Progress must be in range 0.0-1.0
+6. Incoming updates, adds, and writes may only set known fields
 
 =cut
+
+# Fields a todo record may carry. Incoming data may only set these; an
+# unrecognized name is rejected instead of copied into the record.
+#
+# The alternative - copying every key the caller sent - is worse than
+# useless: a model that invents a field (blockedReasonReason, "blockedReason "
+# with a trailing space, descriptionX) gets a successful result, the intended
+# change never happens, and nothing anywhere records that the call was wrong.
+# That is how a blocked todo keeps reporting "has no blockedReason" while the
+# model believes it supplied one.
+my %TODO_FIELDS = map { $_ => 1 } qw(
+    id title description status priority progress dependencies
+    blockedReason taskSummary createdAt updatedAt
+);
+
+# Fields an update may not set. The id selects the record; the timestamps are
+# owned by the store.
+my %UPDATE_LOCKED_FIELDS = map { $_ => 1 } qw(id createdAt updatedAt);
+
+# What an update caller may set, derived from the two tables above so the
+# two never drift apart.
+my %UPDATE_FIELDS = map { $_ => 1 } grep { !$UPDATE_LOCKED_FIELDS{$_} } keys %TODO_FIELDS;
+
+# What an update caller may SEND. 'id' selects the record, so it is accepted
+# (and must not be reported as unrecognized) even though it is never applied.
+my %UPDATE_ACCEPTED_FIELDS = (%UPDATE_FIELDS, id => 1);
 
 =head2 new
 
@@ -118,6 +145,85 @@ sub _fire_invalidation {
     return;
 }
 
+=head2 _unknown_field_errors (Internal)
+
+Report fields an incoming todo or update may not set.
+
+Arguments:
+- $item  - Hashref supplied by the caller
+- $allowed - Hashref of field name => 1
+- $label - How to name the item in the error ('Todo #4', 'New todo #2')
+
+Returns: List of error strings (empty when every field is known)
+
+The message names the offending fields, the allowed set, and - when a field
+name contains characters a field name cannot have - the most likely cause.
+A quoted or space-suffixed field name is the signature of a value that was
+parsed as a key, which is what a stray quote in the arguments JSON produces.
+The model cannot see its own mangled payload any other way: the arguments
+parse as valid JSON, so no layer between the model and the tool reports it.
+
+=cut
+
+sub _unknown_field_errors {
+    my ($self, $item, $allowed, $label) = @_;
+
+    my @unknown = sort grep { !$allowed->{$_} } keys %$item;
+    return () unless @unknown;
+
+    my $shown = join(', ', map { "'" . _clip($_, 60) . "'" } @unknown);
+    my $valid = join(', ', sort keys %$allowed);
+
+    my @errors = ("$label has unrecognized field(s): $shown. "
+        . "Allowed fields: $valid. An unrecognized name is not applied - "
+        . "check the spelling against the schema.");
+
+    my @malformed = grep { $_ !~ /^[A-Za-z_][A-Za-z0-9_]*$/ } @unknown;
+    if (@malformed) {
+        push @errors, "$label has field name(s) that are not valid identifiers "
+            . "(" . join(', ', map { "'" . _clip($_, 60) . "'" } @malformed) . "). "
+            . "A field name contains a quote, bracket, or trailing space, which "
+            . "means the arguments JSON was malformed: a value was parsed as a "
+            . "key. Re-send the call with valid JSON.";
+    }
+
+    return @errors;
+}
+
+# Trim a string for inclusion in an error message. Field names that arrive
+# mangled can be hundreds of characters long; the first 60 identify the
+# problem without pasting a whole paragraph of JSON into the transcript.
+sub _clip {
+    my ($text, $max) = @_;
+    $text = '' unless defined $text;
+    return $text if length($text) <= $max;
+    return substr($text, 0, $max) . '...';
+}
+
+=head2 _describe_shape (Internal)
+
+Name the shape of a malformed list entry so the error says what arrived
+instead of dying on it. A model that sends todoUpdates as an array of
+strings reaches the store as data it cannot dereference; the old code
+died, and the eval above it turned that into a stack-trace-flavoured
+message with no fix in it.
+
+Arguments: $value
+Returns: description string ('a string', 'an array', 'null', ...)
+
+=cut
+
+sub _describe_shape {
+    my ($value) = @_;
+    return 'null' unless defined $value;
+    my $ref = ref $value;
+    return 'an object' if $ref eq 'HASH';
+    return 'an array'  if $ref eq 'ARRAY';
+    return "a $ref reference" if $ref;
+    return 'an empty string' unless length $value;
+    return 'a string';
+}
+
 =head2 read
 
 Read current todo list for this session.
@@ -175,6 +281,25 @@ sub write {
     my ($self, $todos) = @_;
     
     $todos ||= [];
+
+    # Same rule as update/add: only known fields may be stored. A write
+    # replaces the whole list, so an invented field here would persist for
+    # the rest of the session.
+    my @field_errors;
+    for my $i (0 .. $#$todos) {
+        my $todo = $todos->[$i];
+        unless (ref($todo) eq 'HASH') {
+            push @field_errors, "Entry " . ($i + 1) . " of todoList is "
+                . _describe_shape($todo) . ", not an object. Each todo must be an "
+                . "object with at least 'title' and 'description'";
+            next;
+        }
+        my $label = _is_valid_id($todo->{id}) ? "Todo #$todo->{id}" : 'New todo #' . ($i + 1);
+        push @field_errors, $self->_unknown_field_errors($todo, \%TODO_FIELDS, $label);
+    }
+    if (@field_errors) {
+        return (0, "Todo list validation failed:\n" . join("\n", map { "  - $_" } @field_errors));
+    }
     
     # Auto-assign IDs to todos that don't have them
     my $max_id = 0;
@@ -248,6 +373,31 @@ sub update {
     if (!@$todos) {
         return (0, "No todo list exists. Create one first with write operation.");
     }
+
+    unless (ref($updates) eq 'ARRAY') {
+        return (0, "Update validation failed:\n  - 'todoUpdates' must be an array of "
+            . "{id, ...fields} objects, not " . _describe_shape($updates));
+    }
+
+    # Reject malformed entries and unrecognized fields BEFORE anything is
+    # applied, so a rejected update cannot leave a partly-modified list behind
+    # and no invented field ever reaches the stored record.
+    my @field_errors;
+    for my $i (0 .. $#$updates) {
+        my $update = $updates->[$i];
+        unless (ref($update) eq 'HASH') {
+            push @field_errors, "Entry " . ($i + 1) . " of todoUpdates is "
+                . _describe_shape($update) . ", not an object. Each entry must be an "
+                . "object such as {\"id\": 4, \"status\": \"blocked\", "
+                . "\"blockedReason\": \"why\"}";
+            next;
+        }
+        my $label = defined $update->{id} ? "Todo #$update->{id}" : 'An update';
+        push @field_errors, $self->_unknown_field_errors($update, \%UPDATE_ACCEPTED_FIELDS, $label);
+    }
+    if (@field_errors) {
+        return (0, "Update validation failed:\n" . join("\n", map { "  - $_" } @field_errors));
+    }
     
     # Apply each update
     my @applied;
@@ -279,8 +429,11 @@ sub update {
             if (_is_valid_id($todo->{id}) && $todo->{id} == $todo_id) {
                 # Apply updates
                 foreach my $key (keys %$update) {
-                    next if $key eq 'id';  # Don't update ID
-                    next if $key eq 'createdAt';  # Don't update creation time
+                    # Unreachable after the field check above; kept so a
+                    # future caller cannot copy a locked or unknown field
+                    # into the record by bypassing that check.
+                    next if $UPDATE_LOCKED_FIELDS{$key};
+                    next unless $UPDATE_FIELDS{$key};
                     $todo->{$key} = $update->{$key};
                 }
                 $todo->{updatedAt} = time();
@@ -342,6 +495,23 @@ sub add {
     
     $new_todos ||= [];
     return (1, undef) unless @$new_todos;  # No-op if empty
+
+    # Only known fields may be appended. Rejected before anything is
+    # assigned an id or merged with the existing list.
+    my @field_errors;
+    for my $i (0 .. $#$new_todos) {
+        my $todo = $new_todos->[$i];
+        unless (ref($todo) eq 'HASH') {
+            push @field_errors, "Entry " . ($i + 1) . " of newTodos is "
+                . _describe_shape($todo) . ", not an object. Each todo must be an "
+                . "object with at least 'title' and 'description'";
+            next;
+        }
+        push @field_errors, $self->_unknown_field_errors($todo, \%TODO_FIELDS, 'New todo #' . ($i + 1));
+    }
+    if (@field_errors) {
+        return (0, "Add validation failed:\n" . join("\n", map { "  - $_" } @field_errors));
+    }
     
     # Read existing todos
     my $existing = $self->read();
@@ -469,9 +639,15 @@ sub validate {
             push @errors, "Todo #$id has circular dependency";
         }
         
-        # Blocked status requires reason
+        # Blocked status requires reason. The received field names are echoed
+        # because the usual cause is a field the caller did send under a name
+        # the parser mangled - the error is the only place that name is
+        # visible, and without it the caller can only guess at the spelling.
         if (defined $todo->{status} && $todo->{status} eq 'blocked' && !$todo->{blockedReason}) {
-            push @errors, "Todo #$id is blocked but has no blockedReason";
+            my $received = join(', ', map { _clip($_, 40) } sort keys %$todo);
+            push @errors, "Todo #$id is blocked but has no blockedReason "
+                . "(received fields: $received; a todo with status='blocked' needs "
+                . "a 'blockedReason' string)";
         }
         
         # Progress validation

@@ -12,6 +12,7 @@ use CLIO::Core::Logger qw(log_debug);
 use parent 'CLIO::Tools::Tool';
 use CLIO::Session::TodoStore;
 use CLIO::UI::Terminal qw(ui_char);
+use JSON::PP ();  # JSON::PP::false for additionalProperties in the schema
 
 =head1 NAME
 
@@ -251,10 +252,14 @@ sub get_additional_parameters {
                     },
                     blockedReason => {
                         type => "string",
-                        description => "[REQUIRED if status=blocked] Reason why task is blocked.",
+                        description => "[REQUIRED when status=blocked] Reason why task is blocked.",
                     },
                 },
                 required => ["title", "description", "status"],
+                # A field the schema does not define is rejected by the
+                # store. Saying so here is what stops a caller from inventing
+                # a name after the first rejected attempt.
+                additionalProperties => JSON::PP::false,
             },
         },
         newTodos => {
@@ -283,6 +288,7 @@ sub get_additional_parameters {
                     },
                 },
                 required => ["title", "description"],
+                additionalProperties => JSON::PP::false,
             },
         },
         todoUpdates => {
@@ -319,10 +325,11 @@ sub get_additional_parameters {
                     },
                     blockedReason => {
                         type => "string",
-                        description => "[OPTIONAL] Reason for blocked status.",
+                        description => "[REQUIRED when status=blocked] Reason why the todo is blocked. A todo set to 'blocked' without this field is rejected.",
                     },
                 },
                 required => ["id"],
+                additionalProperties => JSON::PP::false,
             },
         },
     };
@@ -617,6 +624,17 @@ sub handle_write {
     for my $i (0 .. $#$todo_list) {
         my $todo = $todo_list->[$i];
         my $num = $i + 1;
+        # An item that is not an object cannot be checked for fields; the
+        # next line would die on it. Report the shape instead.
+        unless (ref($todo) eq 'HASH') {
+            my $kind = ref($todo) eq 'ARRAY' ? 'an array'
+                : ref($todo) ? 'a ' . ref($todo) . ' reference'
+                : defined $todo ? 'a string' : 'null';
+            return $self->error_result(
+                "todoList item #$num is $kind, not an object. Each item must be "
+                . "an object with 'title', 'description', and 'status'."
+            );
+        }
         my @missing;
         push @missing, 'title' unless $todo->{title};
         push @missing, 'description' unless $todo->{description};
@@ -818,6 +836,17 @@ sub handle_add {
     for my $i (0 .. $#$new_todos) {
         my $todo = $new_todos->[$i];
         my $num = $i + 1;
+        # An item that is not an object cannot be checked for fields; the
+        # next line would die on it. Report the shape instead.
+        unless (ref($todo) eq 'HASH') {
+            my $kind = ref($todo) eq 'ARRAY' ? 'an array'
+                : ref($todo) ? 'a ' . ref($todo) . ' reference'
+                : defined $todo ? 'a string' : 'null';
+            return $self->error_result(
+                "newTodos item #$num is $kind, not an object. Each item must be "
+                . "an object with 'title' and 'description'."
+            );
+        }
         my @missing;
         push @missing, 'title' unless $todo->{title};
         push @missing, 'description' unless $todo->{description};

@@ -2,10 +2,17 @@
 # SPDX-License-Identifier: GPL-3.0-only
 # SPDX-FileCopyrightText: Copyright (c) 2026 Andrew Wyatt (Fewtarius)
 #
-# Tests for the tool error loop break mechanism (Phase 3):
-# - After 3 consecutive identical-shape errors, the loop breaks
-# - The enhanced error guidance is NOT saved to session history (only raw error)
-# - The STOP text approach is replaced by an error return from process_input
+# Tests for tool error loop accounting (WorkflowOrchestrator::track_tool_error_loop).
+#
+# The error loop used to set a break flag that ended the turn. That is gone:
+# repeated failures now produce a guidance note the model can read and act on.
+# These tests pin both halves of that contract:
+#
+# - A repeated identical call gets a note that says the input, not the
+#   attempt, has to change.
+# - Repeated failures with DIFFERENT arguments are recognized as a different
+#   problem (wrong call shape) and never described as an identical retry.
+# - Nothing in the verdict can end the turn.
 
 use strict;
 use warnings;
@@ -13,179 +20,136 @@ use utf8;
 use lib './lib';
 
 use Test::More;
-use CLIO::Core::ToolErrorGuidance;
+use File::Temp qw(tempdir);
+use CLIO::Core::Config;
+use CLIO::Core::WorkflowOrchestrator;
 
-# Test 1: ToolErrorGuidance::categorize_error produces stable categories
-subtest 'categorize_error produces stable categories' => sub {
-    my $g = CLIO::Core::ToolErrorGuidance->new();
-
-    # Missing operation parameter
-    my $cat = $g->categorize_error(
-        "Missing required parameter: operation",
-        'file_operations'
+sub build_orchestrator {
+    my $dir = tempdir(CLEANUP => 1);
+    open my $fh, '>', "$dir/config.json" or die $!;
+    print $fh q({"provider":"github_copilot","api_key":"sk-test-key"});
+    close $fh;
+    return CLIO::Core::WorkflowOrchestrator->new(
+        config  => CLIO::Core::Config->new(config_dir => $dir),
+        debug   => 0,
+        session => undef,
     );
-    is($cat, 'missing_required', 'missing operation -> missing_required');
+}
 
-    # Different error text, same category (use a non-operation param)
-    $cat = $g->categorize_error(
-        "Missing required parameter: path",
-        'file_operations'
+sub error_call {
+    my ($orch, %over) = @_;
+    return $orch->track_tool_error_loop(
+        tool        => $over{tool} // 'todo_operations',
+        operation   => $over{operation} // 'update',
+        category    => $over{category} // 'todo_validation_failed',
+        args_digest => $over{digest} // 'digest-a',
+        iteration   => $over{iteration} // 1,
     );
-    is($cat, 'missing_required', 'different text, same category');
+}
 
-    # Unknown operation
-    $cat = $g->categorize_error(
-        "Unknown operation: list_directory",
-        'file_operations'
-    );
-    is($cat, 'invalid_operation', 'unknown operation -> invalid_operation');
+subtest 'a repeated identical call produces guidance, never a break' => sub {
+    my $orch = build_orchestrator();
 
-    # Directory not found
-    $cat = $g->categorize_error(
-        "Working directory does not exist",
-        'terminal_operations'
-    );
-    is($cat, 'directory_not_found', 'directory not found');
-};
+    my $first  = error_call($orch, iteration => 1);
+    my $second = error_call($orch, iteration => 2);
 
-# Test 2: enhance_tool_error produces verbose guidance (but it should NOT
-# be saved to session — that's tested by the orchestration test)
-subtest 'enhance_tool_error produces guidance' => sub {
-    my $g = CLIO::Core::ToolErrorGuidance->new();
+    is($first->{identical}, 1, 'first failure: identical count 1');
+    is($first->{guidance}, undef, 'first failure: no note');
 
-    my $enhanced = $g->enhance_tool_error(
-        error => "Missing required parameter: operation",
-        tool_name => 'file_operations',
-        tool_definition => {
-            description => 'File operations tool',
-            parameters => { type => 'object', properties => { operation => { type => 'string' } } },
-        },
-        attempted_params => {},
-    );
+    is($second->{identical}, 2, 'second identical failure: count 2');
+    ok(defined $second->{guidance}, 'second identical failure: note emitted');
+    like($second->{guidance}, qr/ERROR LOOP NOTICE/, 'note is identified as a loop notice');
+    like($second->{guidance}, qr/attempt #2/, 'note states the attempt number');
+    like($second->{guidance}, qr/Re-sending the same input cannot/, 'note explains why it is futile');
 
-    ok(length($enhanced) > 100, 'enhanced error is verbose (>100 chars)');
-    like($enhanced, qr/TOOL ERROR/, 'contains TOOL ERROR header');
-    unlike($enhanced, qr/^STOP:/, 'does not contain STOP prefix (new approach)');
-    unlike($enhanced, qr/STOP: You have made/, 'does not contain old STOP loop message');
-};
-
-# Test 3: Error loop break flag is set after 3 consecutive errors
-subtest 'error loop break flag' => sub {
-    # Simulate the error loop detection logic from WorkflowOrchestrator
-    my %loop_count;
-    my $last_sig;
-    my $break_flag = undef;
-
-    my @errors = (
-        ['file_operations', 'read_file', 'missing_required'],
-        ['file_operations', 'read_file', 'missing_required'],
-        ['file_operations', 'read_file', 'missing_required'],
-    );
-
-    for my $e (@errors) {
-        my $sig = join('|', @$e);
-        if (defined $last_sig && $last_sig eq $sig) {
-            $loop_count{$sig}++;
-        } else {
-            $loop_count{$sig} = 1;
-            $last_sig = $sig;
-        }
-        my $count = $loop_count{$sig};
-
-        if ($count >= 3) {
-            $break_flag = {
-                tool  => $e->[0],
-                error => 'test error',
-                count => $count,
-                sig   => $sig,
-            };
-            last;
-        }
+    for my $forbidden (qw(break nudge nudge_text error_type success)) {
+        ok(!exists $second->{$forbidden}, "verdict carries no '$forbidden' field");
     }
-
-    ok(defined $break_flag, 'break flag set after 3 consecutive errors');
-    is($break_flag->{tool}, 'file_operations', 'break flag has tool name');
-    is($break_flag->{count}, 3, 'break flag has count=3');
-    ok(length($break_flag->{sig}) > 0, 'break flag has signature');
-
-    # Verify the error message format matches what process_input returns
-    my $msg = sprintf(
-        "Tool error loop broken: %d consecutive identical errors from '%s' "
-        . "(sig: %s). The enhanced error guidance was injected into the "
-        . "current message array but not saved to session history. "
-        . "Please review the error and try a different approach.",
-        $break_flag->{count},
-        $break_flag->{tool},
-        $break_flag->{sig},
-    );
-    like($msg, qr/Tool error loop broken/, 'break message starts correctly');
-    unlike($msg, qr/STOP:/, 'break message does NOT contain STOP text');
-    like($msg, qr/not saved to session history/, 'break message mentions session history');
 };
 
-# Test 4: Session save uses raw error, not enhanced guidance
-subtest 'session save uses raw error' => sub {
-    # Simulate the session save logic from _execute_tool_round
-    my $result_data = {
-        success => 0,
-        error => "Missing required parameter: operation",
-    };
+subtest 'different arguments are not reported as identical retries' => sub {
+    my $orch = build_orchestrator();
 
-    my $is_error = 1;
-    my $ai_content = "TOOL ERROR: file_operations\nMissing required parameter: operation\n\n... (100+ lines of schema dump)";
-    my $sanitized_content = $ai_content;
+    # The gufo session: three different repair attempts, one failure mode.
+    my @attempts = map { error_call($orch, digest => "digest-$_", iteration => $_) } 1 .. 3;
 
-    # The new logic: save raw error to session, not enhanced guidance
-    my $session_content = $sanitized_content;
-    if ($is_error && $result_data && ref($result_data) eq 'HASH') {
-        $session_content = $result_data->{error};
-    }
+    is($attempts[0]{identical}, 1, 'attempt 1: not an identical retry');
+    is($attempts[1]{identical}, 1, 'attempt 2: different arguments -> count stays 1');
+    is($attempts[2]{identical}, 1, 'attempt 3: different arguments -> count stays 1');
+    is($attempts[2]{same_mode}, 3, 'same failure mode counted three times');
 
-    is($session_content, 'Missing required parameter: operation',
-        'session gets raw error, not schema dump');
-    isnt($session_content, $sanitized_content,
-        'session content differs from @messages content');
-    unlike($session_content, qr/TOOL ERROR/, 'session content has no schema dump header');
-    unlike($session_content, qr/schema|example/,
-        'session content is concise (no schema/example details)');
+    ok(defined $attempts[2]{guidance}, 'third same-mode failure produces a note');
+    like($attempts[2]{guidance}, qr/REPEATED FAILURE/, 'note identifies a repeated failure');
+    like($attempts[2]{guidance}, qr/Varying what you send has not fixed it/,
+        'note points at the call shape rather than the values');
+    unlike($attempts[2]{guidance}, qr/ERROR LOOP NOTICE/,
+        'note never claims the call was identical');
+    unlike($attempts[2]{guidance}, qr/attempt #/, 'note does not imply an identical retry');
 };
 
-# Test 5: Successful tool calls reset the error loop counter
-subtest 'successful call resets error loop tracking' => sub {
-    my %loop_count;
-    my $last_sig;
+subtest 'a different failure mode starts its own count' => sub {
+    my $orch = build_orchestrator();
 
-    # Simulate 2 errors then a success
-    my @events = (
-        ['file_operations', 'read_file', 'missing_required', 1],  # error
-        ['file_operations', 'read_file', 'missing_required', 1],  # error
-        ['file_operations', 'read_file', '', 0],                  # success
-        ['file_operations', 'read_file', 'missing_required', 1],  # error (should be count=1, not 3)
-    );
+    error_call($orch, digest => 'a', iteration => 1);
+    error_call($orch, digest => 'b', iteration => 2);
+    my $other = error_call($orch, digest => 'c', category => 'missing_required', iteration => 3);
 
-    my $break_hit = 0;
-    for my $e (@events) {
-        my ($tool, $op, $cat, $is_error) = @$e;
-        if ($is_error) {
-            my $sig = join('|', $tool, $op, $cat);
-            if (defined $last_sig && $last_sig eq $sig) {
-                $loop_count{$sig}++;
-            } else {
-                $loop_count{$sig} = 1;
-                $last_sig = $sig;
-            }
-            my $count = $loop_count{$sig};
-            if ($count >= 3) {
-                $break_hit = 1;
-            }
-        } else {
-            # Reset on success
-            %loop_count = ();
-            $last_sig = undef;
-        }
+    is($other->{same_mode}, 1, 'new category starts at 1');
+    is($other->{guidance}, undef, 'new category produces no note');
+};
+
+subtest 'success clears accumulated failures' => sub {
+    my $orch = build_orchestrator();
+
+    error_call($orch, digest => 'a', iteration => 1);
+    error_call($orch, digest => 'b', iteration => 2);
+    $orch->reset_tool_error_loop();
+
+    my $after = error_call($orch, digest => 'c', iteration => 3);
+    is($after->{identical}, 1, 'identical count restarts at 1');
+    is($after->{same_mode}, 1, 'same-mode count restarts at 1');
+    is($after->{guidance}, undef, 'no note after a success');
+};
+
+subtest 'notes repeat on a cadence rather than every call' => sub {
+    my $orch = build_orchestrator();
+
+    my @notes;
+    for my $i (1 .. 6) {
+        my $v = error_call($orch, digest => 'same', iteration => $i);
+        push @notes, ($v->{guidance} ? $i : 0);
     }
+    is_deeply([ grep { $_ } @notes ], [2, 4, 6],
+        'identical-retry notes fire at 2, 4 and 6');
+};
 
-    ok(! $break_hit, 'no break triggered — success reset the counter');
+subtest 'an identical call and a same-mode failure stay separate channels' => sub {
+    my $orch = build_orchestrator();
+
+    # Two identical retries, then a genuinely different attempt.
+    error_call($orch, digest => 'same', iteration => 1);
+    my $identical = error_call($orch, digest => 'same', iteration => 2);
+    like($identical->{guidance}, qr/ERROR LOOP NOTICE/,
+        'identical channel fires while it is identical');
+
+    my $changed = error_call($orch, digest => 'other', iteration => 3);
+    is($changed->{identical}, 1, 'changing arguments resets the identical count');
+    like($changed->{guidance} // '', qr/REPEATED FAILURE/,
+        'the same-mode channel reports the third failure of the mode');
+    unlike($changed->{guidance} // '', qr/ERROR LOOP NOTICE/,
+        'the differing retry is not described as an identical one');
+};
+
+subtest 'guidance text names the call, not the internal signature' => sub {
+    my $orch = build_orchestrator();
+
+    error_call($orch, digest => 'x', iteration => 1);
+    my $v = error_call($orch, digest => 'x', iteration => 2);
+
+    like($v->{guidance}, qr/'todo_operations update'/,
+        'note names the tool and operation as a caller would say them');
+    unlike($v->{guidance}, qr/todo_validation_failed\|/,
+        'note does not paste the internal signature');
 };
 
 done_testing();

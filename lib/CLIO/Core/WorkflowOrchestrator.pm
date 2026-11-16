@@ -601,6 +601,10 @@ sub process_input {
     # legitimate (re-running tests after edits in a later turn), so the
     # window must not carry over.
     $self->{tool_loop_detector}->reset() if $self->{tool_loop_detector};
+    # Same rule for error-loop accounting. A turn that ended on a failure
+    # must not leave counts that make the next turn's first attempt look
+    # like a retry.
+    $self->reset_tool_error_loop();
 
     my $max_iter = $self->{max_iterations};
     my $iter_limit_display = $max_iter ? $max_iter : 'unlimited';
@@ -961,30 +965,6 @@ sub process_input {
                 tool_calls_made => \@tool_calls_made,
                 on_tool_end     => $on_tool_end_from_ui,
             );
-
-            # Check for tool error loop break before looping back.
-            if (my $break = delete $self->{_tool_error_loop_break}) {
-                my $msg = sprintf(
-                    "Tool error loop broken: %d consecutive identical errors from '%s' "
-                    . "(sig: %s). Enhanced error guidance with schema help has been "
-                    . "injected into the message array and saved to session history. "
-                    . "Please review the error and try a different approach.",
-                    $break->{count} // 3,
-                    $break->{tool} || 'unknown',
-                    $break->{sig} || '',
-                );
-                # Capture payload before breaking the tool error loop so
-                # the session can be resumed via fast-path on a later turn.
-                return {
-                    success => 0,
-                    error => $msg,
-                    error_type => 'tool_error_loop',
-                    tool_name => $break->{tool},
-                    tool_error => $break->{error},
-                    iterations => $iteration,
-                    tool_calls_made => \@tool_calls_made,
-                };
-            }
 
             # Loop back - AI will process tool results
             next;
@@ -2092,28 +2072,12 @@ sub _execute_tool_round {
                 ? $result_data->{exit_code} : undef,
         };
 
-        # Detect repeated identical-shape tool errors and break the loop.
-        # When a model emits a malformed tool call (e.g. missing 'operation'
-        # field, using 'command' instead of 'operation', or malformed JSON),
-        # CLIO returns a TOOL ERROR + full schema help to @messages. The same
-        # error repeating N=3 times means the model is stuck and just burning
-        # context budget on schema dumps. After N=3, we set a break flag that
-        # causes process_input to return an error result instead of continuing
-        # the loop with another API call. The caller surfaces the error to the
-        # user and the turn ends — the model can't ignore a break the way it
-        # can ignore "STOP" text in a tool result.
-        #
-        # Loop signature: tool|operation|error_category. The category is
-        # computed by ToolErrorGuidance::categorize_error which produces a
-        # stable enum (missing_required, invalid_operation, directory_not_found,
-        # etc.). The OLD signature used the first 80 chars of the raw error,
-        # which had two failure modes:
-        #   1. Slight variance in the error text (timestamps, IDs, line
-        #      numbers) reset the count to 1.
-        #   2. Different operation names that resolved to the same root
-        #      cause (e.g. "exec" vs "execute") reset the count.
-        # The category-based signature is robust to both: the categorizer
-        # reduces the noisy raw text to one of ~20 stable enums.
+        # Tool errors repeat for two different reasons, and telling them
+        # apart matters: a model re-sending an identical call is stuck, while
+        # a model trying a different fix for the same failure is working.
+        # track_tool_error_loop counts both and returns a guidance note for
+        # the model. It never ends the turn - the iteration budget is the
+        # bound on a model that ignores the note.
         if ($is_error && $result_data && ref($result_data) eq 'HASH') {
             my $err_category = 'unknown';
             if ($self->{error_guidance} && $self->{error_guidance}->can('categorize_error')) {
@@ -2125,56 +2089,24 @@ sub _execute_tool_round {
                 };
                 $err_category = 'unknown' if $@;
             }
-           my $err_sig = join("|",
-               $tool_name,
-               $tool_operation || '',
-               $err_category
-           );
-            # Track the iteration alongside the error signature so parallel
-            # tool calls in the same iteration don't inflate the consecutive
-            # count. Only errors from DIFFERENT iterations (true sequential
-            # retries) count toward the loop-break threshold.
-            my $last_iter = $self->{_tool_error_loop_last_iteration};
-            my $same_sig  = (defined $self->{_tool_error_loop_last_sig}
-                             && $self->{_tool_error_loop_last_sig} eq $err_sig);
-            my $same_iter = (defined $last_iter && $last_iter == $iteration);
-            if (!defined $self->{_tool_error_loop_count}) {
-                $self->{_tool_error_loop_count} = {};
-                $self->{_tool_error_loop_last_sig} = undef;
-                $self->{_tool_error_loop_last_iteration} = undef;
-            }
-            if ($same_sig && !$same_iter) {
-                # Same error, different iteration = sequential retry
-                $self->{_tool_error_loop_count}{$err_sig}++;
-            } elsif (!($same_sig && $same_iter)) {
-                # New error type, or first error in this iteration.
-                # (If same_sig && same_iter: parallel call, leave count unchanged.)
-                $self->{_tool_error_loop_count}{$err_sig} = 1;
-            }
-            # If same_sig && same_iter (parallel call), don't increment.
-            $self->{_tool_error_loop_last_sig} = $err_sig;
-            $self->{_tool_error_loop_last_iteration} = $iteration;
-            my $count = $self->{_tool_error_loop_count}{$err_sig};
-            if ($count >= 3) {
-                # Break the error loop instead of injecting "STOP" text
-                # (which the model can ignore). Set a flag that causes
-                # process_input to return an error result, so the caller
-                # surfaces the error to the user and the turn ends.
-                $self->{_tool_error_loop_break} = {
-                    tool  => $tool_name,
-                    error => $result_data->{error} // '',
-                    count => $count,
-                    sig   => $err_sig,
-                };
-                log_warning('WorkflowOrchestrator',
-                    "Tool error loop: $count consecutive errors from $tool_name ($err_category). "
-                    . "Breaking to user.");
+
+            my $verdict = $self->track_tool_error_loop(
+                tool        => $tool_name,
+                operation   => $tool_operation,
+                category    => $err_category,
+                args_digest => $self->_tool_arguments_digest($tool_call),
+                iteration   => $iteration,
+            );
+            if ($verdict->{guidance}) {
+                $ai_content .= "\n\n" . $verdict->{guidance};
+                log_debug('WorkflowOrchestrator',
+                    "Tool error loop guidance injected "
+                    . "(identical=$verdict->{identical}, same_mode=$verdict->{same_mode}, "
+                    . "sig=$verdict->{sig})");
             }
         } else {
             # Reset loop tracking on a successful tool call.
-            $self->{_tool_error_loop_count} = {};
-            $self->{_tool_error_loop_last_sig} = undef;
-            $self->{_tool_error_loop_last_iteration} = undef;
+            $self->reset_tool_error_loop();
 
             # Success-loop detection: successful read-only calls sharing a
             # loose signature (argument variations collapsed) with
@@ -2209,6 +2141,25 @@ sub _execute_tool_round {
                     }
                 }
             }
+        }
+
+        # A call whose arguments carry an impossible parameter name never had
+        # the field the model meant to send, and the tool result alone cannot
+        # say so: "missing blockedReason" is true of the parsed arguments and
+        # false of what the model wrote. State the cause here, once, so the
+        # model stops guessing at spellings.
+        if (my $mangled = $tool_call->{_mangled_key}) {
+            my $shown = $mangled;
+            $shown = substr($shown, 0, 80) . '...' if length($shown) > 80;
+            $ai_content .= "\n\nMALFORMED ARGUMENTS (from CLIO): the parameter name "
+                . "'" . $shown . "' is not a valid name, and a quote or bracket inside "
+                . "a name means a string value was parsed as a key - usually a stray "
+                . "quote or a value written without its surrounding braces. Fields you "
+                . "meant to send under that name never arrived. Re-send the call as one "
+                . "well-formed JSON object whose keys are parameter names from the "
+                . "schema.";
+            log_debug('WorkflowOrchestrator',
+                "Attached mangled-arguments note to $tool_name result");
         }
 
         # Sanitize tool result content
@@ -2246,30 +2197,16 @@ sub _execute_tool_round {
                     $$pending_msg_ref = undef;
                 }
 
-                # Save error results to session. When the tool error
-                # loop breaks, the enhanced guidance (with schema help)
-                # must persist in session history so the model sees it on
-                # resume. For non-loop-break errors, we still save the
-                # enhanced content so the model gets schema guidance on
-                # the next iteration — but we cap it to avoid bloating
-                # session files with huge schema dumps across many turns.
+                # Save the tool result the model actually saw. For errors that
+                # means the enhanced guidance with the schema help, plus any
+                # diagnosis appended during this round (mangled arguments, loop
+                # notes) - a resumed turn must not lose the explanation that
+                # told the model what went wrong. Capped so a long run of
+                # schema dumps cannot bloat the session file.
                 my $session_content = $sanitized_content;
-                if ($is_error && $result_data && ref($result_data) eq 'HASH') {
-                    my $loop_break = $self->{_tool_error_loop_break};
-                    my $enhanced = $enhanced_error_for_ai;
-                    if ($enhanced && (!$loop_break || $loop_break->{tool} eq $tool_name)) {
-                        # Save enhanced guidance when it helps the model fix
-                        # the error. Truncate very large schema dumps.
-                        $session_content = sanitize_text($enhanced);
-                        if (length($session_content) > 4096) {
-                            $session_content = substr($session_content, 0, 4096)
-                                . "\n... [truncated for session storage]";
-                        }
-                    } else {
-                        $session_content = sanitize_text(
-                            $result_data->{error} // "$tool_name: tool call failed"
-                        );
-                    }
+                if ($is_error && length($session_content) > 4096) {
+                    $session_content = substr($session_content, 0, 4096)
+                        . "\n... [truncated for session storage]";
                 }
                 $session->add_message(
                     'tool',
@@ -2362,6 +2299,247 @@ sub _get_tool_loop_detector {
     return $self->{tool_loop_detector};
 }
 
+=head2 track_tool_error_loop
+
+Account for a failed tool call and return guidance for the model.
+
+Two distinct patterns are tracked, because they mean different things:
+
+=over 4
+
+=item B<identical> - the same call (same tool, operation, error category,
+and arguments) failed again. Re-sending the same input cannot produce a
+different result. A note fires on the second identical failure and every
+second one after that.
+
+=item B<same_mode> - the same operation keeps failing the same way with
+DIFFERENT arguments. The model is working the problem, so this is not a
+loop; what it usually means is that the shape of the call is wrong (a
+field name, a type, a format) and varying the values cannot fix it. A
+note fires on the third such failure and every third one after that.
+
+=back
+
+The returned note is advisory. This method never ends the turn: a model
+that ignores every note still runs until the iteration budget stops it.
+Ending a turn is the orchestrator's decision, not the accounting's.
+
+Arguments (hash):
+    tool        - canonical tool name
+    operation   - operation, may be empty
+    category    - stable category from ToolErrorGuidance::categorize_error
+    args_digest - digest of the arguments the tool received
+    iteration   - current loop iteration (parallel calls in one iteration
+                  are not sequential retries)
+
+Returns a hashref:
+    sig       - identical-retry signature
+    identical - count of identical failures for sig
+    same_mode - count of failures for this tool/operation/category
+    guidance  - note to append to the error the model sees, or undef
+
+=cut
+
+sub track_tool_error_loop {
+    my ($self, %args) = @_;
+
+    my $tool      = $args{tool}      // 'unknown';
+    my $operation = $args{operation} // '';
+    my $category  = $args{category}  // 'unknown';
+    my $digest    = $args{args_digest} // '';
+    my $iteration = $args{iteration};
+
+    my $st = $self->{_tool_error_loop} //= {
+        by_sig         => {},
+        by_mode        => {},
+        last_sig       => undef,
+        last_iteration => undef,
+    };
+
+    my $mode_sig = join('|', $tool, $operation, $category);
+    my $sig      = join('|', $mode_sig, $digest);
+
+    my $same_sig  = defined $st->{last_sig} && $st->{last_sig} eq $sig;
+    my $same_iter = defined $st->{last_iteration} && defined $iteration
+        && $st->{last_iteration} == $iteration;
+
+    if ($same_sig && $same_iter) {
+        # Parallel duplicate within one iteration: not a sequential retry.
+    } elsif ($same_sig) {
+        $st->{by_sig}{$sig}++;
+        $st->{by_mode}{$mode_sig}++;
+    } else {
+        $st->{by_sig}{$sig} = 1;
+        # A different signature is still another attempt at the same failure
+        # mode, which is what by_mode measures.
+        $st->{by_mode}{$mode_sig} = ($st->{by_mode}{$mode_sig} // 0) + 1;
+    }
+
+    $st->{last_sig}       = $sig;
+    $st->{last_iteration} = $iteration;
+
+    my $identical = $st->{by_sig}{$sig} // 0;
+    my $same_mode = $st->{by_mode}{$mode_sig} // 0;
+
+    my $verdict = {
+        sig       => $sig,
+        mode_sig  => $mode_sig,
+        identical => $identical,
+        same_mode => $same_mode,
+        guidance  => undef,
+    };
+
+    # Identical repeats own the guidance channel while they continue. The
+    # same-mode note claims the arguments differ, which is false once the
+    # same call is being re-sent, so it must not fire in that state.
+    if ($identical >= 2) {
+        $verdict->{guidance} = $self->_error_identical_text($tool, $operation, $identical)
+            if $identical % 2 == 0;
+    } elsif ($same_mode >= 3 && $same_mode % 3 == 0) {
+        $verdict->{guidance} = $self->_error_same_mode_text($tool, $operation, $category, $same_mode);
+    }
+
+    return $verdict;
+}
+
+=head2 reset_tool_error_loop
+
+Clear error-loop accounting. Called on any successful tool call: the model
+got something to work, so earlier failures no longer describe its state.
+
+Returns: nothing.
+
+=cut
+
+sub reset_tool_error_loop {
+    my ($self) = @_;
+    delete $self->{_tool_error_loop};
+    return;
+}
+
+=head2 _parameter_name_is_mangled
+
+Report whether a parameter name could not have been written by a caller.
+
+A stray quote in the arguments JSON starts a runaway string: everything
+after it, up to the next quote, becomes part of the KEY NAME. The result
+still parses as valid JSON, so every layer between the model and the tool
+accepts it, and the tool then reports a missing field the model believes it
+supplied. The model cannot see its own mangled payload, so it guesses at
+field spellings and spirals.
+
+Quotes, brackets, braces, backslashes, control characters, and leading or
+trailing whitespace cannot appear in a parameter name. Hyphens, dots, and
+internal spaces are left alone: some tools legitimately use them.
+
+Arguments: $name
+Returns: 1 when the name is impossible, 0 otherwise
+
+=cut
+
+sub _parameter_name_is_mangled {
+    my ($self, $name) = @_;
+    return 0 unless defined $name && length $name;
+    return 1 if $name =~ /["'\[\]{}\\\x00-\x1f]/;
+    return 1 if $name =~ /^\s/ || $name =~ /\s$/;
+    return 0;
+}
+
+=head2 _find_mangled_key
+
+Search parsed arguments for a parameter name that is impossible, so a
+mangled payload is reported instead of silently ignored. Walks objects and
+arrays to a bounded depth; returns the offending key or undef.
+
+Arguments: $data (parsed arguments), $depth (internal)
+Returns: offending key string, or undef
+
+=cut
+
+sub _find_mangled_key {
+    my ($self, $data, $depth) = @_;
+    $depth //= 0;
+    return undef if $depth > 3;
+
+    if (ref $data eq 'HASH') {
+        for my $key (keys %$data) {
+            return $key if $self->_parameter_name_is_mangled($key);
+            my $found = $self->_find_mangled_key($data->{$key}, $depth + 1);
+            return $found if defined $found;
+        }
+    } elsif (ref $data eq 'ARRAY') {
+        for my $item (@$data) {
+            my $found = $self->_find_mangled_key($item, $depth + 1);
+            return $found if defined $found;
+        }
+    }
+    return undef;
+}
+
+=head2 _tool_arguments_digest
+
+Digest of the arguments a tool call carried, used to tell an identical
+retry apart from a new attempt. Falls back to the parsed arguments when the
+raw string is unavailable.
+
+Arguments: $tool_call (hashref)
+Returns: hex digest string, or '' when there is nothing to digest
+
+=cut
+
+sub _tool_arguments_digest {
+    my ($self, $tool_call) = @_;
+    return '' unless $tool_call && ref($tool_call) eq 'HASH';
+
+    my $raw = $tool_call->{function}{arguments};
+    if (!defined $raw || ref($raw)) {
+        my $parsed = $tool_call->{_parsed_args};
+        return '' unless $parsed && ref($parsed) eq 'HASH';
+        $raw = safe_encode_json($parsed, '{}');
+    }
+    return '' unless defined $raw && length $raw;
+
+    require Digest::SHA;
+    return Digest::SHA::sha256_hex($raw);
+}
+
+=head2 _error_identical_text
+
+Note for a repeated identical tool call.
+
+=cut
+
+sub _error_identical_text {
+    my ($self, $tool, $operation, $count) = @_;
+    my $call = length($operation // '') ? "$tool $operation" : $tool;
+    return "ERROR LOOP NOTICE (from CLIO): this is attempt #${count} of the identical "
+         . "'$call' call - same arguments, same error. Re-sending the same input cannot "
+         . "produce a different result, and the error above has not changed.\n"
+         . "Change the input: a different field, a different value, or a different "
+         . "operation. If the error names a field or a rule, copy the spelling from the "
+         . "schema in this message exactly.";
+}
+
+=head2 _error_same_mode_text
+
+Note for repeated failures of the same call with different arguments.
+
+=cut
+
+sub _error_same_mode_text {
+    my ($self, $tool, $operation, $category, $count) = @_;
+    my $call = length($operation // '') ? "$tool $operation" : $tool;
+    # Deliberately does not claim "each with different arguments": this
+    # channel also carries runs that mixed identical and varied attempts,
+    # and a note that states something false is worse than a generic one.
+    return "REPEATED FAILURE (from CLIO): ${count} calls to '$call' have now failed the "
+         . "same way ('$category'). Varying what you send has not fixed it, so the "
+         . "problem is the shape of the call, not the values.\n"
+         . "Read the schema in the error above and change which fields you send, not just "
+         . "what you put in them. Do not invent field names: a name the schema does not "
+         . "list is rejected, never applied.";
+}
+
 # Validate, classify, and order tool calls from an API response.
 #
 # Performs:
@@ -2392,6 +2570,11 @@ sub _prepare_tool_round {
     # tool_use/tool_result position-pairing check passes. Cleared at the
     # end of every call so no leak across iterations.
     $self->{_deferred_invalid_tool_results} = [];
+
+    # Keep the calls as they arrived. If Phase 1 rejects all of them the
+    # assistant message still has to carry them, or their rejection results
+    # would be orphan tool_results that no provider accepts.
+    my @incoming_tool_calls = @{ $api_response->{tool_calls} || [] };
 
     # ── Phase 1: Validate tool_call argument JSON ────────────────────
     my @validated_tool_calls = ();
@@ -2494,6 +2677,47 @@ sub _prepare_tool_round {
                 };
             }
         } else {
+            # A tool call's arguments are a JSON object of parameter names.
+            # A model can emit a bare string or array here, which decodes
+            # successfully and then dies on the first hash access - killing
+            # the turn for a shape error the model could have been told about.
+            unless (ref($parsed_args) eq 'HASH') {
+                $had_validation_errors = 1;
+                my $kind = ref($parsed_args) eq 'ARRAY' ? 'an array'
+                    : ref($parsed_args) ? 'a ' . ref($parsed_args) . ' reference'
+                    : defined $parsed_args ? 'a string' : 'null';
+                log_warning('WorkflowOrchestrator',
+                    "Rejecting tool call '$tool_name': arguments decoded to $kind, "
+                    . "not an object");
+                push @{$self->{_deferred_invalid_tool_results}}, {
+                    role => 'tool',
+                    tool_call_id => $tool_call->{id},
+                    name => $tool_name,
+                    content => "ERROR: The arguments for '$tool_name' decoded to "
+                        . "$kind, but they must be a JSON object of parameter names. "
+                        . "Nothing was executed.\n"
+                        . "Re-send the call with an object, for example "
+                        . "{\"path\": \"lib/foo.pm\"}.",
+                };
+                next;
+            }
+
+            # The JSON parsed, but a parameter name could not have been
+            # written by a caller. That is the signature of a stray quote:
+            # the rest of the payload became part of a key name, so the
+            # intended field never arrived while every layer below accepts
+            # the result as valid JSON. Record it and let the tool run - a
+            # missing required parameter will fail on its own, and the
+            # explanation is attached to whatever result the model gets.
+            my $mangled = $self->_find_mangled_key($parsed_args);
+            if (defined $mangled) {
+                $tool_call->{_mangled_key} = $mangled;
+                log_warning('WorkflowOrchestrator',
+                    "Tool call '$tool_name' carries an impossible argument key "
+                    . "'" . substr($mangled, 0, 80) . "' - arguments JSON is "
+                    . "likely mangled by a stray quote");
+            }
+
             # Stash parsed args for downstream reuse (avoids re-parsing in Phase 3 and ToolExecutor)
             $tool_call->{_parsed_args} = $parsed_args;
             push @validated_tool_calls, $tool_call;
@@ -2504,17 +2728,19 @@ sub _prepare_tool_round {
 
     # All tool calls rejected
     if (@validated_tool_calls == 0) {
-        log_debug('WorkflowOrchestrator', "All tool calls were rejected due to invalid JSON - skipping tool execution");
+        log_debug('WorkflowOrchestrator',
+            "All " . scalar(@incoming_tool_calls) . " tool calls were rejected - "
+            . "reporting each rejection to the model");
+        # The assistant message keeps the rejected calls so the rejection
+        # results have a matching tool_use. Dropping them left the model with
+        # a generic "I encountered an error" and no idea what was wrong with
+        # its arguments; the reason was computed and then thrown away.
         push @$messages, {
-            role => 'assistant',
-            content => $api_response->{content} || "I encountered an error with my tool calls. Let me try a different approach."
+            role       => 'assistant',
+            content    => $api_response->{content} || '',
+            tool_calls => [ @incoming_tool_calls ],
         };
-        # Discard any deferred invalid-JSON tool_results - with no
-        # assistant-with-tool_calls message in the conversation, they
-        # would be orphan. Anthropic rejects orphan tool_results (they
-        # require a preceding assistant with tool_use), so we drop them
-        # here. The assistant content above already tells the model to
-        # retry with valid JSON.
+        push @$messages, @{ $self->{_deferred_invalid_tool_results} || [] };
         $self->{_deferred_invalid_tool_results} = [];
         return undef;
     }

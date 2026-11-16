@@ -1,8 +1,8 @@
 #!/usr/bin/env perl
 # SPDX-License-Identifier: GPL-3.0-only
 # SPDX-FileCopyrightText: Copyright (c) 2026 Andrew Wyatt (Fewtarius)
-
-# Regression test for the category-based tool error loop signature.
+#
+# Regression test for the category-based tool error signature.
 #
 # The OLD signature was tool|operation|first80chars(error). Two failure modes:
 #   1. Slight variance in the raw error text (timestamps, IDs, line
@@ -10,10 +10,10 @@
 #   2. Different operation names that resolve to the same root cause
 #      reset the count.
 #
-# The NEW signature is tool|operation|error_category where error_category
-# is the stable enum produced by ToolErrorGuidance::categorize_error.
-# This test verifies the new signature is robust to noise in the raw
-# error text.
+# The signature is now tool|operation|category|arguments-digest, where the
+# category is the stable enum produced by ToolErrorGuidance::categorize_error.
+# This test drives the real accounting method (not a copy of it), so a change
+# to the code fails the test instead of drifting away from it.
 
 use strict;
 use warnings;
@@ -22,67 +22,29 @@ use FindBin qw($RealBin);
 use lib "$RealBin/../../lib";
 
 use Test::More;
+use File::Temp qw(tempdir);
+use CLIO::Core::Config;
+use CLIO::Core::WorkflowOrchestrator;
 use CLIO::Core::ToolErrorGuidance;
 
-# Build a FakeOrchestrator that mirrors the new signature: tool +
-# operation + error_category. This is the canonical reference for what
-# WorkflowOrchestrator does at lib/CLIO/Core/WorkflowOrchestrator.pm:2489.
-package FakeOrchestrator;
-
-sub new {
-    my ($class) = @_;
-    return bless {
-        _tool_error_loop_count => {},
-        _tool_error_loop_last_sig => undef,
-        _error_guidance => CLIO::Core::ToolErrorGuidance->new(),
-    }, $class;
-}
-
-sub _err_category {
-    my ($self, $error, $tool_name) = @_;
-    return $self->{_error_guidance}->categorize_error($error // '', $tool_name // '');
-}
-
-sub record_tool_outcome {
-    my ($self, $tool_name, $tool_operation, $result_data) = @_;
-    return ($self->{_tool_error_loop_count}, $self->{_tool_error_loop_last_sig})
-        unless $result_data && ref($result_data) eq 'HASH';
-
-    my $is_error = exists $result_data->{success} && !$result_data->{success};
-    my $err_category = $is_error
-        ? $self->_err_category($result_data->{error} // '', $tool_name)
-        : 'unknown';
-    my $err_sig = join("|",
-        $tool_name,
-        $tool_operation || '',
-        $err_category
+sub build_orchestrator {
+    my $dir = tempdir(CLEANUP => 1);
+    open my $fh, '>', "$dir/config.json" or die $!;
+    print $fh q({"provider":"github_copilot","api_key":"sk-test-key"});
+    close $fh;
+    return CLIO::Core::WorkflowOrchestrator->new(
+        config  => CLIO::Core::Config->new(config_dir => $dir),
+        debug   => 0,
+        session => undef,
     );
-
-    if ($is_error) {
-        if (defined $self->{_tool_error_loop_last_sig}
-            && $self->{_tool_error_loop_last_sig} eq $err_sig) {
-            $self->{_tool_error_loop_count}{$err_sig}++;
-        } else {
-            $self->{_tool_error_loop_count}{$err_sig} = 1;
-            $self->{_tool_error_loop_last_sig} = $err_sig;
-        }
-        my $count = $self->{_tool_error_loop_count}{$err_sig};
-        return ($self->{_tool_error_loop_count}, $count, $err_sig);
-    } else {
-        $self->{_tool_error_loop_count} = {};
-        $self->{_tool_error_loop_last_sig} = undef;
-        return ($self->{_tool_error_loop_count}, 0, undef);
-    }
 }
 
-package main;
+subtest 'raw error noise does not reset the count' => sub {
+    my $orch = build_orchestrator();
+    my $guidance = CLIO::Core::ToolErrorGuidance->new();
 
-subtest 'category-based signature is stable across raw error noise' => sub {
-    my $orc = FakeOrchestrator->new();
-
-    # Same root cause (missing required parameter) with slightly different
-    # raw text. The OLD signature would reset to 1 each time. The NEW
-    # signature keeps the count incrementing.
+    # Same root cause, different raw text. The categorizer collapses all of
+    # these to one category, so the accounting sees one failure mode.
     my @errors = (
         "Missing required parameter: command",
         "Missing 'command' parameter",
@@ -90,96 +52,58 @@ subtest 'category-based signature is stable across raw error noise' => sub {
         "Missing or empty 'command' parameter",
     );
 
-    my @sigs;
-    for my $err (@errors) {
-        my ($count_h, $count, $sig) = $orc->record_tool_outcome(
-            'terminal_operations', 'exec',
-            { success => 0, error => $err }
+    my @verdicts;
+    my $iteration = 0;
+    for my $error (@errors) {
+        my $category = $guidance->categorize_error($error, 'terminal_operations');
+        is($category, 'missing_required', "category for '$error'");
+        push @verdicts, $orch->track_tool_error_loop(
+            tool        => 'terminal_operations',
+            operation   => 'exec',
+            category    => $category,
+            args_digest => 'same-arguments',
+            iteration   => ++$iteration,
         );
-        push @sigs, $sig;
     }
 
-    # All four signatures should be the same because the categorizer
-    # reduces them all to 'missing_required'.
-    is($sigs[0], $sigs[1], 'sig 0 == sig 1 (same category)');
-    is($sigs[1], $sigs[2], 'sig 1 == sig 2 (same category)');
-    is($sigs[2], $sigs[3], 'sig 2 == sig 3 (same category)');
-
-    # And the signature should NOT contain the raw error text.
-    unlike($sigs[0], qr/Missing required parameter/,
-        'signature does not contain raw error text');
-    like($sigs[0], qr/missing_required/, 'signature contains category name');
+    is($verdicts[1]{identical}, 2, 'second form of the same error counts as a repeat');
+    is($verdicts[3]{identical}, 4, 'fourth form still counts, despite different wording');
+    ok(defined $verdicts[3]{guidance}, 'a note is produced once the pattern is real');
 };
 
-subtest 'different categories reset the count' => sub {
-    my $orc = FakeOrchestrator->new();
+subtest 'different categories are counted separately' => sub {
+    my $orch = build_orchestrator();
+    my $guidance = CLIO::Core::ToolErrorGuidance->new();
 
-    # First: missing_required (3 times -> count 3)
-    $orc->record_tool_outcome('terminal_operations', 'exec',
-        { success => 0, error => "Missing required parameter: command" });
-    $orc->record_tool_outcome('terminal_operations', 'exec',
-        { success => 0, error => "Missing 'command' parameter" });
-    my ($h, $count1) = $orc->record_tool_outcome('terminal_operations', 'exec',
-        { success => 0, error => "Missing or empty 'command' parameter" });
-    is($count1, 3, '3 missing_required errors -> count=3');
+    my $missing = $guidance->categorize_error('Missing required parameter: path', 'file_operations');
+    my $invalid = $guidance->categorize_error('Unknown operation: list_directory', 'file_operations');
+    isnt($missing, $invalid, 'the two errors have different categories');
 
-    # Different category (invalid_operation) -> reset to 1
-    my ($h2, $count2, $sig2) = $orc->record_tool_outcome(
-        'terminal_operations', 'exec',
-        { success => 0, error => "Unknown operation: foo" });
-    is($count2, 1, 'switching to invalid_operation resets count to 1');
-    like($sig2, qr/invalid_operation/, 'signature reflects new category');
+    $orch->track_tool_error_loop(
+        tool => 'file_operations', operation => '', category => $missing,
+        args_digest => 'a', iteration => 1);
+    my $v = $orch->track_tool_error_loop(
+        tool => 'file_operations', operation => '', category => $invalid,
+        args_digest => 'b', iteration => 2);
+
+    is($v->{same_mode}, 1, 'a different category starts its own count');
+    is($v->{identical}, 1, 'a different category is not an identical retry');
 };
 
-subtest 'categorize_error public wrapper is callable' => sub {
-    my $eg = CLIO::Core::ToolErrorGuidance->new();
-    is($eg->categorize_error("Missing required parameter: foo", "test_tool"),
-        'missing_required', 'missing_required category');
-    is($eg->categorize_error("Unknown operation: bar", "test_tool"),
-        'invalid_operation', 'invalid_operation category');
-    is($eg->categorize_error("Working directory does not exist", "test_tool"),
-        'directory_not_found', 'directory_not_found category');
-    is($eg->categorize_error("permission denied", "test_tool"),
-        'permission_denied', 'permission_denied category');
-    is($eg->categorize_error("", "test_tool"),
-        'generic_error', 'empty error -> generic_error');
-};
+subtest 'a changed argument set is a new attempt, not a repeat' => sub {
+    my $orch = build_orchestrator();
 
-subtest 'same root cause across different operations stays in same category' => sub {
-    my $orc = FakeOrchestrator->new();
+    my $first = $orch->track_tool_error_loop(
+        tool => 'todo_operations', operation => 'update',
+        category => 'todo_validation_failed', args_digest => 'attempt-1', iteration => 1);
+    my $second = $orch->track_tool_error_loop(
+        tool => 'todo_operations', operation => 'update',
+        category => 'todo_validation_failed', args_digest => 'attempt-2', iteration => 2);
 
-    # Two different operation names, same missing-parameter root cause.
-    my ($h1, $count1, $sig1) = $orc->record_tool_outcome('file_operations', 'read_file',
-        { success => 0, error => "Missing 'path' parameter" });
-    my ($h2, $count2, $sig2) = $orc->record_tool_outcome('file_operations', 'write_file',
-        { success => 0, error => "Missing 'path' parameter" });
-
-    # Different operations => different signatures => count resets.
-    # (This is intentional: the operation is part of the signature so
-    # we don't conflate "missing path in read" with "missing path in
-    # write" - they need different fixes.)
-    isnt($sig1, $sig2,
-        'different operations produce different signatures');
-    is($count1, 1, 'first op error count=1');
-    is($count2, 1, 'second op error count=1 (different op = different sig)');
-};
-
-subtest 'successful call resets tracking even after many errors' => sub {
-    my $orc = FakeOrchestrator->new();
-
-    $orc->record_tool_outcome('terminal_operations', 'exec',
-        { success => 0, error => "Missing required parameter: foo" });
-    $orc->record_tool_outcome('terminal_operations', 'exec',
-        { success => 0, error => "Missing required parameter: foo" });
-    my ($h, $count) = $orc->record_tool_outcome('terminal_operations', 'exec',
-        { success => 0, error => "Missing required parameter: foo" });
-    is($count, 3, '3 errors before success');
-
-    my ($h2, $count_after, $sig_after) = $orc->record_tool_outcome(
-        'terminal_operations', 'exec',
-        { success => 1, result => 'ok' });
-    is($count_after, 0, 'success resets count to 0');
-    is($sig_after, undef, 'success clears last signature');
+    is($first->{identical}, 1,  'first attempt: identical count 1');
+    is($second->{identical}, 1, 'changed arguments: identical count stays 1');
+    is($second->{same_mode}, 2, 'but the failure mode is still counted');
+    is($second->{guidance}, undef, 'no note yet: the model is still trying');
 };
 
 done_testing();
