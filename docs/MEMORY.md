@@ -81,7 +81,7 @@ When the context window needs trimming, `compress_messages()` takes the messages
 | **Key decisions** | Collaboration exchanges with metadata or [COLLABORATION] prefix | 8 | Yes (down to 2 at 32K, up to 32 at 1M) |
 | **Discussion** | Collaboration Q/A pairs from interact tool calls | 10 | Yes |
 
-**Context-aware budgeting:** The summary cap scales with the model's context window at ~2.5% of the context window in tokens (converted to characters via the TokenEstimator ratio). For 128K contexts this produces ~12,800 chars (up from the previous hardcoded 4,000). For 256K it is ~25,600 chars; for 1M it is capped at 60,000 chars. The per-turn compressed tail (in the dynamic userContext) uses ~0.5% of the context window, scaling from ~1,200 chars at 32K to ~20,000 chars at 1M.
+**Context-aware budgeting:** The trim-path summary cap scales with the model's context window at ~2.5% of the context window in tokens (converted to characters via the TokenEstimator ratio). For 128K contexts this produces ~12,800 chars (up from the previous hardcoded 4,000). For 256K it is ~25,600 chars; for 1M it is capped at 60,000 chars. The per-turn compressed tail is sized by what it replaces rather than by the window alone: max(0.5% of the context window, 10% of the dropped tokens), capped at 4% of the prompt budget. See [Context Management](CONTEXT_MANAGEMENT.md).
 
 **Token estimation** uses `CLIO::Memory::TokenEstimator` (learned ratio from API feedback, default 4.0 chars/token) rather than a hardcoded 2.5 ratio.
 

@@ -115,8 +115,8 @@ authority - read them, do not infer from the module name.
 - `lib/CLIO/Core/PluginManager.pm` - Plugin lifecycle
 - `lib/CLIO/Core/PromptBuilder.pm` - Prompt construction (system prompt, the cache-stable [0])
 - `lib/CLIO/Core/PromptManager.pm` - Prompt template storage
-- `lib/CLIO/Core/ContextBuilder.pm` - Per-request projection: anchor turn + recent turns + LTM relevance + cross-turn dedup
-- `lib/CLIO/Core/MessageHistory.pm` - Prose renderer for the dynamic userContext system message
+- `lib/CLIO/Core/ContextBuilder.pm` - Per-request projection: budget-driven turn selection, compressed tail, LTM relevance, cross-turn dedup
+- `lib/CLIO/Core/MessageHistory.pm` - Prose renderer for the dynamic user context block
 - `lib/CLIO/Core/ConversationManager.pm` - History loading + role-based tail walk + reasoning-content stripping
 - `lib/CLIO/Core/API/MessageValidator.pm` - `_role_based_tail_walk` (proactive/reactive trim); protects system_prompt, dynamic userContext, current user_input, tool_call/tool_result pairs
 - `lib/CLIO/Core/ModelDataLoader.pm` - Unified model capability data loader
@@ -431,6 +431,7 @@ command_label (cyan), command_value (white).
 | `docs/SECURITY.md` | Security model and six-layer protection |
 | `docs/PROVIDERS.md` | Provider setup and configuration |
 | `docs/MEMORY.md` | Memory architecture and LTM design |
+| `docs/CONTEXT_MANAGEMENT.md` | Context pipeline: what is sent, budget math, selection, trim, measurement |
 | `docs/MCP.md` | Model Context Protocol integration |
 | `docs/SANDBOX.md` | Sandbox mode |
 | `docs/REMOTE_EXECUTION.md` | Remote execution via SSH |

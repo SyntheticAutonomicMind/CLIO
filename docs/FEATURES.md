@@ -871,45 +871,45 @@ CLIO manages a limited context window (the amount of conversation the AI can "se
 
 ### How Context Is Delivered to the Model
 
-CLIO builds the per-request model-facing context as a stack of role-based messages plus one dynamic userContext system message. The cache-stable prefix is `[system prompt, anchor turn, recent turns]`; the dynamic suffix is `[userContext, user input, current turn exchanges]`. The split is what keeps long sessions fast.
+CLIO builds the per-request model-facing context as a stack of role-based messages plus one dynamic user context block. The cache-stable prefix is `[system prompt, selected history]`; the dynamic suffix is `[user context + user input, current turn exchanges]`. The split is what keeps long sessions fast.
 
 ```text
 messages array sent to the API:
-  [0]  system         system prompt (cache-stable)
-  [1..N] user/assistant/tool   anchor turn + recent turns (cache-stable)
-  [N+1] system        dynamic userContext (changes per turn)
-  [N+2] user          current user input
-  [N+3..] assistant/tool      current turn tool exchanges
+  [0]     system            system prompt (cache-stable)
+  [1..N]  user/assistant/tool   history selected by the projection
+  [N+1]   user              user context + current input (one message)
+  [N+2..] assistant/tool    current turn tool exchanges
 ```
+
+The user context (working directory, date, language, active todos, compressed tail, context files) is prepended to the user message, not pushed as a separate system message. A system message between history and user input breaks tool calling on OpenAI-compatible providers and breaks llama.cpp's Jinja templates.
 
 #### System prompt `[0]` (cache-stable prefix anchor)
 
 Built by `PromptBuilder::build_system_prompt`. Includes the base prompt, installed-skills section, user-profile section, plugin instructions, and puppeteer topology. Only changes when these inputs change. The thinking-steering section is added for Anthropic adaptive-mode models only (other providers' native thinking does not benefit from it and M3 was observed producing low-quality thinking when steered).
 
-#### Anchor + recent turns `[1..N]` (cache-stable)
+#### Selected history `[1..N]` (cache-stable)
 
 Selected by `ContextBuilder::build_projection` from the role-based history:
 
-- **Anchor turn** — the first substantive user message (>=50 chars) plus the assistant's first response. The model always knows what it was originally asked to do, even after aggressive trimming. Falls back to YaRN's `recover_substantive_task` when state history has been trimmed past the original.
-- **Recent turns** — the latest 1-2 complete turns, pushed as role-based messages. The model sees the tool_call/tool_result pairs in their native wire format, not as prose.
+- **Selection is budget-driven, not a turn count.** Turns are added newest-first while they fit within 70% of the available prompt budget (model budget minus system prompt and tool schema). When the total exceeds that, old turns are dropped until the remainder is below 55%. The gap is headroom, so the next turn does not re-trigger a drop. The last two turns always survive.
+- **Anchor** — the first substantive user message (>=50 chars) plus the assistant's first response, when it is not already inside the selected window. Falls back to YaRN's `recover_substantive_task` when history has been trimmed past the original.
+- Turns dropped by the projection are compressed into a `<thread_summary>` block that is prepended to the current user message. The block's size scales with what it replaces: max(0.5% of the context window, 10% of the dropped tokens), capped at 4% of the prompt budget.
 
 This is the role-based history refactor: history was previously collapsed into a single `<messageHistory>` XML system message (which required a custom XML parser for trim and had cache-stability problems with attribute mutations). It's now structured messages the APIs expect natively.
 
-#### Dynamic userContext system message `[N+1]` (dynamic suffix)
+#### User context block `[N+1]` (dynamic suffix)
 
-Rendered by `MessageHistory::messages_to_prose_dynamic` as markdown. Changes every turn (datetime, todo mutations, LTM rescore, environment), so it's placed AFTER the cache-stable prefix to avoid invalidating it. Sections:
+Rendered by `MessageHistory::messages_to_prose_dynamic` as markdown and prepended to the user input. Changes every turn (datetime, todo mutations, environment), so it is placed AFTER the cache-stable prefix to avoid invalidating it. Sections:
 
 ```text
-# Earlier work       (compressed tail of dropped turns)
-# Active task        (from session_goals)
-# Active todos       (current in-progress + pending + blocked)
-# Unresolved state   (recent tool errors, only when present)
-# Relevant memory    (top-5 LTM entries by relevance score)
-# Environment        (cwd, language, datetime_iso)
+Active todos:        (current in-progress + pending + blocked)
 [CONTEXT FILES]      (block from /context add, if any)
+## Long-Term Memory   (top-5 scored entries, when relevant)
 ```
 
-No framework narration. No tier labels. No "After context trimming" footer. No "Use `memory_operations` to retrieve" instructions. These were removed because the model was treating them as directives and spending turns on unnecessary tool calls.
+Environment (working directory, date, language) comes from `PromptBuilder::get_user_context` and is prepended to the input, so it has a single source. The compressed tail is folded in by `WorkflowOrchestrator` rather than rendered here.
+
+No framework narration. No "After context trimming" footer. No "Use `memory_operations` to retrieve" instructions. These were removed because the model was treating them as directives and spending turns on unnecessary tool calls.
 
 #### Repeated tool-call collapse
 
@@ -931,16 +931,16 @@ When the role-based tail walk has to drop messages to fit the budget, CLIO prote
 
 1. **System prompt** `[0]` — never dropped (would invalidate the cache-stable prefix anchor).
 2. **Anchor user message** (first user message) — never dropped, even if it pushes the budget over. If it does, the proactive trim aborts and reactive trim kicks in.
-3. **Dynamic userContext system message** `[N+1]` — never dropped. The model needs the active task, todos, and relevant memory references regardless of how aggressive the trim is.
-4. **Current turn's user input** — never dropped (the model has to know what the user just asked).
+3. **Current turn's user input** (carrying the user context block) — never dropped (the model has to know what the user just asked, and the context block rides with it).
+4. **Existing `<thread_summary>` blocks** — never dropped, so cross-cycle carryover survives.
 5. **Tool call/result pairs** — always kept together, never orphaned.
-6. **Recent tool exchanges** — newest first, oldest dropped first within the recent-turn range.
+6. **Recent tool exchanges** — newest first, oldest dropped first.
 
 If the trim still exceeds budget after protecting these, the proactive trim yields and the reactive trim fires (below).
 
 ### Trim Layers
 
-1. **Proactive trim** (before API call, every iteration after the first) — `MessageValidator::validate_and_truncate` walks the array newest-to-oldest, dropping whole tool_call/tool_result batches while pinning the system prompt `[0]`, the anchor (first user) message, any existing `<thread_summary>` system messages, and the current (last) user message. Dropped messages are re-compressed into a `<thread_summary>` system message injected *before* the last user message. `compute_prompt_budget($caps)` (context window minus output reserve minus tool tokens) sets the budget.
+1. **Proactive trim** (before every API call, including the first iteration) — `MessageValidator::validate_and_truncate` walks the array newest-to-oldest, dropping whole tool_call/tool_result batches while pinning the system prompt `[0]`, the first user message, any message carrying a `<thread_summary>`, and the current (last) user message. It trims to a target of 75% of the effective limit, not to the limit itself, so a trim buys headroom instead of firing every few turns. Dropped messages are re-compressed into a `<thread_summary>` folded into the last user message. `compute_prompt_budget($caps)` sets the budget: context window minus output reserve minus estimation buffer; then the tool schema is subtracted.
 
 2. **Reactive trim** (after API rejection) — `ErrorHandler::trim_for_token_limit` fires when the provider returns `token_limit_exceeded`. It uses a three-tier strategy: tier 1 (retry 1) keeps messages that fit `compute_prompt_budget`; tier 2 (retry 2) keeps the last 25%; tier 3 (retry 3+) keeps the current user message + the last two messages. Each tier compresses the dropped messages into a `<thread_summary>` system message and injects it *before* the last user message — preserving the canonical topology where the final message is always the current user request.
 
@@ -950,7 +950,11 @@ The final message is always the current user request so the provider treats it a
 
 ### Token Estimation
 
-CLIO estimates token counts using a learned character-to-token ratio that calibrates itself against actual API responses over time. The proactive trim uses `TokenEstimator::compute_prompt_budget($caps)` which subtracts max_output_tokens and tool definitions from the model's max_context_window_tokens, then subtracts estimated tool tokens to get the effective prompt budget.
+CLIO estimates token counts using a learned character-to-token ratio that calibrates itself against actual API responses over time. When no observation exists yet, the estimator's default (4.0 chars/token) is used; the validator no longer falls back to a lower constant that would under-estimate prompt size.
+
+The budget is computed once, by `TokenEstimator::compute_prompt_budget($caps)`: context window minus the model's output reserve (clamped to 131072) minus an estimation buffer (8192 + 5% of the window, capped at 51200). The tool schema is then subtracted from that to get the effective limit, and the trim target is 75% of the effective limit.
+
+Every request records what the budget was and what filled it. Use `/context` for the last request, or `tools/context_trace.pl <session.json>` for the per-request table. See [Context Management](CONTEXT_MANAGEMENT.md) for the full pipeline.
 
 ---
 

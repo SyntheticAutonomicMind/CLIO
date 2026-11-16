@@ -70,15 +70,22 @@ Caches are invalidated when the underlying state changes (e.g., theme switch, to
 
 ## Context Window Management
 
-CLIO manages the AI context window automatically with a two-tier trimming system:
+CLIO manages the AI context window automatically. Selection is budget-driven and happens in two places: the projection (what history to keep) and the validator (what must fit before a request goes out).
 
 ### Proactive Trimming
 
-The `MessageValidator` trims messages before each API call using a token-budget walk. It walks backward from the newest message, keeping messages until the budget is exhausted. This runs every iteration after the first.
+The `MessageValidator` trims messages before each API call using a token-budget walk. It walks backward from the newest message, keeping whole tool_call/tool_result batches until the budget is exhausted. This runs before every iteration, including the first.
 
-- **Safe context threshold:** 75% of the model's max context (`SAFE_CONTEXT_PERCENT = 0.75`)
+- **Budget:** `compute_prompt_budget` = context window minus the model's output reserve (clamped to 131072) minus an estimation buffer (8192 + 5% of the window, capped at 51200). The tool schema is then subtracted.
+- **Trim target:** 75% of the effective limit (`CONTEXT_TRIM_TARGET = 0.75`). Trimming to the target rather than to the limit buys headroom, so the conversation grows for many turns before the next trim.
 - **Strategy:** Budget walk from newest, preserves most recent user message
-- **Thread summary:** Compressed summary of dropped messages injected as context
+- **Thread summary:** Compressed summary of dropped messages folded into the current user message
+
+### Projection Selection
+
+Before the validator runs, `ContextBuilder::build_projection` selects which turns to include. Turns are added newest-first while they fit within 70% of the available budget; when the total exceeds that, old turns are dropped until it is below 55%. The compressed summary of dropped turns is capped at max(0.5% of the window, 10% of the dropped tokens), up to 4% of the prompt budget.
+
+See [Context Management](CONTEXT_MANAGEMENT.md) for the full pipeline and the budget arithmetic.
 
 ### Reactive Trimming
 
