@@ -78,7 +78,7 @@ authority - read them, do not infer from the module name.
 | `lib/CLIO/MCP/` | Model Context Protocol (Manager, Client, Transport::HTTP, Transport::Stdio, Auth/OAuth) |
 | `lib/CLIO/Logging/` | Structured logging (ToolLogger, ProcessStats) |
 | `lib/CLIO/Compat/` | Compatibility layers (Terminal, HTTP) |
-| `lib/CLIO/Util/` | Utilities (PathResolver, TextSanitizer, JSON, JSONRepair, YAML, ImageAttachment, ImageDisplay, ConfigPath, AtomicWrite, RateLimit, GitIgnore, AnthropicXMLParser, CABundle, Curl, InputHelpers, Proxy, UUID) |
+| `lib/CLIO/Util/` | Utilities (PathResolver, TextSanitizer, JSON, JSONRepair, YAML, ImageAttachment, ImageDisplay, ConfigPath, AtomicWrite, DisplayWidth, RateLimit, GitIgnore, AnthropicXMLParser, CABundle, Curl, InputHelpers, Proxy, UUID) |
 | `lib/CLIO/Spec/` | OpenSpec integration (Manager) |
 | `lib/CLIO/Core/model-data/` | Unified model capability JSON files (models.json, provider-defaults.json, heuristics.json, provider-mapping.json) |
 | `docs/` | User/dev documentation |
@@ -235,7 +235,7 @@ If the system handles the condition (retry, reroute, fallback), use `log_debug`,
 | `CLIO::Security::` | Auth/authz | Auth, Authz, AuthorizationRelay, CommandAnalyzer, InvisibleCharFilter, PathAuthorizer, SecretRedactor |
 | `CLIO::Logging::` | Structured logging | ToolLogger, ProcessStats |
 | `CLIO::Compat::` | Compatibility | Terminal (ReadKey, ReadMode), HTTP |
-| `CLIO::Util::` | Utilities | PathResolver, TextSanitizer, JSON, JSONRepair, YAML, ImageAttachment, ImageDisplay, ConfigPath, AtomicWrite, RateLimit, GitIgnore, AnthropicXMLParser, CABundle, Curl, InputHelpers, Proxy, UUID |
+| `CLIO::Util::` | Utilities | PathResolver, TextSanitizer, JSON, JSONRepair, YAML, ImageAttachment, ImageDisplay, ConfigPath, AtomicWrite, DisplayWidth, RateLimit, GitIgnore, AnthropicXMLParser, CABundle, Curl, InputHelpers, Proxy, UUID |
 | `CLIO::Code::` | Code intelligence | Scanner, Extractor |
 | `CLIO::Spec::` | OpenSpec integration | Manager |
 | `CLIO::Test::` | Test infrastructure | MockAPI |

@@ -9,6 +9,7 @@ use utf8;
 use Time::HiRes qw(usleep time);
 use POSIX ();
 use CLIO::Core::Logger qw(log_debug);
+use CLIO::Util::DisplayWidth qw(display_width);
 
 
 =head1 NAME
@@ -302,52 +303,11 @@ sub _locale_supports_utf8 {
     return 0;
 }
 
-# Compute the terminal display width of $str using the same logic as
-# CLIO::Core::ReadLine::_display_width, but without a hard dependency on
-# that module (which would risk a circular require at load time). We
-# replicate the essential cases: CJK/fullwidth = 2 cols, combining marks
-# and zero-width chars = 0, ASCII = 1. If Unicode::GCString is available
-# (it usually is in a Perl installation with Unicode), we prefer it for
-# accuracy.
+# Frame erasure needs the same column count the terminal uses. The shared
+# util lives in CLIO::Util::DisplayWidth, which carries no UI dependencies,
+# so importing it here does not risk a circular require.
 sub _spinner_display_width {
-    my ($str) = @_;
-    return 0 unless defined $str && length($str);
-
-    # Fast path: if all chars are ASCII, width == length.
-    if ($str =~ /^[\x20-\x7E]*$/) {
-        return length($str);
-    }
-
-    # Use Unicode::GCString if available (same as ReadLine).
-    if (eval { require Unicode::GCString; 1 }) {
-        return Unicode::GCString->new($str)->columns();
-    }
-
-    # Fallback: process grapheme clusters via \X.
-    my $width = 0;
-    while ($str =~ /(\X)/g) {
-        my $cluster = $1;
-        for my $i (0 .. length($cluster) - 1) {
-            my $ch = substr($cluster, $i, 1);
-            my $cp = ord($ch);
-            # Zero-width: combining marks, ZWJ, ZWNJ, VS, etc.
-            next if $ch =~ /\p{Mn}/;
-            next if $ch =~ /\p{Me}/;
-            next if $cp == 0x200B || $cp == 0x200C || $cp == 0x200D
-                 || $cp == 0x2060 || $cp == 0xFEFF
-                 || ($cp >= 0xFE00 && $cp <= 0xFE0F)
-                 || ($cp >= 0xE0001 && $cp <= 0xE007F);
-            # Wide: CJK, fullwidth, regional indicators
-            if ($ch =~ /\p{EA=Wide}/ || $ch =~ /\p{EA=Fullwidth}/
-                || ($cp >= 0x1F1E6 && $cp <= 0x1F1FF)) {
-                $width += 2;
-            } else {
-                $width += 1;
-            }
-            last;  # only count the first non-zero-width char of the cluster
-        }
-    }
-    return $width;
+    return display_width($_[0]);
 }
 
 sub DESTROY {

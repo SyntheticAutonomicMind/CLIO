@@ -8,6 +8,7 @@ use warnings;
 use utf8;
 
 use CLIO::UI::Terminal qw(box_char ui_char);
+use CLIO::Util::DisplayWidth qw(display_width);
 
 use open ':std', ':encoding(UTF-8)';
 
@@ -318,35 +319,10 @@ sub _visual_length {
     # Restore @ symbols that were inside code blocks
     $clean =~ s/\x01/\@/g;
     
-    # Count visual width, accounting for common wide characters
-    # See: https://www.unicode.org/reports/tr11/ (East Asian Width)
-    my $width = 0;
-    for my $char (split //, $clean) {
-        my $ord = ord($char);
-        # Characters that are truly double-width (East Asian Wide/Fullwidth):
-        # - CJK Unified Ideographs and extensions
-        # - Fullwidth ASCII variants
-        # - Certain emoji (specifically those in presentation sequences)
-        # 
-        # NOT double-width (though sometimes rendered wide):
-        # - Dingbats (U+2700-U+27BF) - single width in most fonts
-        # - Miscellaneous Symbols (U+2600-U+26FF) - mostly single width
-        # - Checkmarks, arrows, etc.
-        if ($ord >= 0x1F300 && $ord <= 0x1F9FF ||  # Emoji (pictographs)
-            $ord >= 0x1FA00 && $ord <= 0x1FAFF ||  # Extended emoji
-            $ord >= 0x3000 && $ord <= 0x9FFF ||    # CJK ideographs
-            $ord >= 0xAC00 && $ord <= 0xD7AF ||    # Korean Hangul
-            $ord >= 0xF900 && $ord <= 0xFAFF ||    # CJK compatibility ideographs
-            $ord >= 0xFE10 && $ord <= 0xFE1F ||    # Vertical forms
-            $ord >= 0xFF00 && $ord <= 0xFFEF ||    # Fullwidth forms
-            $ord >= 0x20000 && $ord <= 0x2FFFF) {  # CJK Extension B+
-            $width += 2;
-        } else {
-            $width += 1;
-        }
-    }
-    
-    return $width;
+    # Column count comes from the shared width util so tables agree with
+    # the terminal. Wide emoji (U+2705, U+274C) used to be counted as one
+    # column here, which pushed every row containing one past its border.
+    return display_width($clean);
 }
 
 =head2 render_table

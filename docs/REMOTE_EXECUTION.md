@@ -349,6 +349,28 @@ Manually remove CLIO from a remote system if automatic cleanup failed or was dis
 
 Transfer files to/from remote systems before or after execution.
 
+Both take `files` as an array of objects carrying both ends of each copy:
+
+```json
+{
+  "operation": "transfer_files",
+  "host": "user@hostname",
+  "files": [
+    { "local_path": "./dist/app.tar.gz", "remote_path": "app.tar.gz" },
+    { "local_path": "./scripts/setup.sh", "remote_path": "/home/user/setup.sh" }
+  ],
+  "working_dir": "/srv/build"
+}
+```
+
+`transfer_files` copies `local_path` to `remote_path`; `retrieve_files`
+copies the other way. Every entry needs both keys - a bare string is
+rejected with an error naming the index and the expected shape.
+
+A relative `remote_path` resolves under `working_dir` (default `/tmp`);
+an absolute `remote_path` is used as given. Relative `local_path` values
+resolve against the local working directory.
+
 ---
 
 ## Examples

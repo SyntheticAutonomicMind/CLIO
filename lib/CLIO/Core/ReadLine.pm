@@ -11,6 +11,7 @@ use CLIO::Core::Logger qw(should_log log_debug log_warning);
 # Ensure STDOUT is autoflushed for immediate terminal response
 $| = 1;
 use CLIO::Compat::Terminal qw(ReadMode ReadKey GetTerminalSize);
+use CLIO::Util::DisplayWidth qw(display_width is_zero_width is_regional_indicator);
 use Encode ();
 use Time::HiRes ();
 
@@ -78,98 +79,18 @@ position.  All screen positions are computed from input state.
 
 Compute the number of terminal columns a string occupies.
 
-ASCII characters are 1 column wide. CJK (Chinese/Japanese/Korean) and other
-fullwidth Unicode characters are 2 columns wide. Combining marks, ZWJ,
-ZWNJ, variation selectors, and other zero-width characters contribute
-0 columns. Tab characters are normalized to a single space by the
-editor (see readline() insert path) before they reach width computation.
-
-Uses Unicode::GCString if available (most accurate), otherwise falls back
-to Perl Unicode properties (C<\p{Wide}>, C<\p{Mn}>, C<\p{Me}>) and an
-explicit zero-width codepoint table.
+Delegates to L<CLIO::Util::DisplayWidth/display_width>, the single width
+implementation shared with the markdown renderer and the progress spinner.
+ASCII characters are 1 column wide, East Asian Wide/Fullwidth and emoji
+presentation sequences are 2, and combining marks, ZWJ, ZWNJ, variation
+selectors, and other zero-width characters contribute 0. Tab characters
+are normalized to a single space by the editor (see the readline() insert
+path) before they reach width computation.
 
 =cut
 
-# Probe for Unicode::GCString at startup so we don't repeat the eval
-# on every _display_width call. The result is captured in a closure.
-my $HAS_UNICODE_GCSTRING = eval { require Unicode::GCString; 1 } ? 1 : 0;
-
-# Codepoints that are zero-width in terminal rendering: combining marks,
-# ZWJ, ZWNJ, variation selectors, zero-width spaces, and tags.
-sub _is_zero_width {
-    my ($cp) = @_;
-    # \p{Mn} = nonspacing marks (combining diacritics)
-    # \p{Me} = enclosing marks
-    return 1 if chr($cp) =~ /\p{Mn}/;
-    return 1 if chr($cp) =~ /\p{Me}/;
-    # Explicit zero-width format characters
-    return 1 if $cp == 0x200B;  # Zero Width Space
-    return 1 if $cp == 0x200C;  # Zero Width Non-Joiner
-    return 1 if $cp == 0x200D;  # Zero Width Joiner
-    return 1 if $cp == 0x2060;  # Word Joiner
-    return 1 if $cp == 0xFEFF;  # Zero Width No-Break Space / BOM
-    # Variation Selectors (VS1-VS16)
-    return 1 if $cp >= 0xFE00 && $cp <= 0xFE0F;
-    # Tags (language tags, U+E0001..U+E007F)
-    return 1 if $cp >= 0xE0001 && $cp <= 0xE007F;
-    return 0;
-}
-
-# Regional Indicator symbols (A-Z, U+1F1E6..U+1F1FF) used in flag emoji.
-sub _is_regional_indicator {
-    my ($cp) = @_;
-    return $cp >= 0x1F1E6 && $cp <= 0x1F1FF;
-}
-
-# Check if a codepoint should be rendered as 2 columns wide.
-sub _is_wide_cp {
-    my ($cp) = @_;
-    my $ch = chr($cp);
-    # East Asian Wide and Fullwidth characters (CJK, Hiragana, Katakana,
-    # Hangul, fullwidth forms, most emoji in the SMP)
-    return 1 if $ch =~ /\p{EA=Wide}/;
-    return 1 if $ch =~ /\p{EA=Fullwidth}/;
-    # Regional indicators (flags) — EA=Neutral per Unicode, but terminals
-    # render them as 2-column wide.
-    return 1 if $cp >= 0x1F1E6 && $cp <= 0x1F1FF;
-    return 0;
-}
-
 sub _display_width {
-    my ($str) = @_;
-    return 0 unless defined $str && length($str);
-
-    # Use Unicode::GCString for accurate width if available
-    if ($HAS_UNICODE_GCSTRING) {
-        return Unicode::GCString->new($str)->columns();
-    }
-
-    # Fallback: process grapheme clusters via \X. The width of each
-    # cluster is the width of its first non-zero-width character
-    # (the "base"). This correctly handles:
-    #   - Combining marks (e + U+0301): width = 1 (from the base 'e')
-    #   - ZWJ sequences (man + ZWJ + woman): width = 2 (from the first emoji)
-    #   - Regional indicator pairs (flag): width = 2 (from the first RI)
-    #   - Zero-width chars (ZWJ, VS, ZWSP): contribute 0 to their cluster
-    my $width = 0;
-    while ($str =~ /(\X)/g) {
-        my $cluster = $1;
-        # Find the first non-zero-width character in the cluster.
-        for my $i (0 .. length($cluster) - 1) {
-            my $ch = substr($cluster, $i, 1);
-            my $cp = ord($ch);
-            if (_is_zero_width($cp)) {
-                next;
-            }
-            if (_is_wide_cp($cp)) {
-                $width += 2;
-            } else {
-                $width += 1;
-            }
-            last;  # Only count the first non-zero-width char of the cluster
-        }
-    }
-    return $width;
+    return display_width($_[0]);
 }
 
 # Find the codepoint offset of the start of the grapheme cluster that
@@ -189,7 +110,7 @@ sub _grapheme_boundary_before {
     # character at $pos (e.g., base + combining mark).
     while ($pos > 0) {
         my $ch = substr($input, $pos, 1);
-        last unless _is_zero_width(ord($ch));
+        last unless is_zero_width(ord($ch));
         $pos--;
     }
     # Handle flag emoji: if the char at $pos is a regional indicator
@@ -198,7 +119,7 @@ sub _grapheme_boundary_before {
     if ($pos > 0) {
         my $this_cp = ord(substr($input, $pos, 1));
         my $prev_cp = ord(substr($input, $pos - 1, 1));
-        if (_is_regional_indicator($this_cp) && _is_regional_indicator($prev_cp)) {
+        if (is_regional_indicator($this_cp) && is_regional_indicator($prev_cp)) {
             $pos--;
         }
     }
@@ -217,7 +138,7 @@ sub _grapheme_boundary_after {
     # Walk forward past zero-width characters (combining marks, ZWJ, VS).
     while ($pos < $len) {
         my $ch = substr($input, $pos, 1);
-        last unless _is_zero_width(ord($ch));
+        last unless is_zero_width(ord($ch));
         $pos++;
     }
     # Handle flag emoji: if the base char is a regional indicator and
@@ -225,12 +146,12 @@ sub _grapheme_boundary_after {
     if ($pos < $len && $pos == $cp + 1) {
         my $base_cp = ord(substr($input, $cp, 1));
         my $next_cp = ord(substr($input, $pos, 1));
-        if (_is_regional_indicator($base_cp) && _is_regional_indicator($next_cp)) {
+        if (is_regional_indicator($base_cp) && is_regional_indicator($next_cp)) {
             $pos++;
             # Also consume any trailing zero-width chars after the second RI
             while ($pos < $len) {
                 my $ch = substr($input, $pos, 1);
-                last unless _is_zero_width(ord($ch));
+                last unless is_zero_width(ord($ch));
                 $pos++;
             }
         }

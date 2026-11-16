@@ -1050,6 +1050,7 @@ Transfer files to remote system via SCP.
 Parameters:
 - host (required): SSH connection target
 - files (required): Array of {local_path => 'local/path', remote_path => 'remote/path'}
+- working_dir (optional): Base for relative remote paths (default: /tmp)
 - ssh_key (optional): SSH private key
 - ssh_port (optional): SSH port
 
@@ -1062,6 +1063,7 @@ sub transfer_files {
     my $files = $params->{files} || [];
     my $ssh_key = $params->{ssh_key};
     my $ssh_port = $params->{ssh_port} || 22;
+    my $working_dir = $params->{working_dir};
     
     unless ($host) {
         return $self->error_result("Missing required parameter: host");
@@ -1070,18 +1072,26 @@ sub transfer_files {
     unless (ref($files) eq 'ARRAY' && @$files) {
         return $self->error_result("Missing required parameter: files");
     }
+
+    # Resolve every spec before touching the network so a malformed entry
+    # cannot leave the remote half-populated.
+    my @specs;
+    eval {
+        my $index = 0;
+        for my $file_spec (@$files) {
+            push @specs, $self->_file_spec_paths($file_spec, $index, $working_dir);
+            $index++;
+        }
+        1;
+    } or return $self->error_result("File transfer failed: " . $self->_clean_eval_error($@));
     
     my @transferred;
     my $result;
     
     eval {
-        for my $file_spec (@$files) {
-            my $local = $file_spec->{local_path};
-            my $remote = $file_spec->{remote_path};
-            
-            unless ($local && $remote) {
-                croak "File spec missing local_path or remote_path";
-            }
+        for my $spec (@specs) {
+            my $local  = $spec->{local_path};
+            my $remote = $spec->{remote_path};
             
             my $scp_result = $self->_scp_to_remote(
                 host => $host,
@@ -1120,6 +1130,7 @@ Retrieve files from remote system via SCP.
 Parameters:
 - host (required): SSH connection target
 - files (required): Array of {remote_path => 'remote/path', local_path => 'local/path'}
+- working_dir (optional): Base for relative remote paths (default: /tmp)
 - ssh_key (optional): SSH private key
 - ssh_port (optional): SSH port
 
@@ -1132,6 +1143,7 @@ sub retrieve_files {
     my $files = $params->{files} || [];
     my $ssh_key = $params->{ssh_key};
     my $ssh_port = $params->{ssh_port} || 22;
+    my $working_dir = $params->{working_dir};
     
     unless ($host) {
         return $self->error_result("Missing required parameter: host");
@@ -1140,18 +1152,24 @@ sub retrieve_files {
     unless (ref($files) eq 'ARRAY' && @$files) {
         return $self->error_result("Missing required parameter: files");
     }
+
+    my @specs;
+    eval {
+        my $index = 0;
+        for my $file_spec (@$files) {
+            push @specs, $self->_file_spec_paths($file_spec, $index, $working_dir);
+            $index++;
+        }
+        1;
+    } or return $self->error_result("File retrieval failed: " . $self->_clean_eval_error($@));
     
     my @retrieved;
     my $result;
     
     eval {
-        for my $file_spec (@$files) {
-            my $remote = $file_spec->{remote_path};
-            my $local = $file_spec->{local_path};
-            
-            unless ($local && $remote) {
-                croak "File spec missing local_path or remote_path";
-            }
+        for my $spec (@specs) {
+            my $remote = $spec->{remote_path};
+            my $local  = $spec->{local_path};
             
             my $scp_result = $self->_scp_from_remote(
                 host => $host,
@@ -1181,6 +1199,69 @@ sub retrieve_files {
     }
     
     return $result;
+}
+
+# --------------------------------------------------------------------------
+# File spec normalization (transfer_files / retrieve_files)
+# --------------------------------------------------------------------------
+
+=head2 _file_spec_paths (Internal)
+
+Validate one entry of the C<files> array and return it as
+C<{ local_path, remote_path }>.
+
+Arguments:
+- $spec: one element of the caller's files array
+- $index: position in the array, used in error messages
+- $working_dir: base directory for relative remote paths (default: /tmp)
+
+Returns: hashref with local_path and remote_path
+
+Throws (via croak) when the entry is not an object carrying both paths.
+The published schema declares objects, so a bare string here means the
+caller ignored the contract; say so instead of dying on a strict-refs
+error three frames deeper.
+
+=cut
+
+sub _file_spec_paths {
+    my ($self, $spec, $index, $working_dir) = @_;
+
+    $index = 0 unless defined $index;
+
+    unless (ref($spec) eq 'HASH') {
+        my $got;
+        if (ref $spec) {
+            $got = ref $spec;
+        } elsif (!defined $spec) {
+            $got = 'undef';
+        } elsif (!length $spec) {
+            $got = 'an empty string';
+        } else {
+            $got = "a plain string ($spec)";
+        }
+        croak "files[$index] must be an object with local_path and remote_path, got $got";
+    }
+
+    my $local  = $spec->{local_path};
+    my $remote = $spec->{remote_path};
+
+    for my $pair (['local_path', $local], ['remote_path', $remote]) {
+        my ($name, $value) = @$pair;
+        unless (defined $value && length $value) {
+            croak "files[$index] is missing $name";
+        }
+    }
+
+    # Relative remote paths resolve under working_dir; absolute paths are
+    # used as given. Local paths are left alone.
+    if ($remote !~ m{^/}) {
+        my $dir = defined $working_dir && length $working_dir ? $working_dir : '/tmp';
+        $dir =~ s{/+$}{};
+        $remote = "$dir/$remote";
+    }
+
+    return { local_path => $local, remote_path => $remote };
 }
 
 # ============================================================================
@@ -1981,7 +2062,7 @@ sub get_additional_parameters {
         },
         working_dir => {
             type => "string",
-            description => "[OPTIONAL] Remote working dir (default: /tmp).",
+            description => "[OPTIONAL] Remote working dir (default: /tmp). For transfer_files and retrieve_files it is the base for relative remote_path values.",
         },
         install_dir => {
             type => "string",
@@ -1998,8 +2079,21 @@ sub get_additional_parameters {
         },
         files => {
             type => "array",
-            items => { type => "string" },
-            description => "[REQUIRED for transfer_files, retrieve_files] Array of file paths to transfer/retrieve.",
+            items => {
+                type => "object",
+                properties => {
+                    local_path => {
+                        type => "string",
+                        description => "Path on the local system.",
+                    },
+                    remote_path => {
+                        type => "string",
+                        description => "Path on the remote system. Relative paths resolve under working_dir.",
+                    },
+                },
+                required => [qw(local_path remote_path)],
+            },
+            description => "[REQUIRED for transfer_files, retrieve_files] Array of {local_path, remote_path} objects. transfer_files copies local_path to remote_path; retrieve_files copies remote_path to local_path. Both keys are required on every entry.",
         },
     };
 }
