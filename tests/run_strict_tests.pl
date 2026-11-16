@@ -75,7 +75,7 @@ $| = 1;
 
 use File::Basename qw(dirname);
 use Cwd qw(abs_path);
-use File::Temp qw(tempfile);
+use File::Temp qw(tempfile tempdir);
 use File::Spec;
 use Getopt::Long qw(GetOptions);
 use POSIX qw(setpgid :sys_wait_h);
@@ -83,6 +83,13 @@ use Time::HiRes qw(time);
 
 my $repo_root = abs_path(dirname(dirname(__FILE__)));
 $repo_root = abs_path('.') unless -d "$repo_root/lib";
+
+# Isolate the run from the user's real configuration. CLIO::Util::ConfigPath
+# honors CLIO_CONFIG_DIR; without it, tests that persist configuration or
+# the model capability cache write to ~/.clio. The capability cache is
+# saved wholesale, so one test saving a single entry discards the rest.
+my $TEST_CONFIG_DIR = tempdir(CLEANUP => 1);
+$ENV{CLIO_CONFIG_DIR} = $TEST_CONFIG_DIR;
 
 # Runtime, not `use lib`: a BEGIN-time lib import would see $repo_root
 # undef, since the assignment above only runs after compilation.

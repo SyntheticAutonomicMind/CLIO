@@ -603,6 +603,8 @@ Arguments:
               - max_context_window_tokens (or context_window)
               - max_prompt_tokens          (used as context_window when set)
               - max_output_tokens
+              - provider_input_limit       (input cap a provider reported in
+                                            a rejection; caps the budget)
 
 Returns:
     Integer prompt budget in tokens. Always >= 1000 to keep a usable
@@ -674,6 +676,19 @@ sub compute_prompt_budget {
     $est_buffer = $buffer_cap if $est_buffer > $buffer_cap;
 
     my $budget = $context_window - $output_reserve - $est_buffer;
+
+    # A provider that rejected a request named its real input limit. Honor
+    # it directly: the listing describes the model, not the endpoint that
+    # served it, and tokenizers differ enough that a prompt can mirror the
+    # listing's window and still be too large upstream. The cap applies to
+    # the prompt, so it is compared against the budget (which is already
+    # net of the output reserve) rather than against the window.
+    if (defined $caps->{provider_input_limit}
+        && $caps->{provider_input_limit} > 0
+        && $budget > $caps->{provider_input_limit}) {
+        $budget = $caps->{provider_input_limit};
+    }
+
     $budget = 1000 if $budget < 1000;
 
     return $budget;

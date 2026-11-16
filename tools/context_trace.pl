@@ -80,7 +80,11 @@ for my $e (@$entries) {
     my $p = ref($e->{projection}) eq 'HASH' ? $e->{projection} : {};
     my $pre = ref($e->{pre_api_trim}) eq 'HASH' ? $e->{pre_api_trim} : {};
 
-    printf "%-19s %9s %9s %9s %8s %6s %7s %7s %7s\n",
+    my $prompt = $e->{usage_prompt_tokens} // 0;
+    my $cached = $e->{usage_cached_tokens} // 0;
+    my $hit = ($prompt && $cached) ? sprintf('%d%%', 100 * $cached / $prompt) : '-';
+
+    printf "%-19s %9s %9s %9s %8s %6s %7s %7s %7s %5s\n",
         (scalar localtime($e->{timestamp} // 0)),
         k($b->{context_window}),
         k($b->{estimated_after}),
@@ -89,14 +93,16 @@ for my $e (@$entries) {
         ($b->{trimmed} ? 'yes' : 'no'),
         (($p->{dropped_messages} // 0) + ($pre->{dropped_messages} // 0)),
         k(($p->{compressed_tail_chars} // 0) + ($pre->{thread_summary_chars} // 0)),
-        k($e->{usage_prompt_tokens});
+        k($prompt),
+        $hit;
 }
 
 print "-" x 110, "\n";
 print "Columns: model = context window, est = estimated prompt tokens,\n";
 print "limit = effective limit, target = trim target, dropped = messages\n";
 print "archived by the projection + pre-call trim, tail = characters of\n";
-print "compressed summary, provider = prompt tokens the provider reported.\n";
+print "compressed summary, provider = prompt tokens the provider reported,\n";
+print "hit = share of the prompt the provider served from its cache.\n";
 
 my $last = $entries->[-1];
 if (ref($last->{budget}{breakdown}) eq 'HASH') {

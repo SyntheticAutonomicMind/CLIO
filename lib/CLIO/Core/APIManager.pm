@@ -2055,7 +2055,7 @@ sub get_model_capabilities {
     if ($self->{_model_capabilities_cache} &&
         $self->{_model_capabilities_cache}{$model}) {
         log_debug('APIManager', "Model caps for $model (cached): prompt=" . ($self->{_model_capabilities_cache}{$model}{max_prompt_tokens} // 'undef') . ", ctx_window=" . ($self->{_model_capabilities_cache}{$model}{max_context_window_tokens} // 'undef'));
-        return $self->_caps_with_overrides($self->{_model_capabilities_cache}{$model});
+        return $self->_caps_with_overrides($self->{_model_capabilities_cache}{$model}, $model);
     }
 
     # Use MCM for all providers — it handles native APIs (Anthropic, Google),
@@ -2123,7 +2123,7 @@ sub get_model_capabilities {
                 $self->{_model_capabilities_cache} ||= {};
                 $self->{_model_capabilities_cache}{$model} = $n;
                 log_debug('APIManager', "MCM capability for $model: ctx=$caps->{context_window}, tools=$caps->{supports_tools}");
-                return $self->_caps_with_overrides($n);
+                return $self->_caps_with_overrides($n, $model);
             }
             return undef;
         };
@@ -2151,7 +2151,7 @@ sub get_model_capabilities {
         $self->{_model_capabilities_cache} ||= {};
         $self->{_model_capabilities_cache}{$model} = $capabilities;
         log_debug('APIManager', "Using default context window for $model: $eff_ctx");
-        return $self->_caps_with_overrides($capabilities);
+        return $self->_caps_with_overrides($capabilities, $model);
     }
 
     log_debug('APIManager', "get_model_capabilities returning undef for $model");
@@ -2184,8 +2184,23 @@ global config values.
 =cut
 
 sub _apply_capability_overrides {
-    my ($self, $caps) = @_;
+    my ($self, $caps, $model) = @_;
     return $caps unless ref($caps) eq 'HASH';
+
+    # Provider-reported input cap. Set when a provider rejected a request
+    # with its real limit; applies to this model for the rest of the
+    # session and (through ModelCapabilitiesManager) across sessions.
+    # compute_prompt_budget caps the prompt budget to it.
+    my $learned_limit;
+    if (defined $model) {
+        $learned_limit = $self->{_learned_input_limits}{$model};
+    }
+    if ($learned_limit && $learned_limit > 0) {
+        my $current = $caps->{provider_input_limit};
+        if (!defined $current || $learned_limit < $current) {
+            $caps->{provider_input_limit} = $learned_limit;
+        }
+    }
 
     # Resolve effective values (session override > global config)
     my %effective;
@@ -2299,10 +2314,10 @@ overrides on every read.
 =cut
 
 sub _caps_with_overrides {
-    my ($self, $caps) = @_;
+    my ($self, $caps, $model) = @_;
     return undef unless ref($caps) eq 'HASH';
     my $copy = { %$caps };
-    return $self->_apply_capability_overrides($copy);
+    return $self->_apply_capability_overrides($copy, $model);
 }
 
 =head2 _resolve_local_model($api_base, $api_id)
@@ -2494,6 +2509,8 @@ sub validate_and_truncate_messages {
     # trim plan describes the budget; this describes what filled it.
     require CLIO::Memory::TokenEstimator;
     $plan->{breakdown} = CLIO::Memory::TokenEstimator::estimate_messages_breakdown($result);
+    $plan->{provider_input_limit} = $caps->{provider_input_limit}
+        if $caps && $caps->{provider_input_limit};
 
     $self->{last_context_plan} = $plan;
     $self->{_last_trimmed_messages} = ($plan->{trimmed} ? $result : undef);
@@ -2532,6 +2549,68 @@ sub record_payload_stats {
     return unless $self->{last_context_plan};
     $self->{last_context_plan}{payload_chars} = $payload_chars;
     return;
+}
+
+=head2 note_provider_input_limit($model, $limit)
+
+Record the input limit a provider reported when it rejected a request.
+
+Three effects, so the next request does not repeat the failure:
+  1. the current session's capability cache for the model carries
+     C<provider_input_limit>, which compute_prompt_budget caps the prompt
+     budget to;
+  2. the limit is remembered per model in C<_learned_input_limits> so it
+     survives a capability cache refresh;
+  3. it is persisted through ModelCapabilitiesManager, so a new session
+     starts with the correct budget instead of rediscovering the limit.
+
+Arguments:
+- $model: model identifier (optional; defaults to the current model)
+- $limit: input token limit reported by the provider
+
+Returns: 1 if recorded, 0 otherwise
+
+=cut
+
+sub note_provider_input_limit {
+    my ($self, $model, $limit) = @_;
+
+    $model ||= $self->get_current_model();
+    return 0 unless $model;
+    return 0 unless $limit && $limit =~ /^\d+$/ && $limit > 0;
+
+    # Monotonic within a session: nothing in a response proves the limit
+    # went up, so a later larger report is a different route, not an
+    # upgrade.
+    my $known = $self->{_learned_input_limits}{$model};
+    return 0 if defined $known && $known <= $limit;
+
+    $self->{_learned_input_limits} ||= {};
+    $self->{_learned_input_limits}{$model} = $limit;
+
+    if ($self->{_model_capabilities_cache}{$model}) {
+        $self->{_model_capabilities_cache}{$model}{provider_input_limit} = $limit;
+    }
+
+    # Persist through MCM using the same provider/model split the
+    # capability lookup uses, so the disk entry is the one that will be
+    # read next session.
+    my ($provider, $api_model) = $self->_parse_model_provider($model);
+    $provider ||= ($self->{config} ? ($self->{config}->get('provider') || '') : '');
+    $api_model ||= $model;
+    if ($provider) {
+        eval {
+            require CLIO::Core::ModelCapabilitiesManager;
+            my $mcm = CLIO::Core::ModelCapabilitiesManager->new(debug => $self->{debug});
+            $mcm->set_provider_input_limit($provider, $api_model, $limit);
+        };
+        log_debug('APIManager', "Persisting provider input limit failed: $@") if $@;
+    }
+
+    log_debug('APIManager',
+        "Provider input limit for $model capped to $limit tokens; "
+        . "next request plans against it");
+    return 1;
 }
 
 =head2 get_last_trimmed_messages

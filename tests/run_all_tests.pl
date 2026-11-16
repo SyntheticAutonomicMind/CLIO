@@ -42,6 +42,22 @@ use File::Spec;
 use Getopt::Long;
 use POSIX qw(:sys_wait_h setpgid SIGKILL);
 use Time::HiRes qw(time);
+use File::Temp qw(tempdir);
+
+# Isolate the whole run from the user's real configuration.
+#
+# CLIO::Util::ConfigPath honors CLIO_CONFIG_DIR, and its documentation
+# already assumed the harness set it, but neither runner did. Tests that
+# write configuration or the model capability cache were therefore
+# mutating ~/.clio - the capability cache in particular is persisted
+# wholesale, so a test that saved one entry silently discarded the
+# user's cached models.
+#
+# One temp directory for the run: every child process inherits it, so
+# no test can reach the real config, and nothing needs cleaning up
+# individually.
+my $TEST_CONFIG_DIR = tempdir(CLEANUP => 1);
+$ENV{CLIO_CONFIG_DIR} = $TEST_CONFIG_DIR;
 
 # Parse command line options
 my %opts = (

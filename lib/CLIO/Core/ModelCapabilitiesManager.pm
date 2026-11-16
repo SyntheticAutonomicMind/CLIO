@@ -494,7 +494,13 @@ Persist cache to disk (atomic write).
 
 sub _save_cache {
     my ($self) = @_;
-    
+
+    # The cache is written wholesale, so it must be loaded first. A
+    # writer that mutates an unloaded cache would persist only its own
+    # entry and silently discard every other cached model. Cheap here:
+    # _ensure_cache_loaded is a no-op once the cache is populated.
+    $self->_ensure_cache_loaded();
+
     my $temp = $self->{cache_file} . '.tmp';
     
     eval {
@@ -602,6 +608,10 @@ sub set_reasoning_mode {
     return 0 unless $provider && $model && $mode;
     return 0 unless $mode =~ /^(?:adaptive|enabled)$/;
 
+    # Same reason as set_provider_input_limit: _save_cache persists the
+    # whole cache, so it must be loaded before it is mutated.
+    $self->_ensure_cache_loaded();
+
     my $cache_key = $self->_build_cache_key($provider, $model);
 
     # Get existing entry (from cache or fetch fresh). If we have nothing
@@ -638,6 +648,62 @@ sub set_reasoning_mode {
     $self->_save_cache();
 
     log_debug('ModelCapabilitiesManager', "Learned reasoning_mode=$mode for $provider:$model (self-corrected from API error)");
+    return 1;
+}
+
+=head2 set_provider_input_limit($provider, $model, $limit)
+
+Persist the input limit a provider reported in a rejection.
+
+Model listings describe the model, not the endpoint that served it: a
+gateway can route a 1M-context model to a provider that enforces a smaller
+window, and some providers count tokens with a tokenizer that produces more
+tokens for the same text. When that happens the request is rejected with a
+message naming the real limit. Capping to that number for this model makes
+the next request plan against what the route actually allows, instead of
+repeating the failure.
+
+The cap is monotonic: a later report can only lower it. Nothing in the
+response proves the limit went up, so raising it would be a guess.
+
+Arguments:
+- $provider: provider key
+- $model: model identifier
+- $limit: input token limit in tokens
+
+Returns: 1 if a lower limit was recorded, 0 otherwise
+
+=cut
+
+sub set_provider_input_limit {
+    my ($self, $provider, $model, $limit) = @_;
+
+    return 0 unless $provider && $model;
+    return 0 unless $limit && $limit =~ /^\d+$/ && $limit > 0;
+
+    # Load first. _save_cache writes the whole in-memory cache, so
+    # mutating an unloaded one would persist a single entry and discard
+    # every other cached model.
+    $self->_ensure_cache_loaded();
+
+    my $cache_key = $self->_build_cache_key($provider, $model);
+    my $entry = $self->{cache}{$cache_key} || {
+        provider   => $provider,
+        model      => $model,
+        _cached_at => time,
+        _learned   => 1,
+    };
+
+    my $known = $entry->{provider_input_limit};
+    return 0 if defined $known && $known <= $limit;
+
+    $entry->{provider_input_limit} = $limit;
+    $entry->{_learned_at} = time;
+    $self->{cache}{$cache_key} = $entry;
+    $self->_save_cache();
+
+    log_debug('ModelCapabilitiesManager',
+        "Learned provider_input_limit=$limit for $provider:$model (reported in a rejection)");
     return 1;
 }
 

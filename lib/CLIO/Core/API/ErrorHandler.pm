@@ -1379,6 +1379,16 @@ sub trim_for_token_limit {
     }
     if ($provider_max_input) {
         log_debug('ErrorHandler', "Extracted provider max input limit from error: $provider_max_input tokens");
+
+        # Keep the limit. The listing describes the model; the route
+        # enforces something smaller, and tokenizers differ. Recording it
+        # caps the prompt budget for this model so the next request plans
+        # against the real limit instead of failing the same way. The
+        # retry tiers below already use it for this attempt.
+        if ($wo->{api_manager} && $wo->{api_manager}->can('note_provider_input_limit')) {
+            eval { $wo->{api_manager}->note_provider_input_limit(undef, $provider_max_input) };
+            log_debug('ErrorHandler', "Could not record provider input limit: $@") if $@;
+        }
     }
 
     # Determine if the current provider is local inference (llama.cpp,
