@@ -2075,14 +2075,17 @@ sub _execute_tool_round {
             $ai_content = $enhanced_error_for_ai;
         } elsif ($result_data && ref($result_data) eq 'HASH' && exists $result_data->{output}) {
             $ai_content = $result_data->{output};
-            
-            # For interact tool results, extract session marker from user response
-            # and strip it from the content sent to AI
-            if ($tool_name eq 'interact' && $session && $session->can('session_name') && defined $ai_content) {
+
+            # Do NOT run session-marker extraction on interact output. The
+            # user's raw reply is embedded inside the attribution frame
+            # (_frame_user_reply), and a user discussing session management
+            # could accidentally trigger a session rename. The AI can set
+            # the session name itself via the normal text channel if needed.
+            if ($tool_name ne 'interact' && $session && $session->can('session_name') && defined $ai_content) {
                 my ($cleaned, $named) = $self->_extract_session_marker($ai_content, $session);
                 if ($named) {
                     $ai_content = $cleaned;
-                    log_debug('WorkflowOrchestrator', "Extracted session marker from interact output");
+                    log_debug('WorkflowOrchestrator', "Extracted session marker from tool output");
                 }
             }
         }
