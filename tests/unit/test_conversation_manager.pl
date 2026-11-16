@@ -1,7 +1,7 @@
 #!/usr/bin/env perl
 # Test CLIO::Core::ConversationManager - conversation history management
 #
-# Tests all exported functions: load_conversation_history, trim_conversation_for_api,
+# Tests all exported functions: load_conversation_history,
 # enforce_message_alternation, inject_context_files, generate_tool_call_id,
 # repair_tool_call_json
 
@@ -13,7 +13,6 @@ use File::Temp qw(tempdir tempfile);
 
 use CLIO::Core::ConversationManager qw(
     load_conversation_history
-    trim_conversation_for_api
     enforce_message_alternation
     inject_context_files
     generate_tool_call_id

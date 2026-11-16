@@ -16,8 +16,6 @@ use Digest::MD5 qw(md5_hex);
 use Exporter 'import';
 our @EXPORT_OK = qw(
     load_conversation_history
-    trim_conversation_for_api
-    trim_with_noise_dropping
     strip_messages_noise
     _strip_message_noise
     enforce_message_alternation
@@ -34,8 +32,13 @@ CLIO::Core::ConversationManager - Conversation history management and validation
 =head1 DESCRIPTION
 
 Manages conversation history for the API workflow loop. Handles loading,
-validating, trimming, and enforcing message format requirements for
-different AI providers.
+validating, and enforcing message format requirements for different AI
+providers.
+
+History is not trimmed here. The single budget authority is
+L<CLIO::Core::API::MessageValidator/validate_and_truncate>, which runs
+before every API call; this module provides the noise stripping and
+format repairs that feed it.
 
 Extracted from WorkflowOrchestrator to reduce module size and improve
 separation of concerns. Uses functional style (exported functions).
@@ -44,12 +47,10 @@ separation of concerns. Uses functional style (exported functions).
 
     use CLIO::Core::ConversationManager qw(
         load_conversation_history
-        trim_conversation_for_api
         enforce_message_alternation
     );
 
     my $history = load_conversation_history($session, debug => 1);
-    my $trimmed = trim_conversation_for_api($history, $system_prompt, %opts);
     my $alternated = enforce_message_alternation($messages, $provider, debug => 1);
 
 =cut
@@ -323,275 +324,20 @@ sub load_conversation_history {
     return \@final_messages;
 }
 
-=head2 trim_conversation_for_api
-
-Trim conversation history to fit within model's token limits.
-
-Strategy:
-1. Always preserve first user message (original task context)
-2. Keep recent messages for continuity
-3. Fill remaining budget with high-importance older messages
-4. Preserve tool_call/tool_result pairs together (never split them)
-
-Arguments:
-- $history: Arrayref of message objects
-- $system_prompt: System prompt string (for token accounting)
-- %opts: Options hash
-  - model_context_window => int (default: 128000)
-  - max_response_tokens => int (default: 16000)
-  - debug => 0|1
-
-Returns:
-- Arrayref of trimmed messages (may be same ref if no trimming needed)
-
-=cut
-
-sub trim_conversation_for_api {
-    my ($history, $system_prompt, %opts) = @_;
-
-    return $history unless $history && @$history;
-
-    my $debug = $opts{debug} // 0;
-    require CLIO::Core::Defaults;
-    my $model_context = $opts{model_context_window} // CLIO::Core::Defaults::DEFAULT_CONTEXT_WINDOW();
-    my $max_response = $opts{max_response_tokens} // CLIO::Core::Defaults::DEFAULT_MAX_RESPONSE_TOKENS();
-
-    # Compute prompt budget from model capabilities. Uses the model's
-    # actual max_response_tokens plus an estimation buffer.
-    my $caps_for_budget = {
-        max_context_window_tokens => $model_context,
-        max_output_tokens         => $max_response,
-    };
-    my $prompt_budget = CLIO::Memory::TokenEstimator::compute_prompt_budget($caps_for_budget);
-    my $safe_threshold = $prompt_budget;
-
-    # Estimate current size
-    my $system_tokens = CLIO::Memory::TokenEstimator::estimate_tokens($system_prompt);
-    my $history_tokens = CLIO::Memory::TokenEstimator::estimate_messages_tokens($history);
-    my $current_total = $system_tokens + $history_tokens + 500;
-
-    if ($current_total <= $safe_threshold) {
-        if ($debug) {
-            log_debug('ConversationManager', "History OK: $history_tokens tokens (total: $current_total of $safe_threshold prompt budget, model context: $model_context)");
-        }
-        return $history;
-    }
-
-    if ($debug) {
-        log_debug('ConversationManager', "History exceeds prompt budget: $current_total tokens (budget: $safe_threshold of $model_context total). Trimming...");
-        log_debug('ConversationManager', "Model context window: $model_context tokens");
-        log_debug('ConversationManager', "Max response: $max_response tokens");
-        log_debug('ConversationManager', "Prompt budget (ctx - output - buffer): $safe_threshold tokens");
-        log_debug('ConversationManager', "System prompt: $system_tokens tokens");
-        log_debug('ConversationManager', "History: $history_tokens tokens");
-        log_debug('ConversationManager', "Messages in history: " . scalar(@$history) . "");
-    }
-
-    my @messages = @$history;
-
-    # Pinned indices (force-included regardless of budget):
-    # - First user message (original task anchor)
-    # - Last user message (current turn's user_input)
-    #
-    # This legacy trim operates on history only. The role-based
-    # `_role_based_tail_walk` in MessageValidator handles the full
-    # messages array including system_prompt and dynamic userContext.
-    my $first_user_idx;
-    for my $i (0 .. $#messages) {
-        if (ref($messages[$i]) eq 'HASH' && ($messages[$i]{role} // '') eq 'user') {
-            $first_user_idx = $i;
-            last;
-        }
-    }
-    return $history unless defined $first_user_idx;
-
-    my $last_user_idx;
-    for my $i ($first_user_idx .. $#messages) {
-        $last_user_idx = $i if ($messages[$i]{role} // '') eq 'user';
-    }
-
-    my @pinned = ($first_user_idx);
-    push @pinned, $last_user_idx if defined $last_user_idx && $last_user_idx != $first_user_idx;
-    my %pinned_idx = map { $_ => 1 } @pinned;
-
-    # Reserve walk budget for pinned up front. Without this, the
-    # walk accumulates non-pinned content close to target_tokens,
-    # and adding pinned overflows. Mirror the fix applied to
-    # `_role_based_tail_walk` in MessageValidator.pm.
-    my $pinned_total = 0;
-    for my $idx (@pinned) {
-        $pinned_total += CLIO::Memory::TokenEstimator::estimate_messages_tokens([$messages[$idx]]);
-    }
-    my $walk_budget = int(($safe_threshold - $system_tokens) * 0.9);
-    $walk_budget = 5000 if $walk_budget < 5000;
-    $walk_budget -= $pinned_total;
-    $walk_budget = 0 if $walk_budget < 0;
-
-    # Track kept INDICES (not messages) so we can reconstruct in
-    # conversation order at the end.
-    my @kept_indices;
-    my $kept_tokens = 0;
-
-    for my $i (reverse 0 .. $#messages) {
-        my $msg = $messages[$i];
-
-        # Skip pinned indices during the walk; force-include them below.
-        next if $pinned_idx{$i};
-
-        my $msg_tokens = CLIO::Memory::TokenEstimator::estimate_messages_tokens([$msg]);
-
-        # Check if this is a tool_result that needs its tool_call partner
-        my $is_tool_result = ($msg->{role} // '') eq 'tool';
-        my $tool_call_id = $msg->{tool_call_id};
-
-        if ($is_tool_result && $tool_call_id) {
-            # Look for the matching tool_call in the remaining messages (earlier indices)
-            my $has_tool_call = 0;
-            for my $j (0 .. $i - 1) {
-                my $prev_msg = $messages[$j];
-                if (($prev_msg->{role} // '') eq 'assistant' && $prev_msg->{tool_calls}) {
-                    for my $tc (@{$prev_msg->{tool_calls}}) {
-                        if ($tc->{id} eq $tool_call_id) {
-                            $has_tool_call = 1;
-                            last;
-                        }
-                    }
-                }
-                last if $has_tool_call;
-            }
-
-            # Tool pairing is a hard invariant that must be honored regardless
-            # of pinned-budget accounting - if we can't fit the pair, we accept
-            # over-budget for the tool result rather than strand it.
-            if (!$has_tool_call) {
-                for my $j (0 .. $i - 1) {
-                    my $prev_msg = $messages[$j];
-                    if (($prev_msg->{role} // '') eq 'assistant' && $prev_msg->{tool_calls}) {
-                        for my $tc (@{$prev_msg->{tool_calls}}) {
-                            if ($tc->{id} eq $tool_call_id) {
-                                my $assistant_tokens = CLIO::Memory::TokenEstimator::estimate_messages_tokens([$prev_msg]);
-                                if (!grep { $_ == $j } @kept_indices) {
-                                    unshift @kept_indices, $j;
-                                    $kept_tokens += $assistant_tokens;
-                                }
-                                last;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        # Skip if already in @kept_indices (tool_pair spliced it in)
-        next if grep { $_ == $i } @kept_indices;
-
-        if ($kept_tokens + $msg_tokens <= $walk_budget) {
-            unshift @kept_indices, $i;
-            $kept_tokens += $msg_tokens;
-        } else {
-            # Budget exhausted - stop adding older messages
-            last;
-        }
-    }
-
-    # Force-include the pinned indices. If they push us over budget,
-    # accept over-budget rather than silently dropping them.
-    my %kept_set = map { $_ => 1 } @kept_indices;
-    for my $idx (@pinned) {
-        next if $kept_set{$idx};
-        my $msg = $messages[$idx];
-        my $msg_tokens = CLIO::Memory::TokenEstimator::estimate_messages_tokens([$msg]);
-        unshift @kept_indices, $idx;
-        $kept_tokens += $msg_tokens;
-        $kept_set{$idx} = 1;
-    }
-
-    # @kept_indices is in reverse-insertion order; sort ascending.
-    @kept_indices = sort { $a <=> $b } @kept_indices;
-    my @final = @messages[@kept_indices];
-
-    if ($debug) {
-        log_debug('ConversationManager', "Trimmed: " . scalar(@messages) . " -> " . scalar(@final) . " messages");
-        log_debug('ConversationManager', "Token reduction: $history_tokens -> $kept_tokens tokens (pinned: $pinned_total)");
-        log_debug('ConversationManager', "Final total with system: " . ($system_tokens + $kept_tokens) . " of $safe_threshold prompt budget");
-    }
-
-    # Filter continuation-only user prompts (mirror of the filter in
-    # MessageValidator::_role_based_tail_walk). Both trim paths
-    # produce similar outputs so the filter is applied symmetrically.
-    my $filtered = filter_continuation_prompts(\@final);
-
-    return $filtered if $filtered && @$filtered;
-
-    return $history;
-}
-
-=head2 trim_with_noise_dropping
-
-Trim conversation history to fit within model's token limits, with
-additional noise-stripping to preserve more signal at the same token cost.
-
-Strategy (messageHistory feature):
-1. Phase 1 (NEW): Strip noise from each message
-   - Drop assistant reasoning_content (one-shot thinking the model
-     already used to produce the response - it doesn't need to see it
-     again in history). This is the biggest single token saving in
-     long sessions where thinking blocks are 500-2000 tokens each.
-   - Preserve user text and tool result content (model needs both).
-2. Phase 2: Delegate to trim_conversation_for_api to do the tail-walk
-   with tool_call/tool_result pairing.
-
-This wrapper is called from WorkflowOrchestrator::_build_turn_context
-in place of trim_conversation_for_api directly. The new behavior is
-"strip noise first, then walk" - both phases run before the history
-is serialized into the messageHistory XML block.
-
-Arguments:
-- $history: Arrayref of message objects
-- $system_prompt: System prompt string (for token accounting)
-- %opts: Options hash (passed through to trim_conversation_for_api)
-  - model_context_window => int (default: 128000)
-  - max_response_tokens => int (default: 16000)
-  - debug => 0|1
-
-Returns:
-- Arrayref of trimmed messages (may be same ref if no trimming needed)
-
-=cut
-
-sub trim_with_noise_dropping {
-    my ($history, $system_prompt, %opts) = @_;
-    return $history unless $history && @$history;
-
-    my $debug = $opts{debug} // 0;
-
-    # Phase 1: Strip noise from each message (non-destructive shallow copy).
-    # The token savings from dropping reasoning_content often bring
-    # the history under budget without needing to drop any messages at all.
-    my @stripped = map { _strip_message_noise($_, $debug) } @$history;
-
-    # Phase 2: Standard trim walk on the noise-reduced history.
-    return trim_conversation_for_api(\@stripped, $system_prompt, %opts);
-}
-
 =head2 strip_messages_noise
 
 Strip high-volume low-signal content (assistant reasoning_content /
 reasoning_blocks) from a history array WITHOUT dropping any messages.
-This is the "Phase 1" of trim_with_noise_dropping, isolated so callers
-that defer token-budget enforcement to a later compression stage (the
-projection's C<_build_compressed_tail> + the proactive
-C<_role_based_tail_walk>) can still recover the token savings of
-noise-stripping without losing messages that the compressor would have
-summarized.
+Callers that defer token-budget enforcement to the projection
+(ContextBuilder) and the proactive trim (_role_based_tail_walk) use this
+to recover the token savings of noise-stripping without losing messages
+the compressor would have summarized.
 
 When called from WorkflowOrchestrator::_build_turn_context, the full
 (noise-stripped) history reaches ContextBuilder, which selects the
-recent window and compresses the rest into a compressed_tail via YaRN.
-Without this isolation, the tail-walk in trim_with_noise_dropping would
-drop old messages before the projection sees them — permanently lost
-with no summary. The proactive _role_based_tail_walk remains the
-authoritative token-budget enforcer and does its own compression.
+window by budget and compresses the rest into a compressed_tail via
+YaRN. The proactive _role_based_tail_walk remains the authoritative
+token-budget enforcer and does its own compression.
 
 Arguments:
 - $history: ArrayRef of message hashes (not mutated)

@@ -218,32 +218,15 @@ Display conversation memory statistics.
 
 sub _display_memory_stats {
     my ($self) = @_;
-    
+
     my $state = $self->{session}{state};
     my $history = $state->get_history();
     my $yarn = $state->yarn();
-    
+
     # Calculate stats
     my $active_messages = scalar(@$history);
     my $active_tokens = $state->get_conversation_size();
-    
-    # Get actual model max_tokens from APIManager
-    require CLIO::Core::Defaults;
-    my $max_tokens = CLIO::Core::Defaults::DEFAULT_CONTEXT_WINDOW();
-    if ($self->{api_manager}) {
-        my $model = $self->{api_manager}->get_current_model();
-        my $caps = $self->{api_manager}->get_model_capabilities($model);
-        if ($caps && $caps->{max_prompt_tokens}) {
-            $max_tokens = $caps->{max_prompt_tokens};
-        }
-    }
-    
-    # Trim threshold uses the same SAFE_CONTEXT_PERCENT as State and ConversationManager
-    require CLIO::Memory::TokenEstimator;
-    my $safe_pct = CLIO::Memory::TokenEstimator->SAFE_CONTEXT_PERCENT;
-    my $threshold = int($max_tokens * $safe_pct);
-    my $usage_pct = sprintf("%.1f%%", ($active_tokens / $max_tokens) * 100);
-    
+
     # Get YaRN stats
     my $thread_id = $state->{session_id};
     my $yarn_thread = $yarn->get_thread($thread_id);
@@ -255,42 +238,127 @@ sub _display_memory_stats {
             $yarn_tokens += CLIO::Memory::TokenEstimator::estimate_tokens($msg->{content} // '');
         }
     }
-    
+
     my $archived_messages = $yarn_messages > $active_messages ? $yarn_messages - $active_messages : 0;
     my $archived_tokens = $yarn_tokens > $active_tokens ? $yarn_tokens - $active_tokens : 0;
-    
-    # Determine status based on actual trim threshold (58% of max context)
+
+    # Last request's budget record. This is the authority: the numbers come
+    # from the code that enforced the budget for that request.
+    my $entries = $state->can('context_stats') ? $state->context_stats() : [];
+    my $last = (@$entries) ? $entries->[-1] : undef;
+    my $budget = ($last && ref($last->{budget}) eq 'HASH') ? $last->{budget} : {};
+    my $breakdown = ref($budget->{breakdown}) eq 'HASH' ? $budget->{breakdown} : {};
+
+    # Fall back to the model caps when no request has been recorded yet
+    # (first turn of a session).
+    my $context_window = $budget->{context_window};
+    if (!defined $context_window && $self->{api_manager}) {
+        my $caps = $self->{api_manager}->get_model_capabilities($self->{api_manager}->get_current_model());
+        $context_window = $caps->{max_context_window_tokens} || $caps->{context_window} if $caps;
+    }
+
+    my $effective_limit = $budget->{effective_limit};
+    my $trim_target = $budget->{trim_target};
+
+    my $estimated = $budget->{estimated_after};
+    $estimated = $active_tokens if !defined $estimated;
+
     my $status;
-    my $threshold_pct = int($safe_pct * 100);
-    if ($active_tokens > $threshold) {
-        $status = $self->colorize("TRIMMING ACTIVE (over ${threshold_pct}%)", 'WARN');
-    } elsif ($active_tokens > $threshold * 0.75) {
-        $status = $self->colorize("Approaching limit", 'THEME');
+    if (defined $effective_limit && defined $estimated && $estimated > $effective_limit) {
+        $status = $self->colorize("OVER BUDGET - next request will trim", 'ERROR');
+    } elsif (defined $trim_target && defined $estimated && $estimated > $trim_target) {
+        $status = $self->colorize("Within budget, above trim target", 'WARN');
+    } elsif ($budget->{trimmed}) {
+        $status = $self->colorize("Trimmed on the last request", 'WARN');
     } else {
         $status = $self->colorize("Healthy", 'SUCCESS');
     }
-    
+
     $self->writeline("", markdown => 0);
-    $self->writeline(sprintf("%-24s %d messages (~%s)",
+    $self->writeline(sprintf("%-22s %d messages (~%s)",
         "Active Messages:",
         $active_messages,
         $self->_format_tokens($active_tokens)), markdown => 0);
-    
+
     if ($archived_messages > 0) {
-        $self->writeline(sprintf("%-24s %d messages (~%s)",
+        $self->writeline(sprintf("%-22s %d messages (~%s)",
             "Archived (YaRN):",
             $archived_messages,
             $self->_format_tokens($archived_tokens)), markdown => 0);
     }
-    
-    $self->writeline(sprintf("%-24s %s / %s (%s)",
-        "Context Usage:",
-        $self->_format_tokens($active_tokens),
-        $self->_format_tokens($max_tokens),
-        $usage_pct), markdown => 0);
-    
-    $self->writeline(sprintf("%-24s %s", "Status:", $status), markdown => 0);
-    
+
+    $self->writeline("", markdown => 0);
+    $self->writeline(sprintf("%-22s %s", "Model:", $last ? $last->{model} : ($self->{api_manager} ? $self->{api_manager}->get_current_model() : 'unknown')), markdown => 0);
+    $self->writeline(sprintf("%-22s %s", "Context window:",
+        $self->_format_tokens($context_window)), markdown => 0);
+
+    if (%$budget) {
+        $self->writeline(sprintf("%-22s %s", "Prompt budget:",
+            $self->_format_tokens($budget->{prompt_budget})), markdown => 0);
+        $self->writeline(sprintf("%-22s %s", "Tool schema:",
+            $self->_format_tokens($budget->{tool_tokens})), markdown => 0);
+        $self->writeline(sprintf("%-22s %s", "Effective limit:",
+            $self->_format_tokens($budget->{effective_limit})), markdown => 0);
+        $self->writeline(sprintf("%-22s %s",
+            "Trim target:",
+            $self->_format_tokens($budget->{trim_target})
+            . sprintf(" (%d%% of the limit)", int(100 * ($budget->{trim_target} // 0) / ($budget->{effective_limit} || 1)))), markdown => 0);
+
+        my $usage_line = $self->_format_tokens($estimated);
+        $usage_line .= sprintf(" / %s", $self->_format_tokens($budget->{effective_limit}));
+        if ($last && $last->{usage_prompt_tokens}) {
+            $usage_line .= sprintf("  (provider reported %s",
+                $self->_format_tokens($last->{usage_prompt_tokens}));
+            $usage_line .= sprintf(", %s cached",
+                $self->_format_tokens($last->{usage_cached_tokens}))
+                if $last->{usage_cached_tokens};
+            $usage_line .= ")";
+        }
+        $self->writeline(sprintf("%-22s %s", "Last request:", $usage_line), markdown => 0);
+
+        if (%$breakdown) {
+            my @parts;
+            my $roles = ref($breakdown->{roles}) eq 'HASH' ? $breakdown->{roles} : {};
+            for my $role (qw(system user assistant tool)) {
+                my $slot = $roles->{$role} or next;
+                push @parts, sprintf("%s %s", $role, $self->_format_tokens($slot->{total}));
+            }
+            $self->writeline(sprintf("%-22s %s", "Composition:", join("  |  ", @parts)), markdown => 0);
+
+            my @field;
+            push @field, sprintf("tool arguments %s", $self->_format_tokens($breakdown->{tool_call_tokens}))
+                if $breakdown->{tool_call_tokens};
+            push @field, sprintf("reasoning %s", $self->_format_tokens($breakdown->{reasoning_tokens}))
+                if $breakdown->{reasoning_tokens};
+            push @field, sprintf("tool schema %s", $self->_format_tokens($budget->{tool_tokens}))
+                if $budget->{tool_tokens};
+            $self->writeline(sprintf("%-22s %s", "Overhead:", join("  |  ", @field)), markdown => 0)
+                if @field;
+        }
+
+        my $proj = ref($last->{projection}) eq 'HASH' ? $last->{projection} : {};
+        if (%$proj) {
+            my $line = sprintf("%d recent turn(s), %d message(s) kept",
+                $proj->{recent_turns} // 0, $proj->{recent_messages} // 0);
+            if ($proj->{dropped_messages}) {
+                $line .= sprintf("; %d message(s) archived to %s",
+                    $proj->{dropped_messages},
+                    $self->_format_tokens(int(($proj->{compressed_tail_chars} // 0) / 4)));
+            }
+            $self->writeline(sprintf("%-22s %s", "Projection:", $line), markdown => 0);
+        }
+
+        if ($last && $last->{pre_api_trim}) {
+            my $pre = $last->{pre_api_trim};
+            $self->writeline(sprintf("%-22s dropped %d message(s) (~%s) before the call",
+                "Pre-call trim:",
+                $pre->{dropped_messages} // 0,
+                $self->_format_tokens($pre->{dropped_estimated_tokens} // 0)), markdown => 0);
+        }
+    }
+
+    $self->writeline(sprintf("%-22s %s", "Status:", $status), markdown => 0);
+
     if ($archived_messages > 0) {
         $self->writeline("", markdown => 0);
         $self->writeline($self->colorize("YaRN Recall Available", 'DATA') . 

@@ -157,6 +157,25 @@ subtest 'internal tool_call keys are stripped from the payload' => sub {
     my @found = grep { index($json, $_) >= 0 } @internal;
     is_deeply(\@found, [], 'serialized Chat Completions body is clean');
 
+    # Reasoning content is history, not prompt content.
+    my $reasoning_messages = [
+        { role => 'user', content => 'go' },
+        { role => 'assistant', content => 'working',
+          reasoning_content => 'private chain of thought ' x 50,
+          reasoning_details => [ { type => 'reasoning.text', text => 'signed block' } ] },
+        { role => 'tool', tool_call_id => 'call_r', content => 'ok' },
+    ];
+    my $rpayload_reasoning = $api->_build_payload(
+        $reasoning_messages, 'gpt-4o', { endpoint => '/chat/completions', openai => 1 },
+        stream => 0,
+    );
+    ok(!exists $rpayload_reasoning->{messages}[1]{reasoning_content},
+        'reasoning_content is not echoed back to the provider');
+    ok(exists $rpayload_reasoning->{messages}[1]{reasoning_details},
+        'reasoning_details is preserved (signed blocks for tool continuity)');
+    ok(exists $reasoning_messages->[1]{reasoning_content},
+        'the caller history is not mutated');
+
     my $rpayload = $api->_build_responses_api_payload(
         $messages, 'gpt-4o',
         { endpoint => '/responses', openai => 1, use_responses_api => 1 },

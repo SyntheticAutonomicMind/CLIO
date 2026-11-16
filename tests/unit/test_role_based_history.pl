@@ -103,6 +103,9 @@ sub make_history {
         unresolved   => [],
         context_files_block => '',
         session      => undef,
+        # Archiving happens under budget pressure; selection is no longer
+        # driven by a turn count.
+        prompt_budget => 300,
     );
 
     my $dynamic = messages_to_prose_dynamic($proj);
@@ -140,6 +143,9 @@ sub make_history {
         unresolved   => [],
         context_files_block => '',
         session      => undef,
+        # Archiving happens under budget pressure; selection is no longer
+        # driven by a turn count.
+        prompt_budget => 300,
     );
 
     # No separate anchor — active task is in dynamic userContext.

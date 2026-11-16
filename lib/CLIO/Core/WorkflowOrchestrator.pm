@@ -657,6 +657,7 @@ sub process_input {
             my $pre_count = scalar(@messages);
             my $model = $self->{api_manager}->get_current_model();
             my $caps = $self->{api_manager}->get_model_capabilities($model);
+            my $pre_api_plan = {};
             my $trimmed = validate_and_truncate(
                 messages           => \@messages,
                 model_capabilities => $caps,
@@ -670,7 +671,9 @@ sub process_input {
                 active_todos       => ($self->{_current_projection} ? $self->{_current_projection}{active_todos} : undef) || [],
                 unresolved         => ($self->{_current_projection} ? $self->{_current_projection}{unresolved} : undef) || [],
                 ltm_entries        => ($self->{_current_projection} ? $self->{_current_projection}{relevant_memory} : undef) || [],
+                context_plan       => $pre_api_plan,
             );
+            $self->{_pre_api_trim_plan} = ($pre_api_plan->{trimmed} ? $pre_api_plan : undef);
             if ($trimmed && scalar(@$trimmed) < $pre_count) {
                 # DIAGNOSTIC: Dump state before and after proactive trim (CLIO_TRIM_DIAG=1 to enable)
                 dump_diagnostic(
@@ -899,6 +902,11 @@ sub process_input {
                 log_debug('WorkflowOrchestrator', "Recorded API usage: model=$model, provider=$provider");
             }
         }
+
+        # Record how this request was budgeted and what filled it. The
+        # numbers come from the code that enforced them, not from a
+        # parallel estimate, so /context cannot disagree with the trim.
+        $self->_record_context_stats($session, $api_response);
         
         # Accumulate performance metrics for /stats
         $self->_record_turn_metrics($api_response, $session);
@@ -1381,6 +1389,15 @@ sub _build_turn_context {
     my $projection;
 
     my $ltm_entries = $self->{skip_ltm} ? [] : $self->_read_ltm_entries_for_projection($session);
+
+    # The projection selects turns against the same budget the API call
+    # will be held to: model prompt budget minus what is already committed
+    # to the system prompt and the tool schema.
+    require CLIO::Memory::TokenEstimator;
+    my $prompt_budget = CLIO::Memory::TokenEstimator::compute_prompt_budget($model_caps);
+    my $reserved_tokens = CLIO::Memory::TokenEstimator::estimate_tokens($system_prompt)
+                        + CLIO::Memory::TokenEstimator::estimate_tools_tokens($tools);
+
     $projection = CLIO::Core::ContextBuilder::build_projection(
         history             => $history,
         user_input          => $user_input,
@@ -1391,6 +1408,8 @@ sub _build_turn_context {
         context_files_block => $self->_render_context_files_for_user_context($session),
         session             => $session,
         context_window      => $ctx_window,
+        prompt_budget       => $prompt_budget,
+        reserved_tokens     => $reserved_tokens,
     );
 
     # Push the projection's selected history (anchor + recent turns)
@@ -3907,6 +3926,78 @@ sub _record_turn_metrics {
         $ttft // 0, $tps // 0, $input_tokens, $output_tokens, $duration // 0, $tool_calls_count
     ));
 }
+
+=head2 _record_context_stats($session, $api_response)
+
+Record the context budget and composition for one API request.
+
+Sources, each from the code that produced it:
+- APIManager::get_last_context_plan: context window, prompt budget, tool
+  tokens, effective limit, trim target, estimate before/after, whether
+  the proactive trim fired, and what it dropped.
+- APIManager plan's breakdown: tokens by role and by field (content,
+  tool_calls, reasoning).
+- The projection's stats: how many turns/messages it kept, and how much
+  it archived into the compressed tail.
+- The provider's usage: the prompt and completion counts it reported,
+  including cache hits when the provider reports them.
+
+Arguments:
+- $session: Session object (must expose state())
+- $api_response: HashRef from the API call
+
+Returns: nothing
+
+=cut
+
+sub _record_context_stats {
+    my ($self, $session, $api_response) = @_;
+    # Session may be a plain hashref in tests and in some embedded callers.
+    require Scalar::Util;
+    return unless Scalar::Util::blessed($session) && $session->can('state');
+
+    my $state = $session->state();
+    return unless Scalar::Util::blessed($state) && $state->can('record_context_stats');
+
+    my $plan = ($self->{api_manager} && $self->{api_manager}->can('get_last_context_plan'))
+        ? $self->{api_manager}->get_last_context_plan()
+        : {};
+    return unless $plan && ref($plan) eq 'HASH' && %$plan;
+
+    my $usage = (ref($api_response->{usage}) eq 'HASH') ? $api_response->{usage} : {};
+    my $projection = $self->{_current_projection};
+    my $proj_stats = (ref($projection) eq 'HASH' && ref($projection->{stats}) eq 'HASH')
+        ? $projection->{stats} : {};
+
+    my $entry = {
+        timestamp            => time(),
+        model                => $plan->{model} // '',
+        provider             => ($self->{api_manager} ? $self->{api_manager}->get_current_provider() : ''),
+        budget               => $plan,
+        projection           => $proj_stats,
+        usage_prompt_tokens  => $usage->{prompt_tokens} // 0,
+        usage_completion_tokens => $usage->{completion_tokens} // 0,
+        usage_cached_tokens  => $usage->{cached_tokens} // 0,
+    };
+
+    # The orchestrator trims before every API call as well. When that trim
+    # fired, record it; the APIManager plan then describes the array that
+    # was actually serialized.
+    if ($self->{_pre_api_trim_plan}) {
+        my $pre = $self->{_pre_api_trim_plan};
+        $entry->{pre_api_trim} = {
+            dropped_messages         => $pre->{dropped_messages} // 0,
+            dropped_estimated_tokens => $pre->{dropped_estimated_tokens} // 0,
+            thread_summary_chars     => $pre->{thread_summary_chars} // 0,
+            messages_before          => $pre->{messages_before} // 0,
+            messages_after           => $pre->{messages_after} // 0,
+        };
+    }
+
+    $state->record_context_stats($entry);
+    return;
+}
+
 
 =head2 get_performance_summary
 

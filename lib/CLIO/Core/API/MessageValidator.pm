@@ -61,13 +61,22 @@ Arguments (hash):
     messages           => ArrayRef of message objects (required)
     model_capabilities => HashRef from get_model_capabilities (optional)
     tools              => ArrayRef of tool definitions (optional)
-    token_ratio        => Learned chars/token ratio (default: 2.5)
+    token_ratio        => Learned chars/token ratio (default: the
+                           TokenEstimator's effective ratio, 4.0 until a
+                           real observation is learned)
     config             => Config object (optional, for provider fallbacks)
     api_base           => API base URL (optional, for local model detection)
     debug              => Debug flag (optional)
     active_task        => Scalar active task text (optional; used to seed
                            a thread_summary for proactively-dropped messages
                            so they are not permanently lost)
+    context_plan       => HashRef (optional). Populated in place with the
+                           budget decision for this request: context window,
+                           prompt budget, tool tokens, effective limit, trim
+                           target, estimate before/after, and what the trim
+                           dropped. The caller records it for /context and
+                           diagnostics, so the reported budget is the budget
+                           that was enforced.
 
 Returns: ArrayRef of validated/truncated messages
 
@@ -100,15 +109,22 @@ sub validate_and_truncate {
     # "isn't numeric in numeric lt" warning. Same class of bug Andrew
     # caught in TodoStore in 64de736c.
     if (!defined $token_ratio) {
-        $token_ratio = 2.5;
+        # Fall back to the estimator's ratio (4.0 until a real observation
+        # is learned), not a hardcoded 2.5. The estimator is the single
+        # source for "characters per token"; a lower default here made the
+        # validator under-estimate prompt size by ~30% on the first request
+        # of every session, which is the unsafe direction - it lets an
+        # oversized request reach the provider and come back as a 400.
+        $token_ratio = CLIO::Memory::TokenEstimator::get_effective_ratio();
     } elsif ($token_ratio =~ /^\d+(\.\d+)?$/) {
         if ($token_ratio < 1.0 || $token_ratio > 10.0) {
             log_warning('MessageValidator',
-                "token_ratio $token_ratio out of range (1.0..10.0) for model $model; clamping to 2.5");
-            $token_ratio = 2.5;
+                "token_ratio $token_ratio out of range (1.0..10.0) for model $model; "
+                . "clamping to " . CLIO::Memory::TokenEstimator::get_effective_ratio());
+            $token_ratio = CLIO::Memory::TokenEstimator::get_effective_ratio();
         }
     } else {
-        $token_ratio = 2.5;
+        $token_ratio = CLIO::Memory::TokenEstimator::get_effective_ratio();
     }
 
     # Propagate the clamped ratio to _estimate_tokens so the parameter
@@ -200,8 +216,35 @@ sub validate_and_truncate {
     # Estimate token usage (use the clamped token_ratio if provided)
     my $estimated_tokens = _estimate_tokens($messages, $token_ratio);
 
+    # The context plan is the record of how this request was budgeted.
+    # Callers pass a hashref and read it back; the numbers come from this
+    # function rather than being recomputed elsewhere, so the recorded
+    # budget cannot drift from the budget that was enforced.
+    my $plan = $args{context_plan};
+    if (ref($plan) eq 'HASH') {
+        %$plan = (
+            model            => $model,
+            ratio            => $token_ratio,
+            context_window   => ($caps && ($caps->{max_context_window_tokens}
+                                        || $caps->{context_window}
+                                        || $caps->{max_prompt_tokens})) || undef,
+            max_prompt       => $max_prompt,
+            prompt_budget    => $prompt_budget,
+            tool_tokens      => $tool_tokens,
+            effective_limit  => $effective_limit,
+            trim_target      => $trim_target,
+            estimated_before => $estimated_tokens,
+            messages_before  => scalar(@$messages),
+            trimmed          => 0,
+        );
+    }
+
     if ($estimated_tokens <= $effective_limit) {
         log_debug('MessageValidator', "Token validation: $estimated_tokens / $effective_limit tokens (OK)");
+        if (ref($plan) eq 'HASH') {
+            $plan->{estimated_after}  = $estimated_tokens;
+            $plan->{messages_after}   = scalar(@$messages);
+        }
         return validate_tool_message_pairs($messages);
     }
 
@@ -222,7 +265,7 @@ sub validate_and_truncate {
                   || 0;
     my $result = _role_based_tail_walk($messages, $trim_target,
         $debug, $active_task, $ctx_window, $active_todos, $unresolved,
-        $ltm_entries, $token_ratio, $effective_limit);
+        $ltm_entries, $token_ratio, $effective_limit, $plan);
 
     trace_context_transition(
         phase           => 'after-proactive-trim',
@@ -249,6 +292,12 @@ sub validate_and_truncate {
             . "but effective_limit is $effective_limit (overshoot="
             . ($result_tokens - $effective_limit) . " tokens). "
             . "Pinned messages exceed budget; provider will likely reject.");
+    }
+
+    if (ref($plan) eq 'HASH') {
+        $plan->{trimmed}         = 1;
+        $plan->{estimated_after} = $result_tokens;
+        $plan->{messages_after}  = scalar(@$result);
     }
 
     return $result;
@@ -299,6 +348,9 @@ Arguments:
 - $hard_limit: The effective limit the array must not exceed (optional).
                Used when the target is unreachable because the pinned
                messages exceed it on their own.
+- $stats: HashRef (optional). When the walk drops messages, filled with
+          dropped_messages, dropped_estimated_tokens, and
+          thread_summary_chars so the caller can report what was archived.
 
 Returns: Trimmed ArrayRef (possibly with a thread_summary folded into
 the last user message for ALL providers)
@@ -306,7 +358,7 @@ the last user message for ALL providers)
 =cut
 
 sub _role_based_tail_walk {
-    my ($messages, $target, $debug, $active_task, $context_window, $active_todos, $unresolved, $ltm_entries, $ratio, $hard_limit) = @_;
+    my ($messages, $target, $debug, $active_task, $context_window, $active_todos, $unresolved, $ltm_entries, $ratio, $hard_limit, $stats) = @_;
 
     return $messages unless $messages && @$messages;
 
@@ -579,6 +631,13 @@ sub _role_based_tail_walk {
             " messages");
     }
 
+    if (ref($stats) eq 'HASH' && @dropped) {
+        my $dropped_tokens = 0;
+        $dropped_tokens += _estimate_tokens([$_], $ratio) for @dropped;
+        $stats->{dropped_messages}         = scalar(@dropped);
+        $stats->{dropped_estimated_tokens} = $dropped_tokens;
+    }
+
     # Re-compress dropped messages into a thread_summary system message.
     # The projection's compressed_tail (now rendered as a <thread_summary>
     # system message by WorkflowOrchestrator) covers turns dropped by the
@@ -688,6 +747,8 @@ sub _role_based_tail_walk {
                 log_debug('MessageValidator',
                     "Folded thread_summary into user message for " .
                     scalar(@dropped) . " proactively-dropped messages");
+                $stats->{thread_summary_chars} = length($summary->{content})
+                    if ref($stats) eq 'HASH';
             } else {
                 # No user message found; fall back to system message
                 # (rare edge case — already invalid for the API, so
@@ -1192,21 +1253,13 @@ sub remove_existing_thread_summaries {
 sub _calculate_tool_tokens {
     my ($tools) = @_;
     return 0 unless $tools && ref($tools) eq 'ARRAY' && @$tools;
-    
-    require CLIO::Memory::TokenEstimator;
-    my $ratio = CLIO::Memory::TokenEstimator::get_effective_ratio();
-    
-    my $total = 0;
-    for my $tool (@$tools) {
-        my $tool_json = safe_encode_json($tool);
-        if ($tool_json) {
-            $total += int(length($tool_json) / $ratio);
-        } else {
-            $total += 600;
-        }
-    }
-    
-    log_debug('MessageValidator', "Tool token budget: $total tokens for " . scalar(@$tools) . " tools (ratio: $ratio)");
+
+    # One definition of "tool schema cost", shared with the projection so
+    # it cannot plan to fill budget the tools already occupy.
+    my $total = CLIO::Memory::TokenEstimator::estimate_tools_tokens($tools);
+    log_debug('MessageValidator', "Tool token budget: $total tokens for "
+        . scalar(@$tools) . " tools (ratio: "
+        . CLIO::Memory::TokenEstimator::get_effective_ratio() . ")");
     return $total;
 }
 

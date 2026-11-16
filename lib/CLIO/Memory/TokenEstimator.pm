@@ -10,7 +10,11 @@ use POSIX qw(ceil);
 use Exporter 'import';
 use CLIO::Core::Defaults ();
 
-our @EXPORT_OK = qw(estimate_tokens estimate_messages_tokens get_effective_ratio compute_prompt_budget message_character_count);
+our @EXPORT_OK = qw(
+    estimate_tokens estimate_messages_tokens estimate_messages_breakdown
+    estimate_tools_tokens get_effective_ratio compute_prompt_budget
+    message_character_count
+);
 
 =head1 NAME
 
@@ -50,13 +54,6 @@ use constant TOKENS_PER_MESSAGE    => 3;   # role + delimiters
 use constant TOKENS_PER_NAME       => 1;   # tool_call_id or name field
 use constant TOKENS_PER_COMPLETION => 3;   # response priming overhead
 use constant TOOL_CALL_OVERHEAD    => 10;  # JSON structure of a tool_call
-
-# Context management threshold: trim at this percentage of max context
-# Used as a fallback when model max_output_tokens is unknown. Real trim
-# paths (MessageValidator, ConversationManager, Session::State,
-# ErrorHandler) prefer compute_prompt_budget() which uses the actual
-# model output cap rather than this percentage.
-use constant SAFE_CONTEXT_PERCENT  => 0.75;
 
 # Package-level learned ratio - updated from API response feedback
 # When undef, falls back to DEFAULT_CHARS_PER_TOKEN
@@ -394,6 +391,182 @@ sub estimate_messages_tokens {
         }
     }
 
+    return $total;
+}
+
+=head2 estimate_messages_breakdown
+
+Estimate message tokens with a per-component breakdown.
+
+Answers "what is in the prompt and how big is each part" without
+re-serializing anything. The total returned here is identical to
+L</estimate_messages_tokens> for the same array; the breakdown only
+attributes it.
+
+Arguments:
+- $messages: ArrayRef of message hashes
+
+Returns: Hashref
+    messages          => count of messages
+    total             => estimated tokens (same as estimate_messages_tokens)
+    overhead          => role framing, tool_call JSON structure, priming
+    content_chars     => characters of message content
+    content_tokens    => tokens attributed to content
+    tool_call_chars   => characters of tool_call name+arguments
+    tool_call_tokens  => tokens attributed to tool_calls
+    reasoning_chars   => characters of reasoning fields
+    reasoning_tokens  => tokens attributed to reasoning fields
+    roles             => { $role => { messages, total, content, tool_calls, reasoning, overhead } }
+
+=cut
+
+sub estimate_messages_breakdown {
+    my ($messages) = @_;
+
+    my %out = (
+        messages         => 0,
+        total            => TOKENS_PER_COMPLETION,
+        overhead         => TOKENS_PER_COMPLETION,
+        content_chars    => 0,
+        content_tokens   => 0,
+        tool_call_chars  => 0,
+        tool_call_tokens => 0,
+        reasoning_chars  => 0,
+        reasoning_tokens => 0,
+        roles            => {},
+    );
+
+    return \%out unless ref $messages eq 'ARRAY';
+
+    for my $msg (@$messages) {
+        next unless ref $msg eq 'HASH';
+
+        my $role = $msg->{role} // 'unknown';
+        my $slot = $out{roles}{$role} ||= {
+            messages   => 0,
+            total      => TOKENS_PER_MESSAGE,
+            content    => 0,
+            tool_calls => 0,
+            reasoning  => 0,
+            overhead   => TOKENS_PER_MESSAGE,
+        };
+
+        $out{messages}++;
+        $out{overhead} += TOKENS_PER_MESSAGE;
+        $out{total}    += TOKENS_PER_MESSAGE;
+        $slot->{messages}++;
+
+        my ($content_chars, $content_tokens) = (0, 0);
+        if (defined $msg->{content}) {
+            $content_chars += message_character_count($msg->{content});
+            $content_tokens += estimate_tokens($msg->{content});
+        }
+        elsif (defined $msg->{parts} && ref($msg->{parts}) eq 'ARRAY') {
+            for my $part (@{$msg->{parts}}) {
+                next unless ref $part eq 'HASH';
+                if ($part->{text}) {
+                    $content_chars  += length($part->{text});
+                    $content_tokens += estimate_tokens($part->{text});
+                }
+                elsif ($part->{inlineData}) {
+                    $content_tokens += 85;
+                }
+            }
+        }
+
+        my ($call_chars, $call_tokens) = (0, 0);
+        if ($msg->{tool_calls} && ref $msg->{tool_calls} eq 'ARRAY') {
+            for my $tool_call (@{$msg->{tool_calls}}) {
+                next unless ref $tool_call eq 'HASH';
+                my $tool_text = ($tool_call->{function}{name} // '') .
+                                ($tool_call->{function}{arguments} // '');
+                $call_chars  += length($tool_text);
+                $call_tokens += estimate_tokens($tool_text) + TOOL_CALL_OVERHEAD;
+            }
+        }
+
+        my ($reason_chars, $reason_tokens) = (0, 0);
+        if (defined $msg->{reasoning_content}) {
+            $reason_chars  += length($msg->{reasoning_content});
+            $reason_tokens += estimate_tokens($msg->{reasoning_content});
+        }
+        if (ref($msg->{reasoning_details}) eq 'ARRAY') {
+            for my $block (@{$msg->{reasoning_details}}) {
+                next unless ref($block) eq 'HASH' && defined $block->{text};
+                $reason_chars  += length($block->{text});
+                $reason_tokens += estimate_tokens($block->{text});
+            }
+        }
+        if (ref($msg->{reasoning_blocks}) eq 'ARRAY') {
+            for my $block (@{$msg->{reasoning_blocks}}) {
+                next unless ref($block) eq 'HASH';
+                my $text = $block->{thinking} // $block->{text} // '';
+                $reason_chars  += length($text);
+                $reason_tokens += estimate_tokens($text);
+            }
+        }
+        if (ref($msg->{responses_reasoning_items}) eq 'ARRAY') {
+            for my $item (@{$msg->{responses_reasoning_items}}) {
+                next unless ref($item) eq 'HASH' && defined $item->{content};
+                $reason_chars  += length($item->{content});
+                $reason_tokens += estimate_tokens($item->{content});
+            }
+        }
+
+        my $name_overhead = 0;
+        if ($msg->{tool_call_id} || $msg->{name}) {
+            $name_overhead = TOKENS_PER_NAME;
+        }
+
+        $out{content_chars}     += $content_chars;
+        $out{content_tokens}    += $content_tokens;
+        $out{tool_call_chars}   += $call_chars;
+        $out{tool_call_tokens}  += $call_tokens;
+        $out{reasoning_chars}   += $reason_chars;
+        $out{reasoning_tokens}  += $reason_tokens;
+
+        my $slot_tokens = $content_tokens + $call_tokens + $reason_tokens
+                        + TOKENS_PER_MESSAGE + $name_overhead;
+        $slot->{content}    += $content_tokens;
+        $slot->{tool_calls} += $call_tokens;
+        $slot->{reasoning}  += $reason_tokens;
+        $slot->{overhead}   += $name_overhead;
+        $slot->{total}      += $content_tokens + $call_tokens + $reason_tokens + $name_overhead;
+
+        $out{overhead} += $name_overhead;
+        $out{total}    += $content_tokens + $call_tokens + $reason_tokens + $name_overhead;
+    }
+
+    return \%out;
+}
+
+=head2 estimate_tools_tokens
+
+Estimate the prompt cost of the tool definitions sent with every request.
+
+Tool schemas are part of the prompt on every call, so they reduce the
+budget available to messages. Centralised here so the validator (which
+subtracts them) and the projection (which must not plan to fill budget
+the tools already occupy) use the same number.
+
+Arguments:
+- $tools: ArrayRef of tool definition hashes (OpenAI function-calling shape)
+
+Returns: Integer estimated tokens
+
+=cut
+
+sub estimate_tools_tokens {
+    my ($tools) = @_;
+    return 0 unless $tools && ref($tools) eq 'ARRAY' && @$tools;
+
+    require CLIO::Util::JSON;
+    my $ratio = get_effective_ratio();
+    my $total = 0;
+    for my $tool (@$tools) {
+        my $json = CLIO::Util::JSON::safe_encode_json($tool);
+        $total += defined $json ? int(length($json) / $ratio) : 600;
+    }
     return $total;
 }
 

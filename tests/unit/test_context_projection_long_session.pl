@@ -20,6 +20,12 @@ use CLIO::Core::ContextBuilder;
 use CLIO::Core::MessageHistory qw(messages_to_prose_dynamic);
 use CLIO::Memory::TokenEstimator qw(estimate_messages_tokens);
 
+# Projection selection is budget-driven. Give the fixtures a budget small
+# enough to force archiving; without one the projection keeps every turn
+# and relies on the proactive trim to enforce the limit.
+use constant TEST_PROMPT_BUDGET => 4000;
+
+
 *build_projection = \&CLIO::Core::ContextBuilder::build_projection;
 
 # ---------------------------------------------------------------------------
@@ -64,8 +70,9 @@ sub make_long_history {
     my $raw_tokens = estimate_messages_tokens($history);
 
     my $proj = build_projection(
-        history    => $history,
-        user_input => 'Phase 50 step',
+        history       => $history,
+        user_input    => 'Phase 50 step',
+        prompt_budget => TEST_PROMPT_BUDGET,
     );
     # Compute projected tokens = anchor + recent turns + dynamic userContext.
     my @proj_messages;
@@ -97,8 +104,9 @@ sub make_long_history {
 {
     my $history = make_long_history(turns => 50);
     my $proj = build_projection(
-        history    => $history,
-        user_input => 'continue',
+        history       => $history,
+        user_input    => 'continue',
+        prompt_budget => TEST_PROMPT_BUDGET,
     );
 
     # No separate anchor — active task is in dynamic userContext.
@@ -116,8 +124,9 @@ sub make_long_history {
 {
     my $history = make_long_history(turns => 50);
     my $proj = build_projection(
-        history    => $history,
-        user_input => 'continue',
+        history       => $history,
+        user_input    => 'continue',
+        prompt_budget => TEST_PROMPT_BUDGET,
     );
 
     my $last_turn = $proj->{turns}[-1];
@@ -134,8 +143,9 @@ sub make_long_history {
 {
     my $history = make_long_history(turns => 50);
     my $proj = build_projection(
-        history    => $history,
-        user_input => 'continue',
+        history       => $history,
+        user_input    => 'continue',
+        prompt_budget => TEST_PROMPT_BUDGET,
     );
 
     ok(length($proj->{compressed_tail}) > 0,
@@ -148,8 +158,9 @@ sub make_long_history {
 {
     my $history = make_long_history(turns => 50);
     my $proj = build_projection(
-        history    => $history,
-        user_input => 'continue',
+        history       => $history,
+        user_input    => 'continue',
+        prompt_budget => TEST_PROMPT_BUDGET,
     );
 
     my $combined = messages_to_prose_dynamic($proj);
@@ -174,7 +185,8 @@ sub make_long_history {
     my $history = make_long_history(turns => 30);
     my $before_count = scalar @$history;
 
-    my $proj = build_projection(history => $history, user_input => 'continue');
+    my $proj = build_projection(history => $history, user_input => 'continue',
+        prompt_budget => TEST_PROMPT_BUDGET);
 
     is(scalar @$history, $before_count, "Raw history count unchanged ($before_count)");
     # Recent turn messages must be the SAME refs (not clones). If
@@ -198,17 +210,19 @@ sub make_long_history {
     # Every 7th turn has an ERROR in the tool content
     my $history = make_long_history(turns => 21);  # turns 7, 14, 21 have errors
     my $proj = build_projection(
-        history    => $history,
-        user_input => 'continue',
+        history       => $history,
+        user_input    => 'continue',
+        prompt_budget => TEST_PROMPT_BUDGET,
     );
 
     # unresolvedState is collected only when build_projection is called
     # with the unresolved arg populated (WorkflowOrchestrator passes it
     # from _collect_unresolved_state). When passed explicitly:
     my $proj2 = build_projection(
-        history    => $history,
-        user_input => 'continue',
-        unresolved => ['tool_error: undefined variable in file_x'],
+        history       => $history,
+        user_input    => 'continue',
+        prompt_budget => TEST_PROMPT_BUDGET,
+        unresolved    => ['tool_error: undefined variable in file_x'],
     );
     # After the role-based history refactor + metadata-leak fix,
     # unresolved state is NOT surfaced via the prose renderer's

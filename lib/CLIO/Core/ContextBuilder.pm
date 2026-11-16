@@ -11,7 +11,7 @@ binmode(STDOUT, ':encoding(UTF-8)');
 binmode(STDERR, ':encoding(UTF-8)');
 
 use CLIO::Core::Logger qw(log_debug log_warning log_error);
-use CLIO::Memory::TokenEstimator qw(estimate_messages_tokens);
+use CLIO::Memory::TokenEstimator qw(estimate_messages_tokens message_character_count);
 use CLIO::Memory::LongTerm ();
 use Digest::SHA qw(sha256_hex);
 use Encode qw(encode_utf8);
@@ -91,8 +91,6 @@ our $VERSION = '1.0.0';
 our $RELEVANCE_THRESHOLD = 5;
 our $MAX_RELEVANT_MEMORIES = 5;
 our $MIN_MEMORY_CONFIDENCE = 0.5;
-our $RECENT_FULL_TURNS = 5;   # always include the latest N turns in full
-our $RECENT_FULL_TURNS_IF_BUDGET = 10;  # include up to N extra if budget allows
 
 # Package-level cache for lazy compressed_tail regeneration.
 # Keyed on _compressed_tail_sig($dropped_turns, $active_task).
@@ -102,25 +100,25 @@ my %_compressed_tail_cache;
 my @_compressed_tail_cache_order;
 our $COMPRESSED_TAIL_CACHE_MAX = 50;
 
-# Session-length-aware scaling for the recent window. Long sessions
-# benefit from a wider recent window (more cache churn per turn,
-# but better trajectory recall) while short sessions keep a minimal
-# window. Bands align with the design spec of "5-10 recent turns":
-#   short (0-30):   3 recent (min_recent floor)
-#   medium (31-100): 5 recent (design default)
-#   long (101-300):  8 recent
-#   very long (301+): 10 recent (hard cap)
-# _select_turns applies a min_recent=3 floor so very short sessions
-# don't get starved of context. The proactive trim
-# (MessageValidator::_role_based_tail_walk) is the final word on
-# what fits the model's context window.
-our $RECENT_SCALING_BANDS = [
-    # [max_total_turns, recent_count]
-    [30,   3],   # short sessions: min_recent floor
-    [100,  5],   # medium: design default
-    [300,  8],   # long: wider window for trajectory recall
-    [1e9,  10],  # very long: hard cap at 10
-];
+# Recent-window selection is token-budgeted, not turn-counted.
+#
+# A turn-count window is blind to how large a turn is. In an agentic
+# session one "turn" can be hundreds of tool calls, so counting turns
+# either keeps far more than the budget allows or discards hundreds of
+# thousands of tokens while most of the window is empty. Selection
+# therefore fills the available prompt budget and drops from the oldest
+# end by measured size.
+#
+# Feedback and hysteresis:
+# - selection fills up to RECENT_FILL_FRACTION of the available budget
+# - when the total exceeds that, it drops until it is below
+#   RECENT_LOW_FRACTION. The gap is headroom: without it, one new turn
+#   crosses the line again and every request re-prefills the array
+# - RECENT_MIN_TURNS always survives, whatever it costs, so the model
+#   never loses the turns it is currently working in
+our $RECENT_MIN_TURNS       = 2;
+our $RECENT_FILL_FRACTION   = 0.70;
+our $RECENT_LOW_FRACTION    = 0.55;
 
 
 # ============================================================================
@@ -142,6 +140,12 @@ Arguments:
 - session: Session object (optional; used for anchor fallback via YaRN).
 - context_window: Model context window in tokens (optional; used to
   scale the compressed tail budget). Defaults to 128K.
+- prompt_budget: Tokens available to the whole prompt for this model
+  (optional). When provided, recent-window selection fills this budget
+  instead of keeping a fixed number of turns.
+- reserved_tokens: Tokens already committed to non-history content -
+  system prompt and tool schema (optional, default 0). Subtracted from
+  prompt_budget before selecting turns.
 - context_files: Arrayref of file paths to render into the userContext
   block (optional).
 - context_files_block: Pre-rendered context-files string (optional). Use
@@ -157,6 +161,9 @@ Returns a hashref:
        active_task       => "...",    # for per-iteration LTM re-score
        user_input        => "...",    # for per-iteration LTM re-score
        token_estimate    => $int,
+       stats             => { ... },  # selection record: recent_turns,
+                                      # dropped_turns/messages/chars/estimate,
+                                      # compressed_tail_chars, kept_estimate
    }
 
 =cut
@@ -181,14 +188,24 @@ sub build_projection {
     my $context_files       = $args{context_files}       || [];
     my $context_files_block = $args{context_files_block} // '';
 
+    # Prompt budget for the whole request, and the tokens already
+    # committed to things that are not history (system prompt, tool
+    # schema). Recent-window selection fills only the remainder.
+    my $prompt_budget   = $args{prompt_budget};
+    my $reserved_tokens = $args{reserved_tokens} // 0;
+    my $budget = {
+        prompt_budget => $prompt_budget,
+        reserved      => $reserved_tokens,
+    };
+
     my $turns = _split_into_turns($history);
 
     # Select anchor (first substantive user turn) and recent turns
     my ($anchor_turn, $recent_turns, $dropped_turns) =
-        _select_turns($turns, $session, $history, $active_task);
+        _select_turns($turns, $session, $history, $active_task, $budget);
 
     # Build the compressed tail if any turns were dropped
-    my $compressed_tail = _build_compressed_tail($dropped_turns, $active_task, $context_window, $active_todos, $unresolved, $ltm);
+    my $compressed_tail = _build_compressed_tail($dropped_turns, $active_task, $context_window, $active_todos, $unresolved, $ltm, $prompt_budget);
 
     my @deduped_recent = @$recent_turns;
 
@@ -225,8 +242,57 @@ sub build_projection {
     my $anchor_list = ref($anchor_collapsed) eq 'ARRAY' ? $anchor_collapsed : [];
     my @all_messages;
     push @all_messages, @$anchor_list;
-    push @all_messages, @collapsed_recent;
+    # @collapsed_recent holds one arrayref per turn. Flatten it: pushing
+    # the turn arrayrefs made every message invisible to the estimator
+    # (which skips non-hash entries), so token_estimate was always just
+    # the priming overhead.
+    push @all_messages, map { @$_ } @collapsed_recent;
     my $token_estimate = estimate_messages_tokens(\@all_messages);
+
+    # Selection record: what the projection kept and what it archived.
+    # Without this, a turn-window change is invisible in the session —
+    # the only symptom is a smaller prompt on the next request.
+    my ($dropped_messages, $dropped_chars) = (0, 0);
+    for my $turn (@$dropped_turns) {
+        next unless ref($turn) eq 'ARRAY';
+        for my $msg (@$turn) {
+            next unless ref($msg) eq 'HASH';
+            $dropped_messages++;
+            $dropped_chars += message_character_count($msg->{content});
+            if (ref($msg->{tool_calls}) eq 'ARRAY') {
+                for my $call (@{$msg->{tool_calls}}) {
+                    next unless ref($call) eq 'HASH';
+                    $dropped_chars += length($call->{function}{name} // '');
+                    $dropped_chars += length($call->{function}{arguments} // '');
+                }
+            }
+        }
+    }
+    my @dropped_messages_flat;
+    for my $turn (@$dropped_turns) {
+        push @dropped_messages_flat, grep { ref($_) eq 'HASH' } @$turn
+            if ref($turn) eq 'ARRAY';
+    }
+
+    my $recent_message_count = 0;
+    $recent_message_count += scalar(@$_) for @collapsed_recent;
+
+    my $stats = {
+        turns_total          => scalar(@$turns),
+        prompt_budget        => $prompt_budget,
+        reserved_tokens      => $reserved_tokens,
+        budget_available     => (defined $prompt_budget && $prompt_budget > 0)
+                                    ? $prompt_budget - $reserved_tokens : undef,
+        recent_turns         => scalar(@collapsed_recent),
+        recent_messages      => $recent_message_count,
+        anchor_messages      => scalar(@$anchor_list),
+        dropped_turns        => scalar(@$dropped_turns),
+        dropped_messages     => $dropped_messages,
+        dropped_chars        => $dropped_chars,
+        dropped_estimate     => estimate_messages_tokens(\@dropped_messages_flat),
+        compressed_tail_chars => length($compressed_tail // ''),
+        kept_estimate        => $token_estimate,
+    };
 
     return {
         turns               => \@collapsed_recent,
@@ -241,6 +307,7 @@ sub build_projection {
         # user_input is preserved on the projection for reference.
         user_input          => $user_input,
         token_estimate      => $token_estimate,
+        stats               => $stats,
         # Note: budget_tokens is no longer accepted — the proactive
         # trim (MessageValidator::_role_based_tail_walk) is the
         # authoritative token-budget enforcer via compute_prompt_budget().
@@ -874,34 +941,75 @@ sub _split_into_turns {
     return \@turns;
 }
 
-=head2 _recent_count_for_turns
+=head2 _recent_count_for_budget($turns, $budget)
 
-Map a session's total turn count to a target recent-window size.
+Choose how many recent turns fit the available prompt budget.
 
-Returns the number of recent turns to keep in the projection for a
-session with $total_turns turns. The bands are configurable via
-$RECENT_SCALING_BANDS; default bands (3/5/8/10) match what
-scratch/optimize.md identified as the right tradeoff between
-cache stability (smaller window) and trajectory recall (bigger
-window).
+$budget is a hashref:
+    prompt_budget => tokens available to the whole prompt
+    reserved      => tokens already committed (system prompt, tool schema)
+    min_turns     => floor (optional, default $RECENT_MIN_TURNS)
 
-A session with 5 turns gets 3 recent; 50 turns gets 5; 200 turns
-gets 8; 1000 turns gets 10. _select_turns applies a min_recent=3
-floor on top of this so single-turn sessions still get 3 recent
-turns in the projection (though the proactive trim is the final
-word on what actually fits the context window).
+Behaviour:
+- With no usable budget, every turn is kept. Guessing a turn count is
+  worse than keeping the session intact; the proactive trim
+  (MessageValidator::_role_based_tail_walk) still enforces the limit.
+- If the turns fit within RECENT_FILL_FRACTION of the available budget,
+  keep them all.
+- Otherwise drop from the oldest end until the remainder is below
+  RECENT_LOW_FRACTION. Filling to the same threshold that triggers a
+  drop would make the next turn cross it again, and every request would
+  re-prefill the array.
+
+Returns the number of turns to keep.
 
 =cut
 
-sub _recent_count_for_turns {
-    my ($total_turns) = @_;
-    $total_turns = 0 unless defined $total_turns && $total_turns =~ /^\d+$/;
-    for my $band (@$RECENT_SCALING_BANDS) {
-        my ($max, $count) = @$band;
-        return $count if $total_turns <= $max;
+sub _recent_count_for_budget {
+    my ($turns, $budget) = @_;
+
+    my $total = scalar(@$turns);
+    return 0 if $total == 0;
+
+    my $min_turns = $budget->{min_turns} // $RECENT_MIN_TURNS;
+    $min_turns = $total if $min_turns > $total;
+
+    my $prompt_budget = $budget->{prompt_budget};
+    my $reserved      = $budget->{reserved} // 0;
+    my $available     = (defined $prompt_budget && $prompt_budget > 0)
+        ? $prompt_budget - $reserved : 0;
+
+    # No usable budget: keep everything. The floor only rejects nonsense
+    # (a caller that passed nothing, or a budget consumed entirely by the
+    # system prompt) - the min-turns floor handles genuinely tiny budgets.
+    return $total unless $available >= 200;
+
+    my @cost = map {
+        ref($_) eq 'ARRAY' ? estimate_messages_tokens($_) : 0
+    } @$turns;
+    my $total_cost = 0;
+    $total_cost += $_ for @cost;
+
+    my $fill = int($available * $RECENT_FILL_FRACTION);
+    return $total if $total_cost <= $fill;
+
+    my $low = int($available * $RECENT_LOW_FRACTION);
+
+    # Accumulate from the newest turn backwards, stopping before the next
+    # older turn would take the window past the low watermark.
+    my $keep = 0;
+    my $acc  = 0;
+    for (my $i = $total - 1; $i >= 0; $i--) {
+        last if $keep >= $min_turns && $acc + $cost[$i] > $low;
+        $acc += $cost[$i];
+        $keep++;
     }
-    # Should be unreachable because the last band has max=1e9.
-    return $RECENT_FULL_TURNS;
+
+    log_debug('ContextBuilder',
+        sprintf('recent window: %d/%d turns kept (%d of %d available tokens, fill=%d low=%d)',
+            $keep, $total, int($acc), int($available), $fill, $low));
+
+    return $keep;
 }
 
 =head2 _select_turns
@@ -921,7 +1029,8 @@ userContext.
 =cut
 
 sub _select_turns {
-    my ($turns, $session, $history, $active_task) = @_;
+    my ($turns, $session, $history, $active_task, $budget) = @_;
+    $budget ||= {};
 
     my $total_turns = scalar(@$turns);
     return (undef, [], []) if $total_turns == 0;
@@ -967,19 +1076,11 @@ sub _select_turns {
     $total_turns = scalar(@$turns);
     return (undef, [], \@trailing_incomplete) if $total_turns == 0;
 
-    # Now compute the recent window based on the number of COMPLETE turns.
-    # (Computing before the while loop used the original count which
-    # could differ after popping — e.g., 1 turn with 1 incomplete ->
-    # recent_count=1 but total_turns=0 after pop -> start_idx=-1.)
-    my $recent_target = _recent_count_for_turns($total_turns);
+    # Compute the recent window from the prompt budget: keep as many
+    # complete turns as fit, drop from the oldest end when the total
+    # exceeds the fill threshold.
+    my $recent_target = _recent_count_for_budget($turns, $budget);
     my $recent_count = $recent_target;
-
-    # Keep at most $recent_target recent turns (min 3 to preserve some history).
-    # The proactive trim (_role_based_tail_walk) is the final word on what
-    # fits the model's context window.
-    my $min_recent = 3;
-    $recent_count = $min_recent if $recent_count < $min_recent;
-    $recent_count = $total_turns if $recent_count > $total_turns;
 
     # Tool-turn preservation: if the most recent turn (or the 2nd-most
     # recent) contains assistant messages with tool_calls, always
@@ -1097,26 +1198,25 @@ Returns '' when there are no dropped turns.
 =cut
 
 sub _build_compressed_tail {
-    my ($dropped_turns, $active_task, $context_window, $active_todos, $unresolved, $ltm) = @_;
+    my ($dropped_turns, $active_task, $context_window, $active_todos, $unresolved, $ltm, $prompt_budget) = @_;
 
     return '' unless $dropped_turns && @$dropped_turns;
 
-    # Context-aware cap for the compressed tail (goes into the dynamic
-    # UC, which is per-turn). Scales with the model's context window:
-    #   32K ctx  -> ~1,200 chars (floor: 300 tokens * ratio)
-    #   64K ctx  -> ~1,308 chars
-    #   128K ctx -> ~2,620 chars
-    #   256K ctx -> ~5,240 chars
-    #   1M ctx   -> ~20,000 chars (ceiling: 8000 tokens * ratio)
-    # The old hardcoded OVERALL_CAP=900 was too conservative for
-    # modern 128K+ context windows.
-    my $OVERALL_CAP = _compute_compressed_tail_cap($context_window);
+    # Cap for the compressed tail. Proportional to how much it replaces,
+    # bounded by the caller's budget.
+    my @dropped_messages;
+    for my $turn (@$dropped_turns) {
+        push @dropped_messages, grep { ref($_) eq 'HASH' } @$turn
+            if ref($turn) eq 'ARRAY';
+    }
+    my $dropped_estimate = estimate_messages_tokens(\@dropped_messages);
+    my $OVERALL_CAP = _compute_compressed_tail_cap($context_window, $dropped_estimate, $prompt_budget);
 
     # Lazy regeneration: cache the compressed tail keyed on a signature
     # of the dropped turns + active_task. If the inputs are unchanged,
     # reuse the cached result (deterministic — same inputs produce same
     # output from compress_for_context_recovery).
-    my $sig = _compressed_tail_sig($dropped_turns, $active_task);
+    my $sig = _compressed_tail_sig($dropped_turns, $active_task, $OVERALL_CAP);
     if (exists $_compressed_tail_cache{$sig}) {
         log_debug('ContextBuilder', "Reusing cached compressed_tail (sig=$sig)");
         return $_compressed_tail_cache{$sig};
@@ -1169,8 +1269,8 @@ sub _build_compressed_tail {
 # Compute a cache signature from the dropped turns + active_task.
 # Uses truncated content to keep the key short.
 sub _compressed_tail_sig {
-    my ($dropped_turns, $active_task) = @_;
-    my $sig = 't' . scalar(@$dropped_turns) . ':';
+    my ($dropped_turns, $active_task, $cap) = @_;
+    my $sig = 't' . scalar(@$dropped_turns) . ':c' . ($cap // 0) . ':';
     for my $turn (@$dropped_turns) {
         next unless ref($turn) eq 'ARRAY';
         $sig .= scalar(@$turn) . '|' if @$turn;
@@ -1184,33 +1284,42 @@ sub _compressed_tail_sig {
     return $sig;
 }
 
-# Compute the character cap for the compressed tail (the per-turn
-# dynamic UC section). This is smaller than YaRN's thread_summary cap
-# (2.5% of context) because the compressed tail lives in the dynamic
-# userContext, which is a per-turn message that churns every turn and
-# therefore does not benefit from provider KV-caching. Reserving
-# 0.5% (instead of 2.5%) keeps the per-turn dynamic UC small while
-# still providing a meaningful "earlier work" summary. The thread_summary
-# cap (2.5%) is used for the cross-cycle injected system messages that
-# persist across turns and DO benefit from caching.
-# Scales with the model's context window but is bounded.
+# Compute the character cap for the compressed tail.
+#
+# The tail replaces whole turns, so its size is proportional to what it
+# replaces rather than fixed by the model's window. A fixed 0.5% of the
+# window meant a 130k-token archive could be summarized into 5k tokens
+# while 700k of budget sat unused - a 96% loss performed for no reason.
+#
+#   10% of the dropped tokens, floored at 0.5% of the window (so short
+#   archives still get a usable tail) and capped at 4% of the prompt
+#   budget (so the tail cannot crowd out live context).
+#
+# The tail sits in the last user message, at the END of the array, so its
+# churn does not invalidate the provider's cached prefix.
 sub _compute_compressed_tail_cap {
-    my ($context_window) = @_;
+    my ($context_window, $dropped_estimate, $prompt_budget) = @_;
     require CLIO::Core::Defaults;
     $context_window //= CLIO::Core::Defaults::DEFAULT_CONTEXT_WINDOW();
 
     require CLIO::Memory::TokenEstimator;
     my $ratio = CLIO::Memory::TokenEstimator::get_effective_ratio();
 
-    # ~0.5% of context window in tokens for the per-turn compressed tail.
-    #   32K ctx  -> 163 tokens -> 652 chars (floored to 300 tokens -> 1200 chars)
-    #   64K ctx  -> 327 tokens -> 1308 chars
-    #   128K ctx -> 655 tokens -> 2620 chars
-    #   256K ctx -> 1310 tokens -> 5240 chars
-    #   1M ctx   -> 5000 tokens -> 20000 chars (floored to 8000 tokens -> 32000, capped)
-    my $cap_tokens = int($context_window * 0.005);
-    $cap_tokens = 300  if $cap_tokens < 300;
-    $cap_tokens = 8000 if $cap_tokens > 8000;
+    my $floor_tokens = int($context_window * 0.005);
+    $floor_tokens = 300 if $floor_tokens < 300;
+
+    my $cap_tokens = $floor_tokens;
+    if ($dropped_estimate && $dropped_estimate > 0) {
+        my $proportional = int($dropped_estimate * 0.10);
+        $cap_tokens = $proportional if $proportional > $cap_tokens;
+    }
+
+    if ($prompt_budget && $prompt_budget > 0) {
+        my $ceiling = int($prompt_budget * 0.04);
+        $ceiling = $floor_tokens if $ceiling < $floor_tokens;
+        $cap_tokens = $ceiling if $cap_tokens > $ceiling;
+    }
+
     return int($cap_tokens * $ratio);
 }
 

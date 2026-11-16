@@ -38,19 +38,20 @@ use CLIO::Core::ContextBuilder;
 
 sub make_history {
     my (%args) = @_;
+    my $size = $args{size} // 80;
     my @messages;
 
     # Anchor turn
     push @messages,
-        { role => 'user', content => $args{anchor_content} // 'Original substantive task that the model must always see.' },
+        { role => 'user', content => ($args{anchor_content} // 'Original substantive task that the model must always see.') . (' z' x $size / 20) },
         { role => 'assistant', content => 'I will start by reading the file.' },
         { role => 'tool', content => 'file contents', tool_call_id => 'call_anchor' };
 
     my $turns = $args{turns} // 5;
     for my $i (1 .. $turns) {
         push @messages,
-            { role => 'user', content => "Question $i: " . ('x' x 80) },
-            { role => 'assistant', content => "Answer $i: " . ('y' x 80) },
+            { role => 'user', content => "Question $i: " . ('x' x $size) },
+            { role => 'assistant', content => "Answer $i: " . ('y' x $size) },
             { role => 'tool', content => "Result $i", tool_call_id => "call_$i" };
     }
 
@@ -62,8 +63,11 @@ sub make_history {
 # ---------------------------------------------------------------------------
 
 {
-    my $history = make_history(turns => 10);
-    my $proj = build_projection(history => $history, user_input => 'continue');
+    my $history = make_history(turns => 10, size => 800);
+    # A budget small enough to force archiving: selection is budget-driven
+    # now, so "old turns get compressed" requires budget pressure.
+    my $proj = build_projection(history => $history, user_input => 'continue',
+        prompt_budget => 5000);
     # Anchor concept removed — active task is in dynamic userContext.
     # The original task is preserved in the compressed_tail via YaRN's
     # [original] marker, which carries the first user request across
@@ -91,8 +95,9 @@ sub make_history {
 # ---------------------------------------------------------------------------
 
 {
-    my $history = make_history(turns => 30);
-    my $proj = build_projection(history => $history, user_input => 'continue');
+    my $history = make_history(turns => 30, size => 800);
+    my $proj = build_projection(history => $history, user_input => 'continue',
+        prompt_budget => 5000);
     ok(length($proj->{compressed_tail}) > 0, "Compressed tail is non-empty for long history");
     # The dropped turns = 30 + 1 (anchor) - 1 (latest) = 28 (approx)
     # We can't assert exact count, but compressed_tail should reflect a
@@ -112,8 +117,9 @@ sub make_history {
 # ---------------------------------------------------------------------------
 
 {
-    my $history = make_history(turns => 3);
-    my $proj = build_projection(history => $history, user_input => 'continue');
+    my $history = make_history(turns => 3, size => 2000);
+    my $proj = build_projection(history => $history, user_input => 'continue',
+        prompt_budget => 5000);
     # Check compressed_tail for framework narration (this is the
     # projection's compressed summary that replaces dropped turns in
     # the message stream).

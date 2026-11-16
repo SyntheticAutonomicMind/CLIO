@@ -10,9 +10,9 @@ use lib '../../lib';
 
 use CLIO::Core::ConversationManager qw(
     enforce_message_alternation
-    trim_conversation_for_api
     load_conversation_history
 );
+use CLIO::Core::API::MessageValidator ();
 
 # Helper to create a message
 sub make_msg {
@@ -165,12 +165,12 @@ subtest 'enforce_message_alternation consecutive arrayref messages' => sub {
 };
 
 # ===========================================
-# Tests for trim_conversation_for_api
+# Tests for the trim path (MessageValidator)
 # ===========================================
 
-subtest 'trim_conversation_for_api preserves arrayref content' => sub {
-    # Trimming should preserve arrayref content structure
+subtest 'validate_and_truncate preserves arrayref content' => sub {
     my $history = [
+        { role => 'system', content => 'You are a helpful assistant' },
         make_msg('user', 'First message'),
         make_msg('assistant', 'Response 1'),
         make_msg('user', [
@@ -180,62 +180,48 @@ subtest 'trim_conversation_for_api preserves arrayref content' => sub {
         make_msg('assistant', 'Response 2'),
     ];
 
-    my $system_prompt = 'You are a helpful assistant';
-
-    # Use large context so no trimming occurs
-    my $result = trim_conversation_for_api($history, $system_prompt,
-        model_context_window => 128000,
-        max_response_tokens => 16000,
-        debug => 0
+    # Large context: no trimming, structure preserved.
+    my $result = CLIO::Core::API::MessageValidator::validate_and_truncate(
+        messages           => $history,
+        model_capabilities => { max_context_window_tokens => 128000, max_output_tokens => 16000 },
+        tools              => [],
+        token_ratio        => 4,
     );
 
-    # All messages should be kept with large context
     is(scalar(@$result), scalar(@$history), 'all messages kept with large context');
-
-    # Arrayref content should be preserved
-    is(ref($result->[2]{content}), 'ARRAY', 'arrayref content preserved after trim');
+    is(ref($result->[3]{content}), 'ARRAY', 'arrayref content preserved');
 };
 
-subtest 'trim_conversation_for_api handles trimming with arrayref' => sub {
-    # When trimming is needed, arrayref content should still be handled
-    my $history = [
-        make_msg('user', 'First user message with some content'),
-        make_msg('assistant', 'First assistant response'),
-        make_msg('user', [
-            { type => 'text', text => 'Second user with array content' },
-            { type => 'image_url', image_url => { url => 'data:image/png;base64,xyz' } }
-        ]),
-        make_msg('assistant', 'Response to array content'),
-    ];
+subtest 'validate_and_truncate handles trimming with arrayref' => sub {
+    my @history = ({ role => 'system', content => 'You are a helpful assistant' });
+    for my $i (1 .. 40) {
+        push @history,
+            make_msg('user', "turn $i " . ('x' x 400)),
+            make_msg('assistant', "reply $i " . ('y' x 400));
+        if ($i == 20) {
+            push @history, make_msg('user', [
+                { type => 'text', text => 'message with image' },
+                { type => 'image_url', image_url => { url => 'data:image/png;base64,xyz' } }
+            ]);
+            push @history, make_msg('assistant', 'response to image');
+        }
+    }
 
-    my $system_prompt = 'You are a helpful assistant';
-
-    # Use small context to force trimming
-    my $result = trim_conversation_for_api($history, $system_prompt,
-        model_context_window => 1000,
-        max_response_tokens => 100,
-        debug => 0
+    my $result = CLIO::Core::API::MessageValidator::validate_and_truncate(
+        messages           => \@history,
+        model_capabilities => { max_context_window_tokens => 4000, max_output_tokens => 1000 },
+        tools              => [],
+        token_ratio        => 4,
     );
 
     ok($result, 'trim returns result');
-    ok(scalar(@$result) >= 1, 'at least one message kept');
+    cmp_ok(scalar(@$result), '<', scalar(@history), 'trim dropped messages');
 
-    # Check that any remaining arrayref content is preserved
     for my $msg (@$result) {
         if (ref($msg->{content}) eq 'ARRAY') {
-            ok(scalar(@{$msg->{content}}) > 0, 'arrayref not empty after trim');
+            ok(scalar(@{$msg->{content}}) > 0, 'arrayref content not emptied by trim');
         }
     }
-};
-
-subtest 'trim_conversation_for_api empty history' => sub {
-    my $result = trim_conversation_for_api([], 'System prompt');
-    is_deeply($result, [], 'empty history returns empty array');
-};
-
-subtest 'trim_conversation_for_api undef history' => sub {
-    my $result = trim_conversation_for_api(undef, 'System prompt');
-    ok(!defined $result || ref($result) eq 'ARRAY', 'undef history handled');
 };
 
 # ===========================================

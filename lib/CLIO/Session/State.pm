@@ -88,6 +88,11 @@ sub new {
             multiplier => 0,  # Billing multiplier from GitHub Copilot (legacy, all 1x as of June 2026)
             requests => [],  # Array of individual request billing records
         },
+        # Per-request context budget records (bounded ring). Each entry is
+        # one API request: the budget that was enforced, the token estimate
+        # by component, what the projection archived, and the provider's
+        # reported usage. /context and tools/context_trace.pl read this.
+        context_stats => [],
         # Context files
        context_files => [],
        # Context management configuration
@@ -150,6 +155,7 @@ my $data = {
         loaded_skills => $self->{loaded_skills} || [],  # Skills merged into system prompt
        input_history => $self->{input_history} || [],  # User input readline history
        session_goals => $self->{session_goals} || [],  # Persistent task goals
+       context_stats => $self->{context_stats} || [],  # Per-request context budget records
     };
     if ($ENV{CLIO_DEBUG} || $self->{debug}) {
         require Data::Dumper;
@@ -372,6 +378,8 @@ sub load {
         loaded_skills => $data->{loaded_skills} || [],
        # User input readline history (persisted across sessions)
        input_history => $data->{input_history} || [],
+       # Per-request context budget records
+       context_stats => $data->{context_stats} || [],
         # Session goals stored in the session file.
         session_goals => $data->{session_goals} || [],
     };
@@ -980,6 +988,51 @@ sub get_billing_summary {
         total_tokens => $self->{billing}{total_tokens},
         requests => $self->{billing}{requests},
     };
+}
+
+=head2 record_context_stats
+
+Record the context budget for one API request.
+
+One entry per request, bounded to the most recent CONTEXT_STATS_MAX.
+The entry is built by WorkflowOrchestrator from the enforced budget
+(APIManager::get_last_context_plan), the projection's selection record,
+the token estimate breakdown, and the provider's reported usage. It is
+the local, trustworthy answer to "what was in that request and why".
+
+Arguments:
+- $entry: HashRef (deep-copied into the ring)
+
+Returns: nothing
+
+=cut
+
+use constant CONTEXT_STATS_MAX => 40;
+
+sub record_context_stats {
+    my ($self, $entry) = @_;
+    return unless $entry && ref($entry) eq 'HASH';
+
+    $self->{context_stats} ||= [];
+    push @{$self->{context_stats}}, $entry;
+    if (@{$self->{context_stats}} > CONTEXT_STATS_MAX) {
+        splice(@{$self->{context_stats}}, 0,
+            @{$self->{context_stats}} - CONTEXT_STATS_MAX);
+    }
+    return;
+}
+
+=head2 context_stats
+
+Return the recorded context budget entries, oldest first.
+
+Returns: ArrayRef of entry hashrefs (possibly empty)
+
+=cut
+
+sub context_stats {
+    my ($self) = @_;
+    return $self->{context_stats} || [];
 }
 
 

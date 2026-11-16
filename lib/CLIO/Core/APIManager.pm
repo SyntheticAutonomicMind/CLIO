@@ -2470,8 +2470,12 @@ sub validate_and_truncate_messages {
         }
     }
     $self->{_request_tool_chars} = $tool_chars;
-    
-    return validate_and_truncate(
+
+    # Budget record for this request. validate_and_truncate fills it in
+    # place, so the numbers reported by /context and the diagnostics are
+    # the ones that were actually enforced here.
+    my $plan = {};
+    my $result = validate_and_truncate(
         messages           => $messages,
         model_capabilities => $caps,
         tools              => $tools,
@@ -2481,7 +2485,53 @@ sub validate_and_truncate_messages {
         debug              => $self->{debug},
         model              => $model,
         active_task        => $self->{_active_task_for_trim} // '',
+        context_plan       => $plan,
     );
+
+    $plan->{tool_chars} = $tool_chars;
+
+    # At-request composition of the array that will be serialized. The
+    # trim plan describes the budget; this describes what filled it.
+    require CLIO::Memory::TokenEstimator;
+    $plan->{breakdown} = CLIO::Memory::TokenEstimator::estimate_messages_breakdown($result);
+
+    $self->{last_context_plan} = $plan;
+    $self->{_last_trimmed_messages} = ($plan->{trimmed} ? $result : undef);
+
+    return $result;
+}
+
+=head2 get_last_context_plan
+
+Return the budget record for the most recent API request: context window,
+prompt budget, tool tokens, effective limit, trim target, token estimate
+before and after any proactive trim, and what the trim dropped.
+
+Returns: HashRef, or an empty hashref before the first request.
+
+=cut
+
+sub get_last_context_plan {
+    my ($self) = @_;
+    return $self->{last_context_plan} || {};
+}
+
+=head2 record_payload_stats
+
+Attach the serialized request size to the last context plan. Called once
+the payload is built, so the record carries both the budgeted estimate and
+what was actually serialized.
+
+Arguments:
+- $payload_chars: Character length of the serialized request body
+
+=cut
+
+sub record_payload_stats {
+    my ($self, $payload_chars) = @_;
+    return unless $self->{last_context_plan};
+    $self->{last_context_plan}{payload_chars} = $payload_chars;
+    return;
 }
 
 =head2 get_last_trimmed_messages
@@ -3185,6 +3235,25 @@ sub _build_payload {
             if (ref($clone->{content}) eq 'ARRAY') {
                 $clone->{content} = [ map { ref($_) eq 'HASH' ? { %$_ } : $_ } @{$clone->{content}} ];
             }
+
+            # reasoning_content is the model's private thinking for a call
+            # that already happened. It is retained in session history for
+            # display, but it must not be echoed back: DeepSeek documents
+            # that it is rejected on input, and every provider bills it as
+            # prompt tokens. Within a single turn this grew to 365,730
+            # characters (~120k tokens) across 188 assistant messages in
+            # one measured session, because history stripping only covered
+            # messages loaded from disk, not the ones added during the
+            # turn.
+            #
+            # reasoning_details is left alone: for Anthropic and Google
+            # models reached through an OpenAI-compatible gateway it also
+            # carries the signed reasoning blocks that tool-call continuity
+            # depends on.
+            if (($clone->{role} // '') eq 'assistant') {
+                delete $clone->{reasoning_content};
+            }
+
             push @cloned_messages, $clone;
         }
     }
@@ -3911,6 +3980,10 @@ sub _encode_payload_json {
         return $is_streaming ? { success => 0, error => $err }
                              : $self->_error($err);
     }
+
+    # Record the serialized size with the budget record for this request.
+    # Free here: the body has just been encoded.
+    $self->record_payload_stats(length($json));
 
     return $json;
 }

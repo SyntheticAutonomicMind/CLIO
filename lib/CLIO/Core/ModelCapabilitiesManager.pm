@@ -2944,11 +2944,18 @@ sub _fetch_openai_compatible_capabilities {
         my $permuted_model = $m->{permuted_model} || undef;
         
         # Extract context window. Different providers use different field
-        # names: OpenAI uses max_tokens/context_window, Google uses
-        # inputTokenLimit, OpenRouter uses context_length (top-level) and
-        # also nests it inside top_provider for per-endpoint limits.
-        # llama.cpp-compatible servers include n_ctx/n_ctx_train in a
-        # meta sub-object (runtime vs training context).
+        # names: OpenRouter uses context_length (top-level) and also nests
+        # it inside top_provider for per-endpoint limits; some gateways use
+        # context_window/max_context_tokens; llama.cpp-compatible servers
+        # include n_ctx/n_ctx_train in a meta sub-object (runtime vs
+        # training context).
+        #
+        # `max_tokens` is deliberately NOT part of this chain. In an
+        # OpenAI-compatible model listing max_tokens is an output cap
+        # (legacy OpenAI semantics); reading it as a context window makes a
+        # 1M-context model look like an 8K model and trims the conversation
+        # to nothing. The output cap is picked up by the max_completion_tokens
+        # chain below.
         my $tp = ref($m->{top_provider}) eq 'HASH' ? $m->{top_provider} : {};
         my $meta = ref($m->{meta}) eq 'HASH' ? $m->{meta} : {};
         # Opper nests max_output_tokens and a capabilities array under an
@@ -2956,7 +2963,6 @@ sub _fetch_openai_compatible_capabilities {
         my $opper_meta = ref($m->{opper}) eq 'HASH' ? $m->{opper} : {};
         my $context_window = $m->{context_length}
             || $m->{context_window}
-            || $m->{max_tokens}
             || $m->{max_context_tokens}
             || $meta->{n_ctx}          # llama.cpp runtime context (--ctx-size)
             || $meta->{n_ctx_train}     # llama.cpp training context

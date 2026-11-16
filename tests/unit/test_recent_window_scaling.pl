@@ -2,29 +2,21 @@
 # SPDX-License-Identifier: GPL-3.0-only
 # SPDX-FileCopyrightText: Copyright (c) 2026 Andrew Wyatt (Fewtarius)
 #
-# Test: RECENT_FULL_TURNS scales with session length.
+# Test: the recent window is token-budgeted, not turn-counted.
 #
-# Prior to 2026-09-02 the recent window was a hard-coded 1 turn
-# (or 2 with budget). For long sessions the model had only the
-# most recent turn in full, with everything older compressed into
-# a single (often noisy) tail. The 2024-message session
-# 2b80d82f-1576-44d7-b1f6-2419a79e30a5.json is the canonical
-# case: 12 turns, 2024 messages, RECENT=1 leaves the model with
-# 143 messages of recent context and 1881 messages dropped.
+# The window used to be a band on the number of turns (3/5/8/10). That
+# is blind to turn size: one agentic "turn" can be hundreds of tool
+# calls, so a count either keeps far more than the budget allows or
+# discards hundreds of thousands of tokens while the window is mostly
+# empty.
 #
-# As of 2026-09-06 the recent window scales with $total_turns:
-#   <= 30 turns  -> 3 recent  (min_recent floor)
-#   <= 100 turns -> 5 recent  (design default)
-#   <= 300 turns -> 8 recent
-#   >  300 turns -> 10 recent (hard cap)
-#
-# _select_turns applies a min_recent=3 floor so very short sessions
-# don't get starved of context. The proactive trim is the final
-# word on what fits the model's context window.
-# This test asserts the bands at the function level (no need to
-# build a 1000-turn fixture). The actual projection on real long
-# sessions is a soak-test question; this test pins the policy
-# itself so it can't regress silently.
+# The contract now:
+#   - no usable budget        -> keep every turn (the proactive trim
+#                                still enforces the limit)
+#   - turns fit within fill   -> keep every turn
+#   - turns exceed fill       -> drop from the oldest end until below
+#                                the low watermark (hysteresis)
+#   - the last RECENT_MIN_TURNS always survive
 
 use strict;
 use warnings;
@@ -34,86 +26,88 @@ use lib './lib';
 use Test::More;
 use CLIO::Core::ContextBuilder;
 
-# The default bands. If a future change tunes them, update this
-# test to match (intentional - this is policy-as-code).
-subtest 'default band: 0-30 turns -> 3 recent' => sub {
-    is(CLIO::Core::ContextBuilder::_recent_count_for_turns(0),   3, '0 turns');
-    is(CLIO::Core::ContextBuilder::_recent_count_for_turns(1),   3, '1 turn');
-    is(CLIO::Core::ContextBuilder::_recent_count_for_turns(15),  3, '15 turns');
-    is(CLIO::Core::ContextBuilder::_recent_count_for_turns(30),  3, '30 turns (band edge)');
-};
-
-subtest 'default band: 31-100 turns -> 5 recent' => sub {
-    is(CLIO::Core::ContextBuilder::_recent_count_for_turns(31),  5, '31 turns (band edge +1)');
-    is(CLIO::Core::ContextBuilder::_recent_count_for_turns(50),  5, '50 turns');
-    is(CLIO::Core::ContextBuilder::_recent_count_for_turns(100), 5, '100 turns (band edge)');
-};
-
-subtest 'default band: 101-300 turns -> 8 recent' => sub {
-    is(CLIO::Core::ContextBuilder::_recent_count_for_turns(101), 8, '101 turns');
-    is(CLIO::Core::ContextBuilder::_recent_count_for_turns(200), 8, '200 turns (mid-band)');
-    is(CLIO::Core::ContextBuilder::_recent_count_for_turns(300), 8, '300 turns (band edge)');
-};
-
-subtest 'default band: 301+ turns -> 10 recent (hard cap)' => sub {
-    is(CLIO::Core::ContextBuilder::_recent_count_for_turns(301), 10, '301 turns');
-    is(CLIO::Core::ContextBuilder::_recent_count_for_turns(500), 10, '500 turns');
-    is(CLIO::Core::ContextBuilder::_recent_count_for_turns(1000), 10, '1000 turns');
-    is(CLIO::Core::ContextBuilder::_recent_count_for_turns(1_000_000), 10, '1M turns (still 10)');
-};
-
-subtest 'edge cases' => sub {
-    is(CLIO::Core::ContextBuilder::_recent_count_for_turns(undef),  3, 'undef -> first band (3)');
-    is(CLIO::Core::ContextBuilder::_recent_count_for_turns(-5),    3, 'negative -> first band (3)');
-    is(CLIO::Core::ContextBuilder::_recent_count_for_turns('abc'), 3, 'non-numeric -> first band (3)');
-};
-
-# Behavioral test: a 200-turn session should produce a 4-turn
-# recent window in the projection, while a 5-turn session should
-# still produce 1-2. We don't load a real 200-turn fixture; we
-# build a synthetic one. This pins that the policy is actually
-# consumed by _select_turns, not just exposed.
-subtest '_select_turns uses the band value' => sub {
+# Helper: N turns of a fixed size, for budget arithmetic.
+sub make_sized_turns {
+    my ($count, $chars) = @_;
     my @turns;
-    for my $i (1..200) {
+    for my $i (1 .. $count) {
         push @turns, [
-            { role => 'user', content => "turn $i: " . ('x' x 100) },
-            { role => 'assistant', content => "response $i" . ('y' x 100) },
+            { role => 'user',      content => "turn $i: " . ('x' x $chars) },
+            { role => 'assistant', content => "response $i: " . ('y' x $chars) },
         ];
     }
+    return \@turns;
+}
 
-    my ($anchor, $recent, $dropped) = CLIO::Core::ContextBuilder::_select_turns(
-        \@turns, undef, [], '',
-    );
-
-    ok(scalar(@$recent) >= 8 && scalar(@$recent) <= 10,
-        '200-turn session produces 8-10 recent turns (8 target)')
-        or diag("Got " . scalar(@$recent) . " recent turns");
-
-    ok(scalar(@$dropped) > 0, 'some turns still dropped to compressed_tail')
-        or diag("Got 0 dropped turns");
+subtest 'no budget keeps every turn' => sub {
+    my $turns = make_sized_turns(40, 200);
+    is(CLIO::Core::ContextBuilder::_recent_count_for_budget($turns, {}),
+        40, 'no budget information -> keep all');
+    is(CLIO::Core::ContextBuilder::_recent_count_for_budget($turns, { prompt_budget => 0 }),
+        40, 'zero budget -> keep all');
 };
 
-subtest 'short session unchanged from baseline' => sub {
-    my @turns;
-    for my $i (1..5) {
-        push @turns, [
-            { role => 'user', content => "turn $i: " . ('x' x 100) },
-            { role => 'assistant', content => "response $i" },
-        ];
-    }
+subtest 'turns that fit the budget all stay' => sub {
+    my $turns = make_sized_turns(5, 40);
+    is(CLIO::Core::ContextBuilder::_recent_count_for_budget(
+            $turns, { prompt_budget => 100000 }),
+        5, 'small session under the fill threshold keeps all turns');
+};
 
+subtest 'over the fill threshold drops to the low watermark' => sub {
+    my $turns = make_sized_turns(200, 400);
+    my $keep = CLIO::Core::ContextBuilder::_recent_count_for_budget(
+        $turns, { prompt_budget => 20000 });
+
+    cmp_ok($keep, '<', 200, 'window shrank');
+    cmp_ok($keep, '>=', $CLIO::Core::ContextBuilder::RECENT_MIN_TURNS, 'min turns floor honored');
+
+    # The kept turns must fit under the low watermark.
+    my $kept_cost = 0;
+    $kept_cost += CLIO::Memory::TokenEstimator::estimate_messages_tokens($_)
+        for @$turns[ -$keep .. -1 ];
+    my $low = int(20000 * $CLIO::Core::ContextBuilder::RECENT_LOW_FRACTION);
+    cmp_ok($kept_cost, '<=', $low, "kept turns ($kept_cost) fit the low watermark ($low)");
+};
+
+subtest 'min turns survive an impossible budget' => sub {
+    my $turns = make_sized_turns(10, 4000);
+    my $keep = CLIO::Core::ContextBuilder::_recent_count_for_budget(
+        $turns, { prompt_budget => 2000 });
+    is($keep, $CLIO::Core::ContextBuilder::RECENT_MIN_TURNS,
+        'min turns kept even when they exceed the budget');
+};
+
+subtest 'a larger budget keeps at least as many turns' => sub {
+    my $turns = make_sized_turns(100, 400);
+    my $prev = 0;
+    for my $budget (5000, 10000, 20000, 40000, 200000) {
+        my $keep = CLIO::Core::ContextBuilder::_recent_count_for_budget(
+            $turns, { prompt_budget => $budget });
+        cmp_ok($keep, '>=', $prev, "budget $budget keeps >= $prev turns");
+        $prev = $keep;
+    }
+    is($prev, 100, 'large enough budget keeps every turn');
+};
+
+subtest '_select_turns consumes the budget' => sub {
+    my $turns = make_sized_turns(200, 400);
     my ($anchor, $recent, $dropped) = CLIO::Core::ContextBuilder::_select_turns(
-        \@turns, undef, [], '',
+        $turns, undef, [], '', { prompt_budget => 20000 },
     );
 
-    # With the revised _select_turns, short sessions keep min 3 recent
-    # turns (no anchor concept — active task is in dynamic userContext).
-    ok(scalar(@$recent) >= 3,
-        '5-turn session produces >= 3 recent turns (min recent window)')
-        or diag("Got " . scalar(@$recent) . " recent turns");
-    ok(!$anchor, 'no anchor (active task via dynamic userContext)');
-    ok(scalar(@$dropped) == 0 || scalar(@$dropped) >= 0, 'dropped turns tracked separately');
+    cmp_ok(scalar(@$recent), '<', 200, 'recent window bounded by the budget');
+    cmp_ok(scalar(@$dropped), '>', 0, 'dropped turns tracked for compression');
+    is(scalar(@$recent) + scalar(@$dropped), 200, 'every turn is either kept or dropped');
+};
+
+subtest 'no budget means no projection-level drop' => sub {
+    my $turns = make_sized_turns(200, 400);
+    my ($anchor, $recent, $dropped) = CLIO::Core::ContextBuilder::_select_turns(
+        $turns, undef, [], '',
+    );
+    is(scalar(@$recent), 200, 'all turns kept without a budget');
+    is(scalar(@$dropped), 0, 'nothing dropped without a budget');
 };
 
 # ===========================================================================
@@ -225,11 +219,8 @@ subtest 'mid-window incomplete turn moved to dropped' => sub {
         make_turn(4),
     );
 
-    # Use a large recent_count so all complete turns would fit in recent
-    my $large_recent = 1000;
-    # _recent_count_for_turns(5) returns 3 (min_recent floor)
-    # so with 5 turns, recent_target=3. Let's build a longer session
-    # so the orphaned turn falls in the recent window.
+    # No budget is passed, so every complete turn is in the recent
+    # window and the orphaned turn necessarily falls inside it.
     @turns = (
         make_turn(1), make_turn(2), make_turn(3),
         make_turn(4), make_turn(5), make_turn(6),
