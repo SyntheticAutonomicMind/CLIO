@@ -155,6 +155,13 @@ sub _categorize_error {
     return 'unknown_tool' if $error =~ /^unknown tool:|is not part of the current tool set/i;
 
     # Edit/patch content mismatch errors (must check BEFORE generic file_not_found)
+    # A chunk line with no prefix is a patch-format error, not a content
+    # mismatch. It must be classified before the mismatch rules so the advice
+    # is "fix the prefix", not "reread the file" - the file was never the
+    # problem, and rereading it produces the same malformed chunk again.
+    return 'malformed_patch_chunk'
+        if $error =~ /malformed patch chunk|has no '\+'\/'-'\/space prefix/i;
+
     return 'edit_content_mismatch' if $error =~ /string not found in file|old_?string not found/i;
     return 'edit_content_mismatch' if $error =~ /cannot find match position for chunk/i;
     return 'edit_ambiguous_match' if $error =~ /old_?string found multiple times|multiple matches/i;
@@ -404,6 +411,23 @@ sub _get_category_guidance {
                    "2. FIND the real text you want to change\n" .
                    "3. RETRY with the correct old_string that exactly matches the file\n\n" .
                    "DO NOT retry the same edit without reading the file first.";
+        },
+
+        malformed_patch_chunk => sub {
+            return "WHAT WENT WRONG: Your patch was rejected before it was applied. A line inside a chunk had no prefix.\n" .
+                   "This is NOT a problem with the file - do not re-read it, and do not change the content you are matching.\n\n" .
+                   "Every line inside a chunk must start with one of:\n" .
+                   "  '+'   a line you are adding\n" .
+                   "  '-'   a line you are removing\n" .
+                   "  ' '   a context line (single leading space, then the exact file text)\n" .
+                   "  '\@\@'  a chunk anchor\n\n" .
+                   "MOST LIKELY CAUSES:\n" .
+                   "1. A new line written without its leading '+'\n" .
+                   "2. A context line that lost its leading space\n" .
+                   "3. POD or prose lines (=head2, =cut, 'sub foo {') pasted into a chunk unprefixed\n" .
+                   "4. A blank line inside a multi-line addition - it still needs '+'\n\n" .
+                   "FIX: re-send the same chunk with a prefix on every line. The error names the offending line number and text.\n" .
+                   "For mixed prose or POD, replace_string with exact old_string/new_string is usually easier.";
         },
         
         edit_ambiguous_match => sub {

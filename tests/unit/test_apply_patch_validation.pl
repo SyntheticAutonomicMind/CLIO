@@ -293,6 +293,76 @@ is($r->{tool_name}, 'apply_patch', 'success path: tool_name is set');
 like($r->{action_description}, qr/apply_patch:.*modified/,
     'success path: action_description is set');
 
+# 9. A chunk line with no prefix is rejected, not guessed at.
+#
+# The parser used to push such a line into both old_lines and new_lines,
+# treating it as context. An addition that lost its '+' therefore became a
+# required pre-existing line, the chunk could never match, and the caller was
+# told to "read the file to see its actual content" - advice that cannot help,
+# because the file was read correctly and the fault is in the patch text.
+print "--- unprefixed chunk line is rejected ---\n";
+
+{
+    my $bad = $tool->execute({
+        operation => 'apply',
+        patch => "*** Begin Patch\n*** Update File: existing.txt\n"
+               . "@@ line 3\n line 3\nbrand new line\n line 3\n*** End Patch\n",
+    }, {});
+
+    ok(!$bad->{success}, 'unprefixed chunk line: patch is rejected');
+    like($bad->{error}, qr/Malformed patch chunk/i,
+        'unprefixed chunk line: error names the format problem');
+    like($bad->{error}, qr/brand new line/,
+        'unprefixed chunk line: error quotes the offending line');
+    like($bad->{error}, qr/line \d+/,
+        'unprefixed chunk line: error gives the line number');
+    unlike($bad->{error}, qr/Cannot find match position/i,
+        'unprefixed chunk line: does not report a misleading content mismatch');
+    unlike($bad->{error}, qr/Read the file to see its actual content/i,
+        'unprefixed chunk line: does not send the caller to re-read the file');
+}
+
+# The parse never coerces, so the same content with a proper '+' still works.
+{
+    my $good = $tool->execute({
+        operation => 'apply',
+        patch => "*** Begin Patch\n*** Update File: existing.txt\n"
+               . "@@ line 3\n line 3\n+brand new line\n*** End Patch\n",
+    }, {});
+
+    ok($good->{success}, 'prefixed equivalent of the rejected patch applies')
+        or diag("apply failed: " . ($good->{error} // '(none)'));
+
+    my $content = do {
+        open my $fh, '<:encoding(UTF-8)', $existing_file or die "read: $!";
+        local $/; <$fh>;
+    };
+    like($content, qr/^brand new line$/m,
+        'prefixed equivalent: the addition actually landed');
+}
+
+# Guidance must classify this as a patch-format error, not a content mismatch,
+# so the caller is told to fix the prefix instead of re-reading the file.
+{
+    require CLIO::Core::ToolErrorGuidance;
+    my $guidance = CLIO::Core::ToolErrorGuidance->new;
+    my $bad = $tool->execute({
+        operation => 'apply',
+        patch => "*** Begin Patch\n*** Update File: existing.txt\n"
+               . "@@ line 3\n line 3\noops no prefix\n line 3\n*** End Patch\n",
+    }, {});
+
+    my $category = $guidance->_categorize_error($bad->{error}, 'apply_patch');
+    is($category, 'malformed_patch_chunk',
+        'unprefixed chunk line: classified as malformed_patch_chunk');
+
+    my $advice = $guidance->_get_category_guidance(
+        $category, 'apply_patch', $bad->{error}, undef, undef);
+    like($advice, qr/prefix/i, 'guidance talks about the missing prefix');
+    unlike($advice, qr/READ the file NOW/i,
+        'guidance does not tell the caller to re-read the file');
+}
+
 done_testing();
 
 print "\n=== apply_patch validation tests COMPLETE ===\n";

@@ -252,13 +252,16 @@ Rules:
 - Multiple @@ sections per file for non-adjacent changes
 
 IMPORTANT: every line in a chunk MUST start with +, -, space, or @@.
-Bare text lines (POD blocks like =head2/=cut, function signatures like
-"sub foo {", or prose paragraphs) are silently dropped, which breaks
-contiguous chunk matching and causes "Cannot find match position for
-chunk" errors. When editing POD blocks or anything with mixed prose,
-prefer replace_string with exact old_string/new_string.
-If you see "Unrecognized line in patch chunk" warnings, the chunk
-format is wrong - reread this rule.',
+A line with no prefix is REJECTED, not guessed at - the patch fails and
+names the offending line. There is no way to tell a context line missing
+its leading space from an addition missing its +, so the chunk is refused
+rather than applied with a guess. Watch for:
+- POD blocks (=head2, =cut), function signatures ("sub foo {"), and prose
+  paragraphs pasted into a chunk without a prefix.
+- Additions written without the leading +.
+- Blank lines inside a multi-line addition: they still need the +.
+When editing POD blocks or anything with mixed prose, prefer replace_string
+with exact old_string/new_string.',
     };
 
     return $def;
@@ -563,7 +566,7 @@ sub _parse_patch {
             my $current_chunk;
             
             while ($i < @lines) {
-                last if $lines[$i] =~ /^\*\*\*\s+(Add|Update|Delete|End)\s/i;
+                last if $lines[$i] =~ /^\*\*\*\s+(Add|Update|Delete|Move|End)\s/i;
                 
                 my $cl = $lines[$i];
                 
@@ -614,16 +617,21 @@ sub _parse_patch {
                     next;
                 }
                 
-                # Unrecognized line — likely missing the leading space on a
-                # context line (a common apply_patch formatting mistake).
-                # Treat it as a context line (added to both old_lines and
-                # new_lines). This is safe: if the line doesn't actually
-                # appear in the file, chunk matching will still fail and
-                # the fuzzy matcher will catch whitespace-only differences.
-                log_debug('ApplyPatch', "Unrecognized line in patch chunk (no +/- prefix): '$cl' - treating as context");
-                push @{$current_chunk->{old_lines}}, $cl;
-                push @{$current_chunk->{new_lines}}, $cl;
-                $i++;
+                # A line carrying no prefix is ambiguous: it is either a
+                # context line that lost its leading space, or a new line that
+                # lost its '+'. Guessing at it commits the wrong change or
+                # produces a chunk that cannot match, and the resulting error
+                # blames the file for content the caller wrote incorrectly.
+                # Refuse the chunk and name the line instead.
+                my $shown = length($cl) > 120 ? substr($cl, 0, 120) . '...' : $cl;
+                return (\@hunks,
+                    "Malformed patch chunk for '$path': line " . ($i + 1)
+                    . " has no '+'/'-'/space prefix: '$shown'. "
+                    . "Every line inside a chunk must start with '+', '-', or a space, "
+                    . "or be a \@\@ anchor or a '***' directive. "
+                    . "A bare line is ambiguous: it may be a context line that lost its "
+                    . "leading space, or a new line that lost its '+'. "
+                    . "Re-send the chunk with explicit prefixes on every line.");
             }
             
             if ($current_chunk) {
