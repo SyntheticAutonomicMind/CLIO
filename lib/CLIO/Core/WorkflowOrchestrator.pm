@@ -10,7 +10,7 @@ use Carp qw(croak);
 use CLIO::UI::Terminal qw(box_char);
 use CLIO::Core::Logger qw(log_error log_warning log_debug should_log);
 use CLIO::Core::ErrorContext qw(classify_error format_error);
-use CLIO::Util::TextSanitizer qw(sanitize_text);
+use CLIO::Util::TextSanitizer qw(sanitize_text sanitize_tool_output);
 use CLIO::Util::JSONRepair qw(repair_malformed_json);
 use CLIO::Util::AnthropicXMLParser qw(is_anthropic_xml_format parse_anthropic_xml_to_json);
 use CLIO::UI::ToolOutputFormatter;
@@ -2195,8 +2195,12 @@ sub _execute_tool_round {
                 "Attached mangled-arguments note to $tool_name result");
         }
 
-        # Sanitize tool result content
-        my $sanitized_content = sanitize_text($ai_content);
+        # Tool output reaches the model as text it is expected to quote back.
+        # Running the display sanitizer here would rewrite emoji and the
+        # U+2300-U+2BFF ranges, so an apply_patch built from what the model
+        # read could never match the file on disk. Only the invisible-character
+        # filter applies, since that is a security boundary.
+        my $sanitized_content = sanitize_tool_output($ai_content);
         $sanitized_content = "$sanitized_content" if defined $sanitized_content;
 
         # Add tool result to conversation
@@ -2274,7 +2278,7 @@ sub _execute_tool_round {
             }
         }
 
-        log_debug('WorkflowOrchestrator', "Tool result added to conversation (sanitized)");
+        log_debug('WorkflowOrchestrator', "Tool result added to conversation");
     }
 
     # Signal end of tool execution to UI

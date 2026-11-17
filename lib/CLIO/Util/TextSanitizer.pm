@@ -32,7 +32,7 @@ call, covering all points where text enters the AI pipeline.
 =cut
 
 use Exporter 'import';
-our @EXPORT_OK = qw(sanitize_text set_sanitize_mode get_sanitize_mode strip_conversation_tags strip_prompt_block_tags strip_session_markers);
+our @EXPORT_OK = qw(sanitize_text sanitize_tool_output set_sanitize_mode get_sanitize_mode strip_conversation_tags strip_prompt_block_tags strip_session_markers);
 
 # Sanitize mode: 'strict' (default) warns on HIGH-severity invisible chars.
 # 'relaxed' still filters them but suppresses the warning - useful when working
@@ -173,6 +173,40 @@ sub sanitize_text {
     
     # Return as character string (JSON::PP will handle UTF-8 encoding)
     return $text;
+}
+
+=head2 sanitize_tool_output
+
+Apply security filtering to tool output without altering its visible content.
+
+Tool results reach the model as text the model is expected to quote back:
+C<apply_patch> old_lines, exact-match edits, diff context. Rewriting any
+visible character here makes the model emit text that never existed on disk,
+so the edit fails with "cannot find match position" and the retry sends the
+same altered text again.
+
+Only the invisible-character filter runs. That is a security boundary against
+hidden instructions injected through tool output, and it does not touch
+printable content. Emoji mapping and Unicode range deletion are display
+concerns and deliberately do not apply: a file holding a raw U+2699 is
+reported to the model with that character intact, so the model can match it.
+
+Arguments:
+- $text: Tool output text
+
+Returns: The text with invisible characters filtered out, otherwise unchanged.
+
+=cut
+
+sub sanitize_tool_output {
+    my ($text) = @_;
+
+    return $text unless defined $text;
+    return $text unless has_invisible_chars($text);
+
+    my $report = describe_invisible_chars($text);
+    log_debug('TextSanitizer', "Stripping invisible Unicode chars from tool output: $report->{summary}");
+    return filter_invisible_chars($text);
 }
 
 =head2 strip_conversation_tags

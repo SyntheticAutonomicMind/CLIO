@@ -9,7 +9,7 @@ use utf8;
 use Exporter 'import';
 use Scalar::Util qw(blessed looks_like_number);
 use CLIO::Core::Logger qw(log_warning);
-use CLIO::Util::TextSanitizer qw(sanitize_text);
+use CLIO::Util::TextSanitizer qw(sanitize_text sanitize_tool_output);
 
 # Map of known JSON boolean class names to plain Perl boolean values.
 # These classes come from JSON::PP, JSON::XS, Cpanel::JSON::XS.
@@ -49,20 +49,32 @@ Extracted from APIManager to reduce module size.
 =cut
 
 sub sanitize_payload {
-    my ($data) = @_;
+    my ($data, $preserve_lossless) = @_;
 
     if (!defined $data) {
         return undef;
     } elsif (ref($data) eq 'HASH') {
+        # Tool results must arrive at the provider byte-identical to what the
+        # tool returned. The model quotes them back in apply_patch old_lines
+        # and other exact-match edits, so replacing or deleting characters
+        # here makes it emit text that never existed on disk: the edit cannot
+        # match, and the retry sends the same altered text. Invisible-character
+        # filtering still runs, because that is a security boundary.
+        my $role = $data->{role};
+        my $type = $data->{type};
+        my $is_tool_content = $preserve_lossless
+            || (defined $role && $role eq 'tool')
+            || (defined $type && $type eq 'function_call_output');
         my %sanitized;
         for my $key (keys %$data) {
-            $sanitized{$key} = sanitize_payload($data->{$key});
+            $sanitized{$key} = sanitize_payload($data->{$key}, $is_tool_content);
         }
         return \%sanitized;
     } elsif (ref($data) eq 'ARRAY') {
-        return [ map { sanitize_payload($_) } @$data ];
+        return [ map { sanitize_payload($_, $preserve_lossless) } @$data ];
     } elsif (!ref($data)) {
-        return looks_like_number($data) ? $data : sanitize_text($data);
+        return $data if looks_like_number($data);
+        return $preserve_lossless ? sanitize_tool_output($data) : sanitize_text($data);
     } else {
         # Blessed ref (not hash/array): check for known JSON boolean types
         # and convert to plain Perl boolean values for correct serialization.
