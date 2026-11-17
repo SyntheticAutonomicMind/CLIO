@@ -771,7 +771,7 @@ graph TD
     SendReq["AuthorizationRelay sends<br/>authorization_request through broker"]
     Queue["Broker queues request in user inbox"]
     Poll["Primary session polls inbox,<br/>displays security prompt"]
-    Respond["User responds:<br/>(y)es once | (a)llow category | (n)o deny"]
+    Respond["User responds:<br/>(o)nce | (a)llow category | (n)o deny"]
     Reply["Response flows back through<br/>broker to child agent"]
     Result["Child tool receives approval/denial,<br/>continues or aborts"]
 
@@ -827,9 +827,11 @@ sequenceDiagram
 ### Behavior
 
 - **Timeout:** 60 seconds (configurable). If no response, the operation is denied.
-- **Session grants:** When the user selects "(a)llow category", the grant is stored in the child agent's process (same as interactive mode). The grant is scoped to the security category (e.g., `system_destructive`, `file_overwrite`, `fetch_url`), meaning future commands in that category are auto-approved.
+- **Session grants:** When the user selects "(a)llow category", the child agent records a grant in its own grant store for the categories it asked about - nothing outside that set. The grant is scoped to the security category (e.g., `system_destructive`, `file_overwrite`, `fetch_url`), meaning future commands in that category are auto-approved. Child grants are process-local: they are not written into the primary session's file, so they do not outlive the sub-agent.
 - **All security prompts** use the same three-option format:
-  `(y)es once | (a)llow category | (n)o deny`
+  `(o)nce | (a)llow category | (n)o deny`
+  The wording comes from `CLIO::Security::Consent`, so the primary prompt and
+  the relay prompt cannot drift apart.
 - **Fallback:** If no broker is connected, operations are denied (same as pre-relay behavior).
 - **Cleanup:** Pending requests are cleaned up when a child agent disconnects. Pending grants are also cleared at session start. Use `/security reset` to manually clear all grants.
 - **Polling:** The primary session checks for auth requests both in the input loop and between tool executions.

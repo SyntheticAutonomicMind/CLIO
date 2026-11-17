@@ -2915,12 +2915,11 @@ or the broker relay for sub-agents). The user always has final authority.
 
 =cut
 
-# Session-level grants for script writing (keyed by category name).
-# `our`, not `my`: /security reads these tables through the package variable.
-our %_script_write_grants;
-
-# Session-level grants for file overwrites (keyed by category name)
-our %_overwrite_session_grants;
+# Session grants live in CLIO::Security::GrantStore: 'script' scope for
+# script_creation, 'overwrite' scope for file_overwrite. This module no longer
+# keeps its own tables.
+use CLIO::Security::GrantStore;
+use CLIO::Security::Consent;
 
 sub _scan_script_content {
     my ($self, $path, $content, $context) = @_;
@@ -2956,7 +2955,7 @@ sub _scan_script_content {
     return undef if $security_level eq 'relaxed' && !$sandbox;
 
     # Check session grants
-    return undef if $_script_write_grants{script_creation};
+    return undef if CLIO::Security::GrantStore::is_granted('script', 'script_creation');
 
     # Scan each line for risky patterns
     my @all_flags;
@@ -3046,8 +3045,8 @@ sub _prompt_script_confirmation {
             if ($relay->available()) {
                 my $result = $relay->request_script_authorization($path, $scan_result, $context);
                 if ($result->{approved}) {
-                    if ($result->{grant_type} eq 'session') {
-                        $_script_write_grants{script_creation} = 1;
+                    if ($result->{grant_type} eq 'all') {
+                        CLIO::Security::GrantStore::grant('script', 'script_creation');
                         log_debug('FileOp', "Session grant (via relay) for script creation");
                     }
                     return 1;
@@ -3062,7 +3061,7 @@ sub _prompt_script_confirmation {
     my $spinner = ($context && $context->{spinner}) ? $context->{spinner} : undef;
     $spinner->stop() if $spinner && $spinner->can('stop');
 
-    my $options = '(o)nce | (a)llow script creation | (n)o deny';
+    my $options = CLIO::Security::Consent::options_text(allow_label => 'script creation');
 
     # Use themed security prompt
     my $theme_mgr = $ui->{theme_mgr};
@@ -3111,43 +3110,15 @@ sub _prompt_script_confirmation {
 
     $spinner->start() if $spinner && $spinner->can('start');
 
-    # Vocabulary: (o)nce | (a)ll | (n)o. Legacy keys stay accepted but logged.
-    if ($response =~ /^(?:o|once)$/) {
-        return 1;
-    } elsif ($response =~ /^(?:y|yes)$/) {
-        log_debug('FileOp', "Legacy key 'y' used for once - accepted, maps to (o)nce");
-        return 1;
-    } elsif ($response =~ /^(?:a|all|allow)$/) {
-        $_script_write_grants{script_creation} = 1;
+    my $decision = CLIO::Security::Consent::parse_answer($response, caller => 'FileOp');
+
+    if ($decision eq 'all') {
+        CLIO::Security::GrantStore::grant('script', 'script_creation');
         log_debug('FileOp', "Session grant added for script creation");
-        return 1;
-    } elsif ($response =~ /^(?:s|session)$/) {
-        log_debug('FileOp', "Legacy key 's' used - accepted, maps to (a)ll");
-        $_script_write_grants{script_creation} = 1;
         return 1;
     }
 
-    return 0;
-}
-
-=head2 reset_script_session_grants
-
-Reset script writing session grants. Called at session start.
-
-=cut
-
-sub reset_script_session_grants {
-    %_script_write_grants = ();
-}
-
-=head2 reset_overwrite_session_grants
-
-Reset file-overwrite session grants. Called at session start.
-
-=cut
-
-sub reset_overwrite_session_grants {
-    %_overwrite_session_grants = ();
+    return $decision eq 'once' ? 1 : 0;
 }
 
 =head2 _prompt_overwrite_confirmation
@@ -3170,7 +3141,7 @@ sub _prompt_overwrite_confirmation {
     my ($self, $path, $existing_size, $context) = @_;
 
     # Check session-level grants first
-    if ($_overwrite_session_grants{file_overwrite}) {
+    if (CLIO::Security::GrantStore::is_granted('overwrite', 'file_overwrite')) {
         log_debug('FileOp', "Session grant exists for 'file_overwrite' - auto-approving");
         return 1;
     }
@@ -3192,8 +3163,8 @@ sub _prompt_overwrite_confirmation {
                     flags       => [{ category => 'file_overwrite', severity => 'medium', description => "File exists ($existing_size bytes) and will be overwritten" }],
                 );
                 if ($result->{approved}) {
-                    if ($result->{grant_type} eq 'session') {
-                        $_overwrite_session_grants{file_overwrite} = 1;
+                    if ($result->{grant_type} eq 'all') {
+                        CLIO::Security::GrantStore::grant('overwrite', 'file_overwrite');
                         log_debug('FileOp', "Session grant (via relay) for file_overwrite");
                     }
                     return 1;
@@ -3208,8 +3179,7 @@ sub _prompt_overwrite_confirmation {
     my $spinner = ($context && $context->{spinner}) ? $context->{spinner} : undef;
     $spinner->stop() if $spinner && $spinner->can('stop');
 
-    # Unified three-option format across all security prompts
-    my $options = '(o)nce | (a)llow file overwrites | (n)o deny';
+    my $options = CLIO::Security::Consent::options_text(allow_label => 'file overwrites');
 
     my $theme_mgr = $ui->{theme_mgr};
     if ($theme_mgr && $theme_mgr->can('get_security_prompt')) {
@@ -3244,23 +3214,15 @@ sub _prompt_overwrite_confirmation {
 
     $spinner->start() if $spinner && $spinner->can('start');
 
-    # Vocabulary: (o)nce | (a)ll | (n)o. Legacy keys stay accepted but logged.
-    if ($response =~ /^(?:o|once)$/) {
-        return 1;
-    } elsif ($response =~ /^(?:y|yes)$/) {
-        log_debug('FileOp', "Legacy key 'y' used for once - accepted, maps to (o)nce");
-        return 1;
-    } elsif ($response =~ /^(?:a|all|allow)$/) {
-        $_overwrite_session_grants{file_overwrite} = 1;
+    my $decision = CLIO::Security::Consent::parse_answer($response, caller => 'FileOp');
+
+    if ($decision eq 'all') {
+        CLIO::Security::GrantStore::grant('overwrite', 'file_overwrite');
         log_debug('FileOp', "Session grant added for file_overwrite");
-        return 1;
-    } elsif ($response =~ /^(?:s|session)$/) {
-        log_debug('FileOp', "Legacy key 's' used - accepted, maps to (a)ll");
-        $_overwrite_session_grants{file_overwrite} = 1;
         return 1;
     }
 
-    return 0;
+    return $decision eq 'once' ? 1 : 0;
 }
 
 =head2 _get_umask

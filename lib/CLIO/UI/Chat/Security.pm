@@ -10,6 +10,7 @@ use utf8;
 
 use CLIO::Core::Logger qw(log_debug log_warning);
 use CLIO::Compat::Terminal qw(ReadKey ReadMode);
+use CLIO::Security::Consent;
 
 =head1 NAME
 
@@ -117,7 +118,7 @@ sub _handle_agent_authorization {
         web_fetch         => 'Web Request',
     }->{$category} || ucfirst($category);
 
-    my $options = '(o)nce | (a)llow category | (n)o deny';
+    my $options = CLIO::Security::Consent::options_text(allow_label => 'category');
 
     if ($theme_mgr && $theme_mgr->can('get_security_prompt')) {
         my ($prompt_line, $input_line) = $theme_mgr->get_security_prompt(
@@ -164,24 +165,9 @@ sub _handle_agent_authorization {
     $SIG{ALRM} = $saved_alrm || 'DEFAULT';
     alarm($remaining_alarm) if $remaining_alarm;
 
-    my ($approved, $grant_type);
-    # Vocabulary: (o)nce | (a)ll | (n)o. Legacy keys stay accepted but logged.
-    if ($response =~ /^(?:o|once)$/) {
-        $approved = 1;
-        $grant_type = 'once';
-    } elsif ($response =~ /^(?:y|yes)$/) {
-        log_debug('ChatSecurity', "Legacy key 'y' used for once - accepted, maps to (o)nce");
-        $approved = 1;
-        $grant_type = 'once';
-    } elsif ($response =~ /^(?:a|all|allow|s|session)$/) {
-        log_debug('ChatSecurity', "Legacy key 's' used - accepted, maps to (a)ll")
-            if $response eq 's' || $response eq 'session';
-        $approved = 1;
-        $grant_type = 'session';
-    } else {
-        $approved = 0;
-        $grant_type = 'denied';
-    }
+    my $decision = CLIO::Security::Consent::parse_answer($response, caller => 'ChatSecurity');
+    my $approved = $decision eq 'deny' ? 0 : 1;
+    my $grant_type = CLIO::Security::Consent::grant_type_for($decision);
 
     log_debug('Chat', "Agent auth response for $request_id: approved=$approved grant=$grant_type");
 

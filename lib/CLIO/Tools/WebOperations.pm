@@ -982,8 +982,10 @@ Returns hashref:
 
 =cut
 
-# Session-level URL grants
-our %_url_session_grants;
+# Session-level fetch grants live in CLIO::Security::GrantStore under the
+# 'web' scope, keyed 'fetch_url'. This module no longer keeps its own table.
+use CLIO::Security::GrantStore;
+use CLIO::Security::Consent;
 
 # Parse an IPv4 literal into its four octets, accepting every form inet_aton
 # resolves and therefore every form a browser will connect to:
@@ -1143,7 +1145,7 @@ sub _check_url_security {
     return { blocked => 0, requires_confirmation => 0 } unless @concerns;
 
     my @ungrantable = grep { !$_->{grantable} } @concerns;
-    my $has_grant   = $_url_session_grants{fetch_url} ? 1 : 0;
+    my $has_grant   = CLIO::Security::GrantStore::is_granted('web', 'fetch_url') ? 1 : 0;
 
     # An existing grant covers the grantable concerns only. Ungrantable
     # concerns always survive it.
@@ -1193,8 +1195,8 @@ sub _prompt_url_confirmation {
             if ($relay->available()) {
                 my $result = $relay->request_url_authorization($url, $security_check, $context);
                 if ($result->{approved}) {
-                    if ($result->{grant_type} eq 'session') {
-                        $_url_session_grants{fetch_url} = 1;
+                    if ($result->{grant_type} eq 'all') {
+                        CLIO::Security::GrantStore::grant('web', 'fetch_url');
                         log_debug('WebOps', "Session grant (via relay) for web fetch");
                     }
                     return 1;
@@ -1237,9 +1239,10 @@ sub _prompt_url_confirmation {
 
     # Ungrantable concerns (internal address, exfiltration shape, non-HTTP
     # scheme) can only be approved one request at a time, so `a` is not offered.
-    my $options = $security_check->{grantable}
-        ? '(o)nce | (a)ll external fetches | (n)o deny'
-        : '(o)nce | (n)o deny';
+    my $options = CLIO::Security::Consent::options_text(
+        allow_label => 'external fetches',
+        grantable   => $security_check->{grantable},
+    );
 
     print $ui->colorize("  Options: ", 'BOLD');
     print "$options\n";
@@ -1266,38 +1269,19 @@ sub _prompt_url_confirmation {
 
     $spinner->start() if $spinner && $spinner->can('start');
 
-    # Vocabulary: (o)nce | (a)ll | (n)o. Legacy keys stay accepted but logged.
-    if ($response =~ /^(?:o|once)$/) {
-        return 1;
-    } elsif ($response =~ /^(?:y|yes)$/) {
-        log_debug('WebOps', "Legacy key 'y' used for once - accepted, maps to (o)nce");
-        return 1;
-    } elsif ($response =~ /^(?:a|all|allow)$/ && $security_check->{grantable}) {
-        $_url_session_grants{fetch_url} = 1;
+    my $decision = CLIO::Security::Consent::parse_answer(
+        $response,
+        caller    => 'WebOps',
+        grantable => $security_check->{grantable},
+    );
+
+    if ($decision eq 'all') {
+        CLIO::Security::GrantStore::grant('web', 'fetch_url');
         log_debug('WebOps', "Session grant added for external web fetches");
-        return 1;
-    } elsif ($response =~ /^(?:a|all|allow)$/) {
-        # The user asked to allow everything, but at least one concern is not
-        # grantable. Approving only this request is the safe reading.
-        log_debug('WebOps', "Answer 'a' on an ungrantable concern - treating as (o)nce");
-        return 1;
-    } elsif ($response =~ /^(?:s|session)$/) {
-        log_debug('WebOps', "Legacy key 's' used - accepted, maps to (a)ll");
-        $_url_session_grants{fetch_url} = 1 if $security_check->{grantable};
         return 1;
     }
 
-    return 0;
-}
-
-=head2 reset_url_session_grants
-
-Reset web operations session grants. Called on new session.
-
-=cut
-
-sub reset_url_session_grants {
-    %_url_session_grants = ();
+    return $decision eq 'once' ? 1 : 0;
 }
 
 1;

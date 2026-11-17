@@ -113,7 +113,14 @@ their security intent.
 | `web_fetch` | Outbound HTTP requests with suspicious URLs | Prompt user |
 
 All prompt-based categories use the same confirmation format:
-`(y)es once | (a)llow category | (n)o deny`
+`(o)nce | (a)llow category | (n)o deny`
+
+The vocabulary is defined once, in `lib/CLIO/Security/Consent.pm`, and every
+prompt in CLIO builds its options line from it - command approval, web fetch,
+script creation, file overwrite, path access, and the broker-side prompt for
+sub-agents. `y`/`yes` are still accepted as legacy spellings of `(o)nce` and
+`s`/`session` as legacy spellings of `(a)llow`; both are logged so the usage
+shows up in the debug trail.
 
 ### What Gets Detected
 
@@ -156,7 +163,7 @@ When a command triggers confirmation, the user sees:
   [high] Network outbound: command uses curl
           Direct network transfer tool
 
-  (y)es once | (a)llow category | (n)o deny:
+  (o)nce | (a)llow category | (n)o deny:
 ```
 
 Commands are classified into risk levels: `low`, `medium`, `high`, and `critical`.
@@ -164,13 +171,26 @@ All risk levels use the same three-option prompt format. Critical commands (e.g.
 `rm -rf /`, system destructive operations) receive a prominent `CRITICAL RISK`
 banner but still allow category-level grants - the user decides their workflow.
 
-**Session-level grants:** If the user selects `(a)llow`, all future commands in
-the same category are auto-approved for the rest of the session. This prevents
-fatigue from repeated prompts during legitimate work.
+**Session-level grants:** If the user selects `(a)llow`, the categories still
+awaiting a decision are granted for the rest of the session - nothing outside
+that set. This prevents fatigue from repeated prompts during legitimate work
+without turning one approval into blanket consent for the whole command.
 
-**Expiring grants:** Type `/security reset` at any time to clear all session-level
-security grants (command, script, overwrite, and web) and restore interactive
-prompts for all flagged operations.
+**Path grants are scoped to a directory.** Approving a path outside the session
+directory with `(a)llow this directory` covers that directory and everything
+below it, for that operation. It does not cover the rest of the filesystem, and
+it does not cover unrelated directories.
+
+**Grants survive a resume.** The grant store is written into the session file
+at save time and restored when the session is resumed, so "allow this category"
+means what it says: a category approval that outlives the process. A *new*
+session starts with no grants, and switching sessions replaces the grant table
+with the grants recorded for the session being loaded - approvals never leak
+between conversations.
+
+**Expiring grants:** Grants carry a lifetime (24 hours by default). Grants that
+expire before a resume are dropped rather than resurrected. Type `/security` to
+see what is active and `/security reset` to clear it.
 
 ### Why Not a Blocklist?
 
@@ -326,6 +346,8 @@ clio --sandbox --new
 # Manage session-level security grants
 /security              # Show active grants
 /security reset        # Clear all grants (restore interactive prompts)
+/security reset web    # Clear one scope: command, script, overwrite,
+                       # web, path
 ```
 
 ---
@@ -341,6 +363,8 @@ clio --sandbox --new
 | PathAuthorizer | `lib/CLIO/Security/PathAuthorizer.pm` | File access control |
 | Authz | `lib/CLIO/Security/Authz.pm` | OO interface |
 | AuthorizationRelay | `lib/CLIO/Security/AuthorizationRelay.pm` | Authorization token forwarding |
+| GrantStore | `lib/CLIO/Security/GrantStore.pm` | Approval grant table: grant, check, expiry, export/restore |
+| Consent | `lib/CLIO/Security/Consent.pm` | The one approval vocabulary: options text, answer parsing, grant types |
 
 ---
 

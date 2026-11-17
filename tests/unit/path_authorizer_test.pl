@@ -140,10 +140,12 @@ if ($first_use && $second_use) {
 }
 say "";
 
-# Test 8: Auto-approve
+# Test 8: no auto-approve bypass
+# The grant store used to carry an `auto_approve` scope that the authorizer
+# never consulted - a bypass primitive with no reader. It is gone; a
+# conversation cannot grant itself blanket path access.
 $tests_total++;
-say "Test 8: Auto-approve conversation";
-$authorizer->setAutoApprove(1, 'auto_conv');
+say "Test 8: No auto-approve bypass";
 $result = $authorizer->checkPathAuthorization(
     path => '/anywhere/file.txt',
     working_directory => $working_dir,
@@ -151,14 +153,11 @@ $result = $authorizer->checkPathAuthorization(
     operation => 'file_operations.delete_file',
     is_user_initiated => 0,
 );
-if ($result->{status} eq 'allowed' && $result->{reason} =~ /auto.approve/i) {
-    say "✅ PASS: Auto-approve bypasses authorization";
-    say "   Status: $result->{status}";
-    say "   Reason: $result->{reason}";
+if ($result->{status} eq 'requires_authorization') {
+    say "[OK] PASS: A conversation cannot grant itself blanket path access";
     $tests_passed++;
 } else {
-    say "❌ FAIL: Auto-approve not working";
-    say "   Status: $result->{status}";
+    say "[FAIL] FAIL: Path check unexpectedly allowed: $result->{status}";
 }
 say "";
 

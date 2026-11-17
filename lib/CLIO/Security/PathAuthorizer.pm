@@ -38,29 +38,23 @@ their designated workspace but must ask permission for operations outside that s
 
 **Grant Types:**
 - One-time: Authorization consumed after first use (default)
-- Session: Valid for entire session (one_time_use => 0)
-
-**Note:** Permanent grants (persisting across sessions) are planned but not yet implemented.
+- Session: Valid for entire session (one_time_use => 0), and restored when the
+  session is resumed
 
 =cut
 
-# Grants are shared across instances on purpose. file_operations and
-# apply_patch each build their own authorizer, so instance-local storage meant a
-# grant approved through one tool was invisible to the other, and nothing
-# outside those instances could enumerate or revoke them. One process is one
-# session, so a package-scoped store is the right scope.
-our %SHARED_GRANTS;
-our %SHARED_AUTO_APPROVE;
+# Grants live in CLIO::Security::GrantStore under the 'path' scope. The store is
+# process-wide on purpose: file_operations and apply_patch each build their own
+# authorizer, so instance-local storage made a grant approved through one tool
+# invisible to the other.
+use CLIO::Security::GrantStore;
+use CLIO::Security::Consent;
 
 sub new {
     my ($class, %opts) = @_;
     
     my $self = {
         debug => $opts{debug} || 0,
-        # Grant storage: { conversation_id => { "<operation>|<path>" => grant } }
-        grants => \%SHARED_GRANTS,
-        # Auto-approve conversations (bypasses all security)
-        auto_approve_conversations => \%SHARED_AUTO_APPROVE,
     };
     
     return bless $self, $class;
@@ -98,15 +92,6 @@ sub checkPathAuthorization {
         return {
             status => 'allowed',
             reason => 'User-initiated operation',
-        };
-    }
-    
-    # Check auto-approve first (bypasses all security)
-    if ($conversation_id && $self->{auto_approve_conversations}->{$conversation_id}) {
-        log_debug('PathAuthorizer', "Auto-approve enabled - bypassing authorization");
-        return {
-            status => 'allowed',
-            reason => 'Auto-approve enabled for conversation',
         };
     }
     
@@ -275,19 +260,24 @@ Arguments:
 =cut
 
 sub grantAuthorization {
-    my ($self, $conversation_id, $operation, $one_time_use, $path) = @_;
+    my ($self, $conversation_id, $operation, $one_time_use, $path, %opts) = @_;
     
     return unless $conversation_id && $operation;
     
     $one_time_use //= 1;  # Default to one-time use
     
-    $self->{grants}->{$conversation_id} ||= {};
-    $self->{grants}->{$conversation_id}->{$self->_grant_key($operation, $path)} = {
-        granted_at => time(),
-        one_time_use => $one_time_use,
-        consumed => 0,
-        path => $path,
-    };
+    CLIO::Security::GrantStore::grant(
+        'path',
+        $self->_grant_key($conversation_id, $operation, $path),
+        data => {
+            conversation_id => $conversation_id,
+            operation       => $operation,
+            path            => $path,
+            one_time_use    => $one_time_use,
+            consumed        => 0,
+            prefix          => $opts{prefix} ? 1 : 0,
+        },
+    );
     
     log_debug('PathAuthorizer', "Authorization granted: conversation=$conversation_id, operation=$operation, path=" . ($path // '*') . ", oneTime=$one_time_use");
 }
@@ -296,18 +286,23 @@ sub grantAuthorization {
 
 Build the storage key for one grant.
 
-A grant is scoped to an operation and, when a path is supplied, to that single
-resolved path. Approving one write outside the session directory must not
-unlock every other path for the rest of the conversation. A grant recorded
-without a path matches any path, which is what bulk approvals rely on.
+A grant is scoped to a conversation, an operation, and - when a path is
+supplied - to that path. Approving one write outside the session directory
+must not unlock every other path for the rest of the conversation.
+
+A grant recorded without a path matches any path; it is only created by
+explicit bulk approval. A grant recorded with C<prefix> set matches the
+directory and everything below it, which is what C<(a)llow this path> means:
+approving a write into a directory opens that directory, not the filesystem.
 
 Do not call directly.
 
 =cut
 
 sub _grant_key {
-    my ($self, $operation, $path) = @_;
-    return $operation . '|' . ((defined $path && length $path) ? $path : '*');
+    my ($self, $conversation_id, $operation, $path) = @_;
+    return ($conversation_id // '') . '|' . $operation . '|'
+        . ((defined $path && length $path) ? $path : '*');
 }
 
 =head2 isAuthorized
@@ -326,28 +321,67 @@ sub isAuthorized {
     my ($self, $conversation_id, $operation, $path) = @_;
     
     return 0 unless $conversation_id;
-    return 0 unless $self->{grants}->{$conversation_id};
     
-    # An exact-path grant is consumed before a wildcard grant for the same
-    # operation is considered.
-    my @candidates = (defined $path && length $path) ? ($path, undef) : (undef);
+    # Most specific first: the exact path, then any approved parent directory
+    # (closest first), then a wildcard grant. An exact-path grant is consumed
+    # before a wildcard grant for the same operation is considered.
+    my @candidates;
+    if (defined $path && length $path) {
+        push @candidates, { path => $path, prefix => 0 };
+        push @candidates, map { { path => $_, prefix => 1 } } $self->_ancestor_dirs($path);
+    }
+    push @candidates, { path => undef, prefix => 0 };
     
     for my $candidate (@candidates) {
-        my $key = $self->_grant_key($operation, $candidate);
-        my $grant = $self->{grants}->{$conversation_id}->{$key};
-        next unless $grant;
-        next if $grant->{consumed};
+        my $key = $self->_grant_key($conversation_id, $operation, $candidate->{path});
+        next unless CLIO::Security::GrantStore::is_granted('path', $key);
+
+        my $data = (CLIO::Security::GrantStore::get('path', $key) || {})->{data} || {};
+        next if $data->{consumed};
+        # Only a grant recorded as a directory approval covers a directory
+        # other than the one it names; an exact-path grant never widens.
+        next if $candidate->{prefix} && !$data->{prefix};
         
         # Consume if one-time use
-        if ($grant->{one_time_use}) {
-            $grant->{consumed} = 1;
-            log_debug('PathAuthorizer', "Authorization consumed: conversation=$conversation_id, operation=$operation, path=" . ($candidate // '*'));
+        if ($data->{one_time_use}) {
+            $data->{consumed} = 1;
+            CLIO::Security::GrantStore::grant('path', $key, data => $data);
+            log_debug('PathAuthorizer', "Authorization consumed: conversation=$conversation_id, operation=$operation, path=" . ($candidate->{path} // '*'));
         }
         
         return 1;
     }
     
     return 0;
+}
+
+=head2 _ancestor_dirs (Internal)
+
+Return the directories containing C<$path>, nearest first, excluding the
+filesystem root.
+
+The root is excluded on purpose: approving a write into C</tmp> must not
+produce a grant that matches everything on the system.
+
+Do not call directly.
+
+=cut
+
+sub _ancestor_dirs {
+    my ($self, $path) = @_;
+
+    require File::Basename;
+    my @dirs;
+    my $dir = File::Basename::dirname($path);
+
+    while (defined $dir && length $dir && $dir ne '/' && $dir ne '.' && $dir ne $path) {
+        push @dirs, $dir;
+        my $parent = File::Basename::dirname($dir);
+        last if !defined $parent || $parent eq $dir;
+        $dir = $parent;
+    }
+
+    return @dirs;
 }
 
 =head2 revokeAuthorization
@@ -364,19 +398,18 @@ sub revokeAuthorization {
     my ($self, $conversation_id, $operation, $path) = @_;
     
     return unless $conversation_id;
-    return unless $self->{grants}->{$conversation_id};
     
     if (defined $path && length $path) {
         # Revoke only the grant for this exact path.
-        delete $self->{grants}->{$conversation_id}->{$self->_grant_key($operation, $path)};
+        CLIO::Security::GrantStore::revoke('path', $self->_grant_key($conversation_id, $operation, $path));
     }
     else {
         # No path given: revoke the operation outright, whichever paths it was
-        # granted for. Grants are keyed "<operation>|<path>", so the prefix
+        # granted for. Grants are keyed "<conversation>|<operation>|<path>", so the prefix
         # identifies every variant of this operation.
-        my $prefix = $operation . '|';
-        for my $key (keys %{$self->{grants}->{$conversation_id}}) {
-            delete $self->{grants}->{$conversation_id}->{$key}
+        my $prefix = $conversation_id . '|' . $operation . '|';
+        for my $key (CLIO::Security::GrantStore::keys_for('path')) {
+            CLIO::Security::GrantStore::revoke('path', $key)
                 if index($key, $prefix) == 0;
         }
     }
@@ -398,54 +431,14 @@ sub revokeAllForConversation {
     
     return unless $conversation_id;
     
-    my $count = $self->{grants}->{$conversation_id} ? scalar(keys %{$self->{grants}->{$conversation_id}}) : 0;
-    delete $self->{grants}->{$conversation_id};
+    my $prefix = $conversation_id . '|';
+    my $count = 0;
+    for my $key (CLIO::Security::GrantStore::keys_for('path')) {
+        next unless index($key, $prefix) == 0;
+        $count++ if CLIO::Security::GrantStore::revoke('path', $key);
+    }
     
     log_debug('PathAuthorizer', "All authorizations revoked: conversation=$conversation_id, count=$count");
-}
-
-=head2 setAutoApprove
-
-Enable or disable auto-approve for a conversation (bypasses all security).
-
-WARNING: This bypasses all authorization checks. Use with caution.
-
-Arguments:
-- enabled: If true, all operations are automatically authorized without prompts
-- conversation_id: The conversation to enable/disable auto-approve for
-
-=cut
-
-sub setAutoApprove {
-    my ($self, $enabled, $conversation_id) = @_;
-    
-    return unless $conversation_id;
-    
-    if ($enabled) {
-        $self->{auto_approve_conversations}->{$conversation_id} = 1;
-        log_warning('PathAuthorizer', "Auto-approve ENABLED - all operations authorized without user permission: conversation=$conversation_id");
-    } else {
-        delete $self->{auto_approve_conversations}->{$conversation_id};
-        log_debug('PathAuthorizer', "Auto-approve disabled: conversation=$conversation_id");
-    }
-}
-
-=head2 isAutoApproveEnabled
-
-Check if auto-approve is enabled for a conversation.
-
-Arguments:
-- conversation_id: The conversation to check
-
-Returns: True if auto-approve is enabled, false otherwise
-
-=cut
-
-sub isAutoApproveEnabled {
-    my ($self, $conversation_id) = @_;
-    
-    return 0 unless $conversation_id;
-    return $self->{auto_approve_conversations}->{$conversation_id} ? 1 : 0;
 }
 
 =head2 authorize_or_prompt
@@ -459,11 +452,11 @@ the session directory could not be approved at all.
 
 Arguments: the same as checkPathAuthorization, plus
 - prompt: coderef invoked as C<$prompt->(%details)> when approval is needed.
-  It must return 'once', 'session', or 'deny'. Omit it to get the plain
+  It must return 'once', 'all', or 'deny'. Omit it to get the plain
   checkPathAuthorization behaviour.
 
 Returns: the checkPathAuthorization status hashref, with C<granted> set to
-'once' or 'session' when the user approved this call.
+'once' or 'all' when the user approved this call.
 
 =cut
 
@@ -488,15 +481,21 @@ sub authorize_or_prompt {
         );
     } || 'deny';
     
-    if ($decision eq 'session') {
-        # Session-wide approval: stored with no path so it covers any later
-        # target for this operation, which is what the user asked for.
-        $self->grantAuthorization($conversation_id, $operation, 0, undef);
-        log_debug('PathAuthorizer', "User approved session-wide: operation=$operation");
+    if ($decision eq 'all') {
+        # Approval covers the directory the approved path lives in, not every
+        # path this operation will ever touch. Approving one file in a
+        # directory should not open the rest of the filesystem, and scoping to
+        # the directory keeps the common case - writing several files into one
+        # directory - prompt-free.
+        require File::Basename;
+        my $scope_dir = File::Basename::dirname($normalized_path);
+        $self->grantAuthorization($conversation_id, $operation, 0, $scope_dir, prefix => 1);
+        log_debug('PathAuthorizer', "User approved directory: operation=$operation, dir=$scope_dir");
         return {
             status  => 'allowed',
-            reason  => 'User approved this operation for the rest of the session',
-            granted => 'session',
+            reason  => "User approved this operation in '$scope_dir' for the rest of the session",
+            granted => 'all',
+            scope   => $scope_dir,
         };
     }
     
@@ -550,7 +549,7 @@ sub prompt_for_path_authorization {
         $spinner->stop() if $spinner && $spinner->can('stop');
         
         my $theme_mgr = $ui->{theme_mgr};
-        my $options   = '(o)nce | (s)ession | (n)o deny';
+        my $options   = CLIO::Security::Consent::options_text(allow_label => 'this directory');
         
         if ($theme_mgr && $theme_mgr->can('get_security_prompt')) {
             my ($prompt_line, $input_line) = $theme_mgr->get_security_prompt(
@@ -583,9 +582,7 @@ sub prompt_for_path_authorization {
         
         $spinner->start() if $spinner && $spinner->can('start');
         
-        return 'once'    if $response =~ /^(?:o|once|y|yes)$/;
-        return 'session' if $response =~ /^(?:s|session|a|all|allow)$/;
-        return 'deny';
+        return CLIO::Security::Consent::parse_answer($response, caller => 'PathAuthorizer');
     }
     
     # No TTY: relay the request through the broker for headless sub-agents.
@@ -596,7 +593,7 @@ sub prompt_for_path_authorization {
         if ($relay->available()) {
             my $result = $relay->request_path_authorization($path, { reason => $reason });
             return 'deny' unless $result->{approved};
-            return $result->{grant_type} eq 'session' ? 'session' : 'once';
+            return $result->{grant_type} eq 'all' ? 'all' : 'once';
         }
     }
     
@@ -615,19 +612,17 @@ Returns: arrayref of hashrefs with conversation_id, operation, path, session.
 sub list_path_grants {
     my @grants;
     
-    for my $conversation_id (sort keys %SHARED_GRANTS) {
-        my $by_key = $SHARED_GRANTS{$conversation_id} || {};
-        for my $key (sort keys %$by_key) {
-            my $grant = $by_key->{$key};
-            next if $grant->{consumed};
-            my ($operation, $path) = split /\|/, $key, 2;
-            push @grants, {
-                conversation_id => $conversation_id,
-                operation       => $operation,
-                path            => ($path && $path ne '*') ? $path : undef,
-                session         => $grant->{one_time_use} ? 0 : 1,
-            };
-        }
+    for my $grant (CLIO::Security::GrantStore::list_grants()) {
+        next unless $grant->{scope} eq 'path';
+        my $data = $grant->{data} || {};
+        next if $data->{consumed};
+        push @grants, {
+            conversation_id => $data->{conversation_id},
+            operation       => $data->{operation},
+            path            => (defined $data->{path} && length $data->{path}) ? $data->{path} : undef,
+            session         => $data->{one_time_use} ? 0 : 1,
+            granted_at      => $grant->{granted_at},
+        };
     }
     
     return \@grants;
@@ -645,14 +640,7 @@ Returns: number of grants cleared.
 =cut
 
 sub reset_path_grants {
-    my $count = 0;
-    
-    for my $conversation_id (keys %SHARED_GRANTS) {
-        $count += scalar keys %{$SHARED_GRANTS{$conversation_id} || {}};
-    }
-    
-    %SHARED_GRANTS = ();
-    %SHARED_AUTO_APPROVE = ();
+    my $count = CLIO::Security::GrantStore::reset_scope('path');
     
     log_debug('PathAuthorizer', "All path grants reset, count=$count");
     

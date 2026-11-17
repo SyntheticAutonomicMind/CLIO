@@ -232,7 +232,7 @@ If the system handles the condition (retry, reroute, fallback), use `log_debug`,
 | `CLIO::MCP::` | Model Context Protocol | Manager, Client, Transport::Stdio, Transport::HTTP, Auth::OAuth |
 | `CLIO::Profile::` | User profiling | Analyzer, Manager |
 | `CLIO::Protocols::` | Complex workflows | Puppeteer |
-| `CLIO::Security::` | Auth/authz | Auth, Authz, AuthorizationRelay, CommandAnalyzer, InvisibleCharFilter, PathAuthorizer, SecretRedactor |
+| `CLIO::Security::` | Auth/authz | Auth, Authz, AuthorizationRelay, CommandAnalyzer, Consent, GrantStore, InvisibleCharFilter, PathAuthorizer, SecretRedactor |
 | `CLIO::Logging::` | Structured logging | ToolLogger, ProcessStats |
 | `CLIO::Compat::` | Compatibility | Terminal (ReadKey, ReadMode), HTTP |
 | `CLIO::Util::` | Utilities | PathResolver, TextSanitizer, JSON, JSONRepair, YAML, ImageAttachment, ImageDisplay, ConfigPath, AtomicWrite, DisplayWidth, RateLimit, GitIgnore, AnthropicXMLParser, CABundle, Curl, InputHelpers, Proxy, UUID |

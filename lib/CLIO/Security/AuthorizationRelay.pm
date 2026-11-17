@@ -76,11 +76,12 @@ Arguments:
 - risk_level: 'standard', 'high', or 'critical'
 - flags: Arrayref of flag hashrefs with category and description (same format as CommandAnalyzer)
 - agent_id: ID of the requesting agent (optional, derived from broker client if not provided)
-- options: Custom options string (optional, defaults to standard y/a/n prompt)
+- options: Custom options string (optional, defaults to the shared
+  o/a/n vocabulary from L<CLIO::Security::Consent>)
 
 Returns: Hashref with:
 - approved: 1 if approved, 0 if denied
-- grant_type: 'once', 'session', or 'denied'
+- grant_type: 'once', 'all', or 'denied'
 
 =cut
 

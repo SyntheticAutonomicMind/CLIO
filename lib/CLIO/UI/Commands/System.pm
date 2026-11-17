@@ -218,81 +218,115 @@ sub handle_multiline_command {
 
 =head2 handle_security_command(@args)
 
-Handle the /security command - manage session-level security grants.
+Handle the /security command - inspect and revoke approval grants.
 
-  /security          Show current security grant status
-  /security reset    Clear all session-level security grants
+  /security                  Show every active grant
+  /security reset            Clear every grant
+  /security reset <scope>    Clear one scope: command, script, overwrite,
+                             web, path
 
 =cut
+
+# Human labels for the GrantStore scopes.
+my %SECURITY_SCOPE_LABELS = (
+    command      => 'command',
+    script       => 'script',
+    overwrite    => 'overwrite',
+    web          => 'web',
+    path         => 'path',
+);
 
 sub handle_security_command {
     my ($self, @args) = @_;
 
+    require CLIO::Security::GrantStore;
+
     my $action = $args[0] || '';
+    my $scope  = $args[1];
 
     if ($action eq 'reset') {
-        require CLIO::Tools::TerminalOperations;
-        require CLIO::Tools::FileOperations;
-        require CLIO::Tools::WebOperations;
-        require CLIO::Security::PathAuthorizer;
-
-        CLIO::Tools::TerminalOperations::reset_session_grants();
-        CLIO::Tools::FileOperations::reset_script_session_grants();
-        CLIO::Tools::FileOperations::reset_overwrite_session_grants();
-        CLIO::Tools::WebOperations::reset_url_session_grants();
-        CLIO::Security::PathAuthorizer::reset_path_grants();
-
-        $self->display_command_header("SECURITY GRANTS RESET");
-        $self->display_success_message("All session-level security grants cleared.");
-        $self->display_key_value("Cleared", "Command confirmation grants");
-        $self->display_key_value("Cleared", "Script creation grants");
-        $self->display_key_value("Cleared", "File overwrite grants");
-        $self->display_key_value("Cleared", "Web fetch grants");
-        $self->display_key_value("Cleared", "Path authorization grants");
+        my $cleared;
+        if (defined $scope && length $scope) {
+            unless ($SECURITY_SCOPE_LABELS{$scope}) {
+                $self->display_error_message(
+                    "Unknown scope '$scope'. Scopes: " . join(', ', sort keys %SECURITY_SCOPE_LABELS));
+                return;
+            }
+            $cleared = CLIO::Security::GrantStore::reset_scope($scope);
+            $self->display_command_header("SECURITY GRANTS RESET");
+            $self->display_success_message(
+                "Cleared $cleared grant(s) in the '$SECURITY_SCOPE_LABELS{$scope}' scope.");
+        } else {
+            $cleared = CLIO::Security::GrantStore::reset();
+            $self->display_command_header("SECURITY GRANTS RESET");
+            $self->display_success_message("All $cleared approval grant(s) cleared.");
+        }
         $self->writeline("", markdown => 0);
+        $self->display_key_value("Effect", "Every category prompts again");
         return;
     }
 
-    # Default: show current status
     $self->display_command_header("SECURITY STATUS");
 
-    require CLIO::Tools::TerminalOperations;
-    require CLIO::Tools::FileOperations;
-    require CLIO::Tools::WebOperations;
-    require CLIO::Security::PathAuthorizer;
+    # One table, one shape: the store is the only thing that knows where
+    # grants live, so this view cannot drift out of sync with enforcement.
+    my @grants = CLIO::Security::GrantStore::list_grants();
 
-    # These are hashes, so they are read with a `%` sigil. Writing
-    # %{$CLIO::Tools::X::_grants} dereferences the scalar $..._grants, which
-    # is undef, and dies with "Can't use an undefined value as a HASH
-    # reference" as soon as any grant is active.
-    my %term      = %CLIO::Tools::TerminalOperations::_session_grants;
-    my %script    = %CLIO::Tools::FileOperations::_script_write_grants;
-    my %overwrite = %CLIO::Tools::FileOperations::_overwrite_session_grants;
-    my %url       = %CLIO::Tools::WebOperations::_url_session_grants;
-    my $path_grants = CLIO::Security::PathAuthorizer::list_path_grants();
-
-    my @all_cats;
-    push @all_cats, map { "command: $_" } keys %term;
-    push @all_cats, map { "script: $_" } keys %script;
-    push @all_cats, map { "overwrite: $_" } keys %overwrite;
-    push @all_cats, map { "web: $_" } keys %url;
-    for my $grant (@$path_grants) {
-        my $scope = $grant->{path} || 'any path';
-        push @all_cats, "path: $grant->{operation} ($scope)";
-    }
-
-    if (@all_cats) {
-        $self->display_key_value("Active grants", scalar(@all_cats) . " session grant(s)");
-        for my $cat (@all_cats) {
-            $self->display_list_item($cat);
-        }
-    } else {
-        $self->display_info_message("No active session-level security grants.");
+    unless (@grants) {
+        $self->display_info_message("No active approval grants.");
         $self->display_key_value("All security prompts", "active (interactive)");
+        $self->writeline("", markdown => 0);
+        $self->display_key_value("Tip", "Answer (a)ll at a prompt to grant a category");
+        return;
     }
 
+    $self->display_key_value("Active grants", scalar(@grants) . " grant(s)");
+
+    for my $grant (@grants) {
+        my $label = $SECURITY_SCOPE_LABELS{ $grant->{scope} } || $grant->{scope};
+        my $target = $grant->{key};
+
+        if ($grant->{scope} eq 'path') {
+            my $data = $grant->{data} || {};
+            my $where = $data->{path};
+            if (defined $where && length $where) {
+                # A directory approval covers everything below it, so show it
+                # as a directory rather than as a file with an odd name.
+                $where .= '/' if $data->{prefix} && $where ne '/';
+            } else {
+                $where = 'any path';
+            }
+            $target = ($data->{operation} || '?') . ' -> ' . $where;
+            $target .= $data->{one_time_use} ? ' (one-time)' : ' (session)';
+        }
+
+        $self->display_list_item("$label: $target (" . _format_grant_age($grant->{age}) . ')');
+    }
+
+    my $ttl = CLIO::Security::GrantStore::ttl_seconds();
     $self->writeline("", markdown => 0);
-    $self->display_key_value("Tip", "Use /security reset to clear all grants");
+    if ($ttl > 0) {
+        my $hours = $ttl / 3600;
+        $self->display_key_value("Lifetime", sprintf('%.0f hour(s); resumed sessions keep unexpired grants', $hours));
+    } else {
+        $self->display_key_value("Lifetime", "no expiry");
+    }
+    $self->display_key_value("Tip", "Use /security reset [scope] to clear grants");
+}
+
+=head2 _format_grant_age($seconds) (Internal)
+
+Render a grant's age as a short human string.
+
+=cut
+
+sub _format_grant_age {
+    my ($age) = @_;
+    $age //= 0;
+    return 'just now' if $age < 60;
+    return int($age / 60) . 'm ago' if $age < 3600;
+    return int($age / 3600) . 'h ago' if $age < 86400;
+    return int($age / 86400) . 'd ago';
 }
 
 1;

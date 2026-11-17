@@ -168,17 +168,12 @@ sub new {
         log_debug('SessionManager', "Manager::new] called with args: " . join(", ", map { "$_=$args{$_}" } keys %args));
     }
 
-    # Reset per-process tool session grants so they never carry across sessions
-    # or accumulate over the lifetime of long-running processes. Without this,
-    # a single 'allow this category for the session' response can persist for
-    # the rest of the process and auto-approve later destructive commands.
-    require CLIO::Tools::TerminalOperations;
-    require CLIO::Tools::FileOperations;
-    require CLIO::Tools::WebOperations;
-    CLIO::Tools::TerminalOperations::reset_session_grants();
-    CLIO::Tools::FileOperations::reset_script_session_grants();
-    CLIO::Tools::FileOperations::reset_overwrite_session_grants();
-    CLIO::Tools::WebOperations::reset_url_session_grants();
+    # A new session starts with no approvals. Grants survive a *resume* (see
+    # load below) but never leak from a previous session in the same process,
+    # which is what made "allow this category" outlive the conversation that
+    # granted it.
+    require CLIO::Security::GrantStore;
+    CLIO::Security::GrantStore::reset();
 
     # Determine working directory for loading project LTM
     my $working_dir = $args{working_directory} || Cwd::getcwd();
@@ -279,6 +274,24 @@ sub load {
     };
     bless $self, $class;
     
+    # Restore the approvals recorded with this session. Replacing the table
+    # (rather than merging) is deliberate: when /session switch loads another
+    # session, the grants that apply are that session's, not the ones the user
+    # just left behind.
+    require CLIO::Security::GrantStore;
+    CLIO::Security::GrantStore::reset();
+    my $saved_grants = ($state->{security} || {})->{grants};
+    if (ref($saved_grants) eq 'ARRAY' && @$saved_grants) {
+        my $restored = CLIO::Security::GrantStore::restore(
+            $saved_grants,
+            conversation_id => $session_id,
+        );
+        log_debug('SessionManager', "Restored approval grants for $session_id: "
+            . "restored=$restored->{restored} expired=$restored->{dropped_expired} "
+            . "other_conversation=$restored->{dropped_other} "
+            . "unknown_scope=$restored->{dropped_unknown}");
+    }
+
     # Load STM, LTM, YaRN from persistent storage
     my $stm  = $state->stm;
     my $ltm  = $state->ltm;

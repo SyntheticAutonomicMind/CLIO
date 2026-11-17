@@ -1063,11 +1063,10 @@ sub validate_command {
     );
 }
 
-# Session-level grants: once user approves a category, don't re-ask.
-# Declared with `our`, not `my`: /security reads this table through the package
-# variable to display active grants, and a lexical made that read a different,
-# always-empty hash.
-our %_session_grants;
+# Session-level grants live in CLIO::Security::GrantStore under the 'command'
+# scope, keyed by flag category. This module no longer keeps its own table.
+use CLIO::Security::GrantStore;
+use CLIO::Security::Consent;
 
 =head2 _decision_source
 
@@ -1110,7 +1109,8 @@ Returns: list of flag hashrefs (empty when every flag is already granted).
 sub _uncovered_flags {
     my ($self, $analysis) = @_;
 
-    return grep { !$_session_grants{$_->{category}} } @{$analysis->{flags} || []};
+    return grep { !CLIO::Security::GrantStore::is_granted('command', $_->{category}) }
+        @{$analysis->{flags} || []};
 }
 
 =head2 _consent_options_text
@@ -1129,10 +1129,10 @@ sub _consent_options_text {
     my ($self, $flag_count) = @_;
 
     my $allow = ($flag_count && $flag_count > 1)
-        ? "(a)llow these $flag_count categories"
-        : '(a)llow category';
+        ? "these $flag_count categories"
+        : 'category';
 
-    return "(o)nce | $allow | (n)o deny";
+    return CLIO::Security::Consent::options_text(allow_label => $allow);
 }
 
 =head2 _prompt_command_confirmation
@@ -1183,9 +1183,9 @@ sub _prompt_command_confirmation {
                 my $result = $relay->request_command_authorization($command, $analysis, $context);
                 if ($result->{approved}) {
                     # Handle session grants from relay
-                    if ($result->{grant_type} eq 'session') {
+                    if ($result->{grant_type} eq 'all') {
                         for my $flag (@{$analysis->{flags}}) {
-                            $_session_grants{$flag->{category}} = 1;
+                            CLIO::Security::GrantStore::grant('command', $flag->{category});
                             log_debug('TermOps', "Session grant (via relay) for: $flag->{category}");
                         }
                     }
@@ -1275,42 +1275,20 @@ sub _prompt_command_confirmation {
 
     $spinner->start() if $spinner && $spinner->can('start');
 
-    # Vocabulary: (o)nce | (a)ll | (n)o. The legacy keys y/s/yes/session are
-    # still accepted so existing muscle memory does not turn into a silent
-    # denial, but they are logged so the usage shows up in the debug trail.
-    if ($response =~ /^(?:o|once)$/) {
-        return 1;
-    } elsif ($response =~ /^(?:y|yes)$/) {
-        log_debug('TermOps', "Legacy key 'y' used for once - accepted, maps to (o)nce");
-        return 1;
-    } elsif ($response =~ /^(?:a|all|allow)$/) {
-        # Grant a session approval for each category still awaiting a decision.
+    my $decision = CLIO::Security::Consent::parse_answer($response, caller => 'TermOps');
+
+    if ($decision eq 'all') {
+        # Grant every category still awaiting a decision. Categories already
+        # granted are not re-granted; nothing outside the uncovered set is
+        # touched, which is what keeps (a) from approving a whole command.
         for my $flag (@uncovered) {
-            $_session_grants{$flag->{category}} = 1;
-            log_debug('TermOps', "Session grant added for category: $flag->{category}");
-        }
-        return 1;
-    } elsif ($response =~ /^(?:s|session)$/) {
-        log_debug('TermOps', "Legacy key 's' used - accepted, maps to (a)ll");
-        for my $flag (@uncovered) {
-            $_session_grants{$flag->{category}} = 1;
+            CLIO::Security::GrantStore::grant('command', $flag->{category});
             log_debug('TermOps', "Session grant added for category: $flag->{category}");
         }
         return 1;
     }
 
-    return 0;
-}
-
-=head2 reset_session_grants
-
-Reset all session-level command security grants.
-Called when starting a new session.
-
-=cut
-
-sub reset_session_grants {
-    %_session_grants = ();
+    return $decision eq 'once' ? 1 : 0;
 }
 
 =head2 _read_and_cleanup_log

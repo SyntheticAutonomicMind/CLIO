@@ -28,6 +28,7 @@ $repo_root = abs_path('.') unless -d "$repo_root/lib";
 unshift @INC, "$repo_root/lib";
 
 require CLIO::Tools::FileOperations;
+require CLIO::Security::GrantStore;
 
 my ($pass, $fail) = (0, 0);
 sub ok {
@@ -89,7 +90,7 @@ my @cases = (
     # this fixture is a pre-existing file the tool did not create. The case is
     # about alias dispatch, not approval, so grant the category up front.
     { name => '_write_grant', setup => sub {
-        $CLIO::Tools::FileOperations::_overwrite_session_grants{file_overwrite} = 1;
+        CLIO::Security::GrantStore::grant('overwrite', 'file_overwrite');
       } },
     { name => '_write_setup', setup => sub {
         open my $fh, '>:encoding(UTF-8)', "$tmp/written_via_alias.txt" or die;

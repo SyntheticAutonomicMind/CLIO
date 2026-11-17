@@ -53,6 +53,7 @@ use CLIO::Memory::YaRN;
 use CLIO::Memory::TokenEstimator;
 use CLIO::Util::TextSanitizer qw(strip_conversation_tags);
 use CLIO::Core::Defaults qw(DEFAULT_CONTEXT_WINDOW DEFAULT_MAX_OUTPUT_TOKENS);
+use CLIO::Security::GrantStore;
 
 sub new {
     my ($class, %args) = @_;
@@ -156,6 +157,12 @@ my $data = {
        input_history => $self->{input_history} || [],  # User input readline history
        session_goals => $self->{session_goals} || [],  # Persistent task goals
        context_stats => $self->{context_stats} || [],  # Per-request context budget records
+       # Approval grants made during the session. Read from the store at save
+       # time rather than mirrored into an instance field, so there is nothing
+       # to keep in sync: the store is the only writer.
+       security => {
+           grants => CLIO::Security::GrantStore::export(),
+       },
     };
     if ($ENV{CLIO_DEBUG} || $self->{debug}) {
         require Data::Dumper;
@@ -382,6 +389,10 @@ sub load {
        context_stats => $data->{context_stats} || [],
         # Session goals stored in the session file.
         session_goals => $data->{session_goals} || [],
+        # Approval grants recorded with the session. Restoration into the
+        # grant store is the caller's decision (Manager::load) so loading a
+        # session for inspection does not change what this process approves.
+        security => $data->{security} || {},
     };
     bless $self, $class;
     

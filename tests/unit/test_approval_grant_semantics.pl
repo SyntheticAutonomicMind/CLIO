@@ -21,6 +21,7 @@ use lib dirname(__FILE__) . '/../..';
 use CLIO::Tools::TerminalOperations;
 use CLIO::Tools::WebOperations;
 use CLIO::Tools::FileOperations;
+use CLIO::Security::GrantStore;
 
 my $passed = 0;
 my $failed = 0;
@@ -38,10 +39,7 @@ sub ok {
 }
 
 sub reset_grants {
-    CLIO::Tools::TerminalOperations::reset_session_grants();
-    CLIO::Tools::WebOperations::reset_url_session_grants();
-    CLIO::Tools::FileOperations::reset_overwrite_session_grants();
-    CLIO::Tools::FileOperations::reset_script_session_grants();
+    CLIO::Security::GrantStore::reset();
 }
 
 # ---------------------------------------------------------------------------
@@ -65,7 +63,7 @@ ok($term->_decision_source($two_flag_analysis, {}) eq 'prompt',
     'no grants reports the prompt decision path');
 
 # One of two categories granted: still needs a decision for the other.
-$CLIO::Tools::TerminalOperations::_session_grants{network_outbound} = 1;
+CLIO::Security::GrantStore::grant('command', 'network_outbound');
 ok($term->_decision_source($two_flag_analysis, {}) eq 'session_grant_partial:1/2',
     'partial coverage reports session_grant_partial:1/2');
 
@@ -81,7 +79,7 @@ ok(scalar(@uncovered) == 1 && $uncovered[0]{category} eq 'credential_access',
     'the uncovered set is exactly the credential-access flag');
 
 # Both categories granted: covered, auto-approves.
-$CLIO::Tools::TerminalOperations::_session_grants{credential_access} = 1;
+CLIO::Security::GrantStore::grant('command', 'credential_access');
 ok($term->_decision_source($two_flag_analysis, {}) eq 'session_grant',
     'full coverage reports session_grant');
 
@@ -118,7 +116,7 @@ ok($r->{requires_confirmation} && $r->{grantable} == 1,
     'strict mode external fetch asks and is grantable');
 
 # A grant covers that.
-$CLIO::Tools::WebOperations::_url_session_grants{fetch_url} = 1;
+CLIO::Security::GrantStore::grant('web', 'fetch_url');
 $r = $web->_check_url_security('https://example.com/page', $strict_ctx);
 ok(!$r->{requires_confirmation},
     'fetch grant covers a plain external fetch in strict mode');
@@ -206,13 +204,13 @@ $result = $fo->execute(
 ok($result->{success}, 'append mode is still permitted without a prompt');
 
 # A session grant lifts the restriction.
-$CLIO::Tools::FileOperations::_overwrite_session_grants{file_overwrite} = 1;
+CLIO::Security::GrantStore::grant('overwrite', 'file_overwrite');
 $result = $fo->execute(
     { operation => 'write_file', path => $target, content => "granted replacement\n" },
     $ctx,
 );
 ok($result->{success}, 'a file_overwrite session grant permits the overwrite');
-$CLIO::Tools::FileOperations::_overwrite_session_grants{file_overwrite} = 0;
+CLIO::Security::GrantStore::revoke('overwrite', 'file_overwrite');
 
 # A file this process created is exempt: rewriting your own output is the
 # normal edit loop, not a clobber of user data.

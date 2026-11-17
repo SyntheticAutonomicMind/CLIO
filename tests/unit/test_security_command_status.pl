@@ -4,12 +4,14 @@
 
 =head1 NAME
 
-test_security_command_status.pl - /security status reads the live grant tables
+test_security_command_status.pl - /security reports what enforcement sees
 
-The status view reads the grant tables through their package variables. When
-those tables were declared with `my`, the view read a different, always-empty
-hash - and the expression used to copy them (`%{$Package::hash}`) dereferenced
-a scalar and died as soon as anything was granted. These tests pin both.
+The status view used to read four package-scoped grant hashes directly. Every
+one of those was a separate shape, and a `my`/`our` mistake once made the view
+read an always-empty copy of one of them. Now the view and enforcement both go
+through CLIO::Security::GrantStore, and these tests pin the shared behaviour:
+grants granted through the store are visible, reset clears them, a scoped reset
+leaves other scopes alone, and an unknown scope changes nothing.
 
 =cut
 
@@ -25,6 +27,7 @@ use CLIO::Tools::TerminalOperations;
 use CLIO::Tools::FileOperations;
 use CLIO::Tools::WebOperations;
 use CLIO::Security::PathAuthorizer;
+use CLIO::Security::GrantStore;
 use CLIO::UI::Commands::System;
 
 {
@@ -68,37 +71,33 @@ sub rendered_security_status {
 }
 
 sub clear_grants {
-    CLIO::Tools::TerminalOperations::reset_session_grants();
-    CLIO::Tools::FileOperations::reset_script_session_grants();
-    CLIO::Tools::FileOperations::reset_overwrite_session_grants();
-    CLIO::Tools::WebOperations::reset_url_session_grants();
-    CLIO::Security::PathAuthorizer::reset_path_grants();
+    CLIO::Security::GrantStore::reset();
 }
 
 subtest 'no grants renders the empty state' => sub {
     clear_grants();
     my ($survived, $out, $err) = rendered_security_status();
     ok($survived, 'status survives with no grants') or diag($err);
-    like($out, qr/No active session-level security grants/, 'reports no grants');
+    like($out, qr/No active approval grants/, 'reports no grants');
 };
 
 subtest 'active grants are listed, one line per grant' => sub {
     clear_grants();
 
-    $CLIO::Tools::TerminalOperations::_session_grants{network_outbound} = 1;
-    $CLIO::Tools::FileOperations::_script_write_grants{script_creation} = 1;
-    $CLIO::Tools::FileOperations::_overwrite_session_grants{file_overwrite} = 1;
-    $CLIO::Tools::WebOperations::_url_session_grants{fetch_url} = 1;
+    CLIO::Security::GrantStore::grant('command', 'network_outbound');
+    CLIO::Security::GrantStore::grant('script', 'script_creation');
+    CLIO::Security::GrantStore::grant('overwrite', 'file_overwrite');
+    CLIO::Security::GrantStore::grant('web', 'fetch_url');
 
     my ($survived, $out, $err) = rendered_security_status();
-    ok($survived, 'status survives with every grant table populated') or diag($err);
+    ok($survived, 'status survives with every scope populated') or diag($err);
 
-    like($out, qr/4 session grant/, 'counts all four grants');
+    like($out, qr/4 grant/, 'counts all four grants');
     like($out, qr/command: network_outbound/, 'lists the command grant');
     like($out, qr/script: script_creation/,    'lists the script grant');
     like($out, qr/overwrite: file_overwrite/,  'lists the overwrite grant');
     like($out, qr/web: fetch_url/,             'lists the web grant');
-    unlike($out, qr/No active session-level security grants/, 'does not claim the empty state');
+    unlike($out, qr/No active approval grants/, 'does not claim the empty state');
 };
 
 subtest 'reset clears every table' => sub {
@@ -107,14 +106,51 @@ subtest 'reset clears every table' => sub {
     my $ok = eval { $cmd->handle_security_command('reset'); 1 };
     ok($ok, 'reset survives') or diag($@);
 
-    is(scalar(keys %CLIO::Tools::TerminalOperations::_session_grants), 0,
-        'command grants cleared');
-    is(scalar(keys %CLIO::Tools::FileOperations::_script_write_grants), 0,
-        'script grants cleared');
-    is(scalar(keys %CLIO::Tools::FileOperations::_overwrite_session_grants), 0,
-        'overwrite grants cleared');
-    is(scalar(keys %CLIO::Tools::WebOperations::_url_session_grants), 0,
-        'web grants cleared');
+    is(CLIO::Security::GrantStore::count(), 0, 'every grant cleared');
+};
+
+subtest 'reset of one scope leaves the others alone' => sub {
+    clear_grants();
+    CLIO::Security::GrantStore::grant('command', 'network_outbound');
+    CLIO::Security::GrantStore::grant('web', 'fetch_url');
+
+    my $chat = FakeChat->new();
+    my $cmd = CLIO::UI::Commands::System->new(chat => $chat);
+    my $ok = eval { $cmd->handle_security_command('reset', 'web'); 1 };
+    ok($ok, 'scoped reset survives') or diag($@);
+
+    ok(!CLIO::Security::GrantStore::is_granted('web', 'fetch_url'), 'web scope cleared');
+    ok(CLIO::Security::GrantStore::is_granted('command', 'network_outbound'),
+        'command scope untouched');
+};
+
+subtest 'unknown scope is rejected without clearing anything' => sub {
+    clear_grants();
+    CLIO::Security::GrantStore::grant('command', 'network_outbound');
+
+    my $chat = FakeChat->new();
+    my $cmd = CLIO::UI::Commands::System->new(chat => $chat);
+    my $ok = eval { $cmd->handle_security_command('reset', 'bogus'); 1 };
+    ok($ok, 'unknown scope does not die') or diag($@);
+    ok(CLIO::Security::GrantStore::is_granted('command', 'network_outbound'),
+        'grants survive a rejected reset');
+};
+
+subtest 'path grants show their real scope' => sub {
+    clear_grants();
+
+    my $authorizer = CLIO::Security::PathAuthorizer->new(debug => 0);
+    $authorizer->grantAuthorization('conv', 'file_operations.write_file', 0,
+        '/tmp/approved', prefix => 1);
+    $authorizer->grantAuthorization('conv', 'file_operations.write_file', 0, undef);
+
+    my ($survived, $out, $err) = rendered_security_status();
+    ok($survived, 'status survives path grants') or diag($err);
+
+    like($out, qr{file_operations\.write_file -> /tmp/approved/ \(session\)},
+        'a directory grant is shown as a directory');
+    like($out, qr{file_operations\.write_file -> any path \(session\)},
+        'a wildcard grant is shown as any path');
 };
 
 done_testing();

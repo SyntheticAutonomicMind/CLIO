@@ -866,7 +866,8 @@ Get a themed security confirmation prompt for command/script approval.
 Arguments:
   - target: The command or file path being checked
   - flags: Arrayref of flag hashrefs [{severity, description, details}, ...]
-  - options: Options text (e.g., "(y)es once | (a)llow category | (n)o deny")
+  - options: Options text, built by L<CLIO::Security::Consent>::options_text
+    (e.g. "(o)nce | (a)llow category | (n)o deny")
 
 Returns: ($prompt_line, $input_line) - $prompt_line may contain newlines (target + flags), $input_line is the options prompt
 Returns: ($prompt_line, $input_line) - two rendered strings
