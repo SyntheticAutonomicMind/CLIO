@@ -29,6 +29,7 @@ use CLIO::Core::MessageHistory qw(messages_to_prose_dynamic);
 use CLIO::Util::JSON qw(encode_json decode_json safe_decode_json safe_encode_json);
 use CLIO::Core::Diagnostics qw(dump_diagnostic deduplicate_paragraphs);
 use CLIO::Core::API::ErrorHandler;
+use CLIO::Core::API::RetryPolicy ();
 use Encode qw(encode_utf8);  # For handling Unicode in JSON
 use Time::HiRes qw(time sleep);
 use Digest::MD5 qw(md5_hex);
@@ -578,13 +579,23 @@ sub process_input {
     my @tool_calls_made = ();
     my $start_time = time();
     my $retry_count = 0;  # Track retries per iteration (prevents infinite loops)
-    my $max_retries = 3;  # Maximum retries for API errors (malformed JSON, etc.)
     my $premature_stop_retries = 0;  # Track retries for premature workflow stops
     my $max_premature_stop_retries = 2;  # Max auto-retries for premature stops
     my $reduce_thinking = 0;  # Lower thinking effort on truncation-retry continuations
     my $max_output_tokens_override = 0;  # Capped output budget for truncation-retry continuations
-    my $max_server_retries = 0;  # Infinite retries for server/network errors (0 = unlimited)
-    my $max_rate_limit_retries = 0;  # Infinite retries for rate limits (0 = unlimited)
+
+    # Retry budgets. Read from config every turn so "/config set" takes
+    # effect on the next request instead of requiring a restart.
+    my $retry_cfg = $self->{config};
+    my $max_retries = ($retry_cfg && $retry_cfg->can('get_retry_max_attempts'))
+        ? $retry_cfg->get_retry_max_attempts
+        : CLIO::Core::API::RetryPolicy::DEFAULT_MAX_ATTEMPTS();
+    my $max_server_retries = ($retry_cfg && $retry_cfg->can('get_retry_max_server_attempts'))
+        ? $retry_cfg->get_retry_max_server_attempts
+        : CLIO::Core::API::RetryPolicy::DEFAULT_MAX_SERVER_ATTEMPTS();
+    my $max_rate_limit_retries = ($retry_cfg && $retry_cfg->can('get_retry_max_rate_limit_attempts'))
+        ? $retry_cfg->get_retry_max_rate_limit_attempts
+        : CLIO::Core::API::RetryPolicy::DEFAULT_MAX_RATE_LIMIT_ATTEMPTS();
     
     # Session-level error budget: Limit total errors across all iterations
     # This prevents cascading failures from consuming the entire session

@@ -9,6 +9,7 @@ use utf8;
 use HTTP::Tiny;
 use File::Temp qw(tempfile);
 use POSIX qw(:errno_h);
+use Time::HiRes ();
 use CLIO::Util::JSON qw(decode_json encode_json);
 use CLIO::Core::Logger qw(should_log log_debug log_warning);
 use CLIO::Util::CABundle qw(find_ca_bundle);
@@ -22,6 +23,35 @@ BEGIN {
     $HAS_SSL = eval { require IO::Socket::SSL; require Net::SSLeay; 1 };
     $HAS_CURL = defined locate_curl();
 }
+
+# curl exit codes worth naming. Every one of these means the request never
+# produced a usable response; the distinction matters because "DNS failed"
+# and "connection refused" and "TLS handshake failed" are three different
+# problems with three different fixes, and reporting all of them as
+# "Connection error" hides that.
+my %CURL_EXIT_SUBTYPE = (
+    6  => 'dns_failure',
+    7  => 'connection_refused',
+    18 => 'partial_transfer',
+    35 => 'tls_handshake',
+    47 => 'redirect_limit',
+    52 => 'empty_reply',
+    55 => 'send_error',
+    56 => 'connection_reset',
+    92 => 'http2_stream',
+);
+
+my %CURL_EXIT_DESCRIPTION = (
+    6  => 'DNS resolution failed',
+    7  => 'connection refused',
+    18 => 'partial transfer',
+    35 => 'TLS handshake failed',
+    47 => 'too many redirects',
+    52 => 'empty reply from server',
+    55 => 'send error',
+    56 => 'connection reset by server',
+    92 => 'HTTP/2 stream error',
+);
 
 =head1 NAME
 
@@ -59,6 +89,14 @@ sub new {
     my ($class, %opts) = @_;
     
     my $timeout = $opts{timeout} || 30;
+    # Separate connect ceiling. Without one, a dead network makes curl spend
+    # the entire --max-time budget trying to open a socket, so the first
+    # retry doesn't happen for minutes.
+    my $connect_timeout = defined $opts{connect_timeout} ? $opts{connect_timeout} : 10;
+    # Abort a transfer that has stopped making progress. Off by default:
+    # a reasoning model can sit silently for tens of seconds before its
+    # first token, and that is not a stall.
+    my $stall_timeout = defined $opts{stall_timeout} ? $opts{stall_timeout} : 0;
     my $proxy = $opts{proxy} || '';
     my $agent = $opts{agent} || 'CLIO/1.0';
     my $default_headers = $opts{default_headers} || {};
@@ -76,6 +114,8 @@ sub new {
     
     my $self = {
         timeout => $timeout,
+        connect_timeout => $connect_timeout,
+        stall_timeout => $stall_timeout,
         agent => $agent,
         http => undef,
         default_headers => $default_headers,
@@ -273,14 +313,125 @@ sub _find_ca_bundle {
     return find_ca_bundle();
 }
 
+=head2 _curl_timeout_args
+
+Build the curl arguments that bound how long one request may take.
+
+Three separate limits, because they answer three separate questions:
+
+  --connect-timeout  how long to wait for the socket to open
+  --max-time         how long the whole request may take
+  --speed-limit/--speed-time
+                     how long the transfer may sit idle before it counts
+                     as dead (only when stall_timeout is configured)
+
+Returns a list of arguments.
+
+=cut
+
+=head2 _effective_connect_timeout()
+
+The connect ceiling curl is actually given, in seconds.
+
+A connect ceiling longer than the whole-request ceiling is nonsense: curl
+would be killed by --max-time before the connect wait expired, so the
+effective value is clamped. Both the argument list and the failure
+classifier read this, so the message a user sees matches the ceiling curl
+was really running under.
+
+=cut
+
+sub _effective_connect_timeout {
+    my ($self) = @_;
+
+    my $max  = $self->{timeout} || 0;
+    my $conn = $self->{connect_timeout} || 0;
+
+    $conn = $max if $max && $conn > $max;
+
+    return $conn;
+}
+
+sub _curl_timeout_args {
+    my ($self) = @_;
+
+    my @args;
+    my $max  = $self->{timeout} || 0;
+    my $conn = $self->_effective_connect_timeout;
+
+    push @args, '--connect-timeout', $conn if $conn > 0;
+    push @args, '--max-time', $max if $max;
+
+    my $stall = $self->{stall_timeout} || 0;
+    if ($stall > 0) {
+        push @args, '--speed-limit', '1', '--speed-time', int($stall);
+    }
+
+    return @args;
+}
+
+=head2 _classify_curl_failure($exit_code, $saw_headers, $elapsed)
+
+Turn a curl exit code into a connection subtype and a description.
+
+curl reports exit 28 for both a connect timeout and a whole-request
+timeout. They are told apart by curl's own diagnostic first, because that
+is the only signal that survives when the two ceilings are the same
+number: "Connection timed out" means no peer was ever reached, while
+"Operation timed out" means the peer accepted the request and never
+finished answering. Without a diagnostic, the fallback is whether the
+peer sent headers and how long the attempt took relative to the connect
+ceiling - weaker, but better than calling every stall a connect failure.
+
+Returns ($subtype, $description). Both are undef when the exit code is 0.
+
+=cut
+
+sub _classify_curl_failure {
+    my ($self, $exit_code, $saw_headers, $elapsed, $stderr) = @_;
+
+    return (undef, undef) unless $exit_code;
+
+    if ($exit_code == 28) {
+        my $conn = $self->_effective_connect_timeout;
+
+        if (defined $stderr && length $stderr) {
+            # Names come from curl's own message catalog, so they are
+            # matched loosely and the heuristic below stays as a fallback
+            # for versions that word things differently.
+            return ('connect_timeout', $conn > 0 ? "could not connect within ${conn}s" : 'could not connect')
+                if $stderr =~ /Connection timed out|Failed to connect|Could not resolve|Resolving timed out/i;
+            return ('timed_out', 'request timed out')
+                if $stderr =~ /Operation timed out/i;
+        }
+
+        if (!$saw_headers && $conn > 0 && ($elapsed // 0) <= $conn + 2) {
+            return ('connect_timeout', "could not connect within ${conn}s");
+        }
+        return ('timed_out', 'request timed out');
+    }
+
+    return (
+        $CURL_EXIT_SUBTYPE{$exit_code},
+        $CURL_EXIT_DESCRIPTION{$exit_code} // "curl exit code $exit_code",
+    );
+}
+
 sub _request_via_curl {
     my ($self, $method, $uri, $headers, $content) = @_;
     
     # Build curl command
-    my @cmd = ('curl', '-s', '-i', '-X', $method);
+    my @cmd = ('curl', '-sS', '-i', '-X', $method);
     
-    # Add timeout
-    push @cmd, '--max-time', $self->{timeout} if $self->{timeout};
+    # Bound the request: separate connect and total ceilings.
+    push @cmd, $self->_curl_timeout_args;
+
+    # curl's diagnostics are the only way to tell a connect timeout from a
+    # request timeout when the two ceilings are the same number. -s silences
+    # stderr, so it is redirected to a file this process can read back.
+    my ($err_fh, $err_file) = tempfile();
+    close $err_fh;
+    push @cmd, '--stderr', $err_file;
     
     # Add proxy if configured
     push @cmd, '--proxy', $self->{proxy} if $self->{proxy};
@@ -318,17 +469,20 @@ sub _request_via_curl {
     
     # Execute curl using safe pipe open
     my $output = '';
+    my $start_time = Time::HiRes::time();
     if (open(my $curl_fh, '-|', @cmd)) {
         local $/;
         $output = <$curl_fh>;
         close($curl_fh);
     } else {
+        unlink $err_file if $err_file && -e $err_file;
         return {
             success => 0,
             status => 599,
             reason => 'Internal Exception',
             headers => {},
             content => "Failed to execute curl: $!",
+            connection_subtype => 'exec_failed',
         };
     }
     
@@ -336,6 +490,20 @@ sub _request_via_curl {
     unlink $content_file if $content_file;
 
     my $exit_code = $? >> 8;
+    my $elapsed   = Time::HiRes::time() - $start_time;
+
+    my $curl_stderr = '';
+    if ($err_file && -e $err_file) {
+        if (open(my $efh, '<', $err_file)) {
+            local $/;
+            $curl_stderr = <$efh> // '';
+            close $efh;
+        }
+        unlink $err_file;
+    }
+
+    my ($failure_subtype, $failure_desc) =
+        $self->_classify_curl_failure($exit_code, ($output =~ m{^HTTP/[\d.]+} ? 1 : 0), $elapsed, $curl_stderr);
 
     # Parse HTTP response
     my ($status_line, $header_block, $body);
@@ -364,7 +532,7 @@ sub _request_via_curl {
         # streaming path already refuses to do that, and callers that only
         # inspect the status need the same truth from this one.
         if ($exit_code != 0) {
-            my $desc = "curl exit code $exit_code";
+            my $desc = $failure_desc // "curl exit code $exit_code";
             if (should_log("DEBUG")) {
                 log_debug('HTTP::curl', "Transfer incomplete: $desc (was HTTP $status)");
             }
@@ -375,6 +543,9 @@ sub _request_via_curl {
                 headers  => \%resp_headers,
                 content  => $body,
                 curl_exit => $exit_code,
+                connection_subtype => $failure_subtype,
+                elapsed  => $elapsed,
+                connect_timeout => $self->{connect_timeout},
             };
         }
 
@@ -385,6 +556,8 @@ sub _request_via_curl {
             headers  => \%resp_headers,
             content  => $body,
             curl_exit => $exit_code,
+            elapsed  => $elapsed,
+            connect_timeout => $self->{connect_timeout},
         };
     } else {
         # Failed to parse response
@@ -393,8 +566,11 @@ sub _request_via_curl {
             status => 599,
             reason => 'Internal Exception',
             headers => {},
-            content => "curl failed: exit code $exit_code",
+            content => "curl failed: " . ($failure_desc // "exit code $exit_code"),
             curl_exit => $exit_code,
+            connection_subtype => $failure_subtype,
+            elapsed => $elapsed,
+            connect_timeout => $self->{connect_timeout},
         };
     }
 }
@@ -420,15 +596,21 @@ sub _request_via_curl_streaming {
     my ($self, $method, $uri, $headers, $content, $callback) = @_;
     
     # Build curl command - use -N (no-buffer) for streaming and separate headers
-    my @cmd = ('curl', '-s', '-N', '-X', $method);
+    my @cmd = ('curl', '-sS', '-N', '-X', $method);
     
     # Write headers to a temp file so we can parse them
     my ($hdr_fh, $hdr_file) = tempfile(UNLINK => 1);
     close $hdr_fh;
     push @cmd, '-D', $hdr_file;  # Dump headers to file
     
-    # Add timeout
-    push @cmd, '--max-time', $self->{timeout} if $self->{timeout};
+    # Bound the request: separate connect and total ceilings.
+    push @cmd, $self->_curl_timeout_args;
+
+    # Diagnostics go to a file: they are the only reliable way to name the
+    # failure (connect timeout vs request deadline vs TLS) after the fact.
+    my ($err_fh, $err_file) = tempfile(UNLINK => 1);
+    close $err_fh;
+    push @cmd, '--stderr', $err_file;
     
     # Add proxy if configured
     push @cmd, '--proxy', $self->{proxy} if $self->{proxy};
@@ -451,7 +633,6 @@ sub _request_via_curl_streaming {
     my $content_file;
     if (defined $content && length($content) > 0) {
         my $content_fh;
-    my $content_file;
         ($content_fh, $content_file) = tempfile(UNLINK => 1);
         print $content_fh $content;
         close $content_fh;
@@ -466,6 +647,7 @@ sub _request_via_curl_streaming {
     }
     
     # Open curl as a pipe for streaming reads
+    my $start_time = Time::HiRes::time();
     my $curl_pid = open(my $curl_fh, '-|', @cmd);
     
     if (!$curl_pid) {
@@ -475,6 +657,7 @@ sub _request_via_curl_streaming {
             reason => 'Internal Exception',
             headers => {},
             content => "Failed to execute curl for streaming: $!",
+            connection_subtype => 'exec_failed',
         };
     }
     
@@ -542,21 +725,16 @@ sub _request_via_curl_streaming {
     
     close($curl_fh);
     my $exit_code = $? >> 8;
-    
-    # Map common curl exit codes to human-readable descriptions
-    my %curl_errors = (
-        6  => 'DNS resolution failed',
-        7  => 'Connection refused',
-        18 => 'Partial transfer',
-        22 => 'HTTP error',
-        28 => 'Connection timed out',
-        35 => 'TLS handshake failed',
-        47 => 'Too many redirects',
-        52 => 'Empty reply from server',
-        55 => 'Send error',
-        56 => 'Connection reset by server',
-        92 => 'HTTP/2 stream error',
-    );
+    my $elapsed = Time::HiRes::time() - $start_time;
+
+    my $curl_stderr = '';
+    if ($err_file && -e $err_file) {
+        if (open(my $efh, '<', $err_file)) {
+            local $/;
+            $curl_stderr = <$efh> // '';
+            close $efh;
+        }
+    }
 
     # Parse headers from the header dump file
     my $status;
@@ -581,6 +759,12 @@ sub _request_via_curl_streaming {
     } else {
         log_debug('HTTP::curl_streaming', "Failed to open header file $hdr_file: $!");
     }
+
+    # Classify a non-zero exit once, using whether the peer ever sent a
+    # status line. A request that never got headers and died at the connect
+    # ceiling is a connect failure, not a request-deadline failure.
+    my ($failure_subtype, $failure_desc) =
+        $self->_classify_curl_failure($exit_code, defined $status ? 1 : 0, $elapsed, $curl_stderr);
     
     # If no HTTP status was parsed from headers, check curl exit code
     if (!defined $status) {
@@ -591,7 +775,7 @@ sub _request_via_curl_streaming {
         } else {
             # curl failed or no data - report as connection error
             $status = 599;
-            $reason = $curl_errors{$exit_code} || "curl exit code $exit_code";
+            $reason = $failure_desc // "curl exit code $exit_code";
         }
     }
     $reason //= '';
@@ -600,14 +784,14 @@ sub _request_via_curl_streaming {
     # the stream is reset before a real status arrives.  Treat any non-success
     # exit combined with a non-2xx status (including < 100) as a connection error.
     if ($exit_code != 0 && !($status >= 200 && $status < 300)) {
-        my $desc = $curl_errors{$exit_code} || "curl exit code $exit_code";
+        my $desc = $failure_desc // "curl exit code $exit_code";
         if ($status < 100) {
             log_debug('HTTP::curl_streaming', "Bogus status $status with curl exit $exit_code - setting to 599 ($desc)");
             $status = 599;
             $reason = $desc;
         }
     } elsif ($exit_code != 0 && $status >= 200 && $status < 300) {
-        my $desc = $curl_errors{$exit_code} || "curl exit code $exit_code";
+        my $desc = $failure_desc // "curl exit code $exit_code";
         log_debug('HTTP::curl_streaming', "curl exit code $exit_code but headers showed $status - overriding to 599 ($desc)");
         $status = 599;
         $reason = "$desc (was HTTP $status)";
@@ -631,6 +815,9 @@ sub _request_via_curl_streaming {
         headers => \%resp_headers,
         content => $accumulated_content,
         curl_exit => $exit_code,
+        connection_subtype => $failure_subtype,
+        elapsed => $elapsed,
+        connect_timeout => $self->{connect_timeout},
     }, 'CLIO::Compat::HTTP::Response';
     
     return $final_response;
@@ -811,13 +998,21 @@ sub _convert_response {
         headers => $response->{headers} || {},
     }, 'CLIO::Compat::HTTP::Response';
 
-    # Carry curl's exit code through the conversion. Both curl paths record it
-    # so the API layer can tell a deadline CLIO imposed (exit 28: --max-time
-    # fired) from a connection the network tore down (exit 18/56/...); both
-    # arrive as status 599. Dropping it here made every 599 look like a
-    # provider-side drop, so a slow local model that outran the request
+    # Carry the transport's diagnosis through the conversion. Both curl paths
+    # record it so the API layer can tell a deadline CLIO imposed (exit 28:
+    # --max-time fired) from a connection the network tore down (exit 18/56/).
+    # Both arrive as status 599. Dropping curl_exit here made every 599 look
+    # like a provider-side drop, so a slow local model that outran the request
     # ceiling was retried forever as "Stream truncated detected".
-    $converted->{curl_exit} = $response->{curl_exit} if defined $response->{curl_exit};
+    #
+    # connection_subtype and elapsed are the same story one level deeper: the
+    # subtype ("dns_failure", "connect_timeout", "connection_reset") is what
+    # lets the retry message name the actual failure instead of saying
+    # "Connection error" and leaving the user to guess. Dropping it here made
+    # that detail unreachable for every real request.
+    for my $key (qw(curl_exit connection_subtype elapsed connect_timeout)) {
+        $converted->{$key} = $response->{$key} if defined $response->{$key};
+    }
 
     return $converted;
 }

@@ -442,6 +442,75 @@ sub hide_busy_indicator {
     return 1;
 }
 
+=head2 display_retry_status($text, $remaining)
+
+Render the retry wait as a single line that updates in place.
+
+Arguments:
+- $text: the retry description without a seconds figure (the caller builds
+  it with C<RetryPolicy::describe(omit_delay =E<gt> 1)>)
+- $remaining: seconds left in the wait; 0 means the wait is over
+
+Returns 1 if the line was drawn, 0 if this UI cannot own a line (piped
+output, sub-agents, or a host protocol that renders its own status).
+
+A retry loop used to print one boxed SYSTEM block per attempt, then go
+silent for the whole wait - up to five minutes with nothing on screen,
+and a wall of identical lines behind it. One line that counts down says
+the same thing in one place and answers the only question the user has
+during a wait: how long is this going to be.
+
+The final call ($remaining == 0) leaves the line in the transcript and
+restarts the busy spinner, so the request visibly resumes.
+
+The line is drawn inline even when the theme box-format system messages.
+A box is a transcript entry; this is a status that is overwritten once a
+second, and a redrawn box would smear.
+
+=cut
+
+sub display_retry_status {
+    my ($self, $text, $remaining) = @_;
+
+    # No line to own when no one is watching, or the host draws its own UI.
+    return 0 if $self->{non_interactive};
+    return 0 unless -t STDOUT;
+    return 0 if $self->{host_proto} && $self->{host_proto}->active();
+
+    $text = '' unless defined $text;
+
+    # Hide the spinner while this line owns the row: two writers to the
+    # same line produce interleaved garbage.
+    $self->hide_busy_indicator();
+
+    my $bullet = ui_char('bullet');
+    my $sep    = ui_char('separator');
+    my $b = $self->colorize($bullet, 'DIM');
+    my $n = $self->colorize(' SYSTEM ', 'SYSTEM');
+    my $s = $self->colorize("$sep ", 'DIM');
+    my $c = $self->colorize($text, 'WARNING');
+
+    if ($remaining && $remaining > 0) {
+        my $left = $remaining < 10 && $remaining != int($remaining)
+            ? sprintf('%.1fs', $remaining)
+            : sprintf('%ds', int($remaining + 0.5));
+        my $count = $self->colorize($left, 'INFO');
+        my $hint  = $self->colorize('(ESC to stop)', 'DIM');
+
+        print "\r\e[K", $b, $n, $s, $c, '  ', $count, ' ', $hint;
+        $self->{_retry_status_active} = 1;
+    } elsif ($self->{_retry_status_active}) {
+        print "\r\e[K", $b, $n, $s, $c, "\n";
+        $self->{_retry_status_active} = 0;
+        $self->{pager}->increment_lines(1) if $self->{pager};
+        # The wait is over; the request is live again.
+        $self->show_busy_indicator();
+    }
+
+    STDOUT->flush() if STDOUT->can('flush');
+    return 1;
+}
+
 =head2 run
 
 Main chat loop - displays interface and processes user input

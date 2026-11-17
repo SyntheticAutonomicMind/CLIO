@@ -112,6 +112,26 @@ Terminal Output
 6. ToolExecutor invokes selected tools; results return as native role-based tool messages.
 7. On token_limit_exceeded, ErrorHandler::trim_for_token_limit fires a three-tier reactive trim (keep-budget on retry 1, last-25% on retry 2, minimal on retry 3+), each tier compressing dropped messages into a thread_summary system message injected *before* the current user message. This is a separate code path from the proactive validate_and_truncate walk, retained for its progressive-aggressiveness strategy.
 8. On 400 Bad Request: silent retry -> tool_call repair -> context trim -> error surface.
+9. On a retryable failure, ErrorHandler asks `API/RetryPolicy.pm` for the attempt budget and the wait, then builds the status line from the same numbers it sleeps on. RetryPolicy is pure: budgets, backoff, `Retry-After` handling, jitter, and message formatting take values in and return numbers and strings, so the message and the sleep cannot disagree.
+
+#### Retry Decision Chain
+
+```text
+provider response
+      │
+      ▼
+ResponseHandler ── error_type, retry_after, curl_exit, connection_subtype
+      │
+      ▼
+RetryPolicy::budget ── attempt limit for the class (0 = unlimited)
+RetryPolicy::delay  ── Retry-After, then curve, then ceiling, then jitter, floor 1s
+RetryPolicy::describe ── the line the user sees, built from the same delay
+      │
+      ▼
+ErrorHandler::_interruptible_sleep(delay)
+```
+
+Classification inputs come from the transport as well as the provider. `curl_exit` 28 with `connection_subtype = connect_timeout` means nothing answered, which is a different failure from a request that connected and then outran CLIO's own ceiling (`request_timeout`). Those two used to be indistinguishable at the call site, and every self-imposed deadline was retried forever as a truncated stream.
 
 #### Prompt Cache Contract
 

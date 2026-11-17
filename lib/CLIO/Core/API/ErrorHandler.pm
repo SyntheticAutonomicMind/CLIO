@@ -10,6 +10,10 @@ use CLIO::UI::Terminal qw(ui_char);
 use CLIO::Core::Logger qw(log_debug log_warning should_log);
 use CLIO::Memory::TokenEstimator qw(estimate_tokens compute_prompt_budget);
 use CLIO::Core::API::MessageValidator qw(remove_existing_thread_summaries);
+use CLIO::Core::API::RetryPolicy qw(
+    budget delay describe is_rate_limited
+    DEFAULT_MAX_DELAY DEFAULT_RATE_LIMIT_MAX_DELAY DEFAULT_JITTER
+);
 use CLIO::Util::RateLimit qw(get_rate_limit_type_name);
 use CLIO::Core::Diagnostics qw(dump_diagnostic display_rate_limit_info get_tool_specific_guidance);
 use CLIO::Core::Defaults qw(DEFAULT_CONTEXT_WINDOW);
@@ -280,6 +284,169 @@ sub get_routing_history {
     return @{ $session->{routing_decisions} || [] };
 }
 
+#============================================================================
+# Retry presentation
+#
+# These helpers turn the classification ResponseHandler produced into the
+# three things the user sees: how long the wait is, what to call the error,
+# and what detail is worth showing. The wait itself comes from RetryPolicy.
+#============================================================================
+
+# Human labels per error class. The label leads the system message, so it
+# must name the thing that failed without repeating the detail.
+my %RETRY_LABEL = (
+    connection_error        => 'Connection error',
+    server_error            => 'Server error',
+    timeout                 => 'Upstream timeout',
+    overloaded              => 'Upstream overload',
+    truncated               => 'Stream truncated',
+    request_timeout         => 'Request deadline',
+    rate_limit              => 'Rate limit',
+    concurrency_limit       => 'Rate limit',
+    malformed_tool_json     => 'Malformed tool JSON',
+    token_limit_exceeded    => 'Token limit exceeded',
+    message_structure_error => 'Message structure error',
+    auth_recovered          => 'Auth recovery',
+    unsupported_param       => 'Unsupported parameter',
+    bad_request             => 'Bad request',
+);
+
+# What each transport failure means in one phrase. "Connection error" alone
+# sends the user looking in the wrong place: a refused connection is a
+# wrong port, a DNS failure is a wrong hostname, a reset is a provider that
+# hung up mid-flight. The subtype is the only place that distinction exists.
+my %CONNECT_DETAIL = (
+    dns_failure        => 'hostname did not resolve',
+    connect_timeout    => 'no connection within the connect timeout',
+    connection_refused => 'connection refused',
+    timed_out          => 'request timed out',
+    connection_reset   => 'connection reset by the provider',
+    tls_handshake      => 'TLS handshake failed',
+    partial_transfer   => 'transfer ended early',
+    empty_reply        => 'provider closed the connection without replying',
+    send_error         => 'request could not be sent',
+    http2_stream       => 'HTTP/2 stream error',
+    redirect_limit     => 'redirect limit reached',
+);
+
+=head2 _retry_config_number($wo, $key, $default)
+
+Read a numeric retry setting from configuration, falling back to a default
+when the key is absent or not a number. A bad value in the config file must
+not be able to produce a zero-second backoff or a NaN sleep.
+
+=cut
+
+sub _retry_config_number {
+    my ($wo, $key, $default) = @_;
+
+    return $default unless $wo && $wo->{config} && $wo->{config}->can('get');
+    my $value = $wo->{config}->get($key);
+    return $default unless defined $value && $value =~ /^\d+(?:\.\d+)?$/;
+    return $value + 0;
+}
+
+=head2 _retry_config_getter($wo, $getter, $key, $default)
+
+Read a retry setting through the Config getter when one exists, so
+validation and defaults live in one place. Falls back to the raw key and
+then to C<$default> for plain-hash configs used in tests.
+
+=cut
+
+sub _retry_config_getter {
+    my ($wo, $getter, $key, $default) = @_;
+
+    my $cfg = $wo && $wo->{config};
+    return $default unless $cfg;
+    return $cfg->$getter() if $cfg->can($getter);
+    return _retry_config_number($wo, $key, $default);
+}
+
+=head2 _retry_max_delay($wo, $error_type)
+
+Return the ceiling on a single wait, in seconds.
+
+Rate limits get a longer ceiling than transient errors. A provider that
+answers "come back in 15 minutes" is telling the truth, and retrying it
+after five minutes just earns another 429.
+
+=cut
+
+sub _retry_max_delay {
+    my ($wo, $error_type) = @_;
+
+    return _retry_config_getter($wo, 'get_retry_rate_limit_max_delay',
+        'retry_rate_limit_max_delay', DEFAULT_RATE_LIMIT_MAX_DELAY)
+        if is_rate_limited($error_type);
+    return _retry_config_getter($wo, 'get_retry_max_delay',
+        'retry_max_delay', DEFAULT_MAX_DELAY);
+}
+
+=head2 _retry_jitter($wo)
+
+Return the fractional jitter applied to computed waits. Clamped to 0..0.5:
+more than that and the curve stops being a curve.
+
+=cut
+
+sub _retry_jitter {
+    my ($wo) = @_;
+
+    my $jitter = _retry_config_getter($wo, 'get_retry_jitter',
+        'retry_jitter', DEFAULT_JITTER);
+    return 0 if $jitter < 0;
+    return 0.5 if $jitter > 0.5;
+    return $jitter;
+}
+
+=head2 _retry_label($error_type, $api_response)
+
+Return the human label for an error class. Rate limits carry the provider's
+own name for the bucket ("Hourly rate limit", "Model rate limit"), because
+the label is the only place the user learns which quota they hit.
+
+=cut
+
+sub _retry_label {
+    my ($error_type, $api_response) = @_;
+
+    if (is_rate_limited($error_type)) {
+        return get_rate_limit_type_name($api_response->{rate_limit_code});
+    }
+
+    return $RETRY_LABEL{$error_type // ''} // 'Error';
+}
+
+=head2 _retry_detail($error_type, $api_response)
+
+Return the parenthetical detail for a retry message, or undef when there is
+nothing worth adding. Every value here is something the user can act on or
+report; an error class that has none returns undef rather than restating the
+label.
+
+=cut
+
+sub _retry_detail {
+    my ($error_type, $api_response) = @_;
+
+    if ($error_type eq 'connection_error') {
+        return $CONNECT_DETAIL{ $api_response->{connection_subtype} // '' };
+    }
+
+    if ($error_type eq 'server_error' || $error_type eq 'overloaded') {
+        my $status = $api_response->{http_status};
+        return defined $status ? "HTTP $status" : undef;
+    }
+
+    if ($error_type eq 'truncated') {
+        my $got = $api_response->{tokens_received};
+        return (defined $got && $got > 0) ? "response ended after $got tokens" : undef;
+    }
+
+    return undef;
+}
+
 =head2 _interruptible_sleep($wo, $session, $seconds, $messages, $label)
 
 Sleep for up to C<$seconds>, checking for a user interrupt on every
@@ -298,17 +465,55 @@ Returns: nothing.
 
 =cut
 
+=head2 _live_retry_status($wo)
+
+Returns 1 when the active UI can render a retry countdown line, so the
+caller knows to hand the message to C<_interruptible_sleep> instead of
+printing it as a one-shot system message.
+
+=head2 _interruptible_sleep($wo, $session, $seconds, $messages, $label, $status_text)
+
+Sleep in one-second slices so ESC can cut the wait short.
+
+When $status_text is provided and the UI supports it, the wait is drawn as
+a single line that counts down in place. Without it the wait is silent:
+the caller has already printed a message stating the duration.
+
+=cut
+
+sub _live_retry_status {
+    my ($wo) = @_;
+    my $ui = $wo && $wo->{ui};
+    return 0 unless $ui && $ui->can('display_retry_status');
+    return 0 if $ui->{non_interactive};
+    return 0 unless -t STDOUT;
+    return 0 if $ui->{host_proto} && $ui->{host_proto}->active();
+    return 1;
+}
+
 sub _interruptible_sleep {
-    my ($wo, $session, $seconds, $messages, $label) = @_;
+    my ($wo, $session, $seconds, $messages, $label, $status_text) = @_;
 
     return unless $seconds && $seconds > 0;
 
     log_debug('ErrorHandler', "Waiting ${seconds}s before $label...");
+
+    my $ui = ($status_text && _live_retry_status($wo)) ? $wo->{ui} : undef;
+
+    # Paint the full duration before the first slice. Without this the line
+    # appears one second late, which is exactly the second a user spends
+    # wondering whether CLIO is stuck.
+    $ui->display_retry_status($status_text, $seconds) if $ui;
+
     my $remaining = $seconds;
     while ($remaining > 0) {
         my $chunk = ($remaining > 1) ? 1 : $remaining;
         sleep($chunk);
         $remaining -= $chunk;
+
+        # The closing draw below handles the last frame; drawing 0 here too
+        # would print the finished line twice.
+        $ui->display_retry_status($status_text, $remaining) if $ui && $remaining > 0;
 
         if ($wo && $wo->can('_check_for_user_interrupt') && $wo->_check_for_user_interrupt($session)) {
             log_debug('ErrorHandler', "$label wait interrupted by user");
@@ -317,6 +522,10 @@ sub _interruptible_sleep {
         }
     }
     log_debug('ErrorHandler', "$label delay complete");
+
+    # Close the line out: it stays in the transcript without the countdown
+    # suffix, and the busy spinner resumes.
+    $ui->display_retry_status($status_text, 0) if $ui;
 }
 
 sub handle_api_error {
@@ -524,14 +733,20 @@ sub handle_api_error {
                         my $rl_wait = $soonest->{expiry} - time();
                         if ($rl_wait > 0) {
                             delete $session->{provider_rate_limits}{$soonest->{provider}};
-                            if ($verbose && $on_system_message) {
-                                my $n = scalar(@$candidates_list);
-                                my $role_ctx = $active_role ? " (role: $active_role)" : '';
+                            my $n = scalar(@$candidates_list);
+                            my $role_ctx = $active_role ? " (role: $active_role)" : '';
+
+                            # One voice per wait: either the countdown line
+                            # carries the news, or a system block does.
+                            my $wait_status = _live_retry_status($wo)
+                                ? "All $n routing targets are rate-limited. Waiting for $soonest->{provider}..."
+                                : undef;
+                            if (!$wait_status && $verbose && $on_system_message) {
                                 my $summary = _format_provider_cooldowns($session->{provider_rate_limits});
                                 $on_system_message->("All $n routing targets are rate-limited$role_ctx. Waiting "
                                     . int($rl_wait) . "s for $soonest->{provider} to recover...$summary");
                             }
-                            _interruptible_sleep($wo, $session, $rl_wait, $messages, "all-providers rate limit");
+                            _interruptible_sleep($wo, $session, $rl_wait, $messages, "all-providers rate limit", $wait_status);
 
                             # Jump routing index to the soonest-expiring candidate
                             my $target_model = $candidates_list->[$soonest->{idx}];
@@ -604,9 +819,13 @@ sub handle_api_error {
                             && $session->{provider_rate_limits}{$new_provider} > time()) {
                             my $rl_wait = $session->{provider_rate_limits}{$new_provider} - time();
                             delete $session->{provider_rate_limits}{$new_provider};
-                            if ($verbose && $on_system_message) {
+                            my $wait_status = _live_retry_status($wo)
+                                ? "Waiting for $new_provider rate limit to expire..."
+                                : undef;
+                            if (!$wait_status && $verbose && $on_system_message) {
                                 $on_system_message->("Waiting " . int($rl_wait) . "s for $new_provider rate limit to expire before retrying...");
-                            }                            _interruptible_sleep($wo, $session, $rl_wait, $messages, "$new_provider rate limit");
+                            }
+                            _interruptible_sleep($wo, $session, $rl_wait, $messages, "$new_provider rate limit", $wait_status);
                             $waited_for_rate_limit = 1;
                             log_debug('ErrorHandler',
                                 "Waited ${rl_wait}s for $new_provider rate limit, cleared entry");
@@ -629,13 +848,35 @@ sub handle_api_error {
     if ($api_response->{retryable}) {
         $$retry_count_ref++;
 
-        # Bail out on persistent bad_request after the configured retry
-        # limit is exhausted. An unrecognized 400 is more likely a
-        # backend/model/payload issue than a context size issue; surface
-        # the provider's actual error rather than synthesizing a
-        # misleading "Token limit exceeded" message.
-        my $error_type_check = $api_response->{error_type} || '';
-        if ($error_type_check eq 'bad_request' && $$retry_count_ref >= $max_retries) {
+        # Determine retry limit based on error type.
+        #
+        # The class boundaries live in RetryPolicy so that the budget, the
+        # backoff curve, and the message describing them cannot disagree.
+        # Transient classes get an unbounded budget when the configured
+        # maximum is 0, which is the default: a provider outage clears when
+        # it clears, and killing the session because the twelfth attempt
+        # failed guarantees the user loses their work.
+        my $error_type_for_limit = $api_response->{error_type} || '';
+        my $retry_budget = budget(
+            error_type     => $error_type_for_limit,
+            max_generic    => $max_retries,
+            max_server     => $max_server_retries,
+            max_rate_limit => $max_rate_limit_retries,
+        );
+        my $retry_limit          = $retry_budget->{limit};
+        my $allow_infinite_retry = $retry_budget->{infinite};
+        # Which knob produced this budget, so the give-up message names the
+        # setting the user can actually change.
+        my $budget_knob = is_rate_limited($error_type_for_limit) ? 'retry_max_rate_limit_attempts'
+                        : ($error_type_for_limit =~ /^(?:server_error|connection_error|timeout|overloaded|truncated)$/)
+                            ? 'retry_max_server_attempts'
+                            : 'retry_max_attempts';
+
+        # Bail out on persistent bad_request after its budget is exhausted.
+        # An unrecognized 400 is more likely a backend/model/payload issue
+        # than a context size issue; surface the provider's actual error
+        # rather than synthesizing a misleading "Token limit exceeded".
+        if ($error_type_for_limit eq 'bad_request' && $$retry_count_ref >= $retry_limit) {
             log_debug('ErrorHandler', "Persistent 400 Bad Request after $$retry_count_ref retries - giving up without context trim.");
 
             dump_diagnostic(
@@ -669,49 +910,6 @@ sub handle_api_error {
                 tool_calls_made => $tool_calls_made,
             };
         }
-        # Determine retry limit based on error type
-        my $error_type_for_limit = $api_response->{error_type} || '';
-        my $retry_limit;
-        my $allow_infinite_retry = 0;
-        # concurrency_limit is CLIO's local per-provider concurrency slot
-        # exhaustion. It is conceptually a rate limit (we are out of allowed
-        # requests right now) and must inherit rate_limit's infinite-retry
-        # budget. Without this it fell into the generic 3-retry bucket,
-        # so any session that briefly had two in-flight requests to the
-        # same provider would die with "Maximum retries exceeded" even
-        # though the in-flight requests were recoverable.
-        if ($error_type_for_limit eq 'rate_limit' || $error_type_for_limit eq 'concurrency_limit') {
-            $retry_limit = $max_rate_limit_retries;
-            $allow_infinite_retry = 1 if $max_rate_limit_retries == 0;
-        } elsif ($error_type_for_limit eq 'server_error' || $error_type_for_limit eq 'connection_error') {
-            $retry_limit = $max_server_retries;
-            $allow_infinite_retry = 1 if $max_server_retries == 0;
-        } elsif ($error_type_for_limit eq 'timeout' || $error_type_for_limit eq 'overloaded') {
-            # Upstream timeouts and overload errors get the same retry budget as 5xx
-            $retry_limit = $max_server_retries;
-            $allow_infinite_retry = 1 if $max_server_retries == 0;
-        } elsif ($error_type_for_limit eq 'truncated') {
-            # Truncated stream (provider ended without finish_reason). This is a
-            # transient network/provider issue that almost always resolves on
-            # retry - treat it like a server_error with infinite retries so a
-            # flapping provider doesn't blow the per-iteration retry budget on
-            # what would otherwise be a single successful retry.
-            $retry_limit = $max_server_retries;
-            $allow_infinite_retry = 1 if $max_server_retries == 0;
-        } elsif ($error_type_for_limit eq 'request_timeout') {
-            # CLIO's own request ceiling expired while the model was still
-            # streaming. Unlike a dropped connection this is deterministic: the
-            # response will outrun the ceiling on every attempt, so an
-            # infinite-retry budget guarantees a permanent loop. One retry
-            # covers the case where the ceiling was grazed by a one-off stall;
-            # after that, the ceiling or the output budget has to change.
-            $retry_limit = 1;
-        } elsif ($error_type_for_limit eq 'bad_request') {
-            $retry_limit = 4;
-        } else {
-            $retry_limit = $max_retries;
-        }
-
         # Skip retry limit check for rate limits when infinite retry is enabled
         if (!$allow_infinite_retry && $$retry_count_ref > $retry_limit) {
             log_debug('ErrorHandler', "Maximum retries ($retry_limit) exceeded for this iteration");
@@ -730,54 +928,60 @@ sub handle_api_error {
             }
             return {
                 success         => 0,
-                error           => "Maximum retries exceeded: $error",
+                # Do not phrase this as "Retrying..." - the retry promise in
+                # the provider message belongs to the retry that just ended,
+                # and the budget is what stopped it. Say which budget, so the
+                # knob to raise is obvious.
+                error           => "$error\n\nGave up after $retry_limit retries "
+                                 . "($budget_knob = $retry_limit). "
+                                 . "Raise it with /config set $budget_knob <n> if this failure is worth retrying further.",
                 iterations      => $iteration,
                 tool_calls_made => $tool_calls_made,
             };
         }
 
-        my $retry_delay = $api_response->{retry_after} // 2;
-        my $error_type;
         my $user_message = $api_response->{user_message};  # Detailed message from ResponseHandler
+        my $type         = $api_response->{error_type} || '';
 
-        # Determine error type - use specific rate limit type if available
-        # concurrency_limit surfaces as "Rate limit detected" so the user
-        # sees the same UI message they get from provider rate limits
-        # (and, importantly, gets infinite retry budget via the matching
-        # change in the retry-limit selector above).
-        if ($api_response->{error_type} && ($api_response->{error_type} eq 'rate_limit' || $api_response->{error_type} eq 'concurrency_limit')) {
+        # Weekly/monthly rate caps don't reset quickly - don't retry, just
+        # inform the user. Checked before the wait is computed because there
+        # is no wait worth scheduling.
+        if ($type eq 'rate_limit' || $type eq 'concurrency_limit') {
             my $rl_code = $api_response->{rate_limit_code} // '';
-            $error_type = get_rate_limit_type_name($rl_code);
-
-            # Weekly/monthly limits don't reset quickly - don't retry, just inform user
             if (!$api_response->{retryable} || $rl_code =~ /user_weekly_rate_limited|user_monthly_rate_limited/i) {
+                my $caps_wait = $api_response->{retry_after} // 2;
                 my $reset_msg = $user_message // "Sorry, you've exceeded your weekly/monthly rate limit. Please review your usage.";
-                display_rate_limit_info($rl_code, $retry_delay);
+                log_debug('ErrorHandler', "Non-retryable rate cap ($rl_code) - surfacing to user");
+                display_rate_limit_info($rl_code, $caps_wait);
                 return {
                     success         => 0,
                     error           => $reset_msg,
                     iterations      => $iteration,
                     tool_calls_made => $tool_calls_made,
-                    rate_limit_wait => $retry_delay,
+                    rate_limit_wait => $caps_wait,
                 };
             }
-        } else {
-            $error_type = "server error";
         }
-        # Upstream timeout/overload get accurate labels instead of generic "server error"
-        if ($api_response->{error_type} && $api_response->{error_type} eq 'timeout') {
-            $error_type = "upstream timeout";
-        } elsif ($api_response->{error_type} && $api_response->{error_type} eq 'overloaded') {
-            $error_type = "upstream overload";
-        } elsif ($api_response->{error_type} && $api_response->{error_type} eq 'truncated') {
-            $error_type = "stream truncated";
-        } elsif ($api_response->{error_type} && $api_response->{error_type} eq 'request_timeout') {
-            $error_type = "request deadline";
-        }
+
+        # ── Wait and label, computed before anything is displayed ──
+        # These were previously built at two different points in the function:
+        # the message was rendered from the raw retry_after while the backoff
+        # curve was applied further down, so a persistent 5xx announced the
+        # same delay on every attempt regardless of the real sleep length.
+        my $retry_delay = delay(
+            error_type  => $type,
+            attempt     => $$retry_count_ref,
+            retry_after => $api_response->{retry_after},
+            max_delay   => _retry_max_delay($wo, $type),
+            jitter      => _retry_jitter($wo),
+        );
+        my $error_type = _retry_label($type, $api_response);
+        my $detail     = _retry_detail($type, $api_response);
 
         # Format retry count display (show ∞ for infinite retries)
         my $retry_display = $allow_infinite_retry ? ui_char('infinity') : $retry_limit;
-        my $system_msg = ucfirst($error_type) . " detected. Retrying in ${retry_delay}s... (attempt $$retry_count_ref" . ($allow_infinite_retry ? "" : "/$retry_display") . ")";
+        my $system_msg;
+        my $silent = 0;
 
         # ── Per-error-type handling ──
         # Compute is_local_inference once for all error-type branches that
@@ -786,10 +990,13 @@ sub handle_api_error {
         # use Jinja chat templates that reject mid-conversation system
         # messages (e.g. Qwen3's "System message must be at the beginning").
         my $is_local_inference = 0;
+        # Loaded unconditionally: the base-URL fallback below calls into it
+        # whether or not the manager can name a provider, and a direct
+        # require of ErrorHandler (tests, tools) never loads it otherwise.
+        require CLIO::Providers;
         if ($wo->{api_manager} && $wo->{api_manager}->can('get_current_provider')) {
             my $provider = $wo->{api_manager}->get_current_provider() || '';
             if ($provider) {
-                require CLIO::Providers;
                 $is_local_inference = CLIO::Providers::is_local_inference($provider);
             }
         }
@@ -799,17 +1006,19 @@ sub handle_api_error {
                 $is_local_inference = 1;
             }
         }
-        if ($api_response->{error_type} && $api_response->{error_type} eq 'unsupported_param') {
-            $error_type  = "unsupported parameter";
-            $system_msg  = undef;
+        if ($type eq 'unsupported_param') {
+            $silent = 1;
             $retry_delay = 0;
             log_debug('ErrorHandler', "Retrying without unsupported parameter");
         }
-        elsif ($api_response->{error_type} && $api_response->{error_type} eq 'bad_request') {
-            $system_msg = undef;
+        elsif ($type eq 'bad_request') {
+            # The caller already stripped the offending parameter; the retry
+            # is immediate and there is nothing useful to tell the user.
+            $silent = 1;
+            $retry_delay = 0;
             log_debug('ErrorHandler', "API 400 Bad Request - retrying silently (attempt $$retry_count_ref)");
         }
-        elsif ($api_response->{error_type} && $api_response->{error_type} eq 'malformed_tool_json') {
+        elsif ($type eq 'malformed_tool_json') {
             if ($$retry_count_ref == 1) {
                 # First attempt: remove bad message, provide schema guidance
                 if (@$messages && $messages->[-1]{role} eq 'assistant') {
@@ -876,61 +1085,29 @@ sub handle_api_error {
                 return 'retry';  # Don't decrement iteration, just continue
             }
         }
-        elsif ($api_response->{error_type} && $api_response->{error_type} eq 'token_limit_exceeded') {
+        elsif ($type eq 'token_limit_exceeded') {
             my $trim_result = trim_for_token_limit($wo, %$ctx);
 
             # Bail out if trim decided further retries are pointless
             return $trim_result->{response} if $trim_result->{bail};
 
-            $error_type = "token limit exceeded";
-            $system_msg = undef;
+            $silent = 1;
         }
-        elsif ($api_response->{error_type} && ($api_response->{error_type} eq 'server_error' || $api_response->{error_type} eq 'connection_error')) {
-            my $backoff_multiplier = 2 ** ($$retry_count_ref - 1);
-            $retry_delay = $retry_delay * $backoff_multiplier;
-            # Cap backoff at 5 minutes
-            $retry_delay = 300 if $retry_delay > 300;
-
-            # Before retrying after connection errors, verify connectivity is restored
-            if ($api_response->{error_type} eq 'connection_error' && $$retry_count_ref == 1) {
-                log_debug('ErrorHandler', "Connection error detected - verifying connectivity before retry...");
-                my $endpoint = $wo->{api_manager}{api_base} || '';
-                my $connected = $wo->{api_manager}->_check_connectivity($endpoint);
-                if (!$connected) {
-                    log_debug('ErrorHandler', "Connectivity check failed - continuing with retry path");
-                    $system_msg = "Network connectivity issue detected. Retrying anyway... (attempt $$retry_count_ref/$max_retries)";
-                }
-            }
-
-            $error_type = $api_response->{error_type} eq 'connection_error' ? "connection error" : "server error";
-            $system_msg //= "Temporary $error_type. Retrying in ${retry_delay}s... (attempt $$retry_count_ref)";
-            log_debug('ErrorHandler', "Applying exponential backoff for server error: ${retry_delay}s delay");
-        }
-        elsif ($api_response->{error_type} && ($api_response->{error_type} eq 'timeout' || $api_response->{error_type} eq 'overloaded')) {
-            # Apply exponential backoff for upstream timeouts and overload conditions.
-            # retry_after from ResponseHandler sets the base (30s for timeout, 10s for overloaded).
-            $error_type = $api_response->{error_type} eq 'timeout' ? "upstream timeout" : "upstream overload";
-            my $backoff_multiplier = 2 ** ($$retry_count_ref - 1);
-            $retry_delay = $retry_delay * $backoff_multiplier;
-            $retry_delay = 300 if $retry_delay > 300;
-            $system_msg //= "Upstream $error_type. Retrying in ${retry_delay}s... (attempt $$retry_count_ref)";
-            log_debug('ErrorHandler', "Applying exponential backoff for $error_type: ${retry_delay}s delay");
-        }
-        # concurrency_limit hits this branch too - the rate_limit branch above
-        # already set $error_type via get_rate_limit_type_name, but this
-        # default assignment ensures the user-facing label is correct even if
-        # the response lacks a rate_limit_code.
-        elsif ($api_response->{error_type} && ($api_response->{error_type} eq 'rate_limit' || $api_response->{error_type} eq 'concurrency_limit')) {
-            $error_type = "rate limit";
-        }
-        elsif ($api_response->{error_type} && $api_response->{error_type} eq 'auth_recovered') {
-            $error_type  = "auth recovery";
-            $system_msg  = undef;
+        elsif ($type eq 'auth_recovered') {
+            $silent = 1;
             $retry_delay = 0;
             log_debug('ErrorHandler', "Auth token refreshed, retrying request silently");
         }
-        elsif ($api_response->{error_type} && $api_response->{error_type} eq 'message_structure_error') {
-            $error_type = "message structure error";
+        elsif ($type eq 'connection_error' && !defined $api_response->{connection_subtype}) {
+            # No connectivity probe here. The probe made a full second request
+            # (or two, with 10s ceilings and sleeps between) before the retry
+            # it was supposed to inform - longer than most backoff waits, and
+            # against an endpoint that had just failed. It also answered a
+            # question the retry answers for free: if the network is still
+            # down, the next attempt fails in milliseconds and says why.
+            log_debug('ErrorHandler', 'Unclassified connection error - retrying without a connectivity probe');
+        }
+        elsif ($type eq 'message_structure_error') {
             $system_msg = "Message structure error detected. Rebuilding from session history... (attempt $$retry_count_ref/$max_retries)";
 
             if ($session && $session->can('get_conversation_history')) {
@@ -964,18 +1141,57 @@ sub handle_api_error {
             $retry_delay = 0;
         }
 
-        # Notify UI
-        if ($system_msg && $on_system_message) {
+        # ── Message ──
+        # Built here, after every branch has had its say, so the number the
+        # user reads is the number of seconds actually slept.
+        #
+        # Two renderers, one text: either the wait is drawn as a live line
+        # that counts down (interactive terminal), or the message is printed
+        # once as a system block (piped output, sub-agents, host protocol).
+        # The live line omits the seconds from the text because it paints
+        # them itself, one per second - the same number twice on one line
+        # is worse than either alone.
+        my $live_status = _live_retry_status($wo) ? 1 : 0;
+        my $wait_text;
+
+        if (!$silent && !defined $system_msg) {
+            $system_msg = describe(
+                label    => $error_type,
+                attempt  => $$retry_count_ref,
+                budget   => $retry_budget,
+                delay    => $retry_delay,
+                detail   => $detail,
+                infinity => ui_char('infinity'),
+                omit_delay => $live_status,
+            );
+        }
+
+        # An unbounded retry loop must not look like it is working. Once we
+        # are past the point where a transient outage would have cleared,
+        # say something different instead of repeating the same line. The
+        # live line already shows a growing attempt count and a countdown,
+        # so the reminder stays on the one-shot path where it adds signal.
+        if (!$live_status && $allow_infinite_retry && !$silent
+            && $$retry_count_ref >= 10 && $$retry_count_ref % 10 == 0) {
+            $system_msg = "Still retrying after $$retry_count_ref attempts"
+                        . " ($error_type). Press ESC to stop waiting and return to the prompt.";
+            log_debug('ErrorHandler', "Long outage: $$retry_count_ref attempts at ${retry_delay}s intervals");
+        }
+
+        if ($live_status && !$silent && defined $system_msg && $retry_delay > 0) {
+            $wait_text = $system_msg;
+        }
+        elsif ($system_msg && $on_system_message) {
             eval { $on_system_message->($system_msg); };
             log_debug('ErrorHandler', "UI callback error: $@") if $@;
-        } elsif ($system_msg) {
-            log_debug('ErrorHandler', "Retryable $error_type detected, retrying in ${retry_delay}s on next iteration (attempt $$retry_count_ref/$max_retries)");
+        } elsif (defined $system_msg) {
+            log_debug('ErrorHandler', "Retryable $error_type detected, retrying in ${retry_delay}s on next iteration (attempt $$retry_count_ref/$retry_display)");
         }
 
         # Wait before retrying (interruptible). Uses the shared helper so the
         # interrupt behavior and chunking stay consistent with the model
         # routing sleep added below.
-        _interruptible_sleep($wo, $session, $retry_delay, $messages, 'retry');
+        _interruptible_sleep($wo, $session, $retry_delay, $messages, 'retry', $wait_text);
 
         return 'retry';
     }

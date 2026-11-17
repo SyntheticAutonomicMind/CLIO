@@ -239,6 +239,9 @@ sub _display_config_help {
     $self->display_command_row("/config set show_banner off", "Suppress the startup banner", 35);
     $self->display_command_row("/config set session_replay off", "Disable history replay on resume/switch", 35);
     $self->display_command_row("/config set session_replay_max 200", "Set max messages to replay", 35);
+    $self->display_command_row("/config set retry_max_delay 120", "Cap one retry wait at 2 minutes", 35);
+    $self->display_command_row("/config set retry_jitter 0", "Make retry waits deterministic", 35);
+    $self->display_command_row("/config set http_connect_timeout 5", "Fail a dead connect in 5s", 35);
     $self->writeline("", markdown => 0);
     
     $self->display_section_header("TIPS");
@@ -246,6 +249,7 @@ sub _display_config_help {
     $self->display_tip("terminal_autodetect detects vim, nano, GPG, ssh, etc.");
     $self->display_tip("Use api_permissive when agent needs to work with API tokens");
     $self->display_tip("Feature toggles take effect on next session start");
+    $self->display_tip("Retry and connection settings take effect on the next request");
     $self->writeline("", markdown => 0);
 }
 

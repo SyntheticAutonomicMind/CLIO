@@ -577,7 +577,24 @@ subtest 'handle_error_response - 503 service unavailable' => sub {
     );
 
     my $result = $handler->handle_error_response($resp, '{}', 0);
-    is($result->{retryable}, 0, 'service unavailable is NOT retryable');
+    # "Please try again later" is the provider telling us this is transient.
+    # Treating it as permanent meant a front-door outage ended the turn
+    # instead of being waited out - the exact failure the retry audit fixed.
+    is($result->{retryable}, 1, '503 service unavailable is retryable (transient)');
+    is($result->{error_type}, 'server_error', 'Error type is server_error');
+    is($result->{http_status}, 503, 'The status code is carried through for display');
+};
+
+subtest 'handle_error_response - 503 with a permanent model complaint' => sub {
+    my $handler = CLIO::Core::API::ResponseHandler->new();
+    my $resp = MockResponse->new(
+        code => 503,
+        status_line => '503 Service Unavailable',
+        content => '{"error":{"message":"model_decommissioned: this model has been retired"}}',
+    );
+
+    my $result = $handler->handle_error_response($resp, '{}', 0);
+    is($result->{retryable}, 0, 'a retired model is NOT retryable');
     is($result->{error_type}, 'provider_unavailable', 'Error type is provider_unavailable');
 };
 

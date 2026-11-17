@@ -298,6 +298,99 @@ sub handle_error_response {
     return $self->_handle_error_response_impl(@args);
 }
 
+=head2 _parse_retry_after_value (Internal)
+
+Arguments: $value - a Retry-After header value (integer seconds or HTTP-date)
+Returns: seconds to wait, or undef when the value cannot be understood
+
+A provider may answer with either form. Treating an HTTP-date as a number
+turns "Wed, 21 Oct 2026 07:28:00 GMT" into a wait measured in decades, so
+both forms are parsed explicitly and anything unrecognized is dropped in
+favor of the caller's default.
+
+=cut
+
+sub _parse_retry_after_value {
+    my ($value) = @_;
+    return undef unless defined $value && length $value;
+
+    return int($value) if $value =~ /^\s*(\d+(?:\.\d+)?)\s*$/;
+
+    # HTTP-date. HTTP::Date ships with HTTP::Tiny, so it is safe to use when
+    # present; without it, an unparseable date is better ignored than guessed.
+    my $epoch = eval {
+        require HTTP::Date;
+        HTTP::Date::str2time($value);
+    };
+    return undef unless defined $epoch;
+
+    my $wait = int($epoch - time());
+    return $wait > 0 ? $wait : 0;
+}
+
+=head2 _retry_after_hint (Internal)
+
+Arguments: $resp, $passed_headers
+Returns: seconds from a Retry-After header, or undef
+
+Checks the headers the caller passed in (streaming responses capture them
+separately) and then the response object itself.
+
+=cut
+
+sub _retry_after_hint {
+    my ($resp, $passed_headers) = @_;
+
+    my $raw;
+    if (ref($passed_headers) eq 'HASH') {
+        $raw = $passed_headers->{'retry-after'};
+    } elsif (ref($passed_headers) && $passed_headers->can('header')) {
+        $raw = $passed_headers->header('Retry-After');
+    }
+
+    if (!defined $raw && ref($resp) && $resp->can('header')) {
+        $raw = eval { $resp->header('Retry-After') };
+    }
+    if (!defined $raw && ref($resp) eq 'HASH' && ref($resp->{headers}) eq 'HASH') {
+        $raw = $resp->{headers}{'retry-after'};
+    }
+
+    return _parse_retry_after_value($raw);
+}
+
+=head2 _is_provider_unavailable (Internal)
+
+Arguments: $status, $error, $content, $resp, $error_obj
+Returns: true when the provider says this model cannot be invoked at all
+
+This classification is permanent, so it must not fire on prose that a
+shared gateway emits during an outage. "Service unavailable" and a bare
+"model unavailable" on a 503 are what nginx and provider front doors say
+when they cannot reach any backend; those clear on their own and belong in
+the retry path. Only claim permanence when the provider names the model as
+degraded or decommissioned, or when a 400/404 states the model itself is
+unavailable.
+
+=cut
+
+sub _is_provider_unavailable {
+    my ($status, $error, $content, $resp, $error_obj) = @_;
+
+    my $text = defined $error ? $error : '';
+    $text .= ' ' . ($content->{detail} // '') if ref($content) eq 'HASH';
+    $text .= ' ' . ($resp->{content} // '') if ref($resp) eq 'HASH';
+
+    return 1 if $text =~ /DEGRADED function cannot be invoked|backend unavailable|model_decommissioned/i;
+    return 1 if ref($error_obj) eq 'HASH'
+             && ($error_obj->{code} // '') =~ /model_not_available|model_decommissioned/i;
+
+    if ($status == 400 || $status == 404) {
+        return 1 if $text =~ /model (?:is )?(?:currently )?unavailable|model_not_available/i;
+    }
+
+    return 0;
+}
+
 sub _handle_error_response_impl {
 
     my ($self, $resp, $json, $is_streaming, %opts) = @_;
@@ -315,7 +408,6 @@ sub _handle_error_response_impl {
 
     my $retryable = 0;
     my $retry_after = undef;
-    my $retry_info = '';
     my $is_retryable_error = 0;
     my $error_type = undef;
 
@@ -365,9 +457,14 @@ sub _handle_error_response_impl {
         if ($error =~ /(?:retry\s+in|please\s+wait)\s+([\d.]+)\s*s(?:econds?)?/i) {
             $retry_after = int($1) + 1;
             $retry_source = 'error_message';
-        } elsif ($retry_after_header) {
-            $retry_after = $retry_after_header;
-            $retry_source = 'header';
+        } elsif (defined $retry_after_header && length $retry_after_header) {
+            # Parse rather than trust: Retry-After may be an HTTP-date, and
+            # assigning the raw string turns that into a multi-decade wait.
+            my $parsed_wait = _parse_retry_after_value($retry_after_header);
+            if (defined $parsed_wait) {
+                $retry_after = $parsed_wait;
+                $retry_source = 'header';
+            }
         }
         # Also check for retryAfter in the error body (GitHub Copilot may return this)
         elsif (ref($error_obj) eq 'HASH' && $error_obj->{retryAfter}) {
@@ -640,16 +737,12 @@ sub _handle_error_response_impl {
 
             $is_retryable_error = 1;
             $retryable = 1;
-            $retry_info = sprintf("Z.AI %s limit (code %s). Retrying in %ds...",
-                $zai_rl_type, $detected_rate_limit_code, $retry_after);
-            $error = $retry_info;
+            $error = sprintf("Z.AI %s limit (code %s)", $zai_rl_type, $detected_rate_limit_code);
             log_debug('ResponseHandler', "Z.AI $zai_rl_type limit (code=$detected_rate_limit_code), retry_after=${retry_after}s");
         } elsif ($user_message) {
-            $retry_info = sprintf("%s Retrying in %d seconds.", $user_message, $retry_after);
-            $error = $retry_info;
+            $error = $user_message;
         } else {
-            $retry_info = sprintf("API rate limit exceeded. Retrying in %d seconds.", $retry_after);
-            $error = $retry_info;
+            $error = "API rate limit exceeded";
         }
 
         # Handle Copilot-style quota messages ("You've used X% of your session rate limit")
@@ -778,8 +871,7 @@ sub _handle_error_response_impl {
                 $retryable = 1;
                 $retry_after = 1;
                 $error_type = 'auth_recovered';
-                $retry_info = "Authentication token refreshed. Retrying request...";
-                $error = $retry_info;
+                $error = "Authentication token was refreshed mid-request";
             } else {
                 $error = "Authentication failed (HTTP $status). Your token may have expired or been revoked. "
                        . "Please run /api logout then /api login to re-authenticate.";
@@ -793,12 +885,8 @@ sub _handle_error_response_impl {
     # Checked BEFORE the generic 5xx handler so 503s with availability semantics aren't retried.
     # Also scans the raw response body because NVIDIA's format puts the DEGRADED text at the
     # top-level `detail` field rather than in `error.message`, so $error alone won't catch it.
-    elsif (($status == 400 || $status == 503) && (
-        $error =~ /DEGRADED function cannot be invoked|model (?:is )?unavailable|service unavailable|backend unavailable|model_not_available|model_decommissioned/i
-        || (ref($content) eq 'HASH' && (($content->{detail} // '') =~ /DEGRADED function cannot be invoked/i))
-        || ($resp->{content} // '') =~ /DEGRADED function cannot be invoked/i
-        || (ref($error_obj) eq 'HASH' && (($error_obj->{code} // '') =~ /model_not_available|model_decommissioned/i))
-    )) {
+    elsif (($status == 400 || $status == 404 || $status == 503)
+        && _is_provider_unavailable($status, $error, $content, $resp, $error_obj)) {
         $is_retryable_error = 0;
         $retryable = 0;
         $error_type = 'provider_unavailable';
@@ -828,7 +916,6 @@ sub _handle_error_response_impl {
         $retryable = 1;
         $retry_after = 30;
         $error_type = 'timeout';
-        $retry_info = "Upstream timeout. Will retry with a longer wait.";
         $error = "The AI provider timed out responding to the request. "
                . "This is usually transient (the upstream was busy). Retrying after a longer wait.\n\n"
                . "Provider detail: $error";
@@ -848,7 +935,6 @@ sub _handle_error_response_impl {
         $retryable = 1;
         $retry_after = 10;
         $error_type = 'overloaded';
-        $retry_info = "Upstream provider is overloaded. Will retry with backoff.";
         $error = "The AI provider reports their upstream is overloaded. "
                . "This is usually transient - retrying after a short wait should resolve it.\n\n"
                . "Provider detail: $error";
@@ -866,7 +952,6 @@ sub _handle_error_response_impl {
         $retryable = 1;
         $retry_after = 60;
         $error_type = 'overloaded';
-        $retry_info = "OpenAI 'Slow Down' detected. Provider requires 15+ minutes of reduced rate before recovery.";
         $error = "OpenAI is throttling this account with a 'Slow Down' response (HTTP 503). "
                . "Per OpenAI's docs, you must reduce request rate to its original level and keep it "
                . "stable for at least 15 minutes before gradually increasing again. "
@@ -889,8 +974,21 @@ sub _handle_error_response_impl {
         $retryable = 1;
         $retry_after = 2;
         $error_type = 'server_error';
-        $retry_info = "Server temporarily unavailable ($status). Retrying...";
-        $error = $retry_info;
+        # A provider that tells us when to come back knows better than our
+        # default does. Take the hint only when it is longer - "Retry-After:
+        # 0" on an overloaded pool must not undercut the backoff curve.
+        my $hint = _retry_after_hint($resp, $passed_headers);
+        if (defined $hint && $hint > $retry_after) {
+            $retry_after = $hint;
+            log_debug('ResponseHandler', "Honoring Retry-After: ${hint}s on HTTP $status");
+        }
+        # The retry narration is RetryPolicy's job now: it knows the attempt
+        # number and the wait it is about to sleep. What belongs here is the
+        # failure itself. Keeping "Retrying..." in $error meant that when the
+        # budget ran out the final message read "Maximum retries exceeded:
+        # Server temporarily unavailable (503). Retrying..." - promising a
+        # retry in the same breath as giving up.
+        $error = "Server temporarily unavailable (HTTP $status)";
     }
     # Handle connection errors (599 = curl/HTTP::Tiny internal failure)
     elsif ($status == 599 || $status < 100) {
@@ -899,8 +997,9 @@ sub _handle_error_response_impl {
         $retry_after = 3;
         $error_type = 'connection_error';
         my $reason = eval { $resp->message } // 'unknown';
-        $retry_info = "Connection error: $reason. Retrying...";
-        $error = $retry_info;
+        # Same split as the 5xx branch above: state the failure, leave the
+        # retry promise to the code that actually schedules the retry.
+        $error = "Connection error: $reason";
     }
     # Handle token limit exceeded (400). Covers multiple provider formats:
     # - Anthropic: model_max_prompt_tokens_exceeded
@@ -955,8 +1054,7 @@ sub _handle_error_response_impl {
             log_debug('ResponseHandler', "Extracted failed tool name: $failed_tool");
         }
 
-        $retry_info = "AI generated malformed tool call JSON. Retrying request...";
-        $error = $retry_info;
+        $error = "AI generated malformed tool call JSON";
         log_debug('ResponseHandler', "Detected malformed tool JSON error - will retry");
         $self->{last_failed_tool} = $failed_tool;
     }
@@ -973,8 +1071,7 @@ sub _handle_error_response_impl {
         # Flag that this model doesn't support previous_response_id
         $self->{_no_previous_response_id} = 1;
 
-        $retry_info = "Model doesn't support previous_response_id. Retrying without it.";
-        $error = $retry_info;
+        $error = "Model does not support previous_response_id";
         log_debug('ResponseHandler', "Cleared stateful markers - model rejects previous_response_id");
     }
 
@@ -989,8 +1086,7 @@ sub _handle_error_response_impl {
         # Flag that this model doesn't support reasoning parameters
         $self->{_no_reasoning} = 1;
 
-        $retry_info = "Model doesn't support reasoning/thinking. Retrying without it.";
-        $error = $retry_info;
+        $error = "Model does not support reasoning/thinking";
         log_debug('ResponseHandler', "Flagged model as not supporting reasoning - will strip from future requests");
     }
 
@@ -1024,8 +1120,10 @@ sub _handle_error_response_impl {
             # and persist the learning to MCM cache.
             $self->{_correct_reasoning_mode} = $correct;
 
-            $retry_info = "Anthropic rejected thinking.type=$rejected, retrying with $correct (self-correcting).";
-            $error = $retry_info;
+            # Keep the mode the provider told us to use: it is the whole
+            # reason this retry can succeed, and it is what the user sees if
+            # the retry then fails for a different reason.
+            $error = "Anthropic rejected thinking.type=$rejected (this model expects thinking.type=$correct)";
             log_debug('ResponseHandler', "Anthropic self-describing mode mismatch: rejected=$rejected correct=$correct - will retry and persist to MCM cache");
         }
         else {
@@ -1044,8 +1142,7 @@ sub _handle_error_response_impl {
         $retry_after = 0;
         $error_type = 'unsupported_param';
 
-        $retry_info = "Temperature must be 1 when thinking is enabled. Retrying with corrected parameters.";
-        $error = $retry_info;
+        $error = "Temperature must be 1 when thinking is enabled";
         log_debug('ResponseHandler', "Anthropic requires temperature=1 with thinking - will correct on retry");
     }
 
@@ -1062,8 +1159,7 @@ sub _handle_error_response_impl {
         # Flag that thinking params caused a conflict - retry without thinking
         $self->{_no_reasoning} = 1;
 
-        $retry_info = "max_tokens must be greater than thinking budget_tokens. Retrying without extended thinking.";
-        $error = $retry_info;
+        $error = "max_tokens must be greater than thinking budget_tokens";
         log_debug('ResponseHandler', "Anthropic max_tokens/budget_tokens conflict - disabling thinking for retry");
     }
 
@@ -1237,7 +1333,6 @@ sub _handle_error_response_impl {
             log_debug('ResponseHandler', "API 400 Bad Request (empty response body)");
         }
 
-        $retry_info = "Unclassified API 400 - retrying. If this persists, the provider message has been logged to /tmp/clio_api_400.log.";
 
         # Preserve the provider's error message so the user actually sees what went wrong.
         # When $error_obj exists, _parse_error_response already extracted the provider's
@@ -1285,6 +1380,8 @@ sub _handle_error_response_impl {
         error_type               => $error_type,
         detected_rate_limit_code => $detected_rate_limit_code,
         error_obj                => $error_obj,
+        connection_subtype       => (ref($resp) ? eval { $resp->{connection_subtype} } : undef),
+        http_status              => $status,
     );
     return $result;
 
@@ -1431,6 +1528,8 @@ sub _build_error_result {
     my $error_type               = $state{error_type};
     my $detected_rate_limit_code = $state{detected_rate_limit_code};
     my $error_obj                = $state{error_obj};
+    my $connection_subtype       = $state{connection_subtype};
+    my $http_status              = $state{http_status};
 
     my $result;
     if ($is_streaming) {
@@ -1443,10 +1542,17 @@ sub _build_error_result {
         $result->{retryable} = 1;
         $result->{retry_after} = $retry_after if $retry_after;
         $result->{error_type} = $error_type if $error_type;
+        # The status code is the one fact about a 5xx that is worth showing:
+        # "HTTP 502" tells an operator more than "server error" ever will.
+        $result->{http_status} = $http_status
+            if defined $http_status && $http_status >= 100;
         # Pass rate_limit_code for specific rate limit type messaging (e.g., user_weekly_rate_limited)
         $result->{rate_limit_code} = $detected_rate_limit_code if $detected_rate_limit_code;
         # Pass error_obj for richer error messaging (e.g. GitHub rate limit codes)
         $result->{error_obj} = $error_obj if $error_obj;
+        # Pass the transport's diagnosis through so the retry message can say
+        # "DNS resolution failed" instead of the useless "Connection error".
+        $result->{connection_subtype} = $connection_subtype if defined $connection_subtype;
         if ($self->{last_failed_tool}) {
             $result->{failed_tool} = $self->{last_failed_tool};
             delete $self->{last_failed_tool};

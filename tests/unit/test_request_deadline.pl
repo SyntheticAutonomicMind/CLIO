@@ -298,4 +298,72 @@ subtest 'curl streaming transport surfaces its exit code' => sub {
     close $listener;
 };
 
+# ══════════════════════════════════════════════════════════════════════════
+# 6. Connect failures and request deadlines are different errors
+# ══════════════════════════════════════════════════════════════════════════
+
+# When the network is down, the connect wait is the entire cost of an
+# attempt. Reporting that as a request deadline tells the user to raise a
+# timeout that was never reached, and hides the fact that nothing answered.
+subtest 'curl diagnostics separate a connect failure from a request deadline' => sub {
+    my $http = CLIO::Compat::HTTP->new(timeout => 30, connect_timeout => 5);
+
+    # Both of these are curl exit 28. Only curl's stderr distinguishes them.
+    my ($subtype, $desc) = $http->_classify_curl_failure(
+        28, 0, 1.1,
+        'curl: (28) Failed to connect to 10.255.255.1 port 443 after 1006 ms: Timeout was reached',
+    );
+    is($subtype, 'connect_timeout', 'a connect timeout is named as one');
+    is($desc, 'could not connect within 5s', 'and states the connect ceiling, not the request one');
+
+    ($subtype, $desc) = $http->_classify_curl_failure(
+        28, 0, 1.1,
+        'curl: (28) Connection timed out after 1006 milliseconds',
+    );
+    is($subtype, 'connect_timeout', 'curl\'s bare "Connection timed out" is a connect timeout');
+
+    ($subtype, $desc) = $http->_classify_curl_failure(
+        28, 1, 30.0,
+        'curl: (28) Operation timed out after 30001 milliseconds with 0 bytes received',
+    );
+    is($subtype, 'timed_out', 'a deadline after the connection was made is a request timeout');
+    is($desc, 'request timed out', 'and does not claim the connect ceiling was hit');
+
+    # Old curl versions word exit 28 differently, so the elapsed/saw_headers
+    # fallback must still work with no stderr at all.
+    ($subtype) = $http->_classify_curl_failure(28, 0, 5.5, '');
+    is($subtype, 'connect_timeout', 'no stderr: an attempt that died near the connect ceiling is a connect failure');
+    ($subtype) = $http->_classify_curl_failure(28, 1, 29.0, '');
+    is($subtype, 'timed_out', 'no stderr: an attempt that received headers hit the request deadline');
+};
+
+subtest 'transport applies the connect timeout to a blackhole address' => sub {
+    my $curl = `command -v curl 2>/dev/null`;
+    chomp $curl;
+    plan skip_all => 'curl not available' unless $curl;
+
+    # 10.255.255.1 is reserved space: nothing routes it. If the local network
+    # rejects it instantly (ICMP unreachable), the test still proves the
+    # failure is reported as a connection failure rather than a deadline.
+    #
+    # A callback selects the curl transport, which is the one every streaming
+    # API call uses. HTTP::Tiny has a single whole-request ceiling and no
+    # separate connect ceiling, so it cannot demonstrate this.
+    my $http = CLIO::Compat::HTTP->new(timeout => 30, connect_timeout => 1);
+    my $started = time;
+    my $resp = $http->request(
+        CLIO::Compat::HTTP::Request->new('GET', 'https://10.255.255.1/'),
+        sub { },
+    );
+    my $elapsed = time - $started;
+
+    is($resp->{status}, 599, 'unreachable host becomes status 599');
+    ok(!$resp->{success}, 'not marked successful');
+    ok(defined $resp->{connection_subtype}, 'the failure carries a subtype');
+    isnt($resp->{connection_subtype}, 'timed_out',
+        'a connect failure is not reported as a request deadline');
+    cmp_ok($elapsed, '<', 10,
+        "the 1s connect ceiling bounds the attempt, not the 30s request ceiling (${elapsed}s)");
+};
+
 done_testing();

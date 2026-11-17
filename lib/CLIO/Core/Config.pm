@@ -11,6 +11,7 @@ use CLIO::UI::Terminal qw(box_char);
 use CLIO::Core::Logger qw(should_log log_debug log_warning);
 use CLIO::Util::ConfigPath qw(get_config_dir);
 use CLIO::Providers qw(get_provider list_providers provider_exists);
+use CLIO::Core::API::RetryPolicy ();
 use CLIO::Util::JSON qw(encode_json decode_json);
 use CLIO::Security::SecretRedactor qw(DEFAULT_REDACT_LEVEL);
 use Storable qw(dclone);
@@ -1688,6 +1689,181 @@ sub set_route_wait_for_rate_limits {
     $self->{config}->{route_wait_for_rate_limits} = $on ? 1 : 0;
     $self->{user_set}->{route_wait_for_rate_limits} = 1;
     return 1;
+}
+
+=head2 Retry and transport settings
+
+The retry loop reads these through the getters below rather than through
+C<get()> directly, because a typo in the config file must not turn into a
+zero-second backoff, a NaN sleep, or an attempt budget of "-1".
+
+Defaults live in L<CLIO::Core::API::RetryPolicy> so the retry policy, the
+config layer, and the error handler cannot drift apart.
+
+=cut
+
+=head2 _setting_number($key, $default)
+
+Read a non-negative number from configuration. Anything non-numeric or
+negative falls back to C<$default>.
+
+=cut
+
+sub _setting_number {
+    my ($self, $key, $default) = @_;
+
+    my $value = $self->{config}->{$key};
+    return $default unless defined $value;
+    return $default unless $value =~ /^\d+(?:\.\d+)?$/;
+    return $value + 0;
+}
+
+=head2 _setting_count($key, $default)
+
+Read a non-negative integer from configuration. Used for attempt budgets,
+where 0 has a meaning (unlimited) and everything else must be a whole
+number of retries.
+
+=cut
+
+sub _setting_count {
+    my ($self, $key, $default) = @_;
+
+    my $value = $self->{config}->{$key};
+    return $default unless defined $value && $value =~ /^\d+$/;
+    return $value + 0;
+}
+
+=head2 get_retry_max_attempts()
+
+Retries for errors that do not fall into the transient or rate-limit
+classes (malformed tool JSON, unrecognized 400s, and similar). Default 3.
+
+Returns: Number of retries, 0 or more.
+
+=cut
+
+sub get_retry_max_attempts {
+    my ($self) = @_;
+
+    return $self->_setting_count('retry_max_attempts',
+        CLIO::Core::API::RetryPolicy::DEFAULT_MAX_ATTEMPTS());
+}
+
+=head2 get_retry_max_server_attempts()
+
+Retries for transient errors: 5xx, connection failures, upstream timeouts,
+truncated streams. Default 0, meaning retry until the request succeeds or
+the user interrupts.
+
+Returns: Number of retries; 0 means unlimited.
+
+=cut
+
+sub get_retry_max_server_attempts {
+    my ($self) = @_;
+
+    return $self->_setting_count('retry_max_server_attempts',
+        CLIO::Core::API::RetryPolicy::DEFAULT_MAX_SERVER_ATTEMPTS());
+}
+
+=head2 get_retry_max_rate_limit_attempts()
+
+Retries for rate limits and local concurrency limits. Default 0, meaning
+keep waiting until the provider lets the request through.
+
+Returns: Number of retries; 0 means unlimited.
+
+=cut
+
+sub get_retry_max_rate_limit_attempts {
+    my ($self) = @_;
+
+    return $self->_setting_count('retry_max_rate_limit_attempts',
+        CLIO::Core::API::RetryPolicy::DEFAULT_MAX_RATE_LIMIT_ATTEMPTS());
+}
+
+=head2 get_retry_max_delay()
+
+Ceiling on one transient-error wait, in seconds. Default 300.
+
+Returns: Number of seconds.
+
+=cut
+
+sub get_retry_max_delay {
+    my ($self) = @_;
+
+    return $self->_setting_number('retry_max_delay',
+        CLIO::Core::API::RetryPolicy::DEFAULT_MAX_DELAY());
+}
+
+=head2 get_retry_rate_limit_max_delay()
+
+Ceiling on one rate-limit wait, in seconds. Default 900.
+
+Returns: Number of seconds.
+
+=cut
+
+sub get_retry_rate_limit_max_delay {
+    my ($self) = @_;
+
+    return $self->_setting_number('retry_rate_limit_max_delay',
+        CLIO::Core::API::RetryPolicy::DEFAULT_RATE_LIMIT_MAX_DELAY());
+}
+
+=head2 get_retry_jitter()
+
+Fractional jitter applied to computed waits, clamped to 0..0.5. Default
+0.2. Zero disables jitter.
+
+Returns: Jitter fraction.
+
+=cut
+
+sub get_retry_jitter {
+    my ($self) = @_;
+
+    my $jitter = $self->_setting_number('retry_jitter',
+        CLIO::Core::API::RetryPolicy::DEFAULT_JITTER());
+    return 0 if $jitter < 0;
+    return 0.5 if $jitter > 0.5;
+    return $jitter;
+}
+
+=head2 get_http_connect_timeout()
+
+Seconds one attempt may spend opening a socket. Default 10.
+
+Returns: Positive number of seconds.
+
+=cut
+
+sub get_http_connect_timeout {
+    my ($self) = @_;
+
+    my $value = $self->_setting_number('http_connect_timeout',
+        CLIO::Core::API::RetryPolicy::DEFAULT_CONNECT_TIMEOUT());
+    return $value > 0
+        ? $value
+        : CLIO::Core::API::RetryPolicy::DEFAULT_CONNECT_TIMEOUT();
+}
+
+=head2 get_http_stall_timeout()
+
+Seconds a transfer may sit idle before it is abandoned. Default 0, which
+disables the ceiling.
+
+Returns: Number of seconds; 0 disables.
+
+=cut
+
+sub get_http_stall_timeout {
+    my ($self) = @_;
+
+    return $self->_setting_number('http_stall_timeout',
+        CLIO::Core::API::RetryPolicy::DEFAULT_STALL_TIMEOUT());
 }
 
 =head2 delete_model_alias($name)

@@ -28,6 +28,7 @@ use utf8;
 use CLIO::Core::Logger qw(should_log log_debug log_warning);
 use CLIO::Core::ErrorContext qw(classify_error format_error);
 use CLIO::Core::Defaults ();
+use CLIO::Core::API::RetryPolicy ();
 use CLIO::Util::ConfigPath qw(get_config_dir);
 use CLIO::Providers qw(get_provider list_providers provider_from_url);
 use POSIX ":sys_wait_h"; # For WNOHANG
@@ -89,7 +90,46 @@ sub _create_http_client {
     my ($self, %opts) = @_;
     my $proxy = $self->{config} ? ($self->{config}->get('http_proxy') || '') : '';
     $opts{proxy} = $proxy if $proxy;
+    $opts{connect_timeout} = $self->_http_connect_timeout() unless defined $opts{connect_timeout};
+    $opts{stall_timeout}   = $self->_http_stall_timeout()   unless defined $opts{stall_timeout};
     return CLIO::Compat::HTTP->new(%opts);
+}
+
+=head2 _http_connect_timeout (Internal)
+
+Returns how long one attempt may spend opening a socket, in seconds.
+
+This is separate from the request ceiling on purpose. When the network is
+down, the connect wait is the entire cost of an attempt: with only a
+request ceiling, every retry burns the full ceiling before the backoff
+even starts.
+
+=cut
+
+sub _http_connect_timeout {
+    my ($self) = @_;
+    my $cfg = $self->{config};
+    return $cfg->get_http_connect_timeout()
+        if $cfg && $cfg->can('get_http_connect_timeout');
+    return CLIO::Core::API::RetryPolicy::DEFAULT_CONNECT_TIMEOUT();
+}
+
+=head2 _http_stall_timeout (Internal)
+
+Returns the idle-transfer ceiling in seconds, or 0 when disabled.
+
+0 is the default: a reasoning model can legitimately sit silent for a long
+time before its first token, and cutting that off would break working
+requests to catch broken ones.
+
+=cut
+
+sub _http_stall_timeout {
+    my ($self) = @_;
+    my $cfg = $self->{config};
+    return $cfg->get_http_stall_timeout()
+        if $cfg && $cfg->can('get_http_stall_timeout');
+    return CLIO::Core::API::RetryPolicy::DEFAULT_STALL_TIMEOUT();
 }
 
 # Get or create a shared HTTP client for connection pooling
@@ -97,9 +137,14 @@ sub _create_http_client {
 sub _get_shared_http_client {
     my ($self, %opts) = @_;
     
+    $opts{connect_timeout} = $self->_http_connect_timeout() unless defined $opts{connect_timeout};
+    $opts{stall_timeout}   = $self->_http_stall_timeout()   unless defined $opts{stall_timeout};
+
     # Create a cache key based on options that affect connection behavior
     my $cache_key = join('|', 
         $opts{timeout} || 300,
+        $opts{connect_timeout} // 10,
+        $opts{stall_timeout} // 0,
         $opts{proxy} || '',
         $opts{agent} || '',
         $opts{ssl_opts} ? _ssl_opts_key($opts{ssl_opts}) : 'no_ssl'
@@ -3698,77 +3743,6 @@ sub _interruptible_rate_wait {
     log_debug('APIManager', "$label delay complete");
 }
 
-=head2 _check_connectivity
-
-Check if we can reach the API endpoint after a network error.
-
-Based on VSCode's approach: ping CAPI to verify network is working before retrying.
-This avoids hammering a struggling server when the network itself is the problem.
-
-Uses exponential backoff delays: [1s, 10s, 10s] between checks.
-
-Arguments:
-- $endpoint: The API endpoint URL to check
-
-Returns: 1 if connectivity is restored, 0 otherwise
-
-=cut
-
-sub _check_connectivity {
-    my ($self, $endpoint) = @_;
-
-    # Quick connectivity check with short delays - we retry regardless
-    my @check_delays = (1, 2);
-
-    for my $i (0 .. $#check_delays) {
-        # Wait before this check (skip first one)
-        if ($i > 0) {
-            log_debug('APIManager', "Waiting ${check_delays[$i]}s before connectivity check...");
-            sleep($check_delays[$i]);
-        }
-
-        log_debug('APIManager', "Checking connectivity to API endpoint...");
-
-        my $ua = $self->_create_http_client(timeout => 10);
-        my %headers = (
-            'Authorization' => "Bearer $self->{api_key}",
-        );
-
-        # Add GitHub-specific headers if using Copilot
-        my $detected = provider_from_url($self->{api_base} // '');
-        if ($detected && $detected eq 'github_copilot') {
-            $headers{'Editor-Version'} = COPILOT_EDITOR_VERSION;
-            $headers{'Editor-Plugin-Version'} = COPILOT_PLUGIN_VERSION;
-            $headers{'Copilot-Language-Server-Version'} = COPILOT_LS_VERSION;
-            $headers{'X-GitHub-Api-Version'} = COPILOT_API_VERSION;
-            $headers{'User-Agent'} = 'CLIO/2.0.0';
-            $headers{'VScode-SessionId'} = $self->{_copilot_session_id};
-            $headers{'VScode-MachineId'} = $self->{_copilot_machine_id};
-            $headers{'Openai-Organization'} = 'github-copilot';
-        }
-
-        # Try a lightweight request - models list or health check
-        my $check_url = $endpoint;
-        $check_url =~ s{/chat/completions.*$}{};
-        $check_url =~ s{/completions.*$}{};
-        $check_url .= '/models';
-
-        my $resp = eval { $ua->get($check_url, headers => \%headers) };
-
-        if ($resp && $resp->is_success) {
-            log_debug('APIManager', "Connectivity restored - API endpoint responding");
-            return 1;
-        }
-
-        my $err = $@ // 'unknown';
-        my $status = $resp ? $resp->code : 'no response';
-        log_debug('APIManager', "Connectivity check failed: $status ($err)");
-    }
-
-    log_debug('APIManager', "Connectivity check failed after " . scalar(@check_delays) . " attempts");
-    return 0;
-}
-
 # Apply rate limiting: broker coordination, local delay, and cooldown.
 #
 # Shared preamble for send_request and send_request_streaming.
@@ -5577,10 +5551,24 @@ sub _deadline_failure_result {
     my $curl_exit = eval { $resp->{curl_exit} };
     return undef unless defined $curl_exit && $curl_exit == 28;
 
+    # curl exit 28 covers two different failures. The transport separates
+    # them: subtype 'connect_timeout' means the socket never opened, so no
+    # request was ever sent and this is an ordinary connection error, not a
+    # response that outran CLIO's ceiling. Only the latter is unfixable by
+    # retrying, and only the latter belongs here.
+    my $subtype = eval { $resp->{connection_subtype} };
+    if (defined $subtype && $subtype eq 'connect_timeout') {
+        log_debug('APIManager',
+            "curl exit 28 with connection_subtype=connect_timeout - classifying as connection error");
+        return undef;
+    }
+
     my $reason      = eval { $resp->{reason} } // eval { $resp->message } // 'Connection timed out';
     my $content_len = length($info{content} // '');
     my $tc_count    = $info{tool_calls} // 0;
     my $ceiling     = defined $info{timeout} ? "$info{timeout}s request ceiling" : 'request ceiling';
+    my $elapsed     = eval { $resp->{elapsed} };
+    my $took        = defined $elapsed ? sprintf('after %.1fs', $elapsed) : '';
 
     my $arrived = ($content_len && $tc_count) ? "$content_len characters and $tc_count tool call(s) had arrived"
                 : $content_len                 ? "$content_len characters had arrived"
@@ -5588,7 +5576,8 @@ sub _deadline_failure_result {
                 :                                'no content had arrived yet';
 
     log_debug('APIManager',
-        "Request deadline expired (curl exit 28, status 599, $ceiling): "
+        "Request deadline expired (curl exit 28, status 599, $ceiling"
+        . ($took ? ", $took" : '') . "): "
         . "content=$content_len chars, tool_calls=$tc_count, reason=$reason");
 
     return {
@@ -5786,6 +5775,10 @@ sub _finalize_streaming_response {
             retryable   => 1,
             retry_after => 5,
             error_type  => 'truncated',
+            # How much arrived before the drop is the only evidence that the
+            # retry is worth making: a stream that produced 40k tokens is a
+            # provider bug, one that produced 3 is a bad day on the wire.
+            tokens_received => $s{token_count} // 0,
         };
     }
 
@@ -7062,11 +7055,17 @@ sub _send_native_streaming {
             # Connection-level failure. The reason field from the HTTP compat
             # layer carries the curl error description.
             my $reason = eval { $response->message } // 'Connection error';
+            my $subtype = eval { $response->{connection_subtype} };
+            my $elapsed = eval { $response->{elapsed} };
             $result->{error} = "Connection error: $reason";
             $result->{retryable} = 1;
             $result->{retry_after} = 3;
             $result->{error_type} = 'connection_error';
-            $result->{user_message} = "The connection to the provider timed out. Retrying after a short wait.";
+            $result->{connection_subtype} = $subtype if defined $subtype;
+            $result->{elapsed} = $elapsed if defined $elapsed;
+            $result->{user_message} = defined $subtype && $subtype eq 'connect_timeout'
+                ? "Could not open a connection to the provider in time."
+                : "The connection to the provider failed before a response arrived.";
         }
 
         if ($status == 429) {

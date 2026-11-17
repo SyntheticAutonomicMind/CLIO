@@ -222,8 +222,51 @@ When an API call fails, CLIO classifies the error into a specific type and choos
 - **`timeout`** - Upstream provider timed out (HTTP 408/504 or 5xx with "timeout" in body). Retried with longer backoff (30s base, exponential).
 - **`overloaded`** - Upstream engine/model is overloaded (`engine_overloaded`, `model_overloaded`, `upstream_error`). Retried with backoff (10s base, exponential).
 - **`server_error`** - Generic 5xx response. Retried with exponential backoff.
-- **`connection_error`** - Network/HTTP transport failure. Connectivity check on first retry.
+- **`connection_error`** - Network/HTTP transport failure. The retry message names the specific failure (DNS, connect timeout, connection reset, TLS) when the transport reported one.
+- **`truncated`** - The provider closed the response without a `finish_reason`. The retry message states how many tokens arrived before the drop.
 - **`rate_limit`** - HTTP 429 with retry guidance from the provider.
+- **`concurrency_limit`** - CLIO's own per-provider concurrency slot was full. Treated exactly like a rate limit.
+
+**Self-imposed deadlines** (retried once, then reported):
+
+- **`request_timeout`** - The request outran the ceiling CLIO set for it. Retrying restarts the same work against the same ceiling, so this class gets one retry and then a message that says what to raise.
+
+### How Retries Are Scheduled
+
+Each retry class has its own attempt budget and its own delay curve:
+
+| Class | Default budget | Delay |
+|-------|----------------|-------|
+| Transient (`server_error`, `connection_error`, `timeout`, `overloaded`, `truncated`) | unlimited | Exponential from the class's base, capped at 300s |
+| Rate limit (`rate_limit`, `concurrency_limit`) | unlimited | Provider's `Retry-After`, capped at 900s, no exponential growth |
+| Deterministic (`request_timeout`) | 1 retry | The configured request ceiling |
+| Unclassified (`malformed_tool_json`, unclassified 400) | 3 retries | Exponential from 2s |
+
+Unlimited means exactly that: CLIO keeps retrying until the request succeeds or you interrupt it. A rate limit that says "come back in fifteen minutes" gets a fifteen-minute wait rather than a quick retry that earns another 429.
+
+Two rules keep the schedule honest:
+
+- The number in the retry message is the number CLIO sleeps. Both are computed by `CLIO::Core::API::RetryPolicy` from the same inputs, after the provider's `Retry-After` and the delay ceiling have been applied.
+- No wait is ever shorter than one second, even when a provider sends `Retry-After: 0`. A zero-second wait turns a rate limit into a hot loop.
+
+### Retry and Transport Configuration
+
+Set these with `/config set <key> <value>`. They take effect on the next request.
+
+| Key | Default | Meaning |
+|-----|---------|---------|
+| `retry_max_attempts` | `3` | Retries for unclassified errors |
+| `retry_max_server_attempts` | `0` | Retries for transient errors; `0` is unlimited |
+| `retry_max_rate_limit_attempts` | `0` | Retries for rate limits; `0` is unlimited |
+| `retry_max_delay` | `300` | Ceiling on one transient wait, in seconds |
+| `retry_rate_limit_max_delay` | `900` | Ceiling on one rate-limit wait, in seconds |
+| `retry_jitter` | `0.2` | Fractional jitter on computed waits; clamped to `0`-`0.5` |
+| `http_connect_timeout` | `10` | Seconds one attempt may spend opening a socket |
+| `http_stall_timeout` | `0` | Seconds a transfer may sit idle before it is abandoned; `0` disables |
+
+Non-numeric or out-of-range values fall back to the default rather than reaching the retry loop, so a typo in `config.json` cannot become a zero-second backoff or an attempt budget of `-1`.
+
+`http_connect_timeout` keeps a dead network from consuming the whole request ceiling on a connect that was never going to succeed, which is what makes the first retry happen in seconds instead of minutes. It applies to the curl transport, which every streaming API call uses. `http_stall_timeout` is off by default because a reasoning model can sit silent for a long time before its first token, and cutting that off would break working requests to catch broken ones.
 
 **Trim-and-retry errors** (context-related):
 

@@ -30,6 +30,19 @@ use CLIO::Core::APIManager;
 use CLIO::Core::API::ErrorHandler;
 use CLIO::UI::Terminal qw(ui_char);
 
+# These subtests assert that a retry is returned, not that it waits. The
+# retry path really sleeps (by design: a 50th consecutive failure waits the
+# full backoff ceiling), so without this stub the suite sits in a five-minute
+# sleep to learn one boolean. Record the wait instead of spending it and
+# assert on it where it matters.
+{
+    no warnings 'redefine';
+    *CLIO::Core::API::ErrorHandler::_interruptible_sleep = sub {
+        my ($wo, $session, $seconds) = @_;
+        push @main::SLEPT, $seconds;
+    };
+}
+
 # ──────────────────────────────────────────────────────────────────────
 # Test fixtures
 # ──────────────────────────────────────────────────────────────────────
@@ -367,7 +380,7 @@ subtest 'Bug 2a: concurrency_limit is retryable with infinite budget' => sub {
         'concurrency_limit returns retry (not Maximum retries exceeded)');
 };
 
-subtest 'Bug 2b: concurrency_limit surfaces "Rate limit detected" to UI' => sub {
+subtest 'Bug 2b: concurrency_limit surfaces the rate limit label to the UI' => sub {
     my $msg;
     my $result = call_handle_api_error(
         api_response => {
@@ -381,8 +394,13 @@ subtest 'Bug 2b: concurrency_limit surfaces "Rate limit detected" to UI' => sub 
     );
 
     is($result, 'retry', 'returns retry');
-    like($msg, qr/Rate limit detected/i,
-        'system message uses "Rate limit detected" label (not "Server error")');
+    # The label must identify the failure class. "Server error" for a 429
+    # sends people looking at the provider's health page instead of their
+    # own usage.
+    like($msg, qr/^Rate limit/i,
+        'system message opens with the rate limit label');
+    unlike($msg, qr/Server error/i,
+        'system message does not call a rate limit a server error');
     like($msg, qr/attempt 1/, 'first attempt logged as attempt 1');
 };
 
