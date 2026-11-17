@@ -117,7 +117,7 @@ sub _handle_agent_authorization {
         web_fetch         => 'Web Request',
     }->{$category} || ucfirst($category);
 
-    my $options = '(y)es once | (a)llow category | (n)o deny';
+    my $options = '(o)nce | (a)llow category | (n)o deny';
 
     if ($theme_mgr && $theme_mgr->can('get_security_prompt')) {
         my ($prompt_line, $input_line) = $theme_mgr->get_security_prompt(
@@ -165,10 +165,17 @@ sub _handle_agent_authorization {
     alarm($remaining_alarm) if $remaining_alarm;
 
     my ($approved, $grant_type);
-    if ($response eq 'y' || $response eq 'yes') {
+    # Vocabulary: (o)nce | (a)ll | (n)o. Legacy keys stay accepted but logged.
+    if ($response =~ /^(?:o|once)$/) {
         $approved = 1;
         $grant_type = 'once';
-    } elsif ($response eq 'a' || $response eq 'allow') {
+    } elsif ($response =~ /^(?:y|yes)$/) {
+        log_debug('ChatSecurity', "Legacy key 'y' used for once - accepted, maps to (o)nce");
+        $approved = 1;
+        $grant_type = 'once';
+    } elsif ($response =~ /^(?:a|all|allow|s|session)$/) {
+        log_debug('ChatSecurity', "Legacy key 's' used - accepted, maps to (a)ll")
+            if $response eq 's' || $response eq 'session';
         $approved = 1;
         $grant_type = 'session';
     } else {

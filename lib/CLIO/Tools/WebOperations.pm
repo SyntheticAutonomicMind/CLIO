@@ -968,13 +968,22 @@ Checks for:
 - Known suspicious URL patterns
 - localhost/internal network access
 
+Concerns are split by whether a session grant may cover them. A fetch grant
+approves the B<fact> of making an outbound request; it must never approve a
+request whose risk is the target or the payload rather than the fetch itself.
+Internal/link-local addresses (including the cloud instance-metadata endpoint),
+payload-shaped query strings, and non-HTTP schemes are ungrantable and prompt
+every time. Only the strict-mode "all fetches need confirmation" concern is
+covered by a session grant.
+
 Returns hashref:
-  { blocked => 0|1, requires_confirmation => 0|1, reason => $text }
+  { blocked => 0|1, requires_confirmation => 0|1, reason => $text,
+    flags => [...], grantable => 0|1, granted_count => $n }
 
 =cut
 
 # Session-level URL grants
-my %_url_session_grants;
+our %_url_session_grants;
 
 # Parse an IPv4 literal into its four octets, accepting every form inet_aton
 # resolves and therefore every form a browser will connect to:
@@ -1050,21 +1059,31 @@ sub _check_url_security {
         };
     }
 
-    # Check for session-level grants
-    return { blocked => 0, requires_confirmation => 0 }
-        if $_url_session_grants{fetch_url};
-
+    # Concerns are classified by whether a session grant may cover them.
+    # A fetch grant approves "this kind of outbound request"; it must never
+    # approve a request whose risk is the target, not the act of fetching.
+    # Internal addresses (cloud metadata, loopback, RFC1918), payload-shaped
+    # query strings, and non-HTTP schemes are ungrantable - they prompt every
+    # time no matter how many fetches the user has approved.
     my @concerns;
 
     # Check for suspiciously long query strings (potential data exfiltration)
     if ($url =~ /\?(.+)/) {
         my $query_string = $1;
         if (length($query_string) > 500) {
-            push @concerns, "Unusually long query string (" . length($query_string) . " chars) - possible data exfiltration";
+            push @concerns, {
+                grantable => 0,
+                category  => 'fetch_exfiltration',
+                text      => "Unusually long query string (" . length($query_string) . " chars) - possible data exfiltration",
+            };
         }
         # Check for base64-like content in params
         if ($query_string =~ /[A-Za-z0-9+\/]{100}={0,2}/) {
-            push @concerns, "Query string contains base64-like encoded data";
+            push @concerns, {
+                grantable => 0,
+                category  => 'fetch_exfiltration',
+                text      => "Query string contains base64-like encoded data",
+            };
         }
     }
 
@@ -1095,29 +1114,62 @@ sub _check_url_security {
         }
 
         if ($internal) {
-            push @concerns, "URL targets internal or link-local address ($host)";
+            push @concerns, {
+                grantable => 0,
+                category  => 'fetch_internal',
+                text      => "URL targets internal or link-local address ($host)",
+            };
         }
     }
 
     # Check for data: or file: URLs
     if ($url =~ m{^(?:data|file|ftp)://}i) {
-        push @concerns, "Non-HTTP URL scheme detected: " . ($url =~ m{^([^:]+)})[0];
+        push @concerns, {
+            grantable => 0,
+            category  => 'fetch_scheme',
+            text      => "Non-HTTP URL scheme detected: " . ($url =~ m{^([^:]+)})[0],
+        };
     }
 
     # Strict mode: require confirmation for ALL fetch_url calls
     if ($security_level eq 'strict' && !@concerns) {
-        push @concerns, "Strict security: all outbound web requests require confirmation";
-    }
-
-    if (@concerns) {
-        return {
-            blocked => 0,
-            requires_confirmation => 1,
-            reason => join('; ', @concerns),
+        push @concerns, {
+            grantable => 1,
+            category  => 'fetch_external',
+            text      => "Strict security: all outbound web requests require confirmation",
         };
     }
 
-    return { blocked => 0, requires_confirmation => 0 };
+    return { blocked => 0, requires_confirmation => 0 } unless @concerns;
+
+    my @ungrantable = grep { !$_->{grantable} } @concerns;
+    my $has_grant   = $_url_session_grants{fetch_url} ? 1 : 0;
+
+    # An existing grant covers the grantable concerns only. Ungrantable
+    # concerns always survive it.
+    my @needs_decision = $has_grant ? @ungrantable : @concerns;
+
+    return { blocked => 0, requires_confirmation => 0 } unless @needs_decision;
+
+    return {
+        blocked               => 0,
+        requires_confirmation => 1,
+        reason                => join('; ', map { $_->{text} } @needs_decision),
+        flags                 => [
+            map {
+                {
+                    category    => $_->{category},
+                    severity    => $_->{grantable} ? 'standard' : 'high',
+                    description => $_->{text},
+                }
+            } @needs_decision
+        ],
+        # (a)ll is only offered when every remaining concern can actually be
+        # covered by a session grant. Offering it on an internal-address fetch
+        # would promise something the next request would not honour.
+        grantable     => (@ungrantable ? 0 : 1),
+        granted_count => ($has_grant ? scalar(@concerns) - scalar(@needs_decision) : 0),
+    };
 }
 
 =head2 _prompt_url_confirmation
@@ -1157,6 +1209,12 @@ sub _prompt_url_confirmation {
     my $spinner = ($context && $context->{spinner}) ? $context->{spinner} : undef;
     $spinner->stop() if $spinner && $spinner->can('stop');
 
+    # Suspend the spinner's ALRM timer before reading. Chat.pm's timer calls
+    # ReadKey(-1), which consumes keystrokes typed at the prompt; without this
+    # the answer could be swallowed and the request silently denied.
+    my $saved_alrm = $SIG{ALRM};
+    my $remaining_alarm = alarm(0);
+
     print "\n";
     print $ui->colorize("  WEB SECURITY CHECK ", 'WARNING');
     print "\n\n";
@@ -1171,26 +1229,61 @@ sub _prompt_url_confirmation {
     print $ui->colorize("  Concern: ", 'WARNING');
     print "$security_check->{reason}\n\n";
 
+    if ($security_check->{granted_count}) {
+        print $ui->colorize(
+            "  (" . $security_check->{granted_count} . " concern already allowed this session)\n\n",
+            'dim');
+    }
+
+    # Ungrantable concerns (internal address, exfiltration shape, non-HTTP
+    # scheme) can only be approved one request at a time, so `a` is not offered.
+    my $options = $security_check->{grantable}
+        ? '(o)nce | (a)ll external fetches | (n)o deny'
+        : '(o)nce | (n)o deny';
+
     print $ui->colorize("  Options: ", 'BOLD');
-    print "(y)es once | (a)llow category | (n)o deny\n";
+    print "$options\n";
 
     require CLIO::Compat::Terminal;
     CLIO::Compat::Terminal::ReadMode(0);
 
     print $ui->colorize("  > ", 'PROMPT');
 
+    # Flush so the prompt is on screen before blocking, and drain any
+    # keystrokes buffered by the spinner's ReadKey polling.
+    my $old_fh = select(STDOUT);
+    $| = 1; select($old_fh);
+    CLIO::Compat::Terminal::ReadKey(-1) while defined CLIO::Compat::Terminal::ReadKey(-1);
+
     my $response = <STDIN>;
     chomp($response) if defined $response;
     $response = lc($response || 'n');
 
     CLIO::Compat::Terminal::ReadMode(1);
+
+    $SIG{ALRM} = $saved_alrm || 'DEFAULT';
+    alarm($remaining_alarm) if $remaining_alarm;
+
     $spinner->start() if $spinner && $spinner->can('start');
 
-    if ($response eq 'y' || $response eq 'yes') {
+    # Vocabulary: (o)nce | (a)ll | (n)o. Legacy keys stay accepted but logged.
+    if ($response =~ /^(?:o|once)$/) {
         return 1;
-    } elsif ($response eq 'a' || $response eq 'allow') {
+    } elsif ($response =~ /^(?:y|yes)$/) {
+        log_debug('WebOps', "Legacy key 'y' used for once - accepted, maps to (o)nce");
+        return 1;
+    } elsif ($response =~ /^(?:a|all|allow)$/ && $security_check->{grantable}) {
         $_url_session_grants{fetch_url} = 1;
-        log_debug('WebOps', "Session grant added for web operations");
+        log_debug('WebOps', "Session grant added for external web fetches");
+        return 1;
+    } elsif ($response =~ /^(?:a|all|allow)$/) {
+        # The user asked to allow everything, but at least one concern is not
+        # grantable. Approving only this request is the safe reading.
+        log_debug('WebOps', "Answer 'a' on an ungrantable concern - treating as (o)nce");
+        return 1;
+    } elsif ($response =~ /^(?:s|session)$/) {
+        log_debug('WebOps', "Legacy key 's' used - accepted, maps to (a)ll");
+        $_url_session_grants{fetch_url} = 1 if $security_check->{grantable};
         return 1;
     }
 

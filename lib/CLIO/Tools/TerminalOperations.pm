@@ -985,6 +985,12 @@ sub validate_command {
         return $path_denial if $path_denial;
     }
 
+    # Record why this command was allowed BEFORE any prompt runs. The prompt
+    # adds session grants on (a)ll, so asking afterwards misreported a command
+    # the user had just approved interactively as "session_grant:<category>" --
+    # indistinguishable in the audit trail from a silent auto-approval.
+    my $decision_source = $self->_decision_source($analysis, $context);
+
     # Dry-run safety: when the command is critical-risk AND we don't have a real
     # interactive TTY (no -t STDIN), deny it without prompting. The prompt path
     # is only safe when a human is actually at the terminal to read the warning
@@ -1053,34 +1059,80 @@ sub validate_command {
         command   => $command,
         safe      => 1,
         analysis  => $analysis,
-        approved_by => $self->_decision_source($analysis, $context),
+        approved_by => $decision_source,
     );
 }
 
 # Session-level grants: once user approves a category, don't re-ask.
-# Declared before any sub that references it so both _decision_source and
-# _prompt_command_confirmation see the same hash.
-my %_session_grants;
+# Declared with `our`, not `my`: /security reads this table through the package
+# variable to display active grants, and a lexical made that read a different,
+# always-empty hash.
+our %_session_grants;
 
 =head2 _decision_source
 
-Internal: report WHY a command was approved (interactive prompt, session grant,
-no flags) so callers can audit the decision path. Returns a short string.
+Internal: report WHICH decision path a command takes - fully granted, partially
+granted plus a prompt, or a prompt for every flag - so callers can audit the
+decision path. Returns a short string.
+
+Call this BEFORE prompting. The prompt adds grants, so calling it afterwards
+reported an interactive approval as a session grant.
 
 =cut
 
 sub _decision_source {
     my ($self, $analysis, $context) = @_;
 
-    return 'no_flags' if !@{$analysis->{flags} || []};
-    # Was a session grant responsible?
-    for my $flag (@{$analysis->{flags}}) {
-        if ($_session_grants{$flag->{category}}) {
-            return 'session_grant:' . $flag->{category};
-        }
-    }
+    my @flags = @{$analysis->{flags} || []};
+    return 'no_flags' if !@flags;
 
-    return 'auto';
+    my @uncovered = $self->_uncovered_flags($analysis);
+    my $granted = @flags - @uncovered;
+
+    return 'session_grant' if $granted == @flags;
+    return "session_grant_partial:$granted/" . scalar(@flags) if $granted;
+    return 'prompt';
+}
+
+=head2 _uncovered_flags
+
+Internal: return the flags on an analysis that no session grant covers.
+
+A grant approves a category, not a command. A command that trips both
+network_outbound and credential_access is not approved by a network_outbound
+grant - the credential access is still an unanswered question. Only flags that
+are not covered need a decision, so this is the set that must be prompted for.
+
+Returns: list of flag hashrefs (empty when every flag is already granted).
+
+=cut
+
+sub _uncovered_flags {
+    my ($self, $analysis) = @_;
+
+    return grep { !$_session_grants{$_->{category}} } @{$analysis->{flags} || []};
+}
+
+=head2 _consent_options_text
+
+Internal: build the prompt options string, naming how many categories `a`
+grants. The option used to read "(a)llow category" regardless of how many
+distinct categories the command tripped, which understated one keypress.
+
+Arguments: $flag_count - number of categories awaiting a decision.
+
+Returns: the options string used by every command confirmation prompt.
+
+=cut
+
+sub _consent_options_text {
+    my ($self, $flag_count) = @_;
+
+    my $allow = ($flag_count && $flag_count > 1)
+        ? "(a)llow these $flag_count categories"
+        : '(a)llow category';
+
+    return "(o)nce | $allow | (n)o deny";
 }
 
 =head2 _prompt_command_confirmation
@@ -1101,13 +1153,21 @@ sub _prompt_command_confirmation {
 
     my $is_critical = ($analysis->{risk_level} && $analysis->{risk_level} eq 'critical') ? 1 : 0;
 
-    # Check session-level grants first
-    for my $flag (@{$analysis->{flags}}) {
-        my $cat = $flag->{category};
-        if ($_session_grants{$cat}) {
-            log_debug('TermOps', "Session grant exists for category '$cat' - auto-approving");
-            return 1;
-        }
+    # A grant approves a category, never a whole command. Auto-approve only
+    # when every flag on this command is already covered. Partial coverage
+    # must re-prompt for the uncovered flags - otherwise a command that trips
+    # both network_outbound and credential_access would be waved through by a
+    # network_outbound grant, and the credential access would never be shown.
+    my @uncovered = $self->_uncovered_flags($analysis);
+    my $granted_count = @{$analysis->{flags} || []} - @uncovered;
+    if (!$uncovered[0]) {
+        log_debug('TermOps', "All " . scalar(@{$analysis->{flags} || []})
+            . " flag category(s) already granted - auto-approving");
+        return 1;
+    }
+    if ($granted_count) {
+        log_debug('TermOps', "Partial grant coverage: $granted_count category(s) granted, "
+            . scalar(@uncovered) . ' still need a decision');
     }
 
     my $ui = ($context && $context->{ui}) ? $context->{ui} : undef;
@@ -1161,35 +1221,41 @@ sub _prompt_command_confirmation {
     $spinner->stop() if $spinner && $spinner->can('stop');
 
     # Build prompt options — unified across all risk levels (including critical).
-    # All risk levels use the same three-option format:
-    #   (y)es once | (a)llow category | (n)o deny
-    my $options = '(y)es once | (a)llow category | (n)o deny';
+    # The options name how many categories `a` grants, because `a` grants a
+    # session approval for every category still awaiting a decision.
+    my $options = $self->_consent_options_text(scalar @uncovered);
 
     # Use themed security prompt
     my $theme_mgr = $ui->{theme_mgr};
     if ($theme_mgr && $theme_mgr->can('get_security_prompt')) {
         my ($prompt_line, $input_line) = $theme_mgr->get_security_prompt(
             $command,
-            $analysis->{flags},
+            \@uncovered,
             $options,
         );
+        my $carry = $granted_count
+            ? $ui->colorize("  ($granted_count category already allowed this session)", 'dim') . "\n"
+            : '';
         if ($is_critical) {
-            print "\n" . $ui->colorize('[WARN] CRITICAL RISK', 'error_message') . "\n" . $prompt_line . "\n" . $input_line;
+            print "\n" . $ui->colorize('[WARN] CRITICAL RISK', 'error_message') . "\n" . $carry . $prompt_line . "\n" . $input_line;
         } else {
-            print "\n$prompt_line\n$input_line";
+            print "\n$carry$prompt_line\n$input_line";
         }
     } else {
         # Minimal fallback if no theme available
         # Build flag descriptions on one line
         my @flag_parts;
-        for my $flag (@{$analysis->{flags} || []}) {
+        for my $flag (@uncovered) {
             push @flag_parts, "[$flag->{severity}] $flag->{description}";
         }
         my $flags_str = join(" | ", @flag_parts);
+        my $carry = $granted_count
+            ? "  ($granted_count category already allowed this session)\n"
+            : '';
         if ($is_critical) {
-            print "\n* CRITICAL RISK | $command\n  $flags_str\n  $options: ";
+            print "\n* CRITICAL RISK | $command\n$carry  $flags_str\n  $options: ";
         } else {
-            print "\n* Security | $command\n  $flags_str\n  $options: ";
+            print "\n* Security | $command\n$carry  $flags_str\n  $options: ";
         }
     }
 
@@ -1209,11 +1275,24 @@ sub _prompt_command_confirmation {
 
     $spinner->start() if $spinner && $spinner->can('start');
 
-    if ($response eq 'y' || $response eq 'yes') {
+    # Vocabulary: (o)nce | (a)ll | (n)o. The legacy keys y/s/yes/session are
+    # still accepted so existing muscle memory does not turn into a silent
+    # denial, but they are logged so the usage shows up in the debug trail.
+    if ($response =~ /^(?:o|once)$/) {
         return 1;
-    } elsif ($response eq 'a' || $response eq 'allow') {
-        # Grant for the session - by category for all risk levels
-        for my $flag (@{$analysis->{flags}}) {
+    } elsif ($response =~ /^(?:y|yes)$/) {
+        log_debug('TermOps', "Legacy key 'y' used for once - accepted, maps to (o)nce");
+        return 1;
+    } elsif ($response =~ /^(?:a|all|allow)$/) {
+        # Grant a session approval for each category still awaiting a decision.
+        for my $flag (@uncovered) {
+            $_session_grants{$flag->{category}} = 1;
+            log_debug('TermOps', "Session grant added for category: $flag->{category}");
+        }
+        return 1;
+    } elsif ($response =~ /^(?:s|session)$/) {
+        log_debug('TermOps', "Legacy key 's' used - accepted, maps to (a)ll");
+        for my $flag (@uncovered) {
             $_session_grants{$flag->{category}} = 1;
             log_debug('TermOps', "Session grant added for category: $flag->{category}");
         }

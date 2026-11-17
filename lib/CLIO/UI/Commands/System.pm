@@ -261,10 +261,14 @@ sub handle_security_command {
     require CLIO::Tools::WebOperations;
     require CLIO::Security::PathAuthorizer;
 
-    my %term = %{$CLIO::Tools::TerminalOperations::_session_grants};
-    my %script = %{$CLIO::Tools::FileOperations::_script_write_grants};
-    my %overwrite = %{$CLIO::Tools::FileOperations::_overwrite_session_grants};
-    my %url = %{$CLIO::Tools::WebOperations::_url_session_grants};
+    # These are hashes, so they are read with a `%` sigil. Writing
+    # %{$CLIO::Tools::X::_grants} dereferences the scalar $..._grants, which
+    # is undef, and dies with "Can't use an undefined value as a HASH
+    # reference" as soon as any grant is active.
+    my %term      = %CLIO::Tools::TerminalOperations::_session_grants;
+    my %script    = %CLIO::Tools::FileOperations::_script_write_grants;
+    my %overwrite = %CLIO::Tools::FileOperations::_overwrite_session_grants;
+    my %url       = %CLIO::Tools::WebOperations::_url_session_grants;
     my $path_grants = CLIO::Security::PathAuthorizer::list_path_grants();
 
     my @all_cats;

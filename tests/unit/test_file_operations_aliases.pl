@@ -85,6 +85,12 @@ my @cases = (
     { name => 'create', params => { operation => 'create', path => "$tmp/created_via_alias.txt", content => "hello\n" },
         check => sub { $_[0]->{success} && -f "$tmp/created_via_alias.txt" } },
 
+    # The overwrite prompt fails closed when no interactive channel exists, and
+    # this fixture is a pre-existing file the tool did not create. The case is
+    # about alias dispatch, not approval, so grant the category up front.
+    { name => '_write_grant', setup => sub {
+        $CLIO::Tools::FileOperations::_overwrite_session_grants{file_overwrite} = 1;
+      } },
     { name => '_write_setup', setup => sub {
         open my $fh, '>:encoding(UTF-8)', "$tmp/written_via_alias.txt" or die;
         print $fh "old\n"; close $fh;

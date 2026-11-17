@@ -23,6 +23,12 @@ use CLIO::Core::WorkflowOrchestrator;
 use POSIX ();  # For _exit() in child process after fork (avoids END blocks)
 use JSON::PP ();  # For JSON::PP::false default in get_additional_parameters()
 
+# Paths this process created. Rewriting a file the agent itself created is the
+# normal write-then-correct loop, not a clobber of user data, so it does not
+# need approval. Only files that did not exist at write time are recorded:
+# appending to a pre-existing file does not make that file safe to overwrite.
+our %_session_created_paths;
+
 =head1 NAME
 
 CLIO::Tools::FileOperations - Consolidated file operations tool
@@ -2281,29 +2287,30 @@ sub write_file {
         $file_existed = -f $path;
         $vault_type = $file_existed ? 'modify' : 'create';
 
-        # Prompt for confirmation when overwriting a non-empty file.
-        # This prevents accidental data loss when the LLM misidentifies a
-        # file path. Append mode is excluded — it's an intentional
-        # append, not a destructive overwrite. Non-interactive contexts
-        # (no UI, or --input mode) skip the prompt but log a warning.
-        if (!$append && $file_existed && -s $path) {
-            my $ui = $context->{ui} if $context;
-            my $has_tty = -t STDIN;
-            if ($ui && $ui->can('colorize') && $has_tty) {
-                my $existing_size = -s $path;
-                my $approved = $self->_prompt_overwrite_confirmation($path, $existing_size, $context);
-                unless ($approved) {
-                    log_debug('FileOp', "User DENIED overwrite: $path ($existing_size bytes)");
-                    return $self->error_result(
-                        "Overwrite denied by user.\n\n" .
-                        "File '$path' already exists ($existing_size bytes). " .
-                        "The user chose not to overwrite this file."
-                    );
-                }
-                log_debug('FileOp', "User APPROVED overwrite: $path");
-            } else {
-                log_debug('FileOp', "Overwrite confirmation skipped: non-interactive context or no UI for $path");
+        # Prompt for confirmation when overwriting a non-empty file. This
+        # prevents accidental data loss when the LLM misidentifies a file path.
+        # Append mode is excluded - it's an intentional append, not a
+        # destructive overwrite.
+        #
+        # A file this process created is exempt: the write-then-correct loop is
+        # how edits get made, and nothing of the user's is at risk. Any other
+        # existing file needs approval, and the prompt fails closed when no
+        # interactive channel is available - previously a non-interactive
+        # overwrite was permitted with only a debug line in the audit trail.
+        my $abs_path = File::Spec->rel2abs($path);
+        if (!$append && $file_existed && -s $path && !$_session_created_paths{$abs_path}) {
+            my $existing_size = -s $path;
+            my $approved = $self->_prompt_overwrite_confirmation($path, $existing_size, $context);
+            unless ($approved) {
+                log_debug('FileOp', "Overwrite NOT approved: $path ($existing_size bytes)");
+                return $self->error_result(
+                    "Overwrite denied: '$path' already exists ($existing_size bytes).\n\n" .
+                    "Replacing an existing file needs explicit approval, and none was available " .
+                    "for this request. Options: use append mode to add to the file, write to a " .
+                    "different path, or delete the file explicitly first."
+                );
             }
+            log_debug('FileOp', "User APPROVED overwrite: $path");
         }
 
         $self->_vault_capture($path, $vault_type, $context);
@@ -2332,6 +2339,10 @@ sub write_file {
         }
 
         $written_size = -s $path;
+
+        # Record files this process brought into existence, so later rewrites
+        # of its own output skip the overwrite prompt.
+        $_session_created_paths{$abs_path} = 1 unless $file_existed;
 
         log_debug('FileOp', "Wrote file $path ($written_size bytes, mode=$verb)");
 
@@ -2904,11 +2915,12 @@ or the broker relay for sub-agents). The user always has final authority.
 
 =cut
 
-# Session-level grants for script writing (keyed by category name)
-my %_script_write_grants;
+# Session-level grants for script writing (keyed by category name).
+# `our`, not `my`: /security reads these tables through the package variable.
+our %_script_write_grants;
 
 # Session-level grants for file overwrites (keyed by category name)
-my %_overwrite_session_grants;
+our %_overwrite_session_grants;
 
 sub _scan_script_content {
     my ($self, $path, $content, $context) = @_;
@@ -3050,13 +3062,15 @@ sub _prompt_script_confirmation {
     my $spinner = ($context && $context->{spinner}) ? $context->{spinner} : undef;
     $spinner->stop() if $spinner && $spinner->can('stop');
 
+    my $options = '(o)nce | (a)llow script creation | (n)o deny';
+
     # Use themed security prompt
     my $theme_mgr = $ui->{theme_mgr};
     if ($theme_mgr && $theme_mgr->can('get_security_prompt')) {
         my ($prompt_line, $input_line) = $theme_mgr->get_security_prompt(
             $path,
             $scan_result->{flags},
-            '(y)es once | (a)llow category | (n)o deny',
+            $options,
         );
         print "\n$prompt_line\n$input_line";
     } else {
@@ -3066,7 +3080,7 @@ sub _prompt_script_confirmation {
             push @flag_parts, "[$flag->{severity}] $flag->{description}";
         }
         my $flags_str = join(" | ", @flag_parts);
-        print "\n* Security | $path\n  $flags_str\n  (y)es once | (a)llow category | (n)o deny: ";
+        print "\n* Security | $path\n  $flags_str\n  $options: ";
     }
 
     # Suspend ALRM handler - Chat.pm's 1-second timer calls ReadKey(-1)
@@ -3081,6 +3095,10 @@ sub _prompt_script_confirmation {
 
     CLIO::Compat::Terminal::ReadMode(0);
 
+    # Flush stdout so the prompt is visible before blocking on input
+    my $old_fh = select(STDOUT);
+    $| = 1; select($old_fh);
+
     my $response = <STDIN>;
     chomp($response) if defined $response;
     $response = lc($response || 'n');
@@ -3093,11 +3111,19 @@ sub _prompt_script_confirmation {
 
     $spinner->start() if $spinner && $spinner->can('start');
 
-    if ($response eq 'y' || $response eq 'yes') {
+    # Vocabulary: (o)nce | (a)ll | (n)o. Legacy keys stay accepted but logged.
+    if ($response =~ /^(?:o|once)$/) {
         return 1;
-    } elsif ($response eq 'a' || $response eq 'allow') {
+    } elsif ($response =~ /^(?:y|yes)$/) {
+        log_debug('FileOp', "Legacy key 'y' used for once - accepted, maps to (o)nce");
+        return 1;
+    } elsif ($response =~ /^(?:a|all|allow)$/) {
         $_script_write_grants{script_creation} = 1;
         log_debug('FileOp', "Session grant added for script creation");
+        return 1;
+    } elsif ($response =~ /^(?:s|session)$/) {
+        log_debug('FileOp', "Legacy key 's' used - accepted, maps to (a)ll");
+        $_script_write_grants{script_creation} = 1;
         return 1;
     }
 
@@ -3152,13 +3178,6 @@ sub _prompt_overwrite_confirmation {
     # Non-interactive context: no UI or no TTY. Try broker relay for sub-agents.
     my $ui = ($context && $context->{ui}) ? $context->{ui} : undef;
     unless ($ui && $ui->can('colorize') && -t STDIN) {
-        # In --input mode: log a warning and allow
-        if ($ui && $ui->{non_interactive}) {
-            log_debug('FileOp', "Non-interactive mode - overwriting $path ($existing_size bytes) without confirmation");
-            $ui->display_warning_message("Overwriting $path ($existing_size bytes) without confirmation (non-interactive mode)");
-            return 1;
-        }
-
         # No TTY - try broker relay for headless sub-agents
         my $broker = ($context && $context->{broker_client}) ? $context->{broker_client} : undef;
         if ($broker) {
@@ -3190,7 +3209,7 @@ sub _prompt_overwrite_confirmation {
     $spinner->stop() if $spinner && $spinner->can('stop');
 
     # Unified three-option format across all security prompts
-    my $options = '(y)es once | (a)llow category | (n)o deny';
+    my $options = '(o)nce | (a)llow file overwrites | (n)o deny';
 
     my $theme_mgr = $ui->{theme_mgr};
     if ($theme_mgr && $theme_mgr->can('get_security_prompt')) {
@@ -3225,11 +3244,19 @@ sub _prompt_overwrite_confirmation {
 
     $spinner->start() if $spinner && $spinner->can('start');
 
-    if ($response eq 'y' || $response eq 'yes') {
+    # Vocabulary: (o)nce | (a)ll | (n)o. Legacy keys stay accepted but logged.
+    if ($response =~ /^(?:o|once)$/) {
         return 1;
-    } elsif ($response eq 'a' || $response eq 'allow') {
+    } elsif ($response =~ /^(?:y|yes)$/) {
+        log_debug('FileOp', "Legacy key 'y' used for once - accepted, maps to (o)nce");
+        return 1;
+    } elsif ($response =~ /^(?:a|all|allow)$/) {
         $_overwrite_session_grants{file_overwrite} = 1;
         log_debug('FileOp', "Session grant added for file_overwrite");
+        return 1;
+    } elsif ($response =~ /^(?:s|session)$/) {
+        log_debug('FileOp', "Legacy key 's' used - accepted, maps to (a)ll");
+        $_overwrite_session_grants{file_overwrite} = 1;
         return 1;
     }
 
