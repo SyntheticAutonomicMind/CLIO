@@ -221,6 +221,9 @@ sub handle_multiline_command {
 Handle the /security command - inspect and revoke approval grants.
 
   /security                  Show every active grant
+  /security revoke <n>       Revoke one grant by its number
+  /security revoke <scope> <key>
+                             Revoke one grant by scope and key
   /security reset            Clear every grant
   /security reset <scope>    Clear one scope: command, script, overwrite,
                              web, path
@@ -243,6 +246,11 @@ sub handle_security_command {
 
     my $action = $args[0] || '';
     my $scope  = $args[1];
+
+    if ($action eq 'revoke') {
+        $self->_security_revoke(@args[1 .. $#args]);
+        return;
+    }
 
     if ($action eq 'reset') {
         my $cleared;
@@ -299,25 +307,17 @@ sub handle_security_command {
 
     $self->display_key_value("Active grants", scalar(@grants) . " grant(s)");
 
+    my $number = 0;
     for my $grant (@grants) {
-        my $label = $SECURITY_SCOPE_LABELS{ $grant->{scope} } || $grant->{scope};
-        my $target = $grant->{key};
-
-        if ($grant->{scope} eq 'path') {
-            my $data = $grant->{data} || {};
-            my $where = $data->{path};
-            if (defined $where && length $where) {
-                # A directory approval covers everything below it, so show it
-                # as a directory rather than as a file with an odd name.
-                $where .= '/' if $data->{prefix} && $where ne '/';
-            } else {
-                $where = 'any path';
-            }
-            $target = ($data->{operation} || '?') . ' -> ' . $where;
-            $target .= $data->{one_time_use} ? ' (one-time)' : ' (session)';
-        }
-
-        $self->display_list_item("$label: $target (" . _format_grant_age($grant->{age}) . ')');
+        $number++;
+        $self->display_list_item(
+            sprintf('%2d. %s (%s)%s',
+                $number,
+                _describe_grant($grant),
+                _format_grant_age($grant->{age}),
+                $grant->{source} eq 'resumed' ? ' - resumed from session' : '',
+            )
+        );
     }
 
     my $ttl = CLIO::Security::GrantStore::ttl_seconds();
@@ -328,7 +328,127 @@ sub handle_security_command {
     } else {
         $self->display_key_value("Lifetime", "no expiry");
     }
-    $self->display_key_value("Tip", "Use /security reset [scope] to clear grants");
+    $self->display_key_value("Tip", "Use /security revoke <number> for one grant, /security reset [scope] for all");
+}
+
+=head2 _security_revoke(@target) (Internal)
+
+Handle C</security revoke>. Accepts either a number from the C</security>
+listing or a scope plus key. Revoking is the safe direction, so it happens
+without a confirmation prompt; the grant that was removed is printed either
+way, because the number is resolved against a freshly read list and a grant
+created since the list was drawn would shift it.
+
+=cut
+
+sub _security_revoke {
+    my ($self, @target) = @_;
+
+    my @grants = CLIO::Security::GrantStore::list_grants();
+
+    $self->display_command_header("SECURITY GRANT REVOKE");
+
+    unless (@target) {
+        $self->display_error_message(
+            "Say which grant to revoke: /security revoke <number>, or /security revoke <scope> <key>.");
+        $self->display_key_value("Tip", "Run /security for the numbered list.");
+        return;
+    }
+
+    unless (@grants) {
+        $self->display_info_message("No active approval grants to revoke.");
+        return;
+    }
+
+    my $grant;
+
+    if (@target == 1 && $target[0] =~ /^\d+$/) {
+        $grant = $grants[ $target[0] - 1 ];
+        unless ($grant) {
+            $self->display_error_message(
+                "No grant numbered $target[0]; there " . (@grants == 1 ? 'is 1 grant' : 'are ' . scalar(@grants) . ' grants') . '.');
+            $self->display_key_value("Tip", "Run /security for the current numbering.");
+            return;
+        }
+    } else {
+        my $scope = $target[0];
+        my $key   = join(' ', @target[1 .. $#target]);
+
+        unless ($SECURITY_SCOPE_LABELS{$scope}) {
+            $self->display_error_message(
+                "Unknown scope '$scope'. Scopes: " . join(', ', sort keys %SECURITY_SCOPE_LABELS));
+            return;
+        }
+
+        # A path grant's key carries the conversation id it was approved in
+        # (`conv|operation|path`), which is not printed anywhere. Accept the
+        # printed tail as well as the whole key so the visible form works.
+        ($grant) = grep {
+            $_->{scope} eq $scope
+                && ($_->{key} eq $key || $_->{key} =~ /\Q$key\E\z/)
+        } @grants;
+        unless ($grant) {
+            $self->display_error_message("No '$scope' grant for '$key'.");
+            my @targets = map { _grant_target($_) } grep { $_->{scope} eq $scope } @grants;
+            $self->display_key_value("Grants in that scope", @targets ? join(', ', @targets) : 'none');
+            return;
+        }
+    }
+
+    my $description = _describe_grant($grant);
+    unless (CLIO::Security::GrantStore::revoke($grant->{scope}, $grant->{key})) {
+        $self->display_error_message("Grant '$description' was already gone.");
+        return;
+    }
+
+    $self->display_success_message("Revoked $description.");
+    $self->writeline("", markdown => 0);
+    $self->display_key_value("Effect", "The next matching action prompts again");
+    $self->display_key_value("Remaining grants", CLIO::Security::GrantStore::count() . " grant(s)");
+}
+
+=head2 _describe_grant($grant) (Internal)
+
+One human line for a grant, shared by the status list and the revoke
+confirmation so the thing you revoke reads the same as the thing you listed.
+
+=cut
+
+sub _describe_grant {
+    my ($grant) = @_;
+
+    my $label = $SECURITY_SCOPE_LABELS{ $grant->{scope} } || $grant->{scope};
+    return "$label: " . _grant_target($grant);
+}
+
+=head2 _grant_target($grant) (Internal)
+
+What a grant covers, without the scope label: the key for most scopes, and an
+operation-plus-path rendering for path grants so a directory reads as a
+directory.
+
+=cut
+
+sub _grant_target {
+    my ($grant) = @_;
+
+    my $target = $grant->{key};
+
+    if ($grant->{scope} eq 'path') {
+        my $data  = $grant->{data} || {};
+        my $where = $data->{path};
+        if (defined $where && length $where) {
+            # A directory approval covers everything below it, so show it as a
+            # directory rather than as a file with an odd name.
+            $where .= '/' if $data->{prefix} && $where ne '/';
+        } else {
+            $where = 'any path';
+        }
+        $target = ($data->{operation} || '?') . ' -> ' . $where;
+        $target .= $data->{one_time_use} ? ' (one-time)' : ' (session)';
+    }
+
+    return $target;
 }
 
 =head2 _format_grant_age($seconds) (Internal)

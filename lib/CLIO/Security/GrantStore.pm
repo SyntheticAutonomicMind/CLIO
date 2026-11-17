@@ -48,6 +48,15 @@ inside that scope:
 Scopes exist so a reset can be narrow (C</security reset web>) and so a grant
 can never be read under the wrong meaning by a typo.
 
+=head2 Provenance
+
+Every grant records whether it was made in this process or restored from a
+session file. The two are indistinguishable once loaded, and they mean
+different things to a user reading C</security>: a grant made a minute ago is
+one they remember answering, while a resumed grant is a decision taken possibly
+yesterday, in a conversation they may have closed for a reason. The status view
+marks the second kind.
+
 =head2 Expiry
 
 Every grant records when it was granted and is only honoured while it is
@@ -116,6 +125,7 @@ sub grant {
     $_grants{$scope}{$key} = {
         granted_at => $opts{granted_at} // $now,
         data       => $opts{data} || {},
+        source     => 'process',
     };
 
     log_debug('GrantStore', "Granted $scope/$key");
@@ -197,7 +207,9 @@ Options:
 
 =back
 
-Each entry: C<{ scope, key, granted_at, expired, data }>.
+Each entry: C<{ scope, key, granted_at, age, expired, data, source }> where
+C<source> is C<'process'> for a grant made in this process and C<'resumed'> for
+one loaded by L</restore>.
 
 =cut
 
@@ -219,6 +231,7 @@ sub list_grants {
                 age        => $age,
                 expired    => $expired,
                 data       => $record->{data} || {},
+                source     => $record->{source} || 'process',
             };
         }
     }
@@ -378,6 +391,7 @@ sub restore {
         $_grants{$scope}{$key} = {
             granted_at => $granted_at,
             data       => $entry->{data} || {},
+            source     => 'resumed',
         };
         $result->{restored}++;
     }

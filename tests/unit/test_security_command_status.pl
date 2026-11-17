@@ -153,4 +153,142 @@ subtest 'path grants show their real scope' => sub {
         'a wildcard grant is shown as any path');
 };
 
+# ---------------------------------------------------------------------------
+# F10: the status view is only half the job. A grant you can see but cannot
+# drop leaves the user choosing between "live with it" and "reset everything".
+sub run_security {
+    my (@args) = @_;
+    my $chat = FakeChat->new();
+    my $cmd  = CLIO::UI::Commands::System->new(chat => $chat);
+    my $ok   = eval { $cmd->handle_security_command(@args); 1 };
+    return ($ok, join("\n", $chat->lines()), $@);
+}
+
+subtest 'grants are numbered for revocation' => sub {
+    clear_grants();
+    CLIO::Security::GrantStore::grant('command', 'network_outbound');
+    CLIO::Security::GrantStore::grant('web', 'fetch_url');
+
+    my (undef, $out) = rendered_security_status();
+    like($out, qr/^\s*1\. command: network_outbound/m, 'first grant is numbered 1');
+    like($out, qr/^\s*2\. web: fetch_url/m, 'second grant is numbered 2');
+    like($out, qr{/security revoke <number>}, 'the tip names the revoke form');
+};
+
+subtest 'revoke by number removes exactly that grant' => sub {
+    clear_grants();
+    CLIO::Security::GrantStore::grant('command', 'network_outbound');
+    CLIO::Security::GrantStore::grant('web', 'fetch_url');
+
+    my ($ok, $out, $err) = run_security('revoke', '1');
+    ok($ok, 'revoke survives') or diag($err);
+
+    ok(!CLIO::Security::GrantStore::is_granted('command', 'network_outbound'),
+        'the numbered grant is gone');
+    ok(CLIO::Security::GrantStore::is_granted('web', 'fetch_url'),
+        'the other grant is untouched');
+    like($out, qr/Revoked command: network_outbound/, 'says what it revoked');
+};
+
+subtest 'a number out of range revokes nothing' => sub {
+    clear_grants();
+    CLIO::Security::GrantStore::grant('command', 'network_outbound');
+
+    my ($ok, $out, $err) = run_security('revoke', '7');
+    ok($ok, 'out-of-range revoke does not die') or diag($err);
+    is(CLIO::Security::GrantStore::count(), 1, 'nothing was removed');
+    like($out, qr/No grant numbered 7/, 'explains the miss');
+};
+
+subtest 'revoke by scope and key' => sub {
+    clear_grants();
+    CLIO::Security::GrantStore::grant('script', 'script_creation');
+    CLIO::Security::GrantStore::grant('overwrite', 'file_overwrite');
+
+    my ($ok, undef, $err) = run_security('revoke', 'script', 'script_creation');
+    ok($ok, 'scope+key revoke survives') or diag($err);
+
+    ok(!CLIO::Security::GrantStore::is_granted('script', 'script_creation'), 'script grant gone');
+    ok(CLIO::Security::GrantStore::is_granted('overwrite', 'file_overwrite'), 'overwrite grant kept');
+};
+
+subtest 'revoke of a path grant accepts the form the listing shows' => sub {
+    clear_grants();
+    my $authorizer = CLIO::Security::PathAuthorizer->new(debug => 0);
+    $authorizer->grantAuthorization('conv', 'file_operations.write_file', 0,
+        '/tmp/approved', prefix => 1);
+
+    # The stored key carries the conversation id; the listing does not show it.
+    my ($grant) = CLIO::Security::GrantStore::list_grants();
+    like($grant->{key}, qr/^conv\|/, 'the stored key is conversation-qualified');
+
+    my ($ok, undef, $err) = run_security('revoke', 'path', 'file_operations.write_file|/tmp/approved');
+    ok($ok, 'path revoke by the printed tail survives') or diag($err);
+    is(CLIO::Security::GrantStore::count(), 0, 'the path grant is gone');
+};
+
+subtest 'revoke of a path grant still accepts the whole key' => sub {
+    clear_grants();
+    my $authorizer = CLIO::Security::PathAuthorizer->new(debug => 0);
+    $authorizer->grantAuthorization('conv', 'file_operations.write_file', 0,
+        '/tmp/approved', prefix => 1);
+
+    my ($grant) = CLIO::Security::GrantStore::list_grants();
+    my ($ok, undef, $err) = run_security('revoke', 'path', $grant->{key});
+    ok($ok, 'path revoke by full key survives') or diag($err);
+    is(CLIO::Security::GrantStore::count(), 0, 'the path grant is gone');
+};
+
+subtest 'revoke rejects an unknown scope without touching anything' => sub {
+    clear_grants();
+    CLIO::Security::GrantStore::grant('command', 'network_outbound');
+
+    my ($ok, $out, $err) = run_security('revoke', 'bogus', 'x');
+    ok($ok, 'unknown scope does not die') or diag($err);
+    is(CLIO::Security::GrantStore::count(), 1, 'nothing was removed');
+    like($out, qr/Unknown scope 'bogus'/, 'names the bad scope');
+};
+
+subtest 'revoke of a missing key lists what is there' => sub {
+    clear_grants();
+    CLIO::Security::GrantStore::grant('web', 'fetch_url');
+
+    my ($ok, $out, $err) = run_security('revoke', 'web', 'nope');
+    ok($ok, 'missing key does not die') or diag($err);
+    is(CLIO::Security::GrantStore::count(), 1, 'nothing was removed');
+    like($out, qr/Grants in that scope: fetch_url/, 'shows the keys that exist');
+};
+
+subtest 'revoke with no target asks for one' => sub {
+    clear_grants();
+    CLIO::Security::GrantStore::grant('command', 'network_outbound');
+
+    my ($ok, $out, $err) = run_security('revoke');
+    ok($ok, 'bare revoke does not die') or diag($err);
+    is(CLIO::Security::GrantStore::count(), 1, 'nothing was removed');
+    like($out, qr/Say which grant to revoke/, 'asks which grant');
+};
+
+subtest 'a resumed grant is marked as resumed' => sub {
+    clear_grants();
+    CLIO::Security::GrantStore::grant('command', 'network_outbound');
+    my $saved = CLIO::Security::GrantStore::export();
+
+    clear_grants();
+    CLIO::Security::GrantStore::restore($saved);
+
+    my (undef, $out) = rendered_security_status();
+    like($out, qr/command: network_outbound .*resumed from session/,
+        'a grant that came back from disk says so');
+};
+
+subtest 'a grant made in this process is not marked resumed' => sub {
+    clear_grants();
+    CLIO::Security::GrantStore::grant('web', 'fetch_url');
+
+    my (undef, $out) = rendered_security_status();
+    unlike($out, qr/fetch_url.*resumed from session/,
+        'a fresh grant is not labelled resumed');
+};
+
 done_testing();

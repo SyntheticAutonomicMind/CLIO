@@ -218,7 +218,13 @@ between conversations.
 
 **Expiring grants:** Grants carry a lifetime (24 hours by default). Grants that
 expire before a resume are dropped rather than resurrected. Type `/security` to
-see what is active and `/security reset` to clear it.
+see what is active, `/security revoke <number>` to drop one, and
+`/security reset` to clear them all.
+
+**Provenance:** `/security` marks grants that came back from a session file as
+"resumed from session". A grant you answered a minute ago and a grant you
+answered yesterday are both live, but they are not the same statement, and the
+listing says which is which.
 
 ### Why Not a Blocklist?
 
@@ -373,6 +379,9 @@ clio --sandbox --new
 
 # Manage session-level security grants
 /security              # Show security level, sandbox state, and active grants
+/security revoke 3      # Drop the third grant in that list
+/security revoke web fetch_url
+                       # Drop one grant by scope and key
 /security reset        # Clear all grants (restore interactive prompts)
 /security reset web    # Clear one scope: command, script, overwrite,
                        # web, path

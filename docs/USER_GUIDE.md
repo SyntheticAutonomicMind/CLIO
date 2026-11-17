@@ -2335,10 +2335,18 @@ still prompts.
 
 ```bash
 /security                  # Show every active approval
+/security revoke 2         # Revoke one by its number in that list
+/security revoke path "file_operations.write_file|/srv/app"
+                           # Revoke one by scope and key
 /security reset            # Clear all of them
 /security reset web        # Clear one scope: command, script, overwrite,
                            # web, path
 ```
+
+Each grant is numbered in the `/security` listing, and grants restored from a
+resumed session are marked "resumed from session" so a decision from yesterday
+is distinguishable from one you answered a minute ago. Revoking takes effect on
+the next matching action: it prompts again.
 
 ### Secret and PII Redaction
 
