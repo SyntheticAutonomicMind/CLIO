@@ -174,10 +174,20 @@ Returns: Hashref with approved and grant_type.
 
 sub request_script_authorization {
     my ($self, $path, $scan_result, $context) = @_;
-    
+
+    # A relaxed controller has already labelled the findings low. Say why, so
+    # the human answering for the sub-agent is not left guessing whether the
+    # scan found nothing serious or was told not to look for it.
+    my $description = $path;
+    if ($scan_result->{relaxed}) {
+        $description .= $scan_result->{relabelled}
+            ? ' (security_level=relaxed: scanned, severity labelled low)'
+            : ' (security_level=relaxed: scanned)';
+    }
+
     return $self->request_authorization(
         category    => 'script_creation',
-        description => $path,
+        description => $description,
         risk_level  => $scan_result->{risk_level} || 'standard',
         flags       => $scan_result->{flags} || [],
     );

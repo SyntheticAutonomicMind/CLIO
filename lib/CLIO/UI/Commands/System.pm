@@ -268,6 +268,23 @@ sub handle_security_command {
 
     $self->display_command_header("SECURITY STATUS");
 
+    # What the configuration itself has already decided for this session. A
+    # level of relaxed lowers the severity a finding is reported at; sandbox
+    # escalates everything. Both are worth seeing next to the grants, because
+    # together they are the whole answer to "what will not ask me?".
+    if ($self->{config}) {
+        my $level   = $self->{config}->get('security_level') || 'standard';
+        my $sandbox = $self->{config}->get('sandbox') ? 'on' : 'off';
+        my %note = (
+            relaxed  => 'commands prompt for critical only; scripts are scanned and labelled low',
+            standard => 'commands prompt for high and above; scripts prompt on any finding',
+            strict   => 'commands prompt for medium and above; scripts prompt on any finding',
+        );
+        $self->display_key_value("Security level", "$level (" . ($note{$level} || '') . ')');
+        $self->display_key_value("Sandbox", "$sandbox (escalates every finding)") if $sandbox eq 'on';
+        $self->writeline("", markdown => 0);
+    }
+
     # One table, one shape: the store is the only thing that knows where
     # grants live, so this view cannot drift out of sync with enforcement.
     my @grants = CLIO::Security::GrantStore::list_grants();

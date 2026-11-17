@@ -147,11 +147,39 @@ shows up in the debug trail.
 
 Configure via `/config set security_level <level>`:
 
-| Level | Confirms | Blocks |
-|-------|----------|--------|
-| `relaxed` | Nothing | System-destructive only |
-| `standard` (default) | High-risk (network, credentials) | System-destructive |
-| `strict` | Medium+ risk (including sudo, env) | System-destructive |
+| Level | Confirms | Labels script findings | Blocks |
+|-------|----------|------------------------|--------|
+| `relaxed` | Critical only | `low` | System-destructive |
+| `standard` (default) | High-risk (network, credentials) | As detected | System-destructive |
+| `strict` | Medium+ risk (including sudo, env) | As detected | System-destructive |
+
+The level decides how a finding is *labelled*. It never decides whether the
+finding is *looked for*.
+
+#### Script writes are always scanned
+
+`write_file` inspects the content of anything that looks like a script - by
+extension, shebang, or Makefile name - before writing it. The command layer
+only ever sees `bash deploy.sh` or `./deploy.sh`, so a write that skipped this
+check would put a script on disk that nothing had read. The only thing standing
+between a written script and its execution is this scan.
+
+`security_level=relaxed` used to skip the scan entirely. It now scans like
+every other level and reports the same findings with everything below `critical`
+labelled `low`. Critical findings keep their severity and still block the write.
+The approval prompt states which happened:
+
+```text
+  Security | deploy.sh
+  (security_level=relaxed: contents were scanned, severity labelled low)
+  [low] Outbound data transfer command 'curl' detected
+  (o)nce | (a)llow script creation | (n)o deny:
+```
+
+A silent relabelling would be the same defect as a silent skip: the user could
+not tell whether nothing was found or everything was found and called low. The
+same notice travels to a sub-agent's parent through the authorization relay,
+because the human answering there is the one making the decision.
 
 ### User Confirmation Flow
 
@@ -333,7 +361,7 @@ The attacker would need to bypass ALL layers simultaneously to succeed.
 # Set command security level
 /config set security_level standard    # Default: prompt for high-risk
 /config set security_level strict      # Prompt for all risky commands
-/config set security_level relaxed     # Only block destructive
+/config set security_level relaxed     # Block destructive; scripts still scanned
 
 # Set secret redaction level
 /config set redact_level standard       # Default: redact everything (recommended)
@@ -344,7 +372,7 @@ The attacker would need to bypass ALL layers simultaneously to succeed.
 clio --sandbox --new
 
 # Manage session-level security grants
-/security              # Show active grants
+/security              # Show security level, sandbox state, and active grants
 /security reset        # Clear all grants (restore interactive prompts)
 /security reset web    # Clear one scope: command, script, overwrite,
                        # web, path

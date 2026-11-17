@@ -220,7 +220,7 @@ sub _display_config_help {
     $self->writeline("", markdown => 0);
     
     $self->display_section_header("COMMAND SECURITY LEVELS");
-    $self->display_key_value("relaxed", "Only block system-destructive commands", 25);
+    $self->display_key_value("relaxed", "Block destructive commands; script writes still prompt (reported low)", 25);
     $self->display_key_value("standard", "Prompt for high-risk commands (default)", 25);
     $self->display_key_value("strict", "Prompt for all risky commands", 25);
     $self->writeline("", markdown => 0);
@@ -342,7 +342,7 @@ sub _handle_config_set {
         $self->{config}->save();
         
         my %level_desc = (
-            relaxed => "Only block system-destructive commands (no prompts for network/credential access)",
+            relaxed => "Block system-destructive commands; no command prompts for network/credential access (script contents are still scanned and reported low)",
             standard => "Prompt for high-risk commands (network transfers, credential access)",
             strict  => "Prompt for all risky commands including medium-risk (ssh, sudo, env dumps)",
         );
@@ -351,7 +351,8 @@ sub _handle_config_set {
         $self->display_info_message($level_desc{$value});
         
         if ($value eq 'relaxed') {
-            $self->display_info_message("WARNING: Network and credential access commands will not be flagged");
+            $self->display_info_message("WARNING: Network and credential access commands run without a prompt");
+            $self->display_info_message("Script writes are still scanned; findings are reported as low");
         }
         return;
     }
@@ -632,7 +633,7 @@ sub show_global_config {
     # Command security level
     my $security_level = $self->{config}->get('security_level') || 'standard';
     my %sec_desc = (
-        relaxed  => '(block destructive only)',
+        relaxed  => '(block destructive; scripts scanned, reported low)',
         standard => '(prompt for high-risk commands)',
         strict   => '(prompt for all risky commands)',
     );

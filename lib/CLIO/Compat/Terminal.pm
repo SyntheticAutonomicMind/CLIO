@@ -386,7 +386,9 @@ sub ReadKey {
             use Fcntl;
 
             my $flags = fcntl(STDIN, F_GETFL, 0);
-            fcntl(STDIN, F_SETFL, $flags | O_NONBLOCK);
+            if (defined $flags) {
+                fcntl(STDIN, F_SETFL, $flags | O_NONBLOCK);
+            }
 
             # Retry on EINTR (interrupted by signal)
             while (1) {
@@ -396,7 +398,10 @@ sub ReadKey {
                 # EINTR: retry immediately
             }
 
-            fcntl(STDIN, F_SETFL, $flags);
+            # fcntl fails on handles that are not descriptors (a tied or
+            # in-memory STDIN under test). Skip the restore rather than
+            # warning about it - the non-blocking read above still worked.
+            fcntl(STDIN, F_SETFL, $flags) if defined $flags;
         }
     } elsif ($timeout == 0) {
         # Blocking read with EINTR retry

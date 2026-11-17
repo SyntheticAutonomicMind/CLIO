@@ -2908,10 +2908,23 @@ to be a script (by extension or shebang line). Uses the CommandAnalyzer
 to classify each significant line.
 
 Returns undef if content is safe, or a hashref describing the concern:
-  { requires_confirmation => 1, summary => $text, flags => [...] }
+  { requires_confirmation => 1, summary => $text, flags => [...],
+    blocked => 1,      # any critical finding
+    relaxed => 1 }     # findings were labelled low by security_level=relaxed
 
 All flagged scripts route through user approval (via _prompt_script_confirmation
 or the broker relay for sub-agents). The user always has final authority.
+
+=head2 security_level
+
+C<security_level> decides how a script finding is *labelled*, never whether the
+content is examined. Relaxed mode used to return undef from here, so a script
+written and then executed through the shell was checked by nothing at all: the
+command layer only sees C<bash deploy.sh>, and the user was never told that a
+configuration value had switched off the only inspection of what the script
+does. Relaxed now scans like every other level and reports the same findings
+with the severity of everything below critical lowered to C<low>; the approval
+prompt says so. System-destructive content stays critical and stays blocked.
 
 =cut
 
@@ -2951,8 +2964,9 @@ sub _scan_script_content {
     my $sandbox = ($config && $config->get('sandbox')) ? 1 : 0;
     my $security_level = ($config) ? ($config->get('security_level') || 'standard') : 'standard';
 
-    # In relaxed mode, don't scan scripts
-    return undef if $security_level eq 'relaxed' && !$sandbox;
+    # Relaxed reporting: scan, but label every non-critical finding low. Sandbox
+    # escalates instead of relaxing, so it never takes this path.
+    my $relaxed = ($security_level eq 'relaxed' && !$sandbox) ? 1 : 0;
 
     # Check session grants
     return undef if CLIO::Security::GrantStore::is_granted('script', 'script_creation');
@@ -3002,10 +3016,25 @@ sub _scan_script_content {
 
     return undef unless @all_flags;
 
+    # Lower the reported severity, keep the finding. Critical is left alone:
+    # relaxed means "do not alarm me about the routine risks", not "let a
+    # destructive script through unwarned".
+    my $relabelled = 0;
+    if ($relaxed) {
+        for my $flag (@all_flags) {
+            next if $flag->{severity} eq 'critical';
+            $flag->{severity} = 'low';
+            $relabelled++;
+        }
+        log_debug('FileOp', "security_level=relaxed: $relabelled of "
+            . scalar(@all_flags) . " script finding(s) reported as low (scan still ran)");
+    }
+
     # Build summary
     my @descriptions = map { $_->{description} } @all_flags;
     my $has_blocked = grep { $_->{severity} eq 'critical' } @all_flags;
     my $summary = "Script contains: " . join('; ', @descriptions);
+    $summary .= ' (labelled low by security_level=relaxed)' if $relabelled;
 
     # If any flag is marked as critical (e.g., destructive commands like
     # "rm -rf /"), we treat the script as blocked.  The caller can inspect
@@ -3015,6 +3044,8 @@ sub _scan_script_content {
         requires_confirmation => 1,
         summary                => $summary,
         flags                  => \@all_flags,
+        relaxed                => $relaxed,
+        relabelled             => $relabelled,
     };
 
     if ($has_blocked) {
@@ -3063,6 +3094,18 @@ sub _prompt_script_confirmation {
 
     my $options = CLIO::Security::Consent::options_text(allow_label => 'script creation');
 
+    # The prompt has to describe what the scan actually found, including the
+    # fact that the configuration lowered the labels. A silent relabelling
+    # would be the same defect as a silent skip: the user cannot tell whether
+    # nothing was found or everything was found and called low.
+    my $is_critical = $scan_result->{blocked} ? 1 : 0;
+    my $notice = '';
+    if ($scan_result->{relaxed}) {
+        $notice = $scan_result->{relabelled}
+            ? 'security_level=relaxed: contents were scanned, severity labelled low'
+            : 'security_level=relaxed: contents were scanned';
+    }
+
     # Use themed security prompt
     my $theme_mgr = $ui->{theme_mgr};
     if ($theme_mgr && $theme_mgr->can('get_security_prompt')) {
@@ -3071,7 +3114,13 @@ sub _prompt_script_confirmation {
             $scan_result->{flags},
             $options,
         );
-        print "\n$prompt_line\n$input_line";
+        my $notice_line = $notice ? $ui->colorize("  ($notice)", 'dim') . "\n" : '';
+        if ($is_critical) {
+            print "\n" . $ui->colorize('[WARN] CRITICAL RISK', 'error_message') . "\n"
+                . $notice_line . $prompt_line . "\n" . $input_line;
+        } else {
+            print "\n$notice_line$prompt_line\n$input_line";
+        }
     } else {
         # Build flag descriptions on one line
         my @flag_parts;
@@ -3079,7 +3128,9 @@ sub _prompt_script_confirmation {
             push @flag_parts, "[$flag->{severity}] $flag->{description}";
         }
         my $flags_str = join(" | ", @flag_parts);
-        print "\n* Security | $path\n  $flags_str\n  $options: ";
+        my $notice_line = $notice ? "  ($notice)\n" : '';
+        my $header = $is_critical ? '* CRITICAL RISK' : '* Security';
+        print "\n$header | $path\n$notice_line  $flags_str\n  $options: ";
     }
 
     # Suspend ALRM handler - Chat.pm's 1-second timer calls ReadKey(-1)

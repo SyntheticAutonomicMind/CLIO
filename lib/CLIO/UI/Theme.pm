@@ -869,7 +869,6 @@ Arguments:
   - options: Options text, built by L<CLIO::Security::Consent>::options_text
     (e.g. "(o)nce | (a)llow category | (n)o deny")
 
-Returns: ($prompt_line, $input_line) - $prompt_line may contain newlines (target + flags), $input_line is the options prompt
 Returns: ($prompt_line, $input_line) - two rendered strings
 
 =cut
