@@ -37,6 +37,10 @@ unlink $path;
 sub dirname_of {
     my ($path) = @_;
     $path =~ s{/[^/]+\z}{};
+    # temp_dir may hand back a path with a trailing slash (it echoes the
+    # platform temp dir). "/tmp/" and "/tmp" name the same directory, so
+    # compare them as the same string rather than failing on the slash.
+    $path =~ s{/+\z}{};
     return $path;
 }
 

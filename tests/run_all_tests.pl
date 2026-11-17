@@ -67,7 +67,12 @@ my %opts = (
     all => 0,
     verbose => 0,
     stop_on_failure => 0,
-    per_test_timeout => 120,
+    # 300s, not 120s. test_code_intelligence_advanced.pl runs 57 subtests that
+    # each scan the working tree for a symbol; it takes ~180s on this checkout
+    # and longer on a cold page cache or a larger tree. At 120s it was killed
+    # and reported as HUNG while it was making progress, which made the one
+    # signal that means "this test deadlocked" worthless.
+    per_test_timeout => 300,
 );
 
 GetOptions(
@@ -380,7 +385,7 @@ sub usage {
     say "  --all               Run all tests (default)";
     say "  --verbose           Show test output even for passing tests";
     say "  --stop-on-failure   Stop at first failure";
-    say "  --per-test-timeout=N  Kill tests that exceed N seconds (default: 120)";
+    say "  --per-test-timeout=N  Kill tests that exceed N seconds (default: 300)";
     say "                        Set to 0 to disable. Hung tests show as [HUNG] in output.";
     say "  --help              Show this help message";
     say "";
