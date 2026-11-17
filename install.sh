@@ -116,6 +116,16 @@ mkdir -p "$INSTALL_DIR" || { echo "Failed to create $INSTALL_DIR"; exit 1; }
 echo "Copying files..."
 cp clio "$INSTALL_DIR/" || exit 1
 cp VERSION "$INSTALL_DIR/" || exit 1
+# Replace lib/ instead of merging into it. cp -r merges, so modules removed
+# from the source tree survive on the install target forever - still scanned
+# by @INC, still picked up by drift audits, and no longer part of CLIO.
+# Only lib/ is pruned: styles, themes, skills, docs and prompts can hold
+# user additions and must not be deleted.
+if [[ -z "$INSTALL_DIR" || "$INSTALL_DIR" == "/" ]]; then
+    echo "ERROR: refusing to prune lib/ with INSTALL_DIR='$INSTALL_DIR'"
+    exit 1
+fi
+rm -rf "${INSTALL_DIR:?}/lib" || exit 1
 cp -r lib "$INSTALL_DIR/" || exit 1
 cp -r styles "$INSTALL_DIR/" || exit 1
 cp -r themes "$INSTALL_DIR/" || exit 1
