@@ -1198,84 +1198,47 @@ sub _prompt_command_confirmation {
         return 0;
     }
 
-    # Suspend ALRM handler first - Chat.pm's 1-second timer calls ReadKey(-1)
-    # which would consume keystrokes before <STDIN> can read them.
-    my $saved_alrm = $SIG{ALRM};
-    my $remaining_alarm = alarm(0);
-
-    # Switch to cooked (normal) mode BEFORE displaying the prompt.
-    # Previously, the terminal stayed in cbreak mode during the prompt, and
-    # a ReadKey(-1) flush ran AFTER the user typed their response - consuming
-    # the user's actual keystrokes (e.g. "n" + Enter). This caused <STDIN>
-    # to block, the user to re-type (often "y"), and the security denial to
-    # be silently ignored: the command ran, the session saved, and the
-    # prompt reappeared for the same command.
-    #
-    # In cooked mode, <STDIN> reads a full line with proper line buffering
-    # and echo. The ALRM is suspended above so it cannot fire during the
-    # prompt to interfere with input.
-    require CLIO::Compat::Terminal;
-    CLIO::Compat::Terminal::ReadMode(0);
-
-    my $spinner = ($context && $context->{spinner}) ? $context->{spinner} : undef;
-    $spinner->stop() if $spinner && $spinner->can('stop');
-
     # Build prompt options — unified across all risk levels (including critical).
     # The options name how many categories `a` grants, because `a` grants a
     # session approval for every category still awaiting a decision.
     my $options = $self->_consent_options_text(scalar @uncovered);
 
-    # Use themed security prompt
+    my $spinner = ($context && $context->{spinner}) ? $context->{spinner} : undef;
     my $theme_mgr = $ui->{theme_mgr};
-    if ($theme_mgr && $theme_mgr->can('get_security_prompt')) {
-        my ($prompt_line, $input_line) = $theme_mgr->get_security_prompt(
-            $command,
-            \@uncovered,
-            $options,
-        );
-        my $carry = $granted_count
-            ? $ui->colorize("  ($granted_count category already allowed this session)", 'dim') . "\n"
-            : '';
-        if ($is_critical) {
-            print "\n" . $ui->colorize('[WARN] CRITICAL RISK', 'error_message') . "\n" . $carry . $prompt_line . "\n" . $input_line;
-        } else {
-            print "\n$carry$prompt_line\n$input_line";
-        }
-    } else {
-        # Minimal fallback if no theme available
-        # Build flag descriptions on one line
-        my @flag_parts;
-        for my $flag (@uncovered) {
-            push @flag_parts, "[$flag->{severity}] $flag->{description}";
-        }
-        my $flags_str = join(" | ", @flag_parts);
-        my $carry = $granted_count
-            ? "  ($granted_count category already allowed this session)\n"
-            : '';
-        if ($is_critical) {
-            print "\n* CRITICAL RISK | $command\n$carry  $flags_str\n  $options: ";
-        } else {
-            print "\n* Security | $command\n$carry  $flags_str\n  $options: ";
-        }
-    }
 
-    # Flush stdout so the prompt is visible before blocking on input
-    my $old_fh = select(STDOUT);
-    $| = 1; select($old_fh);
-
-    my $response = <STDIN>;
-    chomp($response) if defined $response;
-    $response = lc($response || 'n');
-
-    CLIO::Compat::Terminal::ReadMode(1);
-
-    # Restore ALRM handler
-    $SIG{ALRM} = $saved_alrm || 'DEFAULT';
-    alarm($remaining_alarm) if $remaining_alarm;
-
-    $spinner->start() if $spinner && $spinner->can('start');
-
-    my $decision = CLIO::Security::Consent::parse_answer($response, caller => 'TermOps');
+    my $decision = CLIO::Security::Consent::read_answer(
+        caller  => 'TermOps',
+        spinner => $spinner,
+        prompt  => sub {
+            if ($theme_mgr && $theme_mgr->can('get_security_prompt')) {
+                my ($prompt_line, $input_line) = $theme_mgr->get_security_prompt(
+                    $command,
+                    \@uncovered,
+                    $options,
+                );
+                my $carry = $granted_count
+                    ? $ui->colorize("  ($granted_count category already allowed this session)", 'dim') . "\n"
+                    : '';
+                if ($is_critical) {
+                    print "\n" . $ui->colorize('[WARN] CRITICAL RISK', 'error_message') . "\n" . $carry . $prompt_line . "\n" . $input_line;
+                } else {
+                    print "\n$carry$prompt_line\n$input_line";
+                }
+            } else {
+                # Minimal fallback if no theme available
+                my @flag_parts;
+                for my $flag (@uncovered) {
+                    push @flag_parts, "[$flag->{severity}] $flag->{description}";
+                }
+                my $flags_str = join(" | ", @flag_parts);
+                my $carry = $granted_count
+                    ? "  ($granted_count category already allowed this session)\n"
+                    : '';
+                my $header = $is_critical ? '* CRITICAL RISK' : '* Security';
+                print "\n$header | $command\n$carry  $flags_str\n  $options: ";
+            }
+        },
+    );
 
     if ($decision eq 'all') {
         # Grant every category still awaiting a decision. Categories already

@@ -120,52 +120,38 @@ sub _handle_agent_authorization {
 
     my $options = CLIO::Security::Consent::options_text(allow_label => 'category');
 
-    if ($theme_mgr && $theme_mgr->can('get_security_prompt')) {
-        my ($prompt_line, $input_line) = $theme_mgr->get_security_prompt(
-            $description,
-            $flags,
-            $options,
-        );
-        print "\n";
-        if ($is_critical) {
-            print "\e[1;31m[WARN] CRITICAL RISK\e[0m ";
-        }
-        print $chat->colorize("[Agent: $from] ", 'CYAN');
-        print "$cat_label Authorization\n";
-        print "$prompt_line\n$input_line";
-    } else {
-        my @flag_parts;
-        for my $flag (@{$flags || []}) {
-            push @flag_parts, "[$flag->{severity}] $flag->{description}";
-        }
-        my $flags_str = join(" | ", @flag_parts);
-        print "\n";
-        if ($is_critical) {
-            print "* CRITICAL RISK ";
-        } else {
-            print "* Security ";
-        }
-        print "[Agent: $from] $cat_label | $description\n  $flags_str\n  $options: ";
-    }
-
-    require CLIO::Compat::Terminal;
-
-    my $saved_alrm = $SIG{ALRM};
-    my $remaining_alarm = alarm(0);
-
-    while (defined(eval { CLIO::Compat::Terminal::ReadKey(-1) })) { }
-    CLIO::Compat::Terminal::ReadMode(0);
-
-    my $response = <STDIN>;
-    chomp($response) if defined $response;
-    $response = lc($response || 'n');
-
-    CLIO::Compat::Terminal::ReadMode(1);
-
-    $SIG{ALRM} = $saved_alrm || 'DEFAULT';
-    alarm($remaining_alarm) if $remaining_alarm;
-
-    my $decision = CLIO::Security::Consent::parse_answer($response, caller => 'ChatSecurity');
+    my $decision = CLIO::Security::Consent::read_answer(
+        caller  => 'ChatSecurity',
+        prompt  => sub {
+            if ($theme_mgr && $theme_mgr->can('get_security_prompt')) {
+                my ($prompt_line, $input_line) = $theme_mgr->get_security_prompt(
+                    $description,
+                    $flags,
+                    $options,
+                );
+                print "\n";
+                if ($is_critical) {
+                    print $chat->colorize('[WARN] CRITICAL RISK', 'error_message') . " ";
+                }
+                print $chat->colorize("[Agent: $from] ", 'CYAN');
+                print "$cat_label Authorization\n";
+                print "$prompt_line\n$input_line";
+            } else {
+                my @flag_parts;
+                for my $flag (@{$flags || []}) {
+                    push @flag_parts, "[$flag->{severity}] $flag->{description}";
+                }
+                my $flags_str = join(" | ", @flag_parts);
+                print "\n";
+                if ($is_critical) {
+                    print "* CRITICAL RISK ";
+                } else {
+                    print "* Security ";
+                }
+                print "[Agent: $from] $cat_label | $description\n  $flags_str\n  $options: ";
+            }
+        },
+    );
     my $approved = $decision eq 'deny' ? 0 : 1;
     my $grant_type = CLIO::Security::Consent::grant_type_for($decision);
 

@@ -25,6 +25,13 @@ CLIO::Security::Consent - one approval vocabulary for every security prompt
     my $answer = CLIO::Security::Consent::parse_answer($raw, caller => 'FileOp');
     # 'once' | 'all' | 'deny'
 
+    my $decision = CLIO::Security::Consent::read_answer(
+        caller  => 'FileOp',
+        prompt  => sub { print "\n* Security | $path\n  $options: " },
+        spinner => $spinner,
+    );
+    # prints the prompt, reads one line, returns 'once' | 'all' | 'deny'
+
 =head1 DESCRIPTION
 
 Every approval prompt in CLIO asks the same question, so every prompt must
@@ -39,6 +46,13 @@ regexes, and they drifted: path approval still asked for C<(s)ession> while
 command approval had moved to C<(a)ll>, and some sites accepted C<y> as an
 alias for approval while others did not. One vocabulary, one parser, one place
 to change it.
+
+C<read_answer> is the other half: one implementation of the terminal dance
+every prompt needs - stop the spinner, suppress the alarm timer that would eat
+the keystroke, switch to cooked mode, print, flush, drain, read, restore. Each
+call site prints its own prompt through the C<prompt> callback, because only
+the tool knows what to show; the sequencing and the answer classification are
+shared.
 
 An answer of C<a> means "approve the category". What the category is - a
 command flag set, file overwrites, script creation, external fetches, or a
@@ -151,6 +165,100 @@ sub grant_type_for {
     return 'once' if defined $decision && $decision eq 'once';
     return 'all'  if defined $decision && $decision eq 'all';
     return 'denied';
+}
+
+=head2 read_answer(%args)
+
+Run one approval prompt: suspend the spinner's alarm, take the terminal out of
+cbreak mode, print the prompt, read a line, put everything back, and classify
+the answer.
+
+Arguments:
+- prompt: coderef that prints the prompt. Called after the terminal is in
+  cooked mode and after buffered input is drained, before anything is read.
+  Omit it when the caller has already printed the prompt itself.
+- spinner: the active spinner, if any. Stopped for the prompt and restarted
+  after it. Optional.
+- grantable: passed to C<parse_answer>. Defaults to true.
+- caller: debug tag. Defaults to 'Consent'.
+- drain: drop keystrokes buffered by the spinner before reading. Defaults to
+  true.
+- flush: flush STDOUT before reading so the prompt is on screen. Defaults to
+  true.
+
+Returns: 'once', 'all', or 'deny'.
+
+=head3 Why this is not duplicated per tool
+
+Each call site needs the same five steps in the same order, and they were
+copied instead of shared. The copies drifted, in ways only visible at a
+prompt: a drain loop that consumed two keystrokes per iteration and so could
+swallow the answer, a site with no drain at all, a site that never flushed
+STDOUT before blocking, and a site that restored the alarm handler before
+restarting the spinner on some paths but not others.
+
+The order below is the one that works, and the reason each step is where it is:
+
+1. Stop the spinner. Left running it repaints over the prompt.
+2. Suppress C<$SIG{ALRM}> and cancel the pending alarm. Chat.pm's one-second
+   timer calls C<ReadKey(-1)>, which consumes keystrokes before C<< <STDIN> >>
+   can read them. A swallowed answer is a silent denial.
+3. Cooked mode, before printing. Cbreak leaves the prompt without echo and
+   makes the answer arrive byte-by-byte.
+4. Drain, *before* printing. The drain exists to discard keystrokes the spinner
+   buffered while cbreak was active. It cannot tell those apart from an answer
+   the user typed at the prompt, so it runs while the prompt is still
+   invisible and there is nothing yet for the user to answer.
+5. Print, then flush. A prompt that is buffered while the process blocks on
+   input looks like a hang.
+6. Read the line.
+7. Restore terminal mode, the alarm handler, and then the spinner.
+
+=cut
+
+sub read_answer {
+    my (%args) = @_;
+
+    my $spinner   = $args{spinner};
+    my $caller    = $args{caller} || 'Consent';
+    my $prompt    = $args{prompt};
+    my $grantable = exists $args{grantable} ? $args{grantable} : 1;
+    my $drain     = exists $args{drain}     ? $args{drain}     : 1;
+    my $flush     = exists $args{flush}     ? $args{flush}     : 1;
+
+    require CLIO::Compat::Terminal;
+
+    $spinner->stop() if $spinner && $spinner->can('stop');
+
+    my $saved_alrm      = $SIG{ALRM};
+    my $remaining_alarm = alarm(0);
+
+    CLIO::Compat::Terminal::ReadMode(0);
+
+    if ($drain) {
+        while (defined eval { CLIO::Compat::Terminal::ReadKey(-1) }) { }
+    }
+
+    $prompt->() if $prompt;
+
+    if ($flush) {
+        my $old_fh = select(STDOUT);
+        $| = 1;
+        select($old_fh);
+    }
+
+    # A closed or redirected STDIN reads as undef, which parse_answer treats as
+    # a denial. There is no path here that approves an unread answer.
+    my $response = <STDIN>;
+    chomp($response) if defined $response;
+
+    CLIO::Compat::Terminal::ReadMode(1);
+    $SIG{ALRM} = $saved_alrm || 'DEFAULT';
+    alarm($remaining_alarm) if $remaining_alarm;
+
+    $spinner->start() if $spinner && $spinner->can('start');
+
+    return parse_answer($response, caller => $caller, grantable => $grantable);
 }
 
 =head1 SEE ALSO

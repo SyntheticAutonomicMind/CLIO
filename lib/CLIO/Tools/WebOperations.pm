@@ -1209,33 +1209,6 @@ sub _prompt_url_confirmation {
     }
 
     my $spinner = ($context && $context->{spinner}) ? $context->{spinner} : undef;
-    $spinner->stop() if $spinner && $spinner->can('stop');
-
-    # Suspend the spinner's ALRM timer before reading. Chat.pm's timer calls
-    # ReadKey(-1), which consumes keystrokes typed at the prompt; without this
-    # the answer could be swallowed and the request silently denied.
-    my $saved_alrm = $SIG{ALRM};
-    my $remaining_alarm = alarm(0);
-
-    print "\n";
-    print $ui->colorize("  WEB SECURITY CHECK ", 'WARNING');
-    print "\n\n";
-
-    my $display_url = $url;
-    if (length($display_url) > 200) {
-        $display_url = substr($display_url, 0, 197) . '...';
-    }
-    print $ui->colorize("  URL: ", 'BOLD');
-    print "$display_url\n\n";
-
-    print $ui->colorize("  Concern: ", 'WARNING');
-    print "$security_check->{reason}\n\n";
-
-    if ($security_check->{granted_count}) {
-        print $ui->colorize(
-            "  (" . $security_check->{granted_count} . " concern already allowed this session)\n\n",
-            'dim');
-    }
 
     # Ungrantable concerns (internal address, exfiltration shape, non-HTTP
     # scheme) can only be approved one request at a time, so `a` is not offered.
@@ -1244,35 +1217,35 @@ sub _prompt_url_confirmation {
         grantable   => $security_check->{grantable},
     );
 
-    print $ui->colorize("  Options: ", 'BOLD');
-    print "$options\n";
-
-    require CLIO::Compat::Terminal;
-    CLIO::Compat::Terminal::ReadMode(0);
-
-    print $ui->colorize("  > ", 'PROMPT');
-
-    # Flush so the prompt is on screen before blocking, and drain any
-    # keystrokes buffered by the spinner's ReadKey polling.
-    my $old_fh = select(STDOUT);
-    $| = 1; select($old_fh);
-    CLIO::Compat::Terminal::ReadKey(-1) while defined CLIO::Compat::Terminal::ReadKey(-1);
-
-    my $response = <STDIN>;
-    chomp($response) if defined $response;
-    $response = lc($response || 'n');
-
-    CLIO::Compat::Terminal::ReadMode(1);
-
-    $SIG{ALRM} = $saved_alrm || 'DEFAULT';
-    alarm($remaining_alarm) if $remaining_alarm;
-
-    $spinner->start() if $spinner && $spinner->can('start');
-
-    my $decision = CLIO::Security::Consent::parse_answer(
-        $response,
+    my $decision = CLIO::Security::Consent::read_answer(
         caller    => 'WebOps',
+        spinner   => $spinner,
         grantable => $security_check->{grantable},
+        prompt    => sub {
+            print "\n";
+            print $ui->colorize("  WEB SECURITY CHECK ", 'WARNING');
+            print "\n\n";
+
+            my $display_url = $url;
+            if (length($display_url) > 200) {
+                $display_url = substr($display_url, 0, 197) . '...';
+            }
+            print $ui->colorize("  URL: ", 'BOLD');
+            print "$display_url\n\n";
+
+            print $ui->colorize("  Concern: ", 'WARNING');
+            print "$security_check->{reason}\n\n";
+
+            if ($security_check->{granted_count}) {
+                print $ui->colorize(
+                    "  (" . $security_check->{granted_count} . " concern already allowed this session)\n\n",
+                    'dim');
+            }
+
+            print $ui->colorize("  Options: ", 'BOLD');
+            print "$options\n";
+            print $ui->colorize("  > ", 'PROMPT');
+        },
     );
 
     if ($decision eq 'all') {

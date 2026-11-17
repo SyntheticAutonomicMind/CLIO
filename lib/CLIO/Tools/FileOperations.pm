@@ -3090,7 +3090,6 @@ sub _prompt_script_confirmation {
     }
 
     my $spinner = ($context && $context->{spinner}) ? $context->{spinner} : undef;
-    $spinner->stop() if $spinner && $spinner->can('stop');
 
     my $options = CLIO::Security::Consent::options_text(allow_label => 'script creation');
 
@@ -3106,62 +3105,38 @@ sub _prompt_script_confirmation {
             : 'security_level=relaxed: contents were scanned';
     }
 
-    # Use themed security prompt
     my $theme_mgr = $ui->{theme_mgr};
-    if ($theme_mgr && $theme_mgr->can('get_security_prompt')) {
-        my ($prompt_line, $input_line) = $theme_mgr->get_security_prompt(
-            $path,
-            $scan_result->{flags},
-            $options,
-        );
-        my $notice_line = $notice ? $ui->colorize("  ($notice)", 'dim') . "\n" : '';
-        if ($is_critical) {
-            print "\n" . $ui->colorize('[WARN] CRITICAL RISK', 'error_message') . "\n"
-                . $notice_line . $prompt_line . "\n" . $input_line;
-        } else {
-            print "\n$notice_line$prompt_line\n$input_line";
-        }
-    } else {
-        # Build flag descriptions on one line
-        my @flag_parts;
-        for my $flag (@{$scan_result->{flags} || []}) {
-            push @flag_parts, "[$flag->{severity}] $flag->{description}";
-        }
-        my $flags_str = join(" | ", @flag_parts);
-        my $notice_line = $notice ? "  ($notice)\n" : '';
-        my $header = $is_critical ? '* CRITICAL RISK' : '* Security';
-        print "\n$header | $path\n$notice_line  $flags_str\n  $options: ";
-    }
 
-    # Suspend ALRM handler - Chat.pm's 1-second timer calls ReadKey(-1)
-    # which consumes keystrokes before <STDIN> can read them
-    my $saved_alrm = $SIG{ALRM};
-    my $remaining_alarm = alarm(0);
-
-    require CLIO::Compat::Terminal;
-
-    # Flush any buffered ReadKey input from cbreak mode
-    while (defined(eval { CLIO::Compat::Terminal::ReadKey(-1) })) { }
-
-    CLIO::Compat::Terminal::ReadMode(0);
-
-    # Flush stdout so the prompt is visible before blocking on input
-    my $old_fh = select(STDOUT);
-    $| = 1; select($old_fh);
-
-    my $response = <STDIN>;
-    chomp($response) if defined $response;
-    $response = lc($response || 'n');
-
-    CLIO::Compat::Terminal::ReadMode(1);
-
-    # Restore ALRM handler
-    $SIG{ALRM} = $saved_alrm || 'DEFAULT';
-    alarm($remaining_alarm) if $remaining_alarm;
-
-    $spinner->start() if $spinner && $spinner->can('start');
-
-    my $decision = CLIO::Security::Consent::parse_answer($response, caller => 'FileOp');
+    my $decision = CLIO::Security::Consent::read_answer(
+        caller  => 'FileOp',
+        spinner => $spinner,
+        prompt  => sub {
+            if ($theme_mgr && $theme_mgr->can('get_security_prompt')) {
+                my ($prompt_line, $input_line) = $theme_mgr->get_security_prompt(
+                    $path,
+                    $scan_result->{flags},
+                    $options,
+                );
+                my $notice_line = $notice ? $ui->colorize("  ($notice)", 'dim') . "\n" : '';
+                if ($is_critical) {
+                    print "\n" . $ui->colorize('[WARN] CRITICAL RISK', 'error_message') . "\n"
+                        . $notice_line . $prompt_line . "\n" . $input_line;
+                } else {
+                    print "\n$notice_line$prompt_line\n$input_line";
+                }
+            } else {
+                # Build flag descriptions on one line
+                my @flag_parts;
+                for my $flag (@{$scan_result->{flags} || []}) {
+                    push @flag_parts, "[$flag->{severity}] $flag->{description}";
+                }
+                my $flags_str = join(" | ", @flag_parts);
+                my $notice_line = $notice ? "  ($notice)\n" : '';
+                my $header = $is_critical ? '* CRITICAL RISK' : '* Security';
+                print "\n$header | $path\n$notice_line  $flags_str\n  $options: ";
+            }
+        },
+    );
 
     if ($decision eq 'all') {
         CLIO::Security::GrantStore::grant('script', 'script_creation');
@@ -3228,44 +3203,30 @@ sub _prompt_overwrite_confirmation {
     }
 
     my $spinner = ($context && $context->{spinner}) ? $context->{spinner} : undef;
-    $spinner->stop() if $spinner && $spinner->can('stop');
 
     my $options = CLIO::Security::Consent::options_text(allow_label => 'file overwrites');
 
     my $theme_mgr = $ui->{theme_mgr};
-    if ($theme_mgr && $theme_mgr->can('get_security_prompt')) {
-        my ($prompt_line, $input_line) = $theme_mgr->get_security_prompt(
-            $path,
-            [{ category => 'file_overwrite', severity => 'medium', description => "File exists ($existing_size bytes) and will be overwritten" }],
-            $options,
-        );
-        print "\n$prompt_line\n$input_line";
-    } else {
-        print "\n* Security | $path\n  [file_overwrite] File exists ($existing_size bytes) and will be overwritten\n  $options: ";
-    }
+    my $flag = {
+        category    => 'file_overwrite',
+        severity    => 'medium',
+        description => "File exists ($existing_size bytes) and will be overwritten",
+    };
 
-    # Suspend ALRM + terminal during prompt (same pattern as _prompt_script_confirmation)
-    my $saved_alrm = $SIG{ALRM};
-    my $remaining_alarm = alarm(0);
-
-    require CLIO::Compat::Terminal;
-    while (defined(eval { CLIO::Compat::Terminal::ReadKey(-1) })) { }
-    CLIO::Compat::Terminal::ReadMode(0);
-
-    my $old_fh = select(STDOUT);
-    $| = 1; select($old_fh);
-
-    my $response = <STDIN>;
-    chomp($response) if defined $response;
-    $response = lc($response || 'n');
-
-    CLIO::Compat::Terminal::ReadMode(1);
-    $SIG{ALRM} = $saved_alrm || 'DEFAULT';
-    alarm($remaining_alarm) if $remaining_alarm;
-
-    $spinner->start() if $spinner && $spinner->can('start');
-
-    my $decision = CLIO::Security::Consent::parse_answer($response, caller => 'FileOp');
+    my $decision = CLIO::Security::Consent::read_answer(
+        caller  => 'FileOp',
+        spinner => $spinner,
+        prompt  => sub {
+            if ($theme_mgr && $theme_mgr->can('get_security_prompt')) {
+                my ($prompt_line, $input_line) = $theme_mgr->get_security_prompt(
+                    $path, [$flag], $options,
+                );
+                print "\n$prompt_line\n$input_line";
+            } else {
+                print "\n* Security | $path\n  [$flag->{category}] $flag->{description}\n  $options: ";
+            }
+        },
+    );
 
     if ($decision eq 'all') {
         CLIO::Security::GrantStore::grant('overwrite', 'file_overwrite');
