@@ -17,6 +17,7 @@ use File::Spec;
 use CLIO::Core::Logger qw(should_log log_debug);
 use Carp qw(croak);
 use Scalar::Util qw(blessed);
+use Encode qw(encode_utf8);
 
 
 =head1 NAME
@@ -1434,6 +1435,29 @@ sub _validate_ssh_setup {
 }
 
 
+=head2 _base64_command_payload($command)
+
+Encode a command for the remote base64 pipe.
+
+MIME::Base64 is byte-oriented XS. Given a UTF-8-flagged string it either
+encodes the codepoint's low byte (silent corruption below U+0100) or dies
+with "Wide character in subroutine entry". The remote side runs
+base64 -d on the result, so the bytes must be the command's real UTF-8
+encoding. ASCII input is returned byte-identical to what a direct encode
+would produce, so existing commands are unaffected.
+
+Returns: base64 text with no line breaks.
+
+=cut
+
+sub _base64_command_payload {
+    my ($self, $command) = @_;
+
+    require MIME::Base64;
+    my $bytes = utf8::is_utf8($command) ? encode_utf8($command) : $command;
+    return MIME::Base64::encode_base64($bytes, '');
+}
+
 sub _ssh_exec {
     my ($self, %args) = @_;
     
@@ -1464,8 +1488,7 @@ sub _ssh_exec {
     # This prevents shell quoting issues entirely
     if ($command =~ /\n/ || $command =~ /['"\$]/) {
         # Base64 encode the command
-        require MIME::Base64;
-        my $encoded = MIME::Base64::encode_base64($command, '');
+        my $encoded = $self->_base64_command_payload($command);
         $ssh_cmd .= " $quoted_host \"echo '$encoded' | base64 -d | bash\"";
     } else {
         # Simple command - direct execution

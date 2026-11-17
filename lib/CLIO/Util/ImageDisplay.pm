@@ -9,6 +9,7 @@ use utf8;
 use Carp qw(croak);
 use CLIO::Core::Logger qw(log_debug log_warning);
 use CLIO::UI::Terminal qw(supports_inline_images terminal_image_protocol);
+use Encode qw(encode_utf8);
 
 =head1 NAME
 
@@ -261,7 +262,12 @@ sub _display_iterm {
     my $base64 = MIME::Base64::encode_base64($data, '');
     
     my $filename = $opts{filename} // 'image.png';
-    my $name_b64 = MIME::Base64::encode_base64($filename, '');
+    # MIME::Base64 is byte-oriented XS: given a UTF-8-flagged string it
+    # encodes the codepoint's low byte or dies outright. $filename is text,
+    # so encode it to bytes first. $data above is already raw image bytes
+    # and must not be encoded.
+    my $name_bytes = utf8::is_utf8($filename) ? encode_utf8($filename) : $filename;
+    my $name_b64 = MIME::Base64::encode_base64($name_bytes, '');
     chomp($name_b64);
     
     my $size = length($data);
