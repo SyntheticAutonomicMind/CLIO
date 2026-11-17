@@ -10,6 +10,8 @@ use Carp qw(croak);
 use CLIO::Core::Logger qw(log_debug log_warning);
 use CLIO::Util::JSON qw(decode_json encode_json safe_encode_json safe_decode_json);
 
+=encoding UTF-8
+
 =head1 NAME
 
 CLIO::Memory::YaRN - Yet another Recurrence Navigation (conversation threading)

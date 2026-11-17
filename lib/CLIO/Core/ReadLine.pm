@@ -15,6 +15,8 @@ use CLIO::Util::DisplayWidth qw(display_width is_zero_width is_regional_indicato
 use Encode ();
 use Time::HiRes ();
 
+=encoding UTF-8
+
 =head1 NAME
 
 CLIO::Core::ReadLine - Custom readline implementation with tab completion

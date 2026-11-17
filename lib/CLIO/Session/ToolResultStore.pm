@@ -12,6 +12,8 @@ use File::Path qw(make_path remove_tree);
 use File::Spec;
 use Cwd 'abs_path';
 
+=encoding UTF-8
+
 =head1 NAME
 
 CLIO::Session::ToolResultStore - Storage service for large tool results

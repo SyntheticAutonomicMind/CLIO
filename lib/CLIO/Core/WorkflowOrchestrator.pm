@@ -59,6 +59,8 @@ use constant INTERRUPT_POLL_INTERVAL_MS => 100;
 use constant DEFAULT_MAX_ITERATIONS => 200;
 
 # ANSI color codes for terminal output - FALLBACK only when UI is unavailable
+=encoding UTF-8
+
 =head1 NAME
 
 CLIO::Core::WorkflowOrchestrator - Autonomous tool calling workflow orchestrator

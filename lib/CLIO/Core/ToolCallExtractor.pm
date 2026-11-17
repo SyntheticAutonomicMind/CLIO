@@ -9,6 +9,8 @@ use utf8;
 use CLIO::Util::JSON qw(encode_json decode_json safe_decode_json);
 use CLIO::Core::Logger qw(log_debug log_warning);
 
+=encoding UTF-8
+
 =head1 NAME
 
 CLIO::Core::ToolCallExtractor - Extract tool calls from AI response text

@@ -25,6 +25,8 @@ our @EXPORT_OK = qw(
     repair_tool_call_json
 );
 
+=encoding UTF-8
+
 =head1 NAME
 
 CLIO::Core::ConversationManager - Conversation history management and validation

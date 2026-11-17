@@ -10,6 +10,8 @@ use Exporter 'import';
 
 our @EXPORT_OK = qw(spinner_frames spinner_metadata list_spinners detect_locale_utf8 parse_legacy_frames);
 
+=encoding UTF-8
+
 =head1 NAME
 
 CLIO::UI::Spinners - Named spinner animations with capability-aware fallback

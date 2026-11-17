@@ -11,6 +11,8 @@ use CLIO::Core::Logger qw(log_debug log_warning);
 
 our @EXPORT_OK = qw(analyze_command extract_write_targets);
 
+=encoding UTF-8
+
 =head1 NAME
 
 CLIO::Security::CommandAnalyzer - Intent-based command security analysis

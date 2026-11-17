@@ -150,7 +150,7 @@ sub revoke {
 
 =head2 get($scope, $key)
 
-Return the stored grant, or undef. Does not apply expiry - use L</is_granted>
+Return the stored grant, or undef. Does not apply expiry - use C<is_granted>
 for decisions, this for inspection (age, scope-specific data).
 
 =cut
@@ -163,7 +163,7 @@ sub get {
 
 =head2 is_granted($scope, $key)
 
-True when a grant exists and has not aged past L</ttl_seconds>.
+True when a grant exists and has not aged past C<ttl_seconds>.
 
 =cut
 
@@ -209,7 +209,7 @@ Options:
 
 Each entry: C<{ scope, key, granted_at, age, expired, data, source }> where
 C<source> is C<'process'> for a grant made in this process and C<'resumed'> for
-one loaded by L</restore>.
+one loaded by C<restore>.
 
 =cut
 
@@ -332,7 +332,7 @@ sub export {
 
 Load a previously exported table. Expired entries are dropped rather than
 restored, so resuming an old session does not silently re-approve anything.
-Entries carrying a scope that is not in L</known_scopes> are dropped too - a
+Entries carrying a scope that is not in C<known_scopes> are dropped too - a
 grant only comes back if this build knows what the scope means.
 
 Options:

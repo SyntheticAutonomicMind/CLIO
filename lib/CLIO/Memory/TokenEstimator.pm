@@ -16,6 +16,8 @@ our @EXPORT_OK = qw(
     message_character_count
 );
 
+=encoding UTF-8
+
 =head1 NAME
 
 CLIO::Memory::TokenEstimator - Utility for estimating token counts in text

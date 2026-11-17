@@ -19,6 +19,8 @@ use CLIO::Core::Diagnostics qw(dump_diagnostic display_rate_limit_info get_tool_
 use CLIO::Core::Defaults qw(DEFAULT_CONTEXT_WINDOW);
 use Time::HiRes qw(sleep);
 
+=encoding UTF-8
+
 =head1 NAME
 
 CLIO::Core::API::ErrorHandler - API error classification and recovery

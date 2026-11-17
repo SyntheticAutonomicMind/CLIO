@@ -14,6 +14,8 @@ our @EXPORT_OK = qw(
 
 use CLIO::Core::Logger qw(log_debug log_warning log_error);
 
+=encoding UTF-8
+
 =head1 NAME
 
 CLIO::Core::MessageHistory - Prose renderer for conversation history

@@ -11,6 +11,8 @@ use Carp qw(croak);
 use CLIO::Core::Logger qw(log_debug log_warning should_log);
 use CLIO::Providers qw(provider_exists list_providers get_provider);
 
+=encoding UTF-8
+
 =head1 NAME
 
 CLIO::Core::RouteManager - Role-aware route normalization, role resolution,

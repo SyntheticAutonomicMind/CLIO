@@ -33,6 +33,8 @@ use File::Spec;
 $| = 1;
 STDOUT->autoflush(1) if STDOUT->can('autoflush');
 
+=encoding UTF-8
+
 =head1 NAME
 
 CLIO::UI::Chat - Retro BBS-style chat interface

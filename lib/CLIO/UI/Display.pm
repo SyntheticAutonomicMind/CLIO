@@ -12,6 +12,8 @@ use CLIO::Util::TextSanitizer qw(sanitize_text);
 use CLIO::Core::Logger qw(log_debug);
 use CLIO::UI::Terminal qw(box_char ui_char);
 
+=encoding UTF-8
+
 =head1 NAME
 
 CLIO::UI::Display - Message display and formatting for CLIO

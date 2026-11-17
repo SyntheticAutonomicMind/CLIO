@@ -14,6 +14,8 @@ use CLIO::Session::TodoStore;
 use CLIO::UI::Terminal qw(ui_char);
 use JSON::PP ();  # JSON::PP::false for additionalProperties in the schema
 
+=encoding UTF-8
+
 =head1 NAME
 
 CLIO::Tools::TodoList - Todo list management tool

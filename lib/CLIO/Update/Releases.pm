@@ -260,7 +260,7 @@ Arguments:
 Returns:
 - In list context: ($extracted_dir, $cleanup_dir). $cleanup_dir is the
   top-level download directory that should be removed once install
-  completes. Pass it to L<Cleanup|/remove_cleanup_dir> rather than
+  completes. Pass it to C<remove_cleanup_dir> rather than
   computing it via dirname() on $extracted_dir.
 - In scalar context: path to downloaded and extracted directory, or undef
   on failure. Callers that need the cleanup dir should use list context.

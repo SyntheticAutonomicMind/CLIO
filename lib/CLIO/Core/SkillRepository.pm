@@ -13,6 +13,8 @@ use File::Spec;
 use File::Path qw(make_path);
 use Carp qw(croak);
 
+=encoding UTF-8
+
 =head1 NAME
 
 CLIO::Core::SkillRepository - Manage external skill repositories

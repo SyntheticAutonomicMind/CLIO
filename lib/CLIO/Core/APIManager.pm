@@ -3,6 +3,8 @@
 
 package CLIO::Core::APIManager;
 
+=encoding UTF-8
+
 =head1 NAME
 
 CLIO::Core::APIManager - AI provider API communication and request orchestration

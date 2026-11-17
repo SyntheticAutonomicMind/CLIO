@@ -17,6 +17,8 @@ use CLIO::Security::SecretRedactor qw(DEFAULT_REDACT_LEVEL redact redact_any);
 use Storable qw(dclone);
 use Time::HiRes qw(time);
 
+=encoding UTF-8
+
 =head1 NAME
 
 CLIO::Core::ToolExecutor - Bridge between AI tool calls and protocol handlers

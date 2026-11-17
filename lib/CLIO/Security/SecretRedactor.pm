@@ -11,6 +11,8 @@ use CLIO::Core::Logger qw(log_debug);
 
 our @EXPORT_OK = qw(redact redact_any get_redactor DEFAULT_REDACT_LEVEL);
 
+=encoding UTF-8
+
 =head1 NAME
 
 CLIO::Security::SecretRedactor - Automatic secret and PII redaction with configurable levels

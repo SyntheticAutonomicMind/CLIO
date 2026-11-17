@@ -6,6 +6,8 @@ if ($ENV{CLIO_DEBUG}) {
 }
 package CLIO::Session::State;
 
+=encoding UTF-8
+
 =head1 NAME
 
 CLIO::Session::State - Session state persistence and serialization
@@ -441,7 +443,7 @@ sub session_name {
 =head2 auto_name_session
 
 Derive a human-friendly session name from the first user message in
-history and persist it via L</session_name>. Idempotent: only sets a
+history and persist it via C<session_name>. Idempotent: only sets a
 name when one is not already set, so user-supplied names and explicit
 marker renames survive intact.
 

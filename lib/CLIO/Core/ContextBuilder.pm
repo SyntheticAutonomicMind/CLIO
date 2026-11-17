@@ -20,6 +20,8 @@ use Encode qw(encode_utf8);
 # _select_turns tries to call recover_substantive_task.
 use CLIO::Memory::YaRN ();
 
+=encoding UTF-8
+
 =head1 NAME
 
 CLIO::Core::ContextBuilder - Relevance-aware projection builder for CLIO

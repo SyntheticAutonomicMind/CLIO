@@ -8,6 +8,8 @@ use warnings;
 use utf8;
 use CLIO::Core::Logger qw(log_debug should_log);
 
+=encoding UTF-8
+
 =head1 NAME
 
 CLIO::Core::WorkflowCompletion - Detect when an AI agent stopped mid-workflow

@@ -32,6 +32,8 @@ sub _resolve_system_skills_dir {
     return undef;
 }
 
+=encoding UTF-8
+
 =head1 NAME
 
 CLIO::Core::SkillManager - Manage custom skills with variable substitution

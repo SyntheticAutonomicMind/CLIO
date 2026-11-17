@@ -12,6 +12,8 @@ use CLIO::Util::DisplayWidth qw(display_width);
 
 use open ':std', ':encoding(UTF-8)';
 
+=encoding UTF-8
+
 =head1 NAME
 
 CLIO::UI::Markdown - Markdown to ANSI converter for terminal output
@@ -1056,5 +1058,6 @@ Colors and styles can be customized by passing a theme hash:
         }
     );
 
-=back
+=cut
+
 1;

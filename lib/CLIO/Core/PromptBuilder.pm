@@ -10,6 +10,8 @@ use utf8;
 use CLIO::Core::Logger qw(log_error log_warning log_debug);
 use Cwd qw(getcwd);
 
+=encoding UTF-8
+
 =head1 NAME
 
 CLIO::Core::PromptBuilder - System prompt construction and section generation

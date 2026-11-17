@@ -19,6 +19,8 @@ our @EXPORT_OK = qw(
     trace_context_transition
 );
 
+=encoding UTF-8
+
 =head1 NAME
 
 CLIO::Core::MessageFingerprinter - Message identity and context-transition tracing

@@ -10,6 +10,8 @@ use utf8;
 use CLIO::UI::Terminal qw(box_char);
 
 
+=encoding UTF-8
+
 =head1 NAME
 
 CLIO::UI::ANSI - ANSI escape code management with extended @-code system

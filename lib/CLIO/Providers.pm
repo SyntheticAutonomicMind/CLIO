@@ -24,6 +24,8 @@ our @EXPORT_OK = qw(
 # This should rarely be reached - Config and provider defaults take priority.
 use constant DEFAULT_MODEL => 'gpt-4.1';
 
+=encoding UTF-8
+
 =head1 NAME
 
 CLIO::Providers - Central provider registry for CLIO

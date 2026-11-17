@@ -13,6 +13,8 @@ use CLIO::Util::JSON qw(safe_encode_json);
 use CLIO::Core::MessageFingerprinter qw(trace_context_transition);
 
 
+=encoding UTF-8
+
 =head1 NAME
 
 CLIO::Core::API::MessageValidator - Message validation and truncation for API requests

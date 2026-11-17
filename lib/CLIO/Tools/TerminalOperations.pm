@@ -19,6 +19,8 @@ use Time::HiRes ();
 use CLIO::Core::Logger qw(log_debug log_warning log_error);
 use CLIO::Security::CommandAnalyzer qw(analyze_command extract_write_targets);
 
+=encoding UTF-8
+
 =head1 NAME
 
 CLIO::Tools::TerminalOperations - Shell/terminal command execution
