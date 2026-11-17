@@ -65,6 +65,10 @@ use CLIO::Core::Defaults qw(DEFAULT_MAX_OUTPUT_TOKENS DEFAULT_CONTEXT_WINDOW DEF
 # components). Only computed when debugging is enabled — never on hot path.
 use Digest::SHA qw(sha256_hex);
 
+# Digest::SHA is byte-oriented and dies on decoded wide characters, which
+# prompt content routinely contains. encode_utf8 normalizes before hashing.
+use Encode qw(encode_utf8);
+
 # Define request states
 use constant {
     REQUEST_NONE => 0,
@@ -541,6 +545,22 @@ sub _get_workflow_session_id {
     return "clio:$raw_id";
 }
 
+=head2 _diag_fingerprint
+
+SHA-256 fingerprint of diagnostic text, truncated to 16 hex chars.
+
+Arguments: $text (decoded or byte string, undef treated as empty)
+Returns: 16 hex character string
+
+=cut
+
+sub _diag_fingerprint {
+    my ($text) = @_;
+    $text //= '';
+    my $bytes = utf8::is_utf8($text) ? encode_utf8($text) : $text;
+    return substr(sha256_hex($bytes), 0, 16);
+}
+
 =head2 _cache_diagnostics
 
 Compute and log SHA-256 fingerprints of the stable request prefix
@@ -605,9 +625,13 @@ sub _cache_diagnostics {
     my $tools_str = safe_encode_json($tools);
 
     # --- Compute fingerprints (SHA-256, truncated to 16 hex chars) ---
-    my $system_hash       = substr(sha256_hex($system_str), 0, 16);
-    my $first_nonsys_hash = substr(sha256_hex($first_nonsys_str), 0, 16);
-    my $tools_hash        = substr(sha256_hex($tools_str), 0, 16);
+    # Prompt text is decoded Perl text: box-drawing, accents, and emoji all
+    # set the UTF-8 flag, and sha256_hex() dies on those. Encoding first is
+    # what MessageFingerprinter and ContextBuilder already do. ASCII-only
+    # input is unaffected, so existing fingerprints stay identical.
+    my $system_hash       = _diag_fingerprint($system_str);
+    my $first_nonsys_hash = _diag_fingerprint($first_nonsys_str);
+    my $tools_hash        = _diag_fingerprint($tools_str);
 
     # --- Request sequence number (incremented in _build_payload) ---
     my $seq = $self->{_request_seq};
@@ -617,7 +641,7 @@ sub _cache_diagnostics {
     my $workflow_sid   = $self->_get_workflow_session_id() // '(none)';
 
     # --- Stable prefix fingerprint: system + first non-system + tools ---
-    my $prefix_hash = substr(sha256_hex($system_hash . $first_nonsys_hash . $tools_hash), 0, 16);
+    my $prefix_hash = _diag_fingerprint($system_hash . $first_nonsys_hash . $tools_hash);
 
     # --- Store on $self for response handler enrichment ---
     $self->{_pending_cache_diag} = {

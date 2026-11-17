@@ -2515,6 +2515,15 @@ Digest of the arguments a tool call carried, used to tell an identical
 retry apart from a new attempt. Falls back to the parsed arguments when the
 raw string is unavailable.
 
+Digest::SHA is byte-oriented: a decoded wide character in the arguments
+(box-drawing in a patch body, accented text, emoji) makes it die with
+"Wide character in subroutine entry". The arguments a model sends are not
+under our control, so that die was reachable from any failing tool call and
+aborted the whole turn. Encoding first fixes the value, and the surrounding
+eval keeps this diagnostic from ever being able to abort a turn: a digest
+that cannot be computed degrades to '', which the loop tracker treats as an
+unrecognized call rather than a repeat.
+
 Arguments: $tool_call (hashref)
 Returns: hex digest string, or '' when there is nothing to digest
 
@@ -2532,8 +2541,18 @@ sub _tool_arguments_digest {
     }
     return '' unless defined $raw && length $raw;
 
+    # Only strings carrying the UTF-8 flag need encoding. Leaving ASCII bytes
+    # untouched keeps digests stable across the fix.
+    my $bytes = utf8::is_utf8($raw) ? encode_utf8($raw) : $raw;
+
     require Digest::SHA;
-    return Digest::SHA::sha256_hex($raw);
+    my $digest = eval { Digest::SHA::sha256_hex($bytes) };
+    if ($@) {
+        log_debug('WorkflowOrchestrator',
+            "Tool arguments digest failed, loop tracking degraded for this call: $@");
+        return '';
+    }
+    return $digest;
 }
 
 =head2 _error_identical_text

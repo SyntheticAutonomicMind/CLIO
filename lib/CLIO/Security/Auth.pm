@@ -8,6 +8,7 @@ use warnings;
 use utf8;
 use CLIO::Core::Logger qw(log_debug);
 use Digest::SHA qw(sha256_hex);
+use Encode qw(encode_utf8);
 use Time::HiRes qw(time);
 use POSIX qw(strftime);
 
@@ -292,7 +293,11 @@ sub _generate_token {
     my ($self, $user_id) = @_;
     
     my $payload = join(':', $user_id, time(), rand(), $$);
-    my $token = sha256_hex($payload . $self->{secret_key});
+    # Digest::SHA dies on decoded wide characters, so a non-ASCII user name
+    # or secret would abort login. Encoding the concatenation covers both.
+    my $token_source = $payload . $self->{secret_key};
+    $token_source = encode_utf8($token_source) if utf8::is_utf8($token_source);
+    my $token = sha256_hex($token_source);
     
     return $token;
 }
