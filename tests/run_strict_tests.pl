@@ -18,7 +18,7 @@
 #   --quiet              Verdict line plus new warnings only.
 #   --strict-redefine    Also flag "Subroutine ... redefined".
 #   --timeout=N          Seconds per test before the process group is
-#                        killed (default 120, 0 disables). Matches
+#                        killed (default 300, 0 disables). Matches
 #                        run_all_tests.pl: several tests deliberately
 #                        fork, sleep, and get killed to prove cleanup
 #                        works, so a short budget reports them as hung.
@@ -105,14 +105,16 @@ my $EVIDENCE_LINES = 12;
 # Options
 # ---------------------------------------------------------------------------
 
-# Same budget as run_all_tests.pl. Tests that exercise terminal kills and
-# rate-limit backoff sleep for tens of seconds on purpose.
+# Same budget as run_all_tests.pl - including the 300s, which that harness
+# raised when test_code_intelligence_advanced.pl started getting killed at
+# 120s while still passing. Tests that exercise terminal kills and rate-limit
+# backoff sleep for tens of seconds on purpose.
 my %opt = (
     fatal           => 0,
     verbose         => 0,
     quiet           => 0,
     strict_redefine => 0,
-    timeout         => 120,
+    timeout         => 300,
     full            => 0,
     json            => 0,
     baseline        => undef,
@@ -126,7 +128,7 @@ sub usage {
         "  --verbose            one line per test, clean ones included\n",
         "  --quiet              verdict line plus new warnings only\n",
         "  --strict-redefine    also flag redefined subroutines\n",
-        "  --timeout=N          seconds per test before kill (default 120, 0 off)\n",
+        "  --timeout=N          seconds per test before kill (default 300, 0 off)\n",
         "  --full               do not truncate failure evidence\n",
         "  --json               emit one JSON object instead of prose\n",
         "  --baseline[=PATH]    report only warnings absent from a baseline\n",
