@@ -262,6 +262,12 @@ sub _render_thinking {
     # Indent each non-empty line (empty lines pass through unindented,
     # matching the live StreamingController::_indent_and_wrap behavior)
     my @lines = split /\n/, $display_content, -1;
+    # Drop the empty element produced by a trailing newline. The live
+    # path renders through _indent_and_wrap, which emits the same newline
+    # as a line terminator rather than as an extra blank row; keeping it
+    # here would add a gap above the closing hrule that a live session
+    # does not have.
+    pop @lines while @lines && $lines[-1] eq '';
     for my $i (0 .. $#lines) {
         my $line = $lines[$i];
         if (length($line) == 0) {
@@ -270,10 +276,6 @@ sub _render_thinking {
             print $indent . $line . "\n";
         }
     }
-    STDOUT->flush() if STDOUT->can('flush');
-
-    # Print blank line before bottom hrule (matches live session)
-    print "\n";
     STDOUT->flush() if STDOUT->can('flush');
 
     # Print bottom hrule

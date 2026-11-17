@@ -645,4 +645,48 @@ subtest 'end-of-stream partial line is flushed after fix' => sub {
     like($out, qr/Some thinking/, 'partial line content rendered');
 };
 
+# --- Test 17: no blank row between the last content line and the
+# closing hrule.
+#
+# The card is a box: top rule, content, bottom rule. A blank row above
+# the bottom rule made the bottom edge padded while the top edge was
+# tight, so the card read as inconsistent. Assert the bottom rule sits
+# immediately after the last content line.
+subtest 'no gap between content and closing hrule' => sub {
+    my @shapes = (
+        ['content ends with newline',    "Thinking line one\n"],
+        ['content without trailing newline', 'Thinking line two'],
+        ['content ends with blank line', "Thinking line three\n\n"],
+        ['multiple content lines',       "Line a\nLine b\n"],
+    );
+
+    for my $shape (@shapes) {
+        my ($label, $payload) = @$shape;
+        my $config  = MockConfig->new(show_thinking => 1);
+        my $chat    = MockChat->new(config => $config);
+        my $spinner = MockSpinner->new;
+        my $cb      = $chat->_make_thinking_callback($spinner);
+
+        my $out = _capture_stdout(sub {
+            $cb->('', 'start');
+            $cb->($payload, undef);
+            $cb->('', 'end');
+        });
+
+        my @lines = split /\n/, $out, -1;
+        pop @lines while @lines && $lines[-1] eq '';
+
+        # The closing rule is the last line; the row above it must be
+        # content, never a blank.
+        cmp_ok(scalar(@lines), '>=', 4, "$label: card has header, rules, content");
+        my $above_rule = $lines[-2] // '';
+        my $vis = $above_rule;
+        $vis =~ s/\e\[[0-9;]*[A-Za-z]//g;
+        ok(length($vis) > 0,
+            "$label: row above closing hrule is content, not a blank row");
+        ok($vis !~ /^\s*$/,
+            "$label: no whitespace-only row above closing hrule");
+    }
+};
+
 done_testing();

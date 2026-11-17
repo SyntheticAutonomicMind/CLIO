@@ -890,8 +890,16 @@ sub _make_thinking_callback {
                         $think_stream->{md_line_count}++;
                         $think_stream->{line_buffer} = '';
                     }
+                    # flush() emits the rendered markdown buffer verbatim, so a
+                    # buffer without a trailing newline would leave the cursor
+                    # mid-line and glue the closing hrule onto the last content
+                    # line. Terminate the buffer instead of printing a blank
+                    # row, which is what put a gap above the rule.
+                    if ($think_stream->{markdown_buffer} =~ /\S/
+                        && $think_stream->{markdown_buffer} !~ /\n\z/) {
+                        $think_stream->{markdown_buffer} .= "\n";
+                    }
                     $flush_thinking->();
-                    print "\n";
                     $print_thinking_hrule->();
                     print "\n";
                     STDOUT->flush() if STDOUT->can('flush');
@@ -1002,7 +1010,7 @@ Strip <!--session:...--> markers from text. Used as both a class method
 (CLIO::UI::Chat->_strip_session_markers($text)) and an instance method
 ($self->_strip_session_markers($text)) so callers anywhere in the
 package can drop the markers without depending on the lexical closure
-defined in L</_make_thinking_callback>.
+defined in C<_make_thinking_callback>.
 
 The actual regex lives in L<CLIO::Util::TextSanitizer::strip_session_markers>
 as the single source of truth - this method is a thin wrapper so existing

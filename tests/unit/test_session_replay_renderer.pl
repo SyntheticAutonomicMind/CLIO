@@ -7,6 +7,8 @@ use FindBin qw($RealBin);
 use lib "$RealBin/../../lib";
 use Test::More;
 use File::Temp qw(tempdir);
+use Encode ();
+use CLIO::UI::Theme;
 
 # Use a temp dir
 my $temp_dir = tempdir(CLEANUP => 1);
@@ -426,8 +428,11 @@ ok(defined &CLIO::UI::SessionReplay::render_history,
     ok($cap =~ /hello/, "terminal_operations content shown as expanded content fallback");
 }
 
-# Test 14: thinking blocks have blank lines around bottom hrule
-# Matches live session format: content, blank line, bottom hrule, blank line
+# Test 14: thinking block spacing
+# The card is a box: top rule, content, bottom rule, then one blank row
+# separating it from whatever follows. The bottom rule sits immediately
+# after the last content line - there is no blank row above it, matching
+# the tight top edge.
 {
     my $chat = MockChat->new();
     $chat->{non_interactive} = 0;
@@ -451,8 +456,21 @@ ok(defined &CLIO::UI::SessionReplay::render_history,
     
     ok($cap =~ /THINKING/, "thinking header present");
     ok($cap =~ /thinking here/, "thinking content present");
-    my $blank_count = () = $cap =~ /\n\n/g;
-    ok($blank_count >= 2, "thinking block has blank lines around hrules ($blank_count found)");
+
+    # $cap holds bytes (the capture handle has a UTF-8 layer). Decode so the
+    # box-drawing rule can be matched as the codepoint it is.
+    my $text = Encode::decode('UTF-8', $cap);
+    my @lines = split /\n/, $text, -1;
+    my ($content_idx) = grep { $lines[$_] =~ /thinking here/ } 0 .. $#lines;
+    ok(defined $content_idx, "thinking content located in output");
+
+    if (defined $content_idx) {
+        my $rule = CLIO::UI::Theme::box_char('horizontal');
+        ok(index($lines[$content_idx + 1], $rule) >= 0,
+            'closing hrule directly follows the last content line (no gap)');
+        ok($lines[$content_idx + 2] !~ /\S/,
+            'one blank row after the closing hrule');
+    }
 }
 
 # Test 15: box_char/ui_char called as functions, not methods
