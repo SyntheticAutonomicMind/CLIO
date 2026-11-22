@@ -21,7 +21,7 @@
 | **Cheaper Inference** | `cheaperinference` | API Key | Gateway |
 | **cheapaimodel** | `cheapaimodel` | API Key | Gateway |
 | **Standard Compute** | `standardcompute` | API Key | Gateway |
-| **UberLLM** | `uberllm` | API Key | Gateway |
+| **MartLLM** | `uberllm` | API Key | Gateway |
 | **Synap by Linkrra** | `synap` | API Key | Gateway |
 | **Ollama Cloud** | `ollama_cloud` | API Key | Own |
 | **MiniMax** | `minimax` | API Key | Own |
@@ -505,12 +505,12 @@ Pinned model ids use `provider/model` form. Keep the `standardcompute/` prefix o
 
 ---
 
-### UberLLM
+### MartLLM
 
 **Best for:** One OpenAI-compatible API key for text models from many labs (DeepSeek, Claude, GPT, Gemini, Kimi, Qwen and others), usually below list price, prepaid with no monthly fee
 
 **Get API Key:**
-1. Go to [uberllm.dev/signup](https://uberllm.dev/signup) and create an account
+1. Go to [martllm.com/signup](https://martllm.com/signup) and create an account
 2. Create an API key in the dashboard
 
 **Configure CLIO:**
@@ -523,7 +523,7 @@ clio --new
 
 For CI or non-persistent setups, export the key as `CLIO_API_KEY` (for example `export CLIO_API_KEY="$UBERLLM_API_KEY"`).
 
-**Available models:** UberLLM serves its models through one OpenAI-compatible API at `https://api.uberllm.dev/v1`. The default model is `deepseek/deepseek-v4-flash`. Use `/api models` for the current list (also public at `https://api.uberllm.dev/v1/models`); per-model prices are at [uberllm.dev/models](https://uberllm.dev/models).
+**Available models:** MartLLM serves its models through one OpenAI-compatible API at `https://api.martllm.com/v1`. The default model is `deepseek/deepseek-v4-flash`. Use `/api models` for the current list (also public at `https://api.martllm.com/v1/models`); per-model prices are at [martllm.com/models](https://martllm.com/models).
 
 Model ids use `provider/model` form. Keep the `uberllm/` prefix on those so CLIO does not read the first segment as a CLIO provider name:
 ```bash
@@ -935,7 +935,7 @@ CLIO applies a tiered `--max-time` to provider requests so a slow upstream does 
 | Tier | `--max-time` | When it applies |
 |------|--------------|------------------|
 | Cloud | **300 s** | Direct provider connections (OpenAI, Anthropic, Google, DeepSeek, NVIDIA, MiniMax, Z.AI, GitHub Copilot, Ollama Cloud, KiloCode) |
-| Route-based | **300 s** | Multi-hop providers that add an intermediate proxy (OpenRouter, OrcaRouter, Opper, Cheaper Inference, cheapaimodel, Standard Compute, UberLLM, Vercel AI Gateway) |
+| Route-based | **300 s** | Multi-hop providers that add an intermediate proxy (OpenRouter, OrcaRouter, Opper, Cheaper Inference, cheapaimodel, Standard Compute, MartLLM, Vercel AI Gateway) |
 | Local | **900 s** | Inference servers running on this machine (llama.cpp, LM Studio) |
 
 The tier is selected per provider via two flags propagated through `build_endpoint_config()`:
