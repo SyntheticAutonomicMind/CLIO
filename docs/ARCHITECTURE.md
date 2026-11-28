@@ -446,7 +446,7 @@ CLIO has no other protocol modules. The earlier `Architect.pm`, `Editor.pm`, `Va
 **How it works:**
 - Base.pm defines the provider interface
 - Each native provider implements its own API communication
-- 24 providers in `Providers.pm`: GitHub Copilot, OpenAI, Anthropic, Google Gemini, DeepSeek, llama.cpp, LM Studio, Ollama Cloud, OpenRouter, Vercel AI Gateway, OrcaRouter, KiloCode, Opper, Charm Hyper, Cheaper Inference, cheapaimodel, Standard Compute, UberLLM, Synap by Linkrra, MiniMax, MiniMax Token Plan, Z.A.I (Chat), Z.A.I (Coding), NVIDIA NIM
+- 24 providers in `Providers.pm`: GitHub Copilot, OpenAI, Anthropic, Google Gemini, DeepSeek, llama.cpp, LM Studio, Ollama Cloud, OpenRouter, Vercel AI Gateway, OrcaRouter, KiloCode, Opper, Charm Hyper, Cheaper Inference, cheapaimodel, Standard Compute, MartLLM, Synap by Linkrra, MiniMax, MiniMax Token Plan, Z.A.I (Chat), Z.A.I (Coding), NVIDIA NIM
 - OpenAI-compatible providers (OpenAI, DeepSeek, MiniMax, Z.AI, OpenRouter, etc.) and GitHub Copilot are handled directly by APIManager
 
 ### 13. OpenSpec Integration

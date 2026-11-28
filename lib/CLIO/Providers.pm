@@ -59,7 +59,7 @@ type.
     cheaperinference  Cheaper Inference
     cheapaimodel      cheapaimodel
     standardcompute   Standard Compute
-    uberllm           UberLLM
+    uberllm           MartLLM
     synap             Synap by Linkrra
     minimax           MiniMax
     minimax_token     MiniMax Token Plan
@@ -455,16 +455,17 @@ my %PROVIDERS = (
         },
     },
 
+    # MartLLM (formerly UberLLM): the id stays 'uberllm' because it is the saved config value and the model-id prefix.
     uberllm => {
-        name => 'UberLLM',
-        api_base => 'https://api.uberllm.dev/v1/chat/completions',
+        name => 'MartLLM',
+        api_base => 'https://api.martllm.com/v1/chat/completions',
         model => 'deepseek/deepseek-v4-flash',
         requires_auth => 'apikey',
         third_party_gateway => 1,
         supports_tools => 1,
         supports_streaming => 1,
         route_timeout => 1,  # Routes to upstream providers, extra latency from the intermediate hop
-        url_detection_patterns => [ qr{api\.uberllm\.dev}i ],
+        url_detection_patterns => [ qr{api\.(?:martllm\.com|uberllm\.dev)}i ],
         # Model ids use provider/model form (e.g. deepseek/deepseek-v4-flash,
         # anthropic/claude-sonnet-4.6). The public /v1/models list is the
         # source of truth for the model list.

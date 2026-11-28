@@ -1,10 +1,10 @@
 #!/usr/bin/env perl
 # SPDX-License-Identifier: GPL-3.0-only
 #
-# Test: UberLLM provider registration and /api models URL
+# Test: MartLLM provider registration and /api models URL
 # construction.
 #
-# UberLLM serves its OpenAI-compatible API under /v1/, so the
+# MartLLM serves its OpenAI-compatible API under /v1/, so the
 # generic $host/v1/models fallback in _fetch_provider_models already
 # builds the right URL. No provider-specific case is needed in Models.pm.
 
@@ -60,7 +60,7 @@ $ENV{CLIO_TEST} = 1;
 use CLIO::UI::Commands::API::Models;
 use CLIO::Providers;
 
-# --- Fake config that reports a UberLLM API key ---
+# --- Fake config that reports a MartLLM API key ---
 package FakeConfig;
 sub new { return bless { provider => 'uberllm', _key => 'test-key-123' }, $_[0]; }
 sub get {
@@ -88,8 +88,8 @@ package main;
 # ============================================================================
 my $provider_def = CLIO::Providers::get_provider('uberllm');
 ok($provider_def, 'uberllm provider is defined in Providers.pm');
-is($provider_def->{name}, 'UberLLM', 'Display name is UberLLM');
-is($provider_def->{api_base}, 'https://api.uberllm.dev/v1/chat/completions',
+is($provider_def->{name}, 'MartLLM', 'Display name is MartLLM');
+is($provider_def->{api_base}, 'https://api.martllm.com/v1/chat/completions',
    'uberllm api_base is /v1/chat/completions');
 is($provider_def->{model}, 'deepseek/deepseek-v4-flash', 'Default model is deepseek/deepseek-v4-flash');
 is($provider_def->{requires_auth}, 'apikey', 'uberllm uses API key auth');
@@ -117,7 +117,7 @@ my $cmd = CLIO::UI::Commands::API::Models->new(
 $captured_url = undef;
 my $models = $cmd->_fetch_provider_models('uberllm', $provider_def, 'test-key-123', 0);
 
-is($captured_url, 'https://api.uberllm.dev/v1/models',
+is($captured_url, 'https://api.martllm.com/v1/models',
    'uberllm models URL uses the generic /v1/models endpoint');
 ok($models && @$models, 'uberllm models are returned (not empty)');
 is(scalar(@$models), 2, 'Both fake uberllm models are parsed');
