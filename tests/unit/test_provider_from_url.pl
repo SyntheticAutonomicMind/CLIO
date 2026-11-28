@@ -55,6 +55,8 @@ subtest 'standard API providers' => sub {
         'Synap detected');
     is(provider_from_url('https://api.martllm.com/v1/chat/completions'), 'uberllm',
         'MartLLM detected');
+    is(provider_from_url('https://api.uberllm.dev/v1/chat/completions'), 'uberllm',
+        'legacy UberLLM URL still detected');
 };
 
 # =============================================================================

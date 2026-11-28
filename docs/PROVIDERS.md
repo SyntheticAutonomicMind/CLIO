@@ -517,11 +517,11 @@ Pinned model ids use `provider/model` form. Keep the `standardcompute/` prefix o
 ```bash
 clio --new
 /api set provider uberllm
-/api set key <your-uberllm-key>
+/api set key <your-martllm-key>
 /config save
 ```
 
-For CI or non-persistent setups, export the key as `CLIO_API_KEY` (for example `export CLIO_API_KEY="$UBERLLM_API_KEY"`).
+For CI or non-persistent setups, export the key as `CLIO_API_KEY` (for example `export CLIO_API_KEY="$MARTLLM_API_KEY"`).
 
 **Available models:** MartLLM serves its models through one OpenAI-compatible API at `https://api.martllm.com/v1`. The default model is `deepseek/deepseek-v4-flash`. Use `/api models` for the current list (also public at `https://api.martllm.com/v1/models`); per-model prices are at [martllm.com/models](https://martllm.com/models).
 

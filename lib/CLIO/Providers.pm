@@ -455,6 +455,7 @@ my %PROVIDERS = (
         },
     },
 
+    # MartLLM (formerly UberLLM): the id stays 'uberllm' because it is the saved config value and the model-id prefix.
     uberllm => {
         name => 'MartLLM',
         api_base => 'https://api.martllm.com/v1/chat/completions',
